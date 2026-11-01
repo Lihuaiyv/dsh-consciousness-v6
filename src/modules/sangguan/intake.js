@@ -9,6 +9,7 @@ import { loadState } from './projection.js'
 import { theta } from './fold.js'
 import { isTerminal } from './catalog.js'
 import { noteSystem } from './fast.js'
+import { stanceText } from './gates.js'
 
 const relKey = (aid) => 'sangguan.intake.rel:' + aid
 const memKey = (aid) => 'sangguan.intake.mem:' + aid
@@ -37,13 +38,16 @@ export function intakeCandidates(db, aid) {
   const out = []
   const mark = (id) => { seen[id] = 1 }
   try {
-    const rows = db.prepare("SELECT id, text, type FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type IN ('reflection','aspiration') ORDER BY created_at").all(aid)
+    // 只认志向。reflection 是 features 每轮 summarize 出来的「用户画像」（事实/偏好/边界），
+    // 主语是用户，不是它的立场；日记同理是流水账。把它们原样搬进 L 层，
+    // 页首就会变成「用户只问…未提供其他信息」——那不是人生观。
+    const rows = db.prepare("SELECT id, text, type FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type='aspiration' ORDER BY created_at").all(aid)
     for (const r of rows) {
       if (seen[r.id]) continue
-      const text = String(r.text || '').trim()
-      if (!text) continue
       mark(r.id)
-      out.push({ layer: 'L', kind: r.type === 'aspiration' ? 'chapter' : 'role', text: text.slice(0, 300), ref: r.id })
+      const text = stanceText(r.text, 80)
+      if (!text) continue
+      out.push({ layer: 'L', kind: 'chapter', text, ref: r.id })
     }
   } catch { /* 老库没有记忆表 */ }
   try {

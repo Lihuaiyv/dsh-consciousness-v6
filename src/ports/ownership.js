@@ -13,11 +13,15 @@ export const OWNERSHIP = {
     files: [
       'modules/memory.js',
       'modules/conflict.js',
+      'modules/contradict.js',
+      'modules/conflict_ask.js',
       'modules/study.js',
       'algo/recall.js',
     ],
     tables: [
       'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'alerts', 'raw_turns',
+      // 开案后真的开口问：往主动消息队列里排一条
+      'proactive',
       // 只读：召回的关系加成（记忆挂在谁名下、那个人多亲近）
       'rel_evidence', 'rel_person',
     ],

@@ -11,6 +11,9 @@
  * 门控只作用于「模型自己抽出来的」那批。
  */
 
+import { askAboutConflict } from './conflict_ask.js'
+import { attrConflict } from './contradict.js'
+
 const NEG = new Set([...'不没别无取消换改'])
 
 export const GATE = Object.freeze({
@@ -135,6 +138,9 @@ export function decideWrite(db, aid, cand = {}) {
   // 同一件事、极性相反：先判矛盾再判合并（「不喜欢喝美式咖啡了」vs「喜欢喝美式咖啡，不加糖」）
   const flip = polarityFlip(text, best.row.text)
   if (flip) return { action: 'conflict', score: best.score, target: best.row }
+  // 没有否定词、但同一骨架取了互斥的值（「咖啡是热的」vs「…是冰的」）也算
+  const attr = attrConflict(text, best.row.text)
+  if (attr) return { action: 'conflict', score: best.score, target: best.row, attr }
   if (best.score >= mergeLine) return { action: 'merge', score: best.score, target: best.row }
   if (best.score >= GATE.CONFLICT) {
     // 相近但没到合并线、极性也一样：可能是换了说法，也可能只是用词接近 → 新增
@@ -161,21 +167,38 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
   const r = write(cand)
   if (d.action !== 'conflict') return { action: 'new', id: r && r.id, score: d.score }
 
+  // addMemory 自己也可能判出同一条冲突：它已经开过案、排过问句了，就别重复开第二份
+  if (r && r.conflict && r.conflict_id) {
+    return { action: 'conflict', id: r.id, conflict_id: r.conflict_id, score: d.score, dedup: 'addMemory' }
+  }
+
   // 门控判了冲突，就必须落一条可追溯的冲突记录：
   // 不能让 addMemory 自己的相似度判定（可能更低、可能被「不加糖」这类词带偏）把它放过。
   const cid = 'cfl_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
   const at = new Date().toISOString()
+  const kind = d.attr ? 'attribute' : 'polarity'
   try {
     db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(at, d.target.id)
     db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,evidence,escalation_level)
-      VALUES(?,?,?,?, 'open', ?, 'high','polarity',?,0)`).run(
-      cid, aid, d.target.id, r.id, at,
-      JSON.stringify({ similarity: d.score, via: 'gate', a_text: String(d.target.text || '').slice(0, 120), b_text: String(cand.text || '').slice(0, 120) }).slice(0, 800),
+      VALUES(?,?,?,?, 'open', ?, 'high',?,?,0)`).run(
+      cid, aid, d.target.id, r.id, at, kind,
+      JSON.stringify({
+        similarity: d.score, via: 'gate', kind,
+        attribute: d.attr || null,
+        a_text: String(d.target.text || '').slice(0, 120), b_text: String(cand.text || '').slice(0, 120),
+      }).slice(0, 800),
     )
     db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
       'memory.conflict', JSON.stringify({ conflict_id: cid, a: d.target.id, b: r.id, via: 'gate' }), at)
     db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)').run('alr_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
       'data', 2, '有一条记忆冲突未处理', 'open', at)
+    // 开案之后真的开口问（跟 addMemory 共用同一个问句出口）；
+    // attr 的 sentence_a 是候选（新），sentence_b 是旧条——按时间顺序摆
+    askAboutConflict(db, aid, {
+      cid, aId: d.target.id, bId: r.id,
+      aText: (d.attr && d.attr.sentence_b) || d.target.text,
+      bText: (d.attr && d.attr.sentence_a) || cand.text,
+    })
   } catch { /* 记录失败也要把新的事实留下来 */ }
   return { action: 'conflict', id: r && r.id, conflict_id: cid, score: d.score }
 }

@@ -23,6 +23,7 @@ import { DIMS } from './src/modules/values.js'
 import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
+import { claimLine } from './src/modules/conflict_ask.js'
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
@@ -405,6 +406,28 @@ export function consciousnessBlock(db, aid) {
     }
   } catch { /* 老库没有这张表 */ }
 
+  // 未解决的冲突：如果这一条已经排了问句（或刚问过），就交给上面的主动消息说，
+  // 这里不重复；只有问句没排上时才兜一句，保证「对不上」这件事不会又沉回库里。
+  let conflictLine = ''
+  try {
+    const cf = db.prepare("SELECT * FROM conflicts WHERE agent_id=? AND state='open' ORDER BY opened_at DESC LIMIT 1").get(aid)
+    const opened = cf ? Date.parse(cf.opened_at || '') : 0
+    if (cf && opened > Date.now() - 2 * 86400000) {
+      const queued = db.prepare("SELECT id FROM proactive WHERE agent_id=? AND reason=? AND state='pending'").get(aid, 'conflict:' + cf.id)
+      const said = db.prepare("SELECT id FROM proactive WHERE agent_id=? AND reason=? AND delivered_at>=?")
+        .get(aid, 'conflict:' + cf.id, new Date(Date.now() - 86400000).toISOString())
+      if (!queued && !said) {
+        let ev = {}
+        try { ev = JSON.parse(cf.evidence || '{}') } catch { ev = {} }
+        const A = claimLine((ev.attribute && ev.attribute.sentence_a) || ev.a_text || '')
+        const B = claimLine((ev.attribute && ev.attribute.sentence_b) || ev.b_text || '')
+        if (A && B) {
+          conflictLine = '（你注意到一处对不上：先前「' + A + '」，后来「' + B + '」。如果自然，问一句哪个才是现在的，别自己替对方挑。）'
+        }
+      }
+    }
+  } catch { /* 老库没有冲突表 */ }
+
   let userEmotion = null
   try {
     // 用「校准过的读法」而不是模型原始标签：面板上写的是它现在觉得你什么，
@@ -487,6 +510,7 @@ export function consciousnessBlock(db, aid) {
     diaryLines.length ? '最近我自己写下的（日记，不是用户说的）：\n' + diaryLines.join('\n') : '',
     bridgeText ? '（' + bridgeText + ' —— 如果自然，接着这个往下说，不用解释来源。）' : '',
     loopText || '',
+    conflictLine || '',
     spontaneousLine ? '（你心里忽然浮上来的一件事，不一定是这一轮在说的；自然提起，不想提也别硬提）：\n- ' + spontaneousLine : '',
     (memText)
       ? '关于这句话，你能想起的事（只引用相关的，不要编造，也不要全倒出来；'

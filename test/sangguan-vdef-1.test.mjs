@@ -46,16 +46,20 @@ add('agt_feed')
 const mem = (id, type, text) => db.prepare(`INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,
   last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version)
   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, 'agt_feed', type, 'normal', text, 'manual', 0.5, 0.5, 1, 5, T, null, null, 'active', T, null, 1)
-mem('mr', 'reflection', '我想照顾身边的人，把他们放在前面')
+mem('mr', 'aspiration', '我想照顾身边的人，把他们放在前面')
+// 用户画像总结（reflection）不是它的价值取向，不许进命题
+mem('mu', 'reflection', '1. 事实：用户只问了一句「在吗」。 2. 边界：未说明。')
 {
   const before = Object.keys(loadState(db, 'agt_feed').claims).length
   const fed = await ingestValues(db, 'agt_feed', T)
   const claims = Object.values(loadState(db, 'agt_feed').claims).filter((c) => c.layer === 'V')
-  check('总开关关闭时反思仍进价值候选', fed.offered === 1 && claims.length === before + 1 && claims[0].kind === 'norm', { fed, n: claims.length })
+  check('总开关关闭时志向仍进价值候选', fed.offered === 1 && claims.length === before + 1 && claims[0].kind === 'norm', { fed, n: claims.length })
   const again = await ingestValues(db, 'agt_feed', T)
-  check('同一条反思不进第二次', again.offered === 0 && Object.values(loadState(db, 'agt_feed').claims).filter((c) => c.layer === 'V').length === claims.length)
+  check('同一条志向不进第二次', again.offered === 0 && Object.values(loadState(db, 'agt_feed').claims).filter((c) => c.layer === 'V').length === claims.length)
   const short = await ingestValues(db, 'agt_feed', '2026-11-02T00:00:00.000Z', { user: '你好' })
   check('太短的用户原话不进命题', short.offered === 0)
+  check('画像总结不进价值观', !Object.values(loadState(db, 'agt_feed').claims).some((c) => /用户|事实|边界/.test(
+    db.prepare('SELECT text FROM persona_claims WHERE id=?').get(c.id)?.text || '')))
 }
 
 console.log((fail ? '失败 ' : '通过 ') + pass + ' / ' + (pass + fail))

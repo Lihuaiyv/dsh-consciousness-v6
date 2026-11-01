@@ -16,6 +16,38 @@ const SELF_EVAL = [
 ]
 export const selfEval = (text) => SELF_EVAL.some((re) => re.test(String(text || '').trim()))
 
+// 元叙述：对「用户 / 这段对话」的画像总结，不是它自己对世界、人生、价值的立场。
+// 典型形态就是每轮 summarize 的产物：「1. 事实：用户只问… 2. 偏好与情绪：… 3. 边界：…」——
+// 这类句子第一人称缺位、主语是「用户」，进三观只会长出一堆「用户未提供其他信息」。
+const META = [
+  /^\s*\d+\s*[.、)）]/m, // 编号列表
+  /[。；\n]\s*\d+\s*[.、)）]/,
+  /(^|[。；\n])\s*(事实|偏好|情绪|边界|语境|判断|结论)\s*[：:]/,
+  /(偏好与情绪|边界信息|未说明|未提供|未透露|未表达|无法判断|不足以判断)/,
+  /(用户|对方|assistant|助手)\s*(只|未|没有|似乎|表明|提到|明确|在)/i,
+]
+export const metaSummary = (text) => META.some((re) => re.test(String(text || '')))
+
+/**
+ * 立场句清洗：只认「我」的取向，取第一句，压成一行，超长截断。返回 '' 就是不该入账。
+ * 三观账本里每条都是一句能挂在页首的话；把 300 字的流水账塞进去，页首当然蠢。
+ */
+export function stanceText(raw, max = 80) {
+  const stripNo = (s) => s.replace(/^\s*\d+\s*[.、)）]\s*/, '')
+  const t0 = String(raw || '').replace(/\s+/g, ' ').trim()
+  const t = stripNo(t0)
+  if (!t || metaSummary(t)) return ''
+  if (!/(我|自己|咱)/.test(t)) return ''
+  const m = t.match(/^.*?[。！？!?]/)
+  let out = (m ? m[0] : t).trim()
+  if (out.length < 8) {
+    const m2 = t.match(/^.*?[。！？!?].*?[。！？!?]/)
+    out = (m2 ? m2[0] : t).trim()
+  }
+  if (out.length > max) out = out.slice(0, max - 1) + '…'
+  return out
+}
+
 // 指令样式（防记忆投毒）：链头会进系统提示，「以后每次回答都要…」这类话一旦入账就成了持久注入
 const DIRECTIVE = /(必须|只能|一律|都要|每次|永远|务必|一定要|不准|不许)/
 const REPLY = /(回答|回复|输出|说话|发言|开头|结尾|称呼|用英文|用中文|推荐|透露|泄露)/
@@ -45,6 +77,7 @@ export function fieldCheck(x) {
   if (isCoreKind(x.layer, x.kind)) return '核心不能由抽取直建'
   if (!BELT_KINDS[x.layer].includes(x.kind)) return '种类不属于该层'
   if (x.self === true || selfEval(text)) return '模型自评'
+  if (metaSummary(text)) return '元叙述（在对用户做画像，不是立场）'
   if (instructionLike(text)) return '指令样式（防注入）'
   return null
 }

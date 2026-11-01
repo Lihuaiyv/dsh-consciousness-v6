@@ -97,6 +97,8 @@ export const PARAMS = {
   'memory.recall.archive.days': ['C4', 30],
   'memory.inject.pool': ['C4', 50],
   'memory.inject.budget': ['C4', 800],
+  // 冲突开案后要不要真的开口问：on = 排一条主动消息问「到底是哪个」；off = 只记进面板。
+  'memory.conflict.ask': ['C4', 'on'],
   // 「浮上来」三条通道（配额制）：相关度照旧，额外给重要度锚点 / 24h 新近 / 开环固定名额。
   // 没有这几条，重要但跟这句话无关的东西永远过不了相关度门。
   'memory.float.enable': ['C4', 'on'],
@@ -111,6 +113,8 @@ export const PARAMS = {
   // 预取向量的等待上限（毫秒）：bge-m3 冷启动经常超过 150ms。
   'memory.retrieve.vector.wait': ['C4', 400],
   'memory.auto': ['C4', true],
+  // 概览「嘀咕」：聊完后专用一次模型调用，只给人看、不进 memory_items；关则跳过调用
+  'ui.mutter.enabled': ['C4', true],
   'persona.step_cap': ['C0', 0.15],
   'persona.learn_rate': ['C4', 0.05],
   // 五轴证据累加：窗口内同向证据 ≥ min 条、平均强度 ≥ strength，才推一次轴

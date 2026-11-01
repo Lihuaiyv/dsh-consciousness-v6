@@ -1156,7 +1156,7 @@ window.__ModuleLoader__.load({
     /** 标题下面那行：此刻积极还是消极、快情绪由什么拼出来（情绪名看卡里那个大字，不重复）。
      *  「此刻」优先用接口现算的 v3：走势最后一点是采样时的值，快情绪会按分钟回落，
      *  两者差一点就会让标题和卡里的「此刻」对不上。 */
-    function TrendNow({ data, raw, demo, cur }) {
+    function TrendNow({ data, raw, cur }) {
       const pts = (data && data.points) || []
       let last = null
       for (let i = pts.length - 1; i >= 0; i--) if (Number.isFinite(Number(pts[i].f))) { last = pts[i]; break }
@@ -1174,7 +1174,6 @@ window.__ModuleLoader__.load({
       const decomp = fsV !== null && feV !== null && Math.abs(fsV + feV - fV) <= 0.02
       const rawName = raw && raw !== last.lb ? (AFFECT_KEY[raw] || raw) : ''
       return h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 9px' } },
-        demo ? h('b', { style: { fontWeight: 600, color: '#ffd479' } }, '模拟') : null,
         h('b', { style: { fontWeight: 600, color: pos ? '#7fd8ff' : '#ff9b9b' } }, (pos ? '积极' : '消极') + ' ' + sg(tV)),
         h('span', { style: { opacity: 0.72 } },
           '快情绪 ' + sg(fV) + (decomp ? ' = 自己 ' + sg(fsV) + ' + 共情 ' + sg(feV) : '')),
@@ -1869,6 +1868,109 @@ window.__ModuleLoader__.load({
       if (!dest) return
       if (NAV.handler) NAV.handler(dest)
       else NAV.queue.push(dest)
+    }
+
+    /* ------------------------------------------------ 页面内跳转（落点对齐） */
+
+    /**
+     * 滚到某个区块。这里刻意不用 scrollIntoView({block:'start'})：
+     *
+     * 1) 详情页顶部那条页头是 sticky 的。scrollIntoView 把区块顶边对齐到滚动区
+     *    最上面，标题正好被页头压住 —— 看着就是「跳偏了一大截」。
+     * 2) scrollIntoView 会连带滚动所有外层可滚祖先（设置弹层 + 文档层），偏差叠两遍。
+     * 3) 区块高度是参数异步拉回来才定的，刚跳过去时还是占位高度，落点还会再飘。
+     *
+     * 做法：只滚一个容器；先粗滚到区块顶，再按「实测的遮挡量」校一次
+     * （页头到底吸不吸顶、吸多高，都量出来，不靠猜）；布局稳定后再补校。
+     */
+    const SCROLL_GAP = 10
+    const SCROLL_NAV = { token: 0 }
+    const isDocBox = (b) => b === document.scrollingElement || b === document.documentElement
+
+    /** 最近的可滚祖先；都没有就滚文档 */
+    function scrollBoxOf(el) {
+      let n = el && el.parentElement
+      while (n && n.nodeType === 1 && n !== document.body && n !== document.documentElement) {
+        const oy = window.getComputedStyle(n).overflowY
+        if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && n.scrollHeight > n.clientHeight + 1) return n
+        n = n.parentElement
+      }
+      return document.scrollingElement || document.documentElement
+    }
+
+    /** 能放下内容的可视上边界：容器顶，或者已经吸顶的页头下沿 */
+    function readTopEdge(el, box) {
+      const base = isDocBox(box) ? 0 : box.getBoundingClientRect().top
+      const root = (el.closest && el.closest('.dshc')) || document
+      const bar = root.querySelector ? root.querySelector('.dshc-stick') : null
+      if (!bar) return base
+      const br = bar.getBoundingClientRect()
+      // 页头贴着顶边才算遮挡；被滚走了就不占位置
+      return br.top <= base + 1 ? Math.max(base, br.bottom) : base
+    }
+
+    function scrollBoxTo(box, top, behavior) {
+      const t = Math.max(0, top)
+      if (isDocBox(box)) window.scrollTo({ top: t, behavior })
+      else if (box.scrollTo) box.scrollTo({ top: t, behavior })
+      else box.scrollTop = t
+    }
+
+    /** 找不到元素返回 false，调用方可以隔一会儿再试（内容是异步来的） */
+    function scrollToBlock(target, opts) {
+      const el = typeof target === 'string' ? document.getElementById(target) : target
+      if (!el) return false
+      const my = ++SCROLL_NAV.token
+      const smooth = !opts || opts.smooth !== false
+      const box = scrollBoxOf(el)
+      // 兜底：实在找不到能滚的容器（没有可滚祖先，文档也不能滚），交给浏览器自己找
+      const scrollable = isDocBox(box)
+        ? document.documentElement.scrollHeight > window.innerHeight + 4
+        : box.scrollHeight > box.clientHeight + 4
+      if (!scrollable && el.scrollIntoView) {
+        try { el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }) } catch { /* ignore */ }
+        return true
+      }
+      const nowTop = isDocBox(box) ? (window.scrollY || 0) : box.scrollTop
+      const boxTop = isDocBox(box) ? 0 : box.getBoundingClientRect().top
+      // 粗滚：先把区块顶对齐到容器顶，不猜页头多高
+      scrollBoxTo(box, nowTop + el.getBoundingClientRect().top - boxTop, smooth ? 'smooth' : 'auto')
+
+      let canceled = false
+      const cancel = () => { canceled = true }
+      window.addEventListener('wheel', cancel, { passive: true })
+      window.addEventListener('touchstart', cancel, { passive: true })
+      window.addEventListener('keydown', cancel)
+      const cleanup = () => {
+        window.removeEventListener('wheel', cancel)
+        window.removeEventListener('touchstart', cancel)
+        window.removeEventListener('keydown', cancel)
+      }
+      const fix = () => {
+        if (canceled || my !== SCROLL_NAV.token || !el.isConnected) return
+        const b = scrollBoxOf(el)
+        const want = readTopEdge(el, b) + SCROLL_GAP
+        const delta = el.getBoundingClientRect().top - want
+        if (Math.abs(delta) > 2) {
+          scrollBoxTo(b, (isDocBox(b) ? (window.scrollY || 0) : b.scrollTop) + delta, 'auto')
+        }
+      }
+      // 平滑动画大约 300~600ms；之后按实测校两次，顺便兜住异步长高的区块
+      ;[480, 1000, 1600].forEach((ms) => setTimeout(fix, ms))
+      setTimeout(cleanup, 1700)
+      return true
+    }
+
+    /** 目标可能还没渲染出来：按 0 / 260 / 800 / 1500ms 试几次，找到就停 */
+    function scrollToBlockWhenReady(id, tries) {
+      const wait = [0, 260, 800, 1500]
+      let done = false
+      wait.slice(0, tries || wait.length).forEach((ms) => {
+        setTimeout(() => {
+          if (done) return
+          if (scrollToBlock(id)) done = true
+        }, ms)
+      })
     }
 
     const LoadErr = ({ error, retry }) => !error ? null : h('div', { className: 'dshc-err' },
@@ -3380,7 +3482,8 @@ window.__ModuleLoader__.load({
       const openConflicts = (cf.data || []).filter((x) => x.state === 'open')
       useEffect(() => {
         if (focus && focus.focus === 'conflicts') {
-          try { document.getElementById('dshc-conflicts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* ignore */ }
+          // 冲突面板要等 cf 拉回来才长高：出现就跳，跳完再按实测位置校一次
+          scrollToBlockWhenReady('dshc-conflicts')
         }
       }, [focus && focus.at])
       /** keep=a 留先记的 / b 留后记的 / both=「它理解错了」，两条都留并记一句原因 */
@@ -5429,160 +5532,13 @@ window.__ModuleLoader__.load({
         side)
     }
 
-    /* ================= 模拟预览：铺一个月「假想」的情绪曲线 =================
-     * 只给「看形状」用：一次算完、不写库、不碰它真实的样本，切走就丢。
-     * 公式照现行口径搬过来（src/algo/baseline.js + src/algo/emotion.js）；摆幅用她真实的
-     * σ（persona/axes 里那个），其余常量写死在这里，免得预览和后端各说各话：
-     *   底色 = 段式慢波（种子取 agent_id）+ 日节律 ±0.06
-     *   慢情绪 ds/dt：α=0.09 追快情绪、β=0.07 回底色、ω=0.005 拉标签先验
-     *   快情绪 = 自己那半（0.35 惯性）+ 共情（κe=0.25，closeness=0.98）
-     *   总情绪 = 慢 + 0.35×快
-     * 窗口跟着「现在」走，切一天/一周都连得上；这里没叠累积负荷（那层得真经历才有）。
-     */
-    const SIMC = {
-      periodMinD: 3.5, periodMaxD: 9, periodJitter: 0.25,
-      ampBase: 0.10, ampSpan: 0.20, ampGain: 1.5, segMinH: 48, edge: 0.68,
-      /* 摆幅用她真实的 σ（persona/axes 里那个），拿不到才退回 0.5 */
-      sigma: 0.5,
-      circAmp: 0.06, alpha: 0.09, beta: 0.07, wLabel: 0.005,
-      kappa: 0.35, empathy: 0.25, sway: 0.5, closeBase: 0.3, closeSpan: 0.7,
-    }
-    const SIMP = { joy: 0.7, peaceful: 0.5, curious: 0.3, calm: 0.4, confused: -0.2, lost: -0.3, irritated: -0.4, frustrated: -0.5 }
-    const simClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, Number(x) || 0))
-    const simR3 = (x) => Math.round(simClamp(x, -1, 1) * 1000) / 1000
-    const simHash = (str) => {
-      let h = 2166136261 >>> 0
-      const s = String(str)
-      for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0 }
-      return h >>> 0
-    }
-    const simRnd = (seed) => {
-      let a = seed >>> 0
-      return () => {
-        a = (a + 0x6d2b79f5) >>> 0
-        let t = a
-        t = Math.imul(t ^ (t >>> 15), t | 1)
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-      }
-    }
-    /** 段式底色：同一个 agent_id 每次铺出来都一样 */
-    const simSegments = (seed, startMs, untilMs, sigma) => {
-      const periodD = SIMC.periodMinD + simRnd(simHash('period:' + seed))() * (SIMC.periodMaxD - SIMC.periodMinD)
-      const sig = Number.isFinite(Number(sigma)) ? Math.max(0, Math.min(1, Number(sigma))) : SIMC.sigma
-      const amp = SIMC.ampBase + SIMC.ampSpan * sig
-      const out = []
-      let xEnd = 0
-      let t = startMs
-      for (let no = 0; t < untilMs && no < 600; no++) {
-        const rnd = simRnd(simHash(seed + '#' + no))
-        const up = rnd() < simClamp(0.5 - 1.5 * simClamp(xEnd, -1, 1), 0.05, 0.95)
-        const a = amp * SIMC.ampGain * (0.75 + 0.5 * rnd())
-        const to = simClamp((up ? 1 : -1) * a - 0.15 * xEnd, -SIMC.edge, SIMC.edge)
-        const hours = Math.max(SIMC.segMinH, periodD * 24 * (1 + SIMC.periodJitter * (rnd() * 2 - 1)))
-        out.push({ from: simClamp(xEnd, -SIMC.edge, SIMC.edge), to, startMs: t, endMs: t + hours * 3600000 })
-        xEnd = to
-        t += hours * 3600000
-      }
-      return out
-    }
-    const simValAt = (segs, t) => {
-      if (!segs.length) return 0
-      if (t <= segs[0].startMs) return segs[0].from
-      for (let i = 0; i < segs.length; i++) {
-        const sg = segs[i]
-        if (t < sg.endMs) {
-          const span = sg.endMs - sg.startMs
-          const u = span > 0 ? simClamp((t - sg.startMs) / span, 0, 1) : 0
-          return sg.from + (sg.to - sg.from) * (1 - Math.cos(Math.PI * u)) / 2
-        }
-      }
-      return segs[segs.length - 1].to
-    }
-    const simSlow = (s, b, p, fAvg, dtH) => {
-      const lam = SIMC.alpha + SIMC.beta + SIMC.wLabel
-      const target = (SIMC.alpha * fAvg + SIMC.beta * b + SIMC.wLabel * p) / lam
-      return simR3(target + (s - target) * Math.exp(-lam * dtH))
-    }
-    const simFast = (fSelf, eUser, ePrev) => {
-      const w = SIMC.empathy * Math.abs(eUser) * (SIMC.closeBase + SIMC.closeSpan * 0.98)
-      return simClamp(fSelf + w * eUser + SIMC.sway * w * (eUser - ePrev), -1, 1)
-    }
-    const simTotal = (s, f) => simR3(s + SIMC.kappa * f)
-
-    /** 一个月：前面多烧 12 天让慢情绪走稳，每小时两个样本，只留最近 30 天 */
-    function simMonthTrend(aid, days, sigma) {
-      const H = 3600000
-      const DAY = 86400000
-      const toMs = Date.now()
-      const fromMs = toMs - 30 * DAY
-      const burnFrom = fromMs - 12 * DAY
-      const seed = String(aid || 'demo')
-      const segs = simSegments(seed, burnFrom, toMs, sigma)
-      const phaseH = (simHash('circ:' + seed) % 1440) / 60
-      const circ = (t) => SIMC.circAmp * Math.sin((2 * Math.PI * ((((t / H) % 24) + 24) % 24 - phaseH)) / 24)
-      const rnd = simRnd(simHash(seed + ':trend-demo'))
-      const LABELS = [['calm', 24], ['joy', 15], ['curious', 15], ['peaceful', 11], ['confused', 12], ['frustrated', 9], ['irritated', 7], ['lost', 7]]
-      const wSum = LABELS.reduce((a, x) => a + x[1], 0)
-      const draw = () => {
-        let x = rnd() * wSum
-        for (let i = 0; i < LABELS.length; i++) { x -= LABELS[i][1]; if (x <= 0) return LABELS[i][0] }
-        return 'calm'
-      }
-      const points = []
-      let s = simR3(simValAt(segs, burnFrom))
-      let fPrev = 0
-      let selfP = 0
-      let eNow = 0
-      let label = 'calm'
-      let uLabel = 'calm'
-      let hold = 0
-      for (let t = burnFrom; t < toMs; t += H) {
-        const hh = new Date(t).getHours()
-        /* 白天聊得多、夜里少；每小时都留样本，图上是连的 */
-        const chatty = hh < 7 ? 0.2 : hh < 12 ? 0.72 : hh < 19 ? 0.86 : 0.95
-        if (hold-- <= 0) { label = draw(); hold = 1 + Math.floor(rnd() * 3) }
-        if (rnd() < 0.55) uLabel = draw()
-        const b = simR3(simValAt(segs, t) + circ(t))
-        const p = SIMP[label] === undefined ? 0 : SIMP[label]
-        const pu = SIMP[uLabel] === undefined ? 0 : SIMP[uLabel]
-        for (let i = 0; i < 2; i++) {
-          const at = t + Math.floor(((i + 0.5) / 2) * H)
-          selfP = 0.35 * selfP + 0.65 * p
-          const touch = 0.45 + chatty * 0.85
-          const target = rnd() < 0.88 ? pu * (0.35 + rnd() * 0.75) * touch : 0
-          eNow = eNow * 0.55 + target * 0.45
-          const f = simFast(selfP, eNow, fPrev)
-          if (at >= fromMs) {
-            points.push({ at, b, s: simR3(s), f: simR3(f), fs: simR3(selfP), fe: simR3(f - selfP), t: simTotal(s, f), lb: label })
-          }
-          fPrev = f
-        }
-        s = simSlow(s, b, p, fPrev, 1)
-      }
-      const back = Math.max(1, Math.min(366, Number(days) || 30))
-      const winFrom = toMs - back * DAY
-      return {
-        days: back,
-        from: new Date(winFrom).toISOString(),
-        to: new Date(toMs).toISOString(),
-        demo: true,
-        points: points.filter((q) => q.at >= winFrom),
-      }
-    }
-
     function AffectPage({ aid, view, act, setTab }) {
       const [tick, setTick] = useState(0)
       const [trange, setTrange] = useState(7)
       const [a, reloadA] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect'), [aid, tick])
       const [eps] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/episodes'), [aid, tick])
-      const [sim, setSim] = useState(false)
-      const [pax] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/persona/axes'), [aid])
-      const simSigma = Number((pax.data && pax.data.effects && pax.data.effects.sigma))
-      /* 模拟只换这一条走势：别的接口都还读真的，卡片上那几行数字不受影响 */
-      const [trend] = useAsync(() => (sim
-        ? Promise.resolve(simMonthTrend(aid, trange, simSigma))
-        : call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange)), [aid, tick, trange, sim])
+      /* 走势只读库里的真样本：不铺假想曲线 */
+      const [trend, reloadT] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange), [aid, tick, trange])
       const [radar] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/radar'), [aid, tick])
       const [cond, reloadC] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/condition'), [aid, tick])
       const [poison] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/poisons'), [aid, tick])
@@ -5638,9 +5594,8 @@ window.__ModuleLoader__.load({
         const mood = Number(cur.mood)
         return Number.isFinite(mood) ? (mood - 0.5) * 2 : 0
       })()
-      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉）。
-         模拟只动下面那张走势图：这张卡的光一直对着真状态，不然会看岔。 */
-      const look = emoLook(sim ? (Number.isFinite(Number(cur.mood)) ? Number(cur.mood) * 2 - 1 : 0) : tNow, cur.intensity)
+      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉） */
+      const look = emoLook(tNow, cur.intensity)
 
       return h('div', null,
         h(LoadErr, { error: a.error || eps.error, retry: () => { reloadA(); setTick((t) => t + 1) } }),
@@ -5648,7 +5603,7 @@ window.__ModuleLoader__.load({
         h(Sec, {
           title: view === 'user' ? '情绪' : '主情绪（label / intensity / PAD）',
           desc: h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 12px' } },
-            h(TrendNow, { data: trend.data || null, raw: sim ? '' : latestRaw, demo: sim, cur: sim ? null : cur }),
+            h(TrendNow, { data: trend.data || null, raw: latestRaw, cur }),
             h('span', { style: { opacity: 0.5 } },
               view === 'user'
                 ? '· 上半是此刻，下半是它这一程怎么走过来的；虚线是它的水位。'
@@ -5709,14 +5664,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { height: 1, background: 'var(--line)', opacity: 0.6, margin: '14px 0 10px' } }),
             h('div', { className: 'dshc-form', style: { marginBottom: 8 } },
               [[1, '一天'], [7, '一周'], [30, '一月'], [365, '一年']].map(([d, t]) =>
-                h(Btn, { key: d, primary: trange === d, onClick: () => setTrange(d) }, t)),
-              h(Btn, {
-                tint: sim,
-                title: '铺一段假想曲线，只看形状：一次算完、不写库，也不动它真实的情绪',
-                onClick: () => { const on = !sim; setSim(on); if (on && trange < 30) setTrange(30) },
-              }, sim ? '模拟 · 开着' : '模拟一月')),
-            sim ? h('div', { className: 'dshc-sub', style: { margin: '0 0 8px 2px', opacity: 0.62 } },
-              '模拟：拿现行公式从「现在」往回铺 30 天（段式底色 + 日节律 + 慢/快情绪），不进库。挑「一年」时，没铺的那九个多月还是斜纹。') : null,
+                h(Btn, { key: d, primary: trange === d, onClick: () => setTrange(d) }, t))),
             trend.error
               ? h('div', { className: 'dshc-note', style: { padding: '12px 0' } },
                 /接口不存在|NOT_FOUND/.test(trend.error) ? '宿主重启一次就能画' : trend.error)
@@ -7262,8 +7210,7 @@ window.__ModuleLoader__.load({
       const [on, setOn] = useState('')
       const go = (key) => {
         setOn(key)
-        const el = typeof document !== 'undefined' ? document.getElementById('dshc-set-' + key) : null
-        if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        scrollToBlock('dshc-set-' + key)
       }
       return h('div', { className: 'dshc-set-nav' }, (items || []).map(([key, label]) =>
         h('button', { key, type: 'button', 'data-on': on === key ? '1' : '0', onClick: () => go(key) }, label)))

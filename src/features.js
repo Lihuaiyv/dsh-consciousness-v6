@@ -504,8 +504,16 @@ export async function ingest(db, aid, body) {
       if (timer.unref) timer.unref()
     }
   } catch { reflect = null }
+  // 嘀咕：与 fact / episode / appraisal / reflection 平级的「观测层」产物——
+  // 专用一次模型调用，只给人看，不进 memory_items / 检索。关 ui.mutter.enabled 则跳过。
+  let mutter = null
+  if (getParam(db, aid, 'ui.mutter.enabled') !== false) {
+    try {
+      mutter = await writeMutter(db, aid, turns)
+    } catch { mutter = null }
+  }
   db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(now(), aid)
-  return { extracted: extracted.length, written: written.length, actions, summary, invalidated, relations: relate.length, relation_names: relate.map((r) => r.name), reflect_gate: reflectGate, loops, reflect, model: model.status() }
+  return { extracted: extracted.length, written: written.length, actions, summary, invalidated, relations: relate.length, relation_names: relate.map((r) => r.name), reflect_gate: reflectGate, loops, reflect, mutter, model: model.status() }
 }
 
 /**
@@ -960,6 +968,86 @@ function personaStyle(db, aid) {  const rows = getPersona(db, aid)
     card: pick('style.card', ''),
   }
 }
+
+/* ---------------- 嘀咕：与 fact / episode / appraisal / reflection 平级的「观测层」产物 ----------------
+ * 专用一次模型调用，只给人看，不进 memory_items / 检索。关 ui.mutter.enabled 则跳过。 */
+
+/** 中文按约 2 字 ≈ 1 token（与 pack.estTokens 同口径），用于嘀咕观测展示。 */
+function estMutterTokens(text) {
+  return Math.ceil(String(text || '').length / 2)
+}
+
+const MUTTER_MAX_CHARS = 150
+
+/** 嘀咕 system：称呼来自鱼格 style.address，空则「主人」。 */
+function mutterSys(address) {
+  const who = String(address || '').trim() || '主人'
+  return [
+    '你就是这个意识体。看完这一轮，用第一人称对自己嘀咕一段——像脑子里还在推、还没说出口的那种，不是汇报，也不是事后作文。',
+    '对方称「' + who + '」。只用这个称呼指对方，别叫「用户」「对方」。',
+    '输入里 user = ' + who + ' 说的话，assistant / agent = 你自己刚才说出口的话。写的时候「你 / ' + who + '」只能指 user；「我」只能指你自己说过或想过的。',
+    '先在心里分清：哪一句是对方抛的，哪一句是你接的。绝不要把 assistant 里的句子写成「你说…」；自己拐的比喻、后半句、接歌，都算「我刚才…」。',
+    '别把你自己说的话安到 ' + who + ' 头上。拿不准是谁说的就写「刚才那句」，不要猜错归属。不要第三人称旁白。',
+    '先凭这一轮双方的口气，掂一下亲密度——疏还是近、生分还是熟、在较劲还是在对暗号玩梗——再决定嘀咕的拧巴和嘴贱多重；别写死成固定脾气。',
+    '越不亲密：越拧巴、带刺、嘴上不饶，心里可以较劲；嘲用口气带，别刻薄阴阳。',
+    '越亲密（接得上、对暗号、玩梗、语气松）：越明快一点，得意、松快、开心可以多露一点，刺收淡，自嘲轻俏即可，别硬拗别扭。',
+    '味道仍是口语碎碎念，可有一点点戏；别写成分析报告或辩论稿。别煽情、别说教、别升华、别端着正确、别替谁做完结论。',
+    '一整段口语，大约 80～130 字。不要编号、分点、小标题。只写对话里真有的事。',
+  ].join('')
+}
+
+/**
+ * 专用嘀咕调用：结果进 flags（按 agent），绝不 addMemory。
+ * @returns {Promise<{text:string, tokens:number, at:string, address?:string}|null>}
+ */
+export async function writeMutter(db, aid, turns) {
+  const list = Array.isArray(turns) ? turns : []
+  if (!list.length) return null
+  const address = (() => {
+    try { return String(personaStyle(db, aid).address || '').trim() } catch { return '' }
+  })()
+  const sys = mutterSys(address)
+  const body = list.map((t) => `${t.role || 'user'}: ${String(t.text || '')}`).join('\n')
+  const raw = String((await model.summarize([
+    { role: 'system', text: sys },
+    ...list.map((t) => ({ role: t.role || 'user', text: String(t.text || '') })),
+  ])) || '').trim()
+  let text = looksLikeRuntimeNoise(raw) ? '' : raw.replace(/\s+/g, ' ').trim()
+  if (!text) return null
+  const transcriptShaped = /^\s*(user|assistant)\s*[:：]/i.test(text)
+    || (text.match(/\n\s*(user|assistant)\s*[:：]/gi) || []).length >= 1
+  if (transcriptShaped) return null
+  // 超长时在句号处尽量裁，保住旧版那种「一段咬完就停」
+  if (Array.from(text).length > MUTTER_MAX_CHARS) {
+    const chars = Array.from(text)
+    let cut = MUTTER_MAX_CHARS
+    for (let i = MUTTER_MAX_CHARS; i >= Math.floor(MUTTER_MAX_CHARS * 0.7); i--) {
+      if ('。！？…'.includes(chars[i])) { cut = i + 1; break }
+    }
+    text = chars.slice(0, cut).join('')
+  }
+  const tokens = estMutterTokens(sys) + estMutterTokens(body.slice(0, 8000)) + estMutterTokens(text)
+  const at = now()
+  const payload = { text, tokens, at, address: address || '主人' }
+  try { setFlag(db, 'ui.mutter.' + aid, JSON.stringify(payload)) } catch { /* 展示失败不影响入库 */ }
+  return payload
+}
+
+/** 读最近一条嘀咕（展示用）。 */
+export function readMutter(db, aid) {
+  try {
+    const raw = getFlag(db, 'ui.mutter.' + aid)
+    if (!raw) return null
+    const j = JSON.parse(raw)
+    if (!j || typeof j !== 'object' || !j.text) return null
+    return {
+      text: String(j.text),
+      tokens: Number(j.tokens) || null,
+      at: j.at || null,
+    }
+  } catch { return null }
+}
+
 
 export function listChat(db, aid, limit = 60) {
   agent(db, aid)

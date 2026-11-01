@@ -209,6 +209,16 @@ function writePending(c, x, out, verdicts, refs, rep) {
   const pend = pendingList(c.db, c.aid)
   while (pend.length >= c.pendingCap) {
     const old = pend.shift()
+    // 溢出转 EXP 也不能跳过 W1：积压里蹲着的若是画像总结，到这里又变成一条「人生观」
+    const why = fieldCheck(old.candidate)
+    if (why) {
+      append(c.db, c.aid, [{
+        type: 'REJECT', actor: 'sys', at: c.at, refs: [old.id], gate_report: { w: 'W1', reason: why },
+        payload: { text: String(old.candidate && old.candidate.text || '').slice(0, 300), layer: 'L' },
+      }])
+      rep.pending.overflow++
+      continue
+    }
     const { head, tail } = claimEvents(c, old.candidate, 'CLAIM_EXP', { refs: [old.id], gate: { w: 'W5', reason: 'PENDING_JUDGE 溢出，转 EXP' } })
     append(c.db, c.aid, [head, ...tail])
     rep.pending.overflow++

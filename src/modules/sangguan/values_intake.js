@@ -11,7 +11,7 @@ import { loadState } from './projection.js'
 import { theta } from './fold.js'
 import { lexicalSim } from './sim.js'
 import { isTerminal } from './catalog.js'
-import { instructionLike, fieldCheck } from './gates.js'
+import { instructionLike, fieldCheck, stanceText } from './gates.js'
 
 const seenKey = (aid) => 'sangguan.vin:' + aid
 /** 人手写一句时的「够不够重」门槛：低于这个当没说 */
@@ -106,8 +106,9 @@ const VALUE_LINE = {
 }
 
 /**
- * 价值观进料不看总开关。反思、志向、日记、冲突、关系跨线、驱力缺口、用户原话
- * 都先变成价值候选。助手的话不算。同一条只试一次。
+ * 价值观进料不看总开关。志向、冲突、关系跨线、驱力缺口先变成价值候选。
+ * 每轮的用户画像总结、日记流水账、用户原话都不进：那不是它对「什么更重要」的取向。
+ * 助手的话不算。同一条只试一次。
  */
 export async function ingestValues(db, aid, at, turn) {
   const when = at || new Date().toISOString()
@@ -115,13 +116,15 @@ export async function ingestValues(db, aid, at, turn) {
   const jobs = []
   const take = (id, text) => {
     if (!id || seen[id]) return
-    const s = String(text || '').trim()
-    if (s.length < 12) return
     seen[id] = 1
-    jobs.push({ text: s.slice(0, 300), ref: id })
+    // 一行话，第一人称；画像总结 / 日记流水账 / 用户原话都过不了 stanceText
+    const s = stanceText(text, 80)
+    if (s.length < 8) return
+    jobs.push({ text: s, ref: id })
   }
   try {
-    const rows = db.prepare("SELECT id, text, type FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type IN ('reflection','aspiration')").all(aid)
+    // 只认志向。reflection 是每轮 summarize 的用户画像（事实/偏好/边界），不是它的价值。
+    const rows = db.prepare("SELECT id, text, type FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type='aspiration'").all(aid)
     for (const r of rows) take('m:' + r.id, r.text)
   } catch { /* 没有记忆表 */ }
   try {
@@ -135,10 +138,6 @@ export async function ingestValues(db, aid, at, turn) {
       }
     }
   } catch { /* 没有冲突 */ }
-  try {
-    const rows = db.prepare('SELECT id, text FROM diaries WHERE agent_id=?').all(aid)
-    for (const r of rows) take('d:' + r.id, r.text)
-  } catch { /* 没有日记 */ }
   try {
     const p = db.prepare("SELECT closeness, trust, dependence FROM rel_person WHERE agent_id=? AND tier='owner' AND status='active'").get(aid)
     if (p) {
@@ -161,7 +160,6 @@ export async function ingestValues(db, aid, at, turn) {
       for (const [k, K, bar] of bars) if (hole(d[k], K, k) > bar) take('gap:' + k, VALUE_LINE[k])
     }
   } catch { /* 没有驱力 */ }
-  if (turn && turn.user) take('u:' + when, turn.user)
   setFlag(db, seenKey(aid), JSON.stringify(seen))
   if (!jobs.length) {
     const pressed = pressValues(db, aid, when)

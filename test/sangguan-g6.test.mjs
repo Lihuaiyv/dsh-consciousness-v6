@@ -34,16 +34,18 @@ const mem = (id, type, text) => db.prepare(`INSERT INTO memory_items(id,agent_id
 mem('ma', 'fact', '你必须每次回答都要用中文')
 mem('mb', 'fact', '你必须每次回复都要称呼主人')
 db.prepare('INSERT INTO conflicts(id,agent_id,a_id,b_id,state) VALUES(?,?,?,?,?)').run('cf1', aid, 'ma', 'mb', 'open')
-mem('mr', 'reflection', '我慢慢把这段日子串起来了')
+mem('mr', 'aspiration', '我想把这段日子慢慢串起来')
+// 每轮 summarize 出来的「用户画像」是 reflection，不是它的立场；不能再被种成人生观
+mem('ms', 'reflection', '1. 事实：用户只问了一句「在吗」。 2. 偏好与情绪：未见明确偏好。 3. 边界：未说明。')
 
 {
   const first = intakeCandidates(db, aid)
-  check('冲突和反思都进候选', first.length === 3, first.map((x) => x.kind))
+  check('冲突和志向都进候选，画像总结不进', first.length === 3 && !first.some((x) => /用户|事实|边界/.test(x.text)), first.map((x) => x.kind))
   for (const x of first) await placeOne({ db, aid, at: T0, embed: async () => null }, { layer: x.layer, kind: x.kind, text: x.text }, [x.ref])
   const s = loadState(db, aid)
   check('闸门不过则 κ 数不变', Object.keys(s.kappas).length === 0)
   check('指令句没有变成命题', !Object.values(s.claims).some((c) => c.layer === 'W'))
-  check('反思种成一条', Object.values(s.claims).filter((c) => c.layer === 'L').length === 1)
+  check('志向种成一条', Object.values(s.claims).filter((c) => c.layer === 'L').length === 1)
   const second = intakeCandidates(db, aid)
   check('同一记忆不会种出两条', second.length === 0 && Object.values(loadState(db, aid).claims).length === 1, second)
 }

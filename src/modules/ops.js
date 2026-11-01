@@ -1,6 +1,6 @@
 import { now } from '../db.js'
 import { zipStore, unzipStore } from '../zip.js'
-import { err, nid, agent, active, modelStatus } from '../kernel.js'
+import { err, nid, agent, active, modelStatus, getParam, getFlag } from '../kernel.js'
 import { getDrive } from './drive.js'
 import { getAffect } from './affect.js'
 import { inbox, listProposals } from './selfmod.js'
@@ -201,12 +201,24 @@ export function overview(db, aid) {
     unread = Number(db.prepare("SELECT COUNT(*) n FROM proposals WHERE agent_id=? AND state='shadowed' AND shadow_done>=shadow_total").get(aid).n || 0)
   } catch { unread = 0 }
 
+  // 嘀咕：观测层，不进 memory_items；开关默认开
+  const mutterOn = getParam(db, aid, 'ui.mutter.enabled') !== false
+  let mutter = null
+  try {
+    const raw = getFlag(db, 'ui.mutter.' + aid)
+    if (raw) {
+      const j = JSON.parse(raw)
+      if (j && j.text) mutter = { text: String(j.text), tokens: Number(j.tokens) || null, at: j.at || null }
+    }
+  } catch { mutter = null }
+
   return {
     id: a.id, name: a.name, mode: a.mode, state: a.status, unread,
     status, alerts, warn, inbox: { todo: box.todo.length, change: box.change.length },
     conflicts_open: Number(stats.open_conflicts || 0),
     memory_count: stats.count,
     recent: { last_interaction: last, idle_days: +idleDays.toFixed(1), last_memory: stats.last_memory },
+    mutter: { enabled: mutterOn, ...(mutter || {}) },
     drive, affect,
   }
 }

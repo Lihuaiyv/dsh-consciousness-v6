@@ -4,6 +4,8 @@ import { err, nid, tx, agent, active, event, getParam } from '../kernel.js'
 import { bandOf, heatOf, nowRow } from './tiers.js'
 import { archiveFact } from './archive.js'
 import { normalizeTerms } from './terms.js'
+import { attrConflict } from './contradict.js'
+import { askAboutConflict } from './conflict_ask.js'
 export { normalizeTerms }
 
 const SECRET = /(sk-[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,})/g
@@ -42,23 +44,41 @@ function coreText(text) {
 }
 
 function detectConflict(db, aid, text, typ = 'fact') {
-  // 反思/经历是流水账，不承担事实断言，不参与冲突检测
-  if (!CONFLICT_TYPES.has(typ)) return [null, null, null]
   const probe = coreText(text)
-  if (!probe) return [null, null, null]
-  const rows = db.prepare("SELECT * FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY created_at DESC LIMIT 200").all(aid)
+  if (!probe) return [null, null, null, null]
+  let rows = []
+  try {
+    rows = db.prepare("SELECT * FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY created_at DESC LIMIT 200").all(aid)
+  } catch { rows = [] }
+
+  // ① 属性矛盾：不靠否定词。摘要（「1. 事实：…」）也算，它本来就是事实的载体——
+  //    「咖啡是热的」和「咖啡是冰的」整句没有一个否定词，只有同一骨架下的取值不同。
+  //    情景（episode）是流水账，句子长、细节多，不拿它比，免得把两件事里各自出现的词撞成一对。
+  for (const m of rows) {
+    if (!CONFLICT_TYPES.has(m.type) && m.type !== 'reflection') continue
+    const hit = attrConflict(probe, m.text)
+    if (!hit) continue
+    // 只有双方都是事实/评价时才让旧的退场；两段流水账都留，只挂一条等人拍的冲突。
+    const invalidate = CONFLICT_TYPES.has(typ) && CONFLICT_TYPES.has(m.type)
+    return ['conflict', { ...m, sim: Number(sim(probe, coreText(m.text)).toFixed(3)), attr: hit }, 'high',
+      { invalidate, via: 'attribute', attr: hit }]
+  }
+
+  // 反思/经历是流水账，不承担事实断言，不参与否定词判决
+  if (!CONFLICT_TYPES.has(typ)) return [null, null, null, null]
   let hit = null
   for (const m of rows) {
     if (!CONFLICT_TYPES.has(m.type)) continue
     const other = coreText(m.text)
     const s = sim(probe, other)
-    if (s >= 0.9) return ['duplicate', m, null]
+    if (s >= 0.9) return ['duplicate', m, null, null]
     if (!hit && s >= 0.5 && hasNeg(probe) !== hasNeg(other)) hit = { m, s }
   }
-  if (!hit) return [null, null, null]
+  if (!hit) return [null, null, null, null]
   const risky = IDENTITY.test(probe + ' ' + hit.m.text) || Number(hit.m.weight || 0) >= 0.8
   // 带上相似度，冲突留痕里要能回答「凭什么判成冲突」
-  return ['conflict', { ...hit.m, sim: Number(hit.s.toFixed(3)) }, risky ? 'high' : 'low']
+  return ['conflict', { ...hit.m, sim: Number(hit.s.toFixed(3)) }, risky ? 'high' : 'low',
+    { invalidate: true, via: 'polarity' }]
 }
 
 /**
@@ -118,7 +138,7 @@ export function addMemory(db, aid, body) {
   const typ = body.type || 'fact'
   if (!['fact', 'episode', 'appraisal', 'reflection', 'conflict'].includes(typ)) err(400, 'INVALID_ARGUMENT', 'type 非法')
   const safe = redact(text)
-  const [kind, old, risk] = detectConflict(db, aid, safe, typ)
+  const [kind, old, risk, opt] = detectConflict(db, aid, safe, typ)
   if (kind === 'duplicate') {
     // 完全重复：不新建，也不写自环（旧代码写的是 from_id=to_id 的自环，等于没连）。
     return { id: old.id, duplicate: true }
@@ -134,6 +154,7 @@ export function addMemory(db, aid, body) {
   const searchText = buildSearchText(safe, factKey, terms)
   const seq = journalIntent(db, aid, 'insert_memory', { memory_id: mid }, body.turn_id)
   let superseded = []
+  let conflictId = null
   tx(db, () => {
     db.prepare(`INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,
         last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version)
@@ -189,6 +210,8 @@ export function addMemory(db, aid, body) {
         a_text: String(old.text || '').slice(0, 120),
         b_text: safe.slice(0, 120),
         risk, type: typ,
+        via: (opt && opt.via) || 'polarity',
+        attribute: (opt && opt.attr) || null,
       })
       if (risk === 'low') {
         // 低风险：两条都保留，不算“待处理”
@@ -197,18 +220,28 @@ export function addMemory(db, aid, body) {
           .run(cid, aid, old.id, mid, '模板相似/否定词差异，两条都保留', now(), now(), body.turn_id || null, evidence)
         event(db, aid, 'memory.conflict_superseded', { conflict_id: cid, a: old.id, b: mid })
       } else {
-        db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), old.id)
+        // 属性矛盾只顶掉事实/评价；两段摘要（流水账）都留，别把整段纪要判死
+        if (!opt || opt.invalidate !== false) db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), old.id)
+        const kindCol = opt && opt.attr ? 'attribute' : 'polarity'
         db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,source_turn_id,evidence)
-          VALUES(?,?,?,?, 'open', ?, 'high','polarity',?,?)`)
-          .run(cid, aid, old.id, mid, now(), body.turn_id || null, evidence)
-        event(db, aid, 'memory.conflict', { conflict_id: cid, a: old.id, b: mid })
+          VALUES(?,?,?,?, 'open', ?, 'high',?,?,?)`)
+          .run(cid, aid, old.id, mid, now(), kindCol, body.turn_id || null, evidence)
+        event(db, aid, 'memory.conflict', { conflict_id: cid, a: old.id, b: mid, via: (opt && opt.via) || 'polarity' })
         db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)')
           .run(nid('alr_'), aid, 'data', 2, '有一条记忆冲突未处理', 'open', now())
+        // 开案之后真的开口问：排一条待发的主动消息（同一个冲突只问一次）
+        // attr 的 sentence_a 是「这句」（新），sentence_b 是「旧那条」——问句要按时间顺序说
+        askAboutConflict(db, aid, {
+          cid, aId: old.id, bId: mid,
+          aText: (opt && opt.attr && opt.attr.sentence_b) || old.text,
+          bText: (opt && opt.attr && opt.attr.sentence_a) || safe,
+        })
+        conflictId = cid
       }
     }
   })
   journalDone(db, seq)
-  return { id: mid, conflict: kind === 'conflict' && risk === 'high', superseded: kind === 'conflict' && risk === 'low', superseded_ids: superseded }
+  return { id: mid, conflict: kind === 'conflict' && risk === 'high', conflict_id: conflictId, superseded: kind === 'conflict' && risk === 'low', superseded_ids: superseded }
 }
 
 export function listMemory(db, aid, includeDeleted = false) {
@@ -355,6 +388,8 @@ export function resolveConflict(db, aid, cid, body = {}) {
   else { inv(c.a_id, false); inv(c.b_id, false) }
   db.prepare("UPDATE conflicts SET state='resolved', resolution=?, reason=?, resolved_at=? WHERE id=?").run(keep, reason, now(), cid)
   try { db.prepare("UPDATE alerts SET state='resolved' WHERE agent_id=? AND kind='data' AND title LIKE '%冲突%' AND state='open'").run(aid) } catch { /* 老库没有告警表 */ }
+  // 已经拍板了，就别再把「到底是哪个」的问句排着队发出去
+  try { db.prepare("DELETE FROM proactive WHERE agent_id=? AND state='pending' AND reason=?").run(aid, 'conflict:' + cid) } catch { /* 老库没有主动消息表 */ }
   event(db, aid, 'memory.conflict_resolved', { conflict_id: cid, keep, reason })
   return { id: cid, state: 'resolved', keep, reason }
 }
