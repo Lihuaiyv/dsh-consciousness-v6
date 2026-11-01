@@ -3,6 +3,22 @@
 设置 → 意识。整页由 Client 半注册进 `settings.section`（React 组件，在设置内容区里渲染），
 不再往页面注入浮层，也不开 iframe。宿主半在插件进程内提供 `/dsh-consciousness/api`。
 
+## 唯一真源（2026-11-01 起）
+
+- **这个目录就是真源**：`D:\deepseek\dsh-plugins\dsh-consciousness-v6`。DSH 通过
+  `~/.dsh/profiles/desktop/node_modules/dsh-consciousness-v6` 的 junction 直接加载它，改完即生效（前端改动要刷新页面）。
+- 桌面 `C:\Users\ygys1\Desktop\ds\dsh-plugin` 现在只是**指向这里的 junction**，不要在那边另存副本。
+- 远端：`github.com/Lihuaiyv/dsh-consciousness-v6`（`origin/main`）。
+- 旧的「工作区副本 + `_tmp_deploy.mjs` 挑文件复制」流程已退役。旧副本、`.bak`、整目录备份都搬进了
+  `C:\Users\ygys1\Desktop\ds\_回收站\2026-11-01\`，要找回按那里的路由清单。
+
+### 收工前三件事
+
+1. `node test/run-tests.mjs` —— 全绿（当前 **536/536**）。
+2. `npm run check:arch` —— INV9 / 参数 / 归属 / 依赖图 / 宿主契约。
+3. `git add -A && git commit -m "一句中文"`；要异地备份就 `git push`。
+   不要再建 `*.bak` 或整目录副本——git 已经有历史了。
+
 ## 数据
 
 `~/.dsh/consciousness/app.db`（node:sqlite + FTS5，schema 11，含 `algo_bindings`、`affect_user_read`、`action_config`、`research_seen`、`research_runs`）。
@@ -38,7 +54,7 @@ POST /dsh-consciousness/api
 ## 测试
 
 ```bash
-node test/run-tests.mjs     # 456/456
+node test/run-tests.mjs     # 536/536
 node scripts/render-audit.mjs  # 40 个页面组合渲染审计（含设置页分组 / 参数行）
 npm run check:host          # 宿主契约自检：19 条 mock 宿主用例，不启 DSH
 npm run check:arch          # INV9 / 参数 / 归属 / 依赖图 / 宿主契约

@@ -25,6 +25,9 @@ src.bak-*/
 _stray-scripts-file.bak
 *.corrupted-*
 
+# 一次性临时脚本：不校验、不入库
+_tmp_*
+
 # 一次性审计输出和测试日志
 _audit/
 _baseline/
