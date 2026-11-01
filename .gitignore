@@ -1,0 +1,33 @@
+# 依赖
+node_modules/
+
+# 本地库和日志。聊天记录在 ~/.dsh/consciousness/，不进仓库。
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+
+# 密钥和本机配置
+.env
+.env.*
+credentials.json
+*.pem
+
+# 历史副本。版本记录由 git 管，这些文件不再入库。
+*.bak
+*.bak-*
+src.bak-*/
+_stray-scripts-file.bak
+
+# 一次性审计输出和测试日志
+_audit/
+_baseline/
+run-tests*.txt
+
+# 系统杂项
+.DS_Store
+Thumbs.db
+desktop.ini
