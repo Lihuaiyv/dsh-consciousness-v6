@@ -468,10 +468,9 @@ export function consciousnessBlock(db, aid) {
     str(persona, 'style.catchphrase') ? '口头禅：' + str(persona, 'style.catchphrase') + '。' : '',
     axesLine && axesLine !== '中间' ? '鱼格倾向：' + axesLine + '。' : '',
     mbtiLine || '',
-    vals.length ? '你看重：' + vals.map((v) => ((DIMS.find((d) => d[0] === v.key) || [0, v.key])[1])).join('、') + '。' : '',
-    sg.worldLine ? '世界观：' + sg.worldLine + '。' : '',
-    sg.lifeLine ? '人生观：' + sg.lifeLine + '。' : '',
-    sg.valLine ? '价值观：' + sg.valLine + '。' : '',
+    sg.worldLine ? sg.worldLine : '',
+    sg.lifeLine ? sg.lifeLine : '',
+    sg.valLine ? sg.valLine : '',
     sg.ask ? '合适时可以问一句：' + oneLine(sg.ask, 60) + '。别生硬，也别每轮都问。' : '',
     // ② 关系（对谁、什么分寸）：第一个人带温度，其余人只留数字
     relLine,
