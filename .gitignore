@@ -1,5 +1,7 @@
-# 依赖
+# 依赖和编译缓存
 node_modules/
+__pycache__/
+*.pyc
 
 # 本地库和日志。聊天记录在 ~/.dsh/consciousness/，不进仓库。
 *.db
@@ -21,6 +23,7 @@ credentials.json
 *.bak-*
 src.bak-*/
 _stray-scripts-file.bak
+*.corrupted-*
 
 # 一次性审计输出和测试日志
 _audit/
