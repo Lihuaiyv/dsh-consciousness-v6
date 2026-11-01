@@ -13,18 +13,12 @@
  *   heat = 0.40·重要度 + 0.22·新鲜度 + 0.18·强化次数 + 0.10·钉住 + 0.10·情绪显著度
  *   新鲜度按半衰期衰减，半衰期随重要度拉长（重要的淡得慢）
  *   被召回一次 → hits+1、时钟拨回、热度重算（强化）
- *   short = 钉住 / heat≥0.52
- *   mid   = 60 天内，或（更老但 heat≥0.45）
- *   long  = 其余
- *   （不能用「heat≥0.30 即 mid」：0.40·importance 会让 importance≥0.75 的记忆永远进不了长期）
  *
  * band 只影响**排序和配额**，不影响「进不进」——准入仍然看证据。
  */
 
 import { now } from '../db.js'
 import { tempStats, targetTemp } from './temps.js'
-
-export const BAND_WEIGHTS = { short: 1, mid: 0.88, long: 0.72 }
 
 const DAY_MS = 86400000
 const clamp01 = (x) => Math.max(0, Math.min(1, Number(x) || 0))
@@ -44,7 +38,6 @@ export function seedScores(text, type, affectIntensity, valence) {
   const t = String(text || '')
   const base = type === 'episode' ? 0.45 : type === 'reflection' ? 0.6 : type === 'appraisal' ? 0.55 : 0.5
   const boost = /答应|承诺|约定|边界|底线|禁忌|不要|必须|永远|再也|记住|别再/.test(t) ? 0.35
-    : /(每周|每天|每日|总是|经常|常常|习惯于|有个习惯)/.test(t) ? 0.22
     : /喜欢|讨厌|偏好|习惯|介意|最怕|最爱|想要/.test(t) ? 0.15 : 0
   const out = {
     importance: Math.max(0, Math.min(1, base + boost)),
@@ -62,8 +55,7 @@ export function seedScores(text, type, affectIntensity, valence) {
  */
 export function heatOf(row, at = Date.now()) {
   if (!row) return 0
-  // 合并强化常只抬 weight、importance 停在默认 0.5：取较大值，跟 thoughts.scoreRow 对齐
-  const imp = clamp01(Math.max(Number(row.importance) || 0, Number(row.weight) || 0) || 0.5)
+  const imp = clamp01(row.importance ?? row.weight ?? 0.5)
   const hits = Math.max(0, Number(row.hits || 0))
   const strength = Math.min(1, Math.log1p(hits) / Math.log1p(8))
   const anchor = Date.parse(row.last_hit_at || row.created_at || '')
@@ -74,33 +66,19 @@ export function heatOf(row, at = Date.now()) {
   return Math.round(clamp01(0.40 * imp + 0.22 * recency + 0.18 * strength + 0.10 * pin + 0.10 * salience) * 10000) / 10000
 }
 
-/**
- * 热度 → 档位。钉住的一律短期（它必须每轮都在）。
- *
- * 短期是「桌面」：只留给真正烫的（heat≥0.52）或钉住的——默认事实出生热度约 0.42，
- * 应进中期；否则「近两天一律短期」会把整张桌面堆满，短期再也少不下来。
- * 被反复想起的会靠 hits / last_hit_at 把热度抬上去，自己升回短期。
- *
- * 过了 60 天还要留中期，热度得 ≥0.45（高于 0.40·importance 地板），
- * 否则 importance≥0.75 的承诺/边界会永远进不了长期抽屉。
- */
-export function bandOf(row, heat = null, at = Date.now()) {
+/** 热度 → 档位。钉住的一律短期（它必须每轮都在）。 */
+export function bandOf(row, heat = heatOf(row)) {
   if (!row) return 'mid'
   if (row.mark === 'locked') return 'short'
-  const h = heat == null ? heatOf(row, at) : heat
   const anchor = Date.parse(row.last_hit_at || row.created_at || '')
-  const age = Number.isFinite(anchor) ? Math.max(0, (at - anchor) / DAY_MS) : 0
-  if (h >= 0.52) return 'short'
-  if (age <= 60) return 'mid'
-  if (h >= 0.45) return 'mid'
+  const age = Number.isFinite(anchor) ? Math.max(0, (Date.now() - anchor) / DAY_MS) : 0
+  // 档位是「优先级」，不是「价值」：最近两天的东西天然在短期，90 天没被碰过的落到长期。
+  if (heat >= 0.52 || age <= 2) return 'short'
+  if (heat >= 0.30 || age <= 60) return 'mid'
   return 'long'
 }
 
 /** 档位在召回分上的乘数：短期优先，但不把长期一棍子打死。 */
-export function bandWeight(band) {
-  return BAND_WEIGHTS[band] || BAND_WEIGHTS.mid
-}
-
 /**
  * 面板要的「此刻那条记忆的账」：热度、档位按请求时刻现算，温度按状态机现算。
  *
@@ -114,7 +92,7 @@ export function bandWeight(band) {
 export function nowRow(row, at = Date.now()) {
   if (!row) return row
   const heat = heatOf(row, at)
-  return { ...row, heat, band: bandOf(row, heat, at), temp_now: targetTemp(row, at) }
+  return { ...row, heat, band: bandOf(row, heat), temp_now: targetTemp(row, at) }
 }
 
 /** 重算一个意识体的全部热度与档位。返回各档条数。 */
@@ -126,7 +104,7 @@ export function refreshHeat(db, aid, at = Date.now()) {
   try {
     for (const r of rows) {
       const h = heatOf(r, at)
-      const b = bandOf(r, h, at)
+      const b = bandOf(r, h)
       counts[b]++
       up.run(h, b, r.id)
     }
@@ -174,7 +152,7 @@ export function touch(db, ids, at = Date.now()) {
     const s1 = Math.min(60, Math.max(0.5, s0 * (1 + 0.25 * (1 - R))))
     const next = { ...row, hits: Number(row.hits || 0) + 1, last_hit_at: stamp, last_decay_at: stamp, stability: s1 }
     const h = heatOf(next, at)
-    up.run(stamp, stamp, Math.round(s1 * 1000) / 1000, h, bandOf(next, h, at), id)
+    up.run(stamp, stamp, Math.round(s1 * 1000) / 1000, h, bandOf(next, h), id)
     n++
   }
   return n
@@ -184,12 +162,12 @@ export function touch(db, ids, at = Date.now()) {
 export function tierStats(db, aid, at = Date.now()) {
   const rows = db.prepare("SELECT id,text,type,importance,salience,hits,last_hit_at,heat,band,mark,created_at FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL").all(aid)
   const counts = { short: 0, mid: 0, long: 0 }
-  for (const r of rows) counts[bandOf(r, heatOf(r, at), at)]++
+  for (const r of rows) counts[bandOf(r, heatOf(r, at))]++
   const hot = rows
     .map((r) => ({ ...r, heat: heatOf(r, at) }))
     .sort((a, b) => b.heat - a.heat)
     .slice(0, 10)
-    .map((r) => ({ id: r.id, text: String(r.text).slice(0, 60), band: bandOf(r, r.heat, at), heat: r.heat, hits: Number(r.hits || 0) }))
+    .map((r) => ({ id: r.id, text: String(r.text).slice(0, 60), band: bandOf(r, r.heat), heat: r.heat, hits: Number(r.hits || 0) }))
   const raw = db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=?').get(aid)?.n || 0
   const days = db.prepare('SELECT COUNT(*) n FROM diaries WHERE agent_id=?').get(aid)?.n || 0
   const eps = db.prepare('SELECT COUNT(*) n FROM episodes WHERE agent_id=?').get(aid)?.n || 0
@@ -207,16 +185,13 @@ export function tierStats(db, aid, at = Date.now()) {
  * 迁移用：给还没算过热度的老库补一遍。
  * 只跑一次（写 flags），不阻塞启动。
  */
-/** 档位规则改版时换 key，启动会按新规则重算一次存档 heat/band。 */
-const HEAT_BOOT_KEY = 'tiers.bootstrapped.v2'
-
 export function ensureHeatBootstrapped(db) {
   try {
-    const done = db.prepare('SELECT value FROM flags WHERE key=?').get(HEAT_BOOT_KEY)
+    const done = db.prepare("SELECT value FROM flags WHERE key='tiers.bootstrapped'").get()
     if (done) return 0
     const agents = db.prepare("SELECT id FROM agents WHERE status!='soft_deleted'").all()
     for (const a of agents) refreshHeat(db, a.id)
-    db.prepare('INSERT INTO flags(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(HEAT_BOOT_KEY, now())
+    db.prepare("INSERT INTO flags(key,value) VALUES('tiers.bootstrapped',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(now())
     return agents.length
   } catch { return 0 }
 }

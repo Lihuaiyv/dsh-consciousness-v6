@@ -3,6 +3,7 @@
  * 运行：node test/affect-v3.test.mjs
  */
 import { birthPeriod, planSegments, valueAtTime, valueAt, ampFor, pUp, nextSegment, mulberry32, hashSeed,
+  circadianAt, stepLoad, LOAD_CAP,
   PERIOD_MIN_D, PERIOD_MAX_D, PERIOD_JITTER, SEG_MIN_H, EDGE } from '../src/algo/baseline.js'
 import { desensitize, decayedCount, stimulusKey, FLOOR, COUNT_CAP } from '../src/algo/desensitize.js'
 import { expressionFrom } from '../src/algo/expression.js'
@@ -158,10 +159,77 @@ check('总情绪：封顶', totalOf(0.8, 1) === 1 && totalOf(-0.8, -1) === -1, {
 
 const sSteady = (() => {
   let s = 0
-  for (let i = 0; i < 200; i++) s = stepSlow({ s, b: 0.3, p: 0.4, fHourly: 0.3 })
+  for (let i = 0; i < 400; i++) s = stepSlow({ s, b: 0.3, p: 0.4, fHourly: -0.6 })
   return s
 })()
-check('慢情绪收敛到底色附近', Math.abs(sSteady - 0.315) < 0.03, { s: sSteady })
+// α=0.09、β=0.07、ω=0.005 → s* = (0.09×(-0.6) + 0.07×0.3 + 0.005×0.4) / 0.165 ≈ -0.187
+// 底色是正的、快情绪是负的：结果落在负那侧，说明「刚才的事」比「水位」更算数
+check('慢情绪追的是快情绪，不是底色', sSteady < -0.1, { s: sSteady })
+
+{
+  // 步长无关：一次走 6 小时 == 六次各走 1 小时（精确离散化该有的性质）
+  let stepwise = 0
+  for (let i = 0; i < 6; i++) stepwise = stepSlow({ s: stepwise, b: 0.2, p: 0.4, fHourly: 0.8, dtHours: 1 })
+  const oneShot = stepSlow({ s: 0, b: 0.2, p: 0.4, fHourly: 0.8, dtHours: 6 })
+  check('6 个一小时 ≈ 一次六小时', Math.abs(stepwise - oneShot) < 0.01, { stepwise, oneShot })
+}
+
+{
+  // 没有新刺激：8 小时后余温该退到三成左右（λ=0.165 → exp(-1.32)≈0.27）
+  let s = 0.8
+  for (let i = 0; i < 8; i++) s = stepSlow({ s, b: 0, p: 0, fHourly: 0, dtHours: 1 })
+  check('静默一夜退到三成左右', s < 0.30 && s > 0.15, { s })
+}
+
+{
+  // 底色现在真有拉力：同一条快情绪轨迹，水位高 / 低要能拉开慢情绪
+  let hiSide = 0
+  let loSide = 0
+  for (let i = 0; i < 48; i++) {
+    hiSide = stepSlow({ s: hiSide, b: 0.8, p: 0, fHourly: 0.2, dtHours: 1 })
+    loSide = stepSlow({ s: loSide, b: -0.8, p: 0, fHourly: 0.2, dtHours: 1 })
+  }
+  check('底色的力气够：水位高低的慢情绪能拉开', Math.abs(hiSide - loSide) > 0.2, { hi: hiSide, lo: loSide })
+}
+
+{
+  // 标签先验只占一丝（ω/λ ≈ 0.03），不能冒充底色
+  let s = 0
+  for (let i = 0; i < 500; i++) s = stepSlow({ s, b: 0, p: 1, fHourly: 0, dtHours: 1 })
+  check('标签先验只占 3%', s > 0.02 && s < 0.045, { s })
+}
+
+// ================= 五-b、底色的三层：日节律 + 累积负荷 =================
+
+{
+  const amp = 0.06
+  let lo = Infinity
+  let hi = -Infinity
+  for (let h = 0; h < 24; h++) {
+    const v = circadianAt(T0 + h * H, 'agt_circ', amp)
+    lo = Math.min(lo, v)
+    hi = Math.max(hi, v)
+  }
+  check('日节律一天摸到两头', hi > amp * 0.9 && lo < -amp * 0.9, { lo: +lo.toFixed(3), hi: +hi.toFixed(3) })
+  check('日节律隔天重复', Math.abs(circadianAt(T0 + 5 * H, 'agt_circ', amp) - circadianAt(T0 + 29 * H, 'agt_circ', amp)) < 1e-9)
+  check('日节律相位跟着个体走',
+    Math.abs(circadianAt(T0 + 3 * H, 'agt_a', amp) - circadianAt(T0 + 3 * H, 'agt_b', amp)) > 1e-6)
+  check('日节律关掉就是 0', circadianAt(T0, 'agt_circ', 0) === 0 && circadianAt(T0, 'agt_circ', NaN) === 0)
+}
+
+{
+  // 累积负荷：一直偏 0.3，水位被拖到 s*=(κ/Λ)·0.3 ≈ 0.19；松手一周基本代谢干净
+  const gain = 0.01
+  const tauH = 168
+  const target = (gain / (gain + 1 / tauH)) * 0.3
+  let L = 0
+  for (let h = 0; h < 24 * 14; h++) L = stepLoad({ load: L, s: 0.3, bPlan: 0, dtHours: 1, gain, tauH })
+  check('一直偏着，水位被拖走', L > target * 0.8 && L < target * 1.1, { L, target: +target.toFixed(3) })
+  let back = L
+  for (let h = 0; h < 24 * 7; h++) back = stepLoad({ load: back, s: 0, bPlan: 0, dtHours: 1, gain, tauH })
+  check('松手一周基本代谢回去', Math.abs(back) < 0.08, { back })
+  check('负荷有上限', Math.abs(stepLoad({ load: 5, s: 1, bPlan: -1, dtHours: 1 })) <= LOAD_CAP + 1e-9)
+}
 
 check('共情：对方难过会把自己拉低', fastOf({ fSelf: 0, eUser: -0.6, closeness: 0.99 }) < -0.05, { f: fastOf({ fSelf: 0, eUser: -0.6, closeness: 0.99 }) })
 check('共情：对方高兴会把自己拉高', fastOf({ fSelf: 0, eUser: 0.6, closeness: 0.99 }) > 0.05)
@@ -223,7 +291,9 @@ check('300 组随机输入全部合法', bad === 0, { bad })
   let prevS = 0
   let maxJump = 0
   let badCount = 0
-  let gapSum = 0
+  let sSum = 0
+  let fSum = 0
+  let bSum = 0
   let hours = 0
   let stim = { count: 0, lastAt: null }
   for (let h = 0; h < 7 * 24; h++) {
@@ -238,12 +308,17 @@ check('300 组随机输入全部合法', bad === 0, { bad })
     prevS = s
     const T = totalOf(s, f)
     if (!finite(s) || !finite(T) || Math.abs(s) > 1 || Math.abs(T) > 1) badCount++
-    gapSum += Math.abs(s - b)
+    sSum += s
+    fSum += f
+    bSum += b
     hours++
   }
+  const avg = (x) => x / hours
   check('7 天联调不越界', badCount === 0, { badCount })
   check('慢情绪每小时跳不超过 0.2', maxJump <= 0.2 + 1e-9, { maxJump })
-  check('慢情绪大致跟着底色', gapSum / hours < 0.12, { avgGap: +(gapSum / hours).toFixed(3) })
+  check('慢情绪站在快情绪那侧（不是被底色拉过去）',
+    Math.abs(avg(sSum) - avg(fSum)) < Math.abs(avg(sSum) - avg(bSum)),
+    { s: +avg(sSum).toFixed(3), f: +avg(fSum).toFixed(3), b: +avg(bSum).toFixed(3) })
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

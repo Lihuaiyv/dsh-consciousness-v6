@@ -22,6 +22,26 @@ export const OWNERSHIP = {
       'rel_evidence', 'rel_person',
     ],
   },
+  loops: {
+    // 开环：承诺 / 待办 / 悬着的事，写自己的表；只读记忆正文用来挂来源
+    files: ['modules/loops.js'],
+    tables: ['open_loops', 'memory_items'],
+  },
+  surfacing: {
+    // 浮现观测：注入 / 用上，只写自己的表
+    files: ['modules/surfacing.js'],
+    tables: ['surfaced_items'],
+  },
+  pulse: {
+    // 空闲心跳：只写自己的浮现队列；记忆正文只读，用来挑候选
+    files: ['modules/pulse.js'],
+    tables: ['surface_queue', 'surfaced_items', 'memory_items'],
+  },
+  selfread: {
+    // 回读自己那句话：只改 affect_v3 的慢情绪
+    files: ['modules/self_read.js'],
+    tables: ['affect_v3'],
+  },
   algo: {
     files: [
       'algo/active.js', 'algo/registry.js', 'algo/index.js',
@@ -50,7 +70,7 @@ export const OWNERSHIP = {
     tables: ['condition_state', 'memory_items'],
   },
   values: {
-    files: ['modules/values.js', 'modules/persona_dims.js'],
+    files: ['modules/values.js'],
     // 读外域做证据（记忆/情绪），只写自己的 persona_values
     tables: ['persona_values', 'memory_items', 'affect_state', 'rel_person', 'relations'],
   },
@@ -68,8 +88,6 @@ export const OWNERSHIP = {
     // affect_state 只读：长期情绪改胃口（跟提示词/页面上写的那个标签同源）
     tables: [
       'drive_state', 'action_ports', 'action_log', 'cooldowns', 'budgets', 'persona', 'persona_values', 'affect_events',
-      // 只读：E→N 取 episode 强度
-      'affect_episodes',
       'relations', 'rel_person', 'affect_v3', 'condition_state', 'browse_items', 'affect_state',
     ],
   },
@@ -87,11 +105,12 @@ export const OWNERSHIP = {
       'chat_turns', 'bindings', 'flags', 'metric_snapshots', 'metric_samples', 'condition_state',
       // purge / zip 级联（命令式清理，不算业务耦合）
       'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'persona', 'persona_values', 'preferences', 'taboos',
+      'open_loops',
       'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'drive_state',
       'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'alerts', 'algo_bindings',
       'agent_params', 'agent_bindings', 'rule_artifacts',
       // 分层记忆的级联清理
-      'episodes', 'diaries', 'raw_turns', 'raw_fts', 'fact_archive', 'fact_fts', 'memory_timeline',
+      'episodes', 'diaries', 'raw_turns', 'raw_fts', 'fact_archive', 'fact_fts',
       // 人物账本的级联清理（purge 时按子表 → person 顺序删）
       'rel_mention', 'rel_evidence', 'rel_edge', 'rel_channel', 'rel_extract_queue', 'rel_review', 'rel_event', 'rel_person',
     ],
@@ -104,20 +123,14 @@ export const OWNERSHIP = {
     // 分层记忆：原文 / 纪要 / 日记 / 事实存根 / 热度账本 / 会话缓冲 / 检索骨架 / 回放日志 / 夜间巩固
     files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js'],
     tables: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
+      // 累计重要性 → 反思的游标（consolidate.js 读写）
+      'reflect_cursor',
       // 只读：写日记时快照状态、仓库统计体量、注入用量
       'persona', 'persona_values', 'drive_state', 'relations', 'preferences', 'taboos', 'metric_samples',
       // 只读：检索时的实体扩散（entities）与同实体一跳（memory_links）
       'entities', 'memory_links',
       // 向量通道：检索读已存向量
-      'memory_vec',
-      // 只读：日记日的心情（affect_episodes）、记忆体检的冲突数（conflicts）
-      'affect_episodes', 'conflicts'],
-  },
-  timeline: {
-    // G1 时效索引 + as-of：只追加写 memory_timeline；作废/复活按原 UPDATE 写 memory_items；其余只读出证
-    files: ['modules/timeline.js', 'modules/timeparse.js', 'modules/asof.js'],
-    tables: ['memory_timeline', 'memory_items', 'memory_fts', 'fact_archive', 'fact_fts', 'raw_turns', 'raw_fts',
-      'episodes', 'conflicts', 'flags', 'retrieval_log'],
+      'memory_vec'],
   },
   vectors: {
     // 向量通道：写自己的 memory_vec，读记忆正文
@@ -127,8 +140,7 @@ export const OWNERSHIP = {
   writegate: {
     // 写入侧：实体归一化 / 写入门控 / 抽取队列 / 检索卡补写（门控只改 memory_items 的强化计数）
     files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js'],
-    // fact_archive 只读：改写时核对旧句存根确实落库
-    tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive'],
+    tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts'],
   },
   sangguan: {
     // 三观引擎：L0 只增账本 + 可重建投影 + 判定缓存；claim_purge 只在整 agent 清除的事务里存在
@@ -155,9 +167,10 @@ export const OWNERSHIP = {
       'events', 'agents', 'flags', 'bindings', 'chat_turns', 'proactive', 'proactive_stats', 'proactive_decisions',
       'affect_episodes', 'memory_items', 'memory_fts', 'sqlite_master',
       // 全量导出 / 导入清单
-      'fact_archive', 'fact_fts', 'raw_turns', 'episodes', 'diaries', 'memory_timeline',
+      'fact_archive', 'fact_fts', 'raw_turns', 'episodes', 'diaries',
       // 全量导出动态 ${t}（扫不到）；保留导出清单核心表以防静态化
       'memory_links', 'persona', 'affect_state', 'alerts', 'drive_state',
+      'open_loops',
       'metric_snapshots', 'algo_bindings', 'persona_values', 'preferences',
       'taboos', 'relations', 'affect_samples', 'affect_user_read', 'agent_params',
       'rule_artifacts', 'agent_bindings',

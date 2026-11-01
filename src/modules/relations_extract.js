@@ -282,6 +282,3 @@ export async function tickRelationRead(db, aid, opts = {}) {
 }
 
 /** 测试 / 补跑用：清掉队列里失败的任务。 */
-export function resetRelationQueue(db, aid) {
-  db.prepare("UPDATE rel_extract_queue SET state='pending', attempts=0, next_at=? WHERE agent_id=? AND state='failed'").run(now(), aid)
-}

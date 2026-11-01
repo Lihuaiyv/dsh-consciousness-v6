@@ -59,7 +59,7 @@ function openReadOnly() {
 
 function dbCounts(db) {
   const t = {}
-  for (const name of ['agents', 'memory_items', 'persona', 'persona_values', 'persona_worldview', 'persona_lifeview', 'persona_views', 'relations', 'conflicts', 'proactive', 'changes']) {
+  for (const name of ['agents', 'memory_items', 'persona', 'persona_values', 'persona_views', 'relations', 'conflicts', 'proactive', 'changes']) {
     try { t[name] = Number(db.prepare(`SELECT COUNT(*) n FROM ${name}`).get().n) } catch { t[name] = null }
   }
   return t
@@ -123,30 +123,6 @@ if (!OFFLINE && ping && aid) {
     else ok('价值观不归零', '最低 ' + Math.min(...vals.items.map((x) => x.weight)).toFixed(3))
   } catch (e) {
     fail('价值观接口', e.message + '（老宿主？重启/等热加载）')
-  }
-
-  try {
-    const wv = await api('GET', `/v1/agents/${aid}/worldview/explain`)
-    const n = (wv.items || []).length
-    if (n === 8) ok('世界观八维', (wv.derived && wv.derived.label) || ('good=' + (wv.derived && wv.derived.good)))
-    else warn('世界观八维', '只有 ' + n + ' 维')
-    const bad = (wv.items || []).filter((x) => Number(x.weight) < 0.05 || Number(x.weight) > 0.95)
-    if (bad.length) fail('世界观范围', bad.map((x) => x.label).join('、'))
-    else ok('世界观范围', '均在地板~天花板内')
-  } catch (e) {
-    fail('世界观接口', e.message + '（需热加载插件）')
-  }
-
-  try {
-    const lv = await api('GET', `/v1/agents/${aid}/lifeview/explain`)
-    const n = (lv.items || []).length
-    if (n === 7) ok('人生观七维', 'presence=' + Number(lv.derived && lv.derived.presence).toFixed(2))
-    else warn('人生观七维', '只有 ' + n + ' 维')
-    const telos = lv.derived && lv.derived.stance && lv.derived.stance.telos
-    if (telos) ok('人生观命题', String(telos).slice(0, 40))
-    else warn('人生观命题', '还没有 telos（先 grow 一次）')
-  } catch (e) {
-    fail('人生观接口', e.message + '（需热加载插件）')
   }
 
   try {

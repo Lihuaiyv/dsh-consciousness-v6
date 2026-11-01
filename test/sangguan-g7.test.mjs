@@ -50,6 +50,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
+import { claimUserValue } from '../src/modules/sangguan/values_intake.js'
 import { append, newId } from '../src/modules/sangguan/ledger.js'
 import { loadState } from '../src/modules/sangguan/projection.js'
 import { setSangguanConfig } from '../src/modules/sangguan/config.js'
@@ -62,14 +63,14 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-sg7-'))
 const db = openDb(path.join(dir, 'app.db'))
 const T = '2026-11-01T12:00:00.000Z'
 const add = (id) => db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)").run(id, id, 'daily', 'active', T)
-const putVal = (aid, key, weight) => db.prepare('INSERT INTO persona_values VALUES(?,?,?,?,?)').run(aid, key, weight, '[]', T)
 
 add('agt_fold')
-for (const [k] of DIMS) putVal('agt_fold', k, k === 'benevolence' ? 0.42 : 0.064)
+// 一条命题就能把仁善抬起来：不依赖任何旧表，也不照抄旧数字
+claimUserValue(db, 'agt_fold', { key: 'benevolence', weight: 0.9 }, T)
 setSangguanConfig(db, 'agt_fold', { enabled: true, replace: { V: 'engine' } })
 {
   const v = readViews(db, 'agt_fold')
-  check('切到引擎但还没有命题：继续用旧表', v.source.V === 'meter' && v.V.weights.benevolence === 0.42, v.source)
+  check('有命题就折算，不照抄旧数字', v.source.V === 'engine' && v.V.weights.benevolence > 0.3 && v.V.weights.benevolence !== 0.42, v.V.weights)
 }
 const exp = append(db, 'agt_fold', [{
   type: 'CLAIM_EXP', layer: 'V', actor: 'sys', at: T,
@@ -87,7 +88,8 @@ append(db, 'agt_fold', [{
   check('引擎权重不再等于旧表的 0.42', v.V.weights.benevolence !== 0.42, v.V.weights.benevolence)
 }
 setSangguanConfig(db, 'agt_fold', { replace: { V: 'meter' } })
-check('切回 meter 后权重回到旧表', readViews(db, 'agt_fold').source.V === 'meter' && readViews(db, 'agt_fold').V.weights.benevolence === 0.42)
+const kept = readViews(db, 'agt_fold').V.weights.benevolence
+check('关掉替换开关后价值观仍是折算', readViews(db, 'agt_fold').source.V === 'engine' && readViews(db, 'agt_fold').V.weights.benevolence === kept && kept !== 0.42)
 
 const exp2 = append(db, 'agt_fold', [{
   type: 'CLAIM_EXP', layer: 'V', actor: 'sys', at: '2026-11-02T13:00:00.000Z',

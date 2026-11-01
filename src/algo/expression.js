@@ -74,22 +74,3 @@ export function expressionFrom({ slow = 0, intensity = 0.4, ei = 0.5 } = {}) {
     tone: toneOf(s, i),
   }
 }
-
-/**
- * 注入用的一句话分寸。跟 expressionFrom 同源，别在 index 里再硬编码一套。
- * @param {ReturnType<typeof expressionFrom>} expr
- */
-export function expressionLine(expr) {
-  const e = expr && typeof expr === 'object' ? expr : expressionFrom({})
-  const n = Math.max(1, Math.min(4, Number(e.sentences) || 3))
-  const tone = String(e.tone || 'plain')
-  const pro = Math.max(0, Number(e.proactive) || 0)
-  if (n <= 1) {
-    if (tone === 'cool') return '只说 1 句，不主动起话头，语气偏冷'
-    if (tone === 'short' || pro <= 0) return '只说 1 句，短促，不主动提问'
-    return '只说 1 句'
-  }
-  if (n === 2) return '最多 2 句，直接，不主动展开'
-  if (n >= 4 || (tone === 'warm' && pro >= 1)) return '可以多说一点，愿意展开'
-  return '可以 3~4 句，有一点温度'
-}

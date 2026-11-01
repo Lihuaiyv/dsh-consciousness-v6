@@ -1,10 +1,9 @@
 import { now } from '../db.js'
 import { err, nid, agent, active } from '../kernel.js'
 import { seedAffect } from './affect.js'
-import { seedDrive } from './drive.js'
-import { tickRitual as tickRitualLedger, syncLegacyToLedger } from './relations.js'
+import { seedDrive, setCooldown, cooldownActive } from './drive.js'
 import { seedRuleBindings } from './artifacts.js'
-import { AXIS_KEYS, AXIS_DEFAULTS, NEUTRAL, shrinkAxes, isAxisPath, axesView, setAxisManual, releaseAxis } from './traits.js'
+import { AXIS_KEYS, AXIS_DEFAULTS, NEUTRAL, shrinkAxes, isAxisPath, axesView, setAxisManual, releaseAxis, isManualAxis } from './traits.js'
 
 /**
  * 手写区的字数上限。这些字每轮都会进系统提示，所以按「最坏情况注入」定预算：
@@ -40,8 +39,12 @@ function requireText(v, max, label) {
 
 /** 只种人格表；完整出生态走 seedState（编排，不直写外域表） */
 export function seedPersona(db, aid) {
-  for (const k of AXIS_KEYS) db.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)').run(aid, 'axis.' + k, String(AXIS_DEFAULTS[k] ?? NEUTRAL), 'auto', now())
-  // 价值观真源是 persona_values（growValues / setValue）；不再种无人读的 values.weight
+  for (const k of AXIS_KEYS) {
+    // 手动轴（敏感度）出场就是 manual：经历不推它，只能在设置里手动调
+    const origin = isManualAxis(k) ? 'manual' : 'auto'
+    db.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)').run(aid, 'axis.' + k, String(AXIS_DEFAULTS[k] ?? NEUTRAL), origin, now())
+  }
+  db.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)').run(aid, 'values.weight', '0.1', 'auto', now())
 }
 
 export function seedState(db, aid) {
@@ -137,20 +140,11 @@ export function upsertRelation(db, aid, body) {
   const id = body.id || nid('rel_')
   const old = body.id ? db.prepare('SELECT * FROM relations WHERE id=? AND agent_id=?').get(body.id, aid) : null
   const v = (x, d) => (x === undefined ? d : Number(x))
-  const kind = body.kind || old?.kind || 'acquaintance'
-  const closeness = v(body.closeness, old?.closeness ?? 0.2)
-  const trust = v(body.trust, old?.trust ?? 0.2)
-  const dependence = v(body.dependence, old?.dependence ?? 0)
-  const notes = body.notes ?? old?.notes ?? null
-  const root = body.root ? 1 : old?.root || 0
   db.prepare('INSERT OR REPLACE INTO relations VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-    .run(id, aid, name, kind, closeness, trust, dependence, root, notes, old?.created_at || now(), now())
-  // 活账本才是注入 / 面板真源；旧表只镜像
-  try {
-    syncLegacyToLedger(db, aid, {
-      name, kind: root ? 'owner' : kind, closeness, trust, dependence, notes, legacy_id: id,
-    })
-  } catch { /* 账本失败不回滚旧表：读方仍有兜底 */ }
+    .run(id, aid, name, body.kind || old?.kind || 'acquaintance',
+      v(body.closeness, old?.closeness ?? 0.2), v(body.trust, old?.trust ?? 0.2),
+      v(body.dependence, old?.dependence ?? 0), body.root ? 1 : old?.root || 0,
+      body.notes ?? old?.notes ?? null, old?.created_at || now(), now())
   return { id }
 }
 
@@ -217,8 +211,30 @@ export function addTaboo(db, aid, body) {
     .run(id, aid, text, body.level === 'root' ? 'root' : 'soft', body.origin || 'manual', now())
   return { id }
 }
-// ---------------- 关系的时间效应（6 号 R09） ----------------
-/** R09：转发到人物账本（rel_person）；旧 relations 只镜像。 */
+// ---------------- 关系的时间效应（6 号 R09 / F7） ----------------
+
+const RITUAL_DAYS = 14
+
+/**
+ * R09（涂尔干）：14 天没有共同活动 → 亲近 −0.02，每 14 天最多一次。
+ * 由宿主在回合结束时调用；没有任何互动时间锚点时不动。
+ */
 export function tickRitual(db, aid) {
-  return tickRitualLedger(db, aid)
+  agent(db, aid)
+  const owner = db.prepare('SELECT * FROM relations WHERE agent_id=? AND root=1').get(aid)
+    || db.prepare('SELECT * FROM relations WHERE agent_id=? ORDER BY closeness DESC LIMIT 1').get(aid)
+  if (!owner) return null
+  const row = db.prepare('SELECT last_interaction_at FROM agents WHERE id=?').get(aid)
+  const last = row && row.last_interaction_at
+  if (!last) return null
+  const idle = (Date.now() - Date.parse(last)) / 86400000
+  if (!(idle >= RITUAL_DAYS)) return null
+  if (cooldownActive(db, aid, 'ritual', owner.id)) return null
+  const before = Number(owner.closeness)
+  const after = Math.max(0, +(before - 0.02).toFixed(3))
+  db.prepare('UPDATE relations SET closeness=?, updated_at=? WHERE id=?').run(after, now(), owner.id)
+  setCooldown(db, aid, 'ritual', owner.id, RITUAL_DAYS, '14 天没有共同活动')
+  db.prepare('INSERT INTO changes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(nid('chg_'), null, aid, 'relations.closeness', String(before), String(after), now(), 'system', 'system', 'auto', null, null)
+  return { relation: owner.name, before, after, idle_days: +idle.toFixed(1), rule: 'R09' }
 }

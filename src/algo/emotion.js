@@ -2,12 +2,25 @@
  * 情绪 v3 的组合入口：把四条规则串成一次计算。
  *
  * 只做计算，不碰库、不碰 model：
- *   stepSlow   慢情绪一小时一步（86% 惯性 + 12% 底色 + 1% 标签 + 1% 快情绪）
+ *   stepSlow   慢情绪：一阶跟随快情绪，底色只做长程回归
  *   fastOf     快情绪（自己的反应 + 共情水平项 + 共情波动项）
  *   totalOf    总情绪（慢 + 0.35×快，偏移不是平分）
  *   frameOf    一次算完：下一步慢情绪、总情绪、表达档
  *
  * 接入点在 P2：affect.js 评价后调 frameOf，把 sNext / total 写回 affect_state。
+ *
+ * 2026-11-01 改：慢情绪原来是「86% 惯性 + 12% 底色 + 1% 标签 + 1% 快情绪」，
+ * 稳态里快情绪只占 7%——它稳的是底色那个数，不是刚才发生的事。现在换成一阶跟随：
+ *
+ *   ds/dt = α·(f − s) + β·(b − s) + ω·(p − s)
+ *
+ *   s* = (α·f + β·b + ω·p) / (α+β+ω)   稳态（α=0.09、β=0.07，f 五成半 / b 四成）
+ *   λ  = α+β+ω                          到达速率（λ≈0.165 → τ≈6h）
+ *   s(t+dt) = s* + (s − s*)·exp(−λ·dt)  精确解：走多久就按多久算，跟调用步长无关
+ *
+ * 两个速度是分开的：α 管「追上刚才的事」，β 管「滑回自己的水位」。
+ * β 调大不是让底色赢——是让水位真正有拉力，这样底色自己的波浪（日节律 +
+ * 累积负荷，见 baseline.js）才能从慢情绪上透出来。
  */
 
 import { expressionFrom } from './expression.js'
@@ -18,19 +31,45 @@ const num = (v, d) => {
 }
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x))
 const clamp01 = (x) => clamp(x, 0, 1)
-export const INERTIA = 0.86
-export const W_BASE = 0.12
-export const W_LABEL = 0.01
-export const W_FAST = 0.01
+/** 慢情绪追快情绪的速率（每小时）。α+β 决定「多久退掉」，α:β 决定「谁说话更算数」 */
+export const SLOW_ALPHA = 0.09
+/** 底色回归（每小时）。不能太小：太小等于底色没力气，慢情绪会黏在刚才那一下上；
+ *  现在 α:β ≈ 4.5:3 → 稳态里五成半由刚才的事定，四成由水位定，底色自己的波浪才透得出来。 */
+export const SLOW_BETA = 0.07
+/** 标签先验的拉力（每小时）：只留一丝，不让它冒充底色 */
+export const SLOW_W_LABEL = 0.005
+
+/** 旧口径的常量，留着给老调用方对照，新代码不要再用 */
+
 export const KAPPA = 0.35
 export const EMPATHY_KAPPA = 0.25
 export const EMPATHY_SWAY = 0.5
 export const CLOSE_BASE = 0.3
 export const CLOSE_SPAN = 0.7
 
-/** 慢情绪：一小时一步 */
-export function stepSlow({ s = 0, b = 0, p = 0, fHourly = 0, inertia = INERTIA, wb = W_BASE, wl = W_LABEL, wf = W_FAST } = {}) {
-  const out = num(inertia, INERTIA) * num(s, 0) + num(wb, W_BASE) * num(b, 0) + num(wl, W_LABEL) * num(p, 0) + num(wf, W_FAST) * num(fHourly, 0)
+/**
+ * 慢情绪：真 EMA。
+ * @param {object} p
+ * @param {number} [p.s] 现在的慢情绪 [-1,1]
+ * @param {number} [p.b] 这一段的底色 [-1,1]
+ * @param {number} [p.p] 情绪标签的先验愉悦度
+ * @param {number} [p.fHourly] 这一段快情绪的平均值
+ * @param {number} [p.dtHours] 走了多久（小时，可小于 1）
+ * @param {number} [p.alpha] 追快情绪的速率
+ * @param {number} [p.beta] 回底色的速率
+ * @param {number} [p.wl] 标签先验的速率
+ */
+export function stepSlow({ s = 0, b = 0, p = 0, fHourly = 0, dtHours = 1,
+  alpha = SLOW_ALPHA, beta = SLOW_BETA, wl = SLOW_W_LABEL } = {}) {
+  const cur = num(s, 0)
+  const a = Math.max(0, num(alpha, SLOW_ALPHA))
+  const be = Math.max(0, num(beta, SLOW_BETA))
+  const w = Math.max(0, num(wl, SLOW_W_LABEL))
+  const lam = a + be + w
+  if (!(lam > 0)) return Math.round(clamp(cur, -1, 1) * 1000) / 1000
+  const target = (a * num(fHourly, 0) + be * num(b, 0) + w * num(p, 0)) / lam
+  const dt = Math.max(0, num(dtHours, 1))
+  const out = target + (cur - target) * Math.exp(-lam * dt)
   return Math.round(clamp(out, -1, 1) * 1000) / 1000
 }
 
@@ -54,8 +93,8 @@ export function fastOf({ fSelf = 0, eUser = 0, ePrev = 0, closeness = 0.5, kappa
 }
 
 /** 一次算完：下一步慢情绪、总情绪、表达档 */
-export function frameOf({ s = 0, b = 0, p = 0, f = 0, fHourly, intensity = 0.4, ei = 0.5, kappa = KAPPA } = {}) {
-  const sNext = stepSlow({ s, b, p, fHourly: fHourly ?? f })
+export function frameOf({ s = 0, b = 0, p = 0, f = 0, fHourly, dtHours = 1, intensity = 0.4, ei = 0.5, kappa = KAPPA } = {}) {
+  const sNext = stepSlow({ s, b, p, fHourly: fHourly ?? f, dtHours })
   const total = totalOf(sNext, f, kappa)
   const expression = expressionFrom({ slow: sNext, intensity, ei })
   return { s: sNext, total, expression }

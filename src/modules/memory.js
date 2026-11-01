@@ -4,15 +4,10 @@ import { err, nid, tx, agent, active, event, getParam } from '../kernel.js'
 import { bandOf, heatOf, nowRow } from './tiers.js'
 import { archiveFact } from './archive.js'
 import { normalizeTerms } from './terms.js'
-import { polarityFlip } from './gate.js'
-import { scheduleEmbed } from './vector.js'
-import { sourceBadge, sourceHint } from './memory_source.js'
-import {
-  logAdd, invalidateMemory, reactivateMemory, hideMemory, unhideMemory, disputeOpen, disputeClose,
-} from './timeline.js'
 export { normalizeTerms }
 
 const SECRET = /(sk-[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,})/g
+const NEG = new Set([...'不没别无取消换改'])
 const CONFLICT_TYPES = new Set(['fact', 'appraisal'])
 const IDENTITY = /(姓名|名字|称呼|主人|生日|禁忌|禁止|住在|住址|电话|年龄|工作)/
 
@@ -27,36 +22,13 @@ export function buildSearchText(text, key, terms) {
   for (const t of normalizeTerms(terms)) parts.push(t)
   return parts.filter(Boolean).join(' ')
 }
-
-/** U7：习惯 / 节律类断言——要稳进 T1，不能日子一久就只躺在日记里。 */
-const HABIT_RE = /(每周|每天|每日|每晚|每早|每周[一二三四五六日天]|总是|经常|常常|习惯于|有个习惯|固定去|每周两次|每周一次)/
-
-export function isHabitText(text) {
-  return HABIT_RE.test(String(text || ''))
-}
-
-/** 习惯类重要度地板（调用方显式更高则保留）。 */
-export function habitImportanceFloor(text, importance) {
-  const base = Math.max(0, Math.min(1, Number(importance) || 0))
-  if (!isHabitText(text)) return base
-  return Math.max(base, 0.72)
-}
-
-/** 无 key 时给习惯一条稳定 fact_key，方便合并与冷层穿透识别。 */
-export function habitFactKey(text, existing) {
-  const cur = String(existing || '').trim()
-  if (cur) return cur.slice(0, 120)
-  if (!isHabitText(text)) return null
-  const t = String(text || '')
-  const tip = (t.match(/[\u4e00-\u9fff]{2,6}/) || ['habit'])[0]
-  return ('habit.' + tip).slice(0, 120)
-}
 function sim(a, b) {
   const A = chars(a), B = chars(b)
   let inter = 0
   for (const c of A) if (B.has(c)) inter++
   return inter / Math.max(1, new Set([...A, ...B]).size)
 }
+function hasNeg(text) { return [...text].some((c) => NEG.has(c)) }
 
 /** 去掉模板句、时间戳、角色前缀，只留下真正的内容再比 */
 function coreText(text) {
@@ -81,8 +53,7 @@ function detectConflict(db, aid, text, typ = 'fact') {
     const other = coreText(m.text)
     const s = sim(probe, other)
     if (s >= 0.9) return ['duplicate', m, null]
-    // 与写入门控同一套极性：看共享片段前有没有否定，避免「不加糖」整句 hasNeg 误判
-    if (!hit && s >= 0.5 && polarityFlip(probe, other)) hit = { m, s }
+    if (!hit && s >= 0.5 && hasNeg(probe) !== hasNeg(other)) hit = { m, s }
   }
   if (!hit) return [null, null, null]
   const risky = IDENTITY.test(probe + ' ' + hit.m.text) || Number(hit.m.weight || 0) >= 0.8
@@ -114,7 +85,8 @@ export function supersedeByKey(db, aid, mid, factKey, typ = 'fact') {
   } catch { return [] }
   if (!rows.length) return []
   const at = now()
-  for (const r of rows) invalidateMemory(db, aid, r.id, { at, supersededBy: mid, bumpVersion: true, reason: 'supersede' })
+  const upd = db.prepare('UPDATE memory_items SET invalid_at=?, superseded_by=?, version=version+1 WHERE id=?')
+  for (const r of rows) upd.run(at, mid, r.id)
   try { event(db, aid, 'memory.fact_superseded', { by: mid, old: rows.map((r) => r.id), key }) } catch { /* 事件失败不影响写入 */ }
   return rows.map((r) => r.id)
 }
@@ -128,12 +100,10 @@ export function supersedeMany(db, aid, mid, ids = [], reason = 'merged') {
   const list = [...new Set((ids || []).filter(Boolean))].filter((x) => x !== mid)
   if (!list.length) return []
   const at = now()
+  const upd = db.prepare('UPDATE memory_items SET invalid_at=?, superseded_by=?, version=version+1 WHERE id=? AND agent_id=?')
   const done = []
   for (const id of list) {
-    try {
-      invalidateMemory(db, aid, id, { at, supersededBy: mid, bumpVersion: true, agentScoped: true, reason: String(reason || 'merged') })
-      done.push(id)
-    } catch { /* 单条失败不影响其余 */ }
+    try { upd.run(at, mid, id, aid); done.push(id) } catch { /* 单条失败不影响其余 */ }
   }
   if (done.length) {
     try { event(db, aid, 'memory.superseded_many', { by: mid, old: done, reason }) } catch { /* 事件失败不影响写入 */ }
@@ -148,28 +118,22 @@ export function addMemory(db, aid, body) {
   const typ = body.type || 'fact'
   if (!['fact', 'episode', 'appraisal', 'reflection', 'conflict'].includes(typ)) err(400, 'INVALID_ARGUMENT', 'type 非法')
   const safe = redact(text)
-  // skipConflict：门控 applyWrite 已独占冲突判定与留痕，这里再跑会双行 conflicts / 双告警
-  const [kind, old, risk] = body.skipConflict ? [null, null, null] : detectConflict(db, aid, safe, typ)
+  const [kind, old, risk] = detectConflict(db, aid, safe, typ)
   if (kind === 'duplicate') {
     // 完全重复：不新建，也不写自环（旧代码写的是 from_id=to_id 的自环，等于没连）。
     return { id: old.id, duplicate: true }
   }
   const mid = nid('mem_')
-  const rawImp = Math.max(0, Math.min(1, Number(body.importance ?? body.weight ?? 0.5) || 0.5))
-  // U7：习惯类抬重要度地板（不碰日记事实源；只在落 T1 时加温）
-  const importance = typ === 'fact' ? habitImportanceFloor(safe, rawImp) : rawImp
+  const importance = Math.max(0, Math.min(1, Number(body.importance ?? body.weight ?? 0.5) || 0.5))
   const salience = Math.max(0, Math.min(1, Number(body.salience ?? 0) || 0))
   /* 出生时的情绪效价：调用方给了就用给的（对话里就是这一下的愉悦），
      没给就是 0（中性）——记忆模块不直接读情绪表（INV10），要加成由调用方注入。 */
   const valence = Math.max(-1, Math.min(1, body.valence != null ? Number(body.valence) || 0 : 0))
   const terms = normalizeTerms(body.terms)
-  const factKey = typ === 'fact'
-    ? habitFactKey(safe, body.fact_key || body.key)
-    : (String(body.fact_key || body.key || '').trim().slice(0, 120) || null)
+  const factKey = String(body.fact_key || body.key || '').trim().slice(0, 120) || null
   const searchText = buildSearchText(safe, factKey, terms)
   const seq = journalIntent(db, aid, 'insert_memory', { memory_id: mid }, body.turn_id)
   let superseded = []
-  const bornAt = now()
   tx(db, () => {
     db.prepare(`INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,
         last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version)
@@ -203,31 +167,19 @@ export function addMemory(db, aid, body) {
       try { db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=?").run(now(), mid) } catch { /* 老库没有温度列 */ }
     }
     db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(mid, searchText)
+    // 事实失效：同一个 fact_key 的旧说法当场退场（不删，只标记被谁取代）
+    superseded = supersedeByKey(db, aid, mid, factKey, typ)
     // T4 事实存根：这条事实「出生时」长什么样，永远留一份（只追加，之后衰减/推翻/合并都不动它）
-    let payload = body.payload
-    if (payload && typeof payload === 'string') {
-      try { payload = JSON.parse(payload) } catch { payload = { raw: String(payload).slice(0, 200) } }
-    }
-    let birthRef = null
     try {
-      birthRef = archiveFact(db, aid, {
+      archiveFact(db, aid, {
         memory_id: mid, text: safe, type: typ, mark: 'normal',
         importance, salience, confidence: body.confidence != null ? Number(body.confidence) : 0.8,
         fact_key: factKey, source_turn_id: body.turn_id || null,
         source: body.source || 'model',
-        payload: payload && typeof payload === 'object' ? payload : null,
-      }).id
+      })
     } catch {
       try { event(db, aid, 'memory.archive_failed', { memory_id: mid }) } catch { /* 连事件都失败就只剩写入 */ }
     }
-    // 时效索引：出生事件先记，取代链的「新事实说话时刻 = 旧事实失效时刻」要查它
-    logAdd(db, aid, mid, {
-      at: bornAt, validAt: body.valid_at || null, sourceTurnId: body.turn_id || null,
-      episodeId: payload && typeof payload === 'object' ? payload.episode_id : null,
-      textRef: birthRef, actor: String(body.source || 'manual').slice(0, 24),
-    })
-    // 事实失效：同一个 fact_key 的旧说法当场退场（不删，只标记被谁取代）
-    superseded = supersedeByKey(db, aid, mid, factKey, typ)
     event(db, aid, 'memory.written', { memory_id: mid })
     if (kind === 'conflict') {
       const cid = nid('cfl_')
@@ -245,11 +197,10 @@ export function addMemory(db, aid, body) {
           .run(cid, aid, old.id, mid, '模板相似/否定词差异，两条都保留', now(), now(), body.turn_id || null, evidence)
         event(db, aid, 'memory.conflict_superseded', { conflict_id: cid, a: old.id, b: mid })
       } else {
-        invalidateMemory(db, aid, old.id, { reason: 'conflict', causeId: mid })
+        db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), old.id)
         db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,source_turn_id,evidence)
           VALUES(?,?,?,?, 'open', ?, 'high','polarity',?,?)`)
           .run(cid, aid, old.id, mid, now(), body.turn_id || null, evidence)
-        disputeOpen(db, aid, [old.id, mid], cid)
         event(db, aid, 'memory.conflict', { conflict_id: cid, a: old.id, b: mid })
         db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)')
           .run(nid('alr_'), aid, 'data', 2, '有一条记忆冲突未处理', 'open', now())
@@ -257,8 +208,6 @@ export function addMemory(db, aid, body) {
     }
   })
   journalDone(db, seq)
-  // 向量通道：有 embedding 时异步补一条；失败静默（INV10：本文件不写 memory_vec SQL）
-  try { scheduleEmbed(db, aid, mid, safe) } catch { /* ignore */ }
   return { id: mid, conflict: kind === 'conflict' && risk === 'high', superseded: kind === 'conflict' && risk === 'low', superseded_ids: superseded }
 }
 
@@ -267,12 +216,7 @@ export function listMemory(db, aid, includeDeleted = false) {
   const sql = "SELECT * FROM memory_items WHERE agent_id=?" + (includeDeleted ? '' : " AND status='active'") + ' ORDER BY created_at DESC LIMIT 100'
   // 面板上看到的热度按此刻现算（库里的是上次巡检的快照），写库不在这里做
   const at = Date.now()
-  return db.prepare(sql).all(aid).map((r) => {
-    const row = nowRow(r, at)
-    const badge = sourceBadge(row.source)
-    const hint = sourceHint(row)
-    return { ...row, source_badge: badge.label, source_tone: badge.tone, source_hint: hint }
-  })
+  return db.prepare(sql).all(aid).map((r) => nowRow(r, at))
 }
 
 export function setMemoryMark(db, mid, body) {
@@ -297,15 +241,14 @@ export function restoreAgent(db, aid) {
   if (row.status !== 'soft_deleted') err(409, 'CONFLICT', '只有软删的意识体可以恢复')
   const t = row.deleted_at ? Date.parse(row.deleted_at) : Date.now()
   if (Date.now() - t > 7 * 86400000) err(410, 'GONE', '已超过 7 天恢复期')
-  // 先摘掉软删标成 paused；真正变 active 由调用方走排他激活（避免多 active）
-  db.prepare("UPDATE agents SET status='paused', deleted_at=NULL WHERE id=?").run(aid)
-  return { id: aid, status: 'paused', needs_activate: true }
+  db.prepare("UPDATE agents SET status='active', deleted_at=NULL WHERE id=?").run(aid)
+  return { id: aid, status: 'active' }
 }
 
 export function softDelete(db, mid) {
   const row = db.prepare('SELECT * FROM memory_items WHERE id=?').get(mid)
   if (!row) err(404, 'NOT_FOUND', '记忆不存在')
-  hideMemory(db, row.agent_id, mid)
+  db.prepare("UPDATE memory_items SET status='soft_deleted', deleted_at=? WHERE id=?").run(now(), mid)
   return { id: mid, status: 'soft_deleted' }
 }
 
@@ -313,7 +256,7 @@ export function restoreMemory(db, mid) {
   const row = db.prepare('SELECT * FROM memory_items WHERE id=?').get(mid)
   if (!row || row.status !== 'soft_deleted') err(404, 'NOT_FOUND', '没有可恢复的记忆')
   if (Date.now() - Date.parse(row.deleted_at) > 7 * 86400000) err(410, 'GONE', '恢复窗口已过')
-  unhideMemory(db, row.agent_id, mid)
+  db.prepare("UPDATE memory_items SET status='active', deleted_at=NULL WHERE id=?").run(mid)
   return { id: mid, status: 'active' }
 }
 
@@ -397,7 +340,7 @@ export function listConflicts(db, aid) {
   return rows.map((c) => ({ ...c, a: one(c.a_id), b: one(c.b_id) }))
 }
 
-/** 处理冲突：keep=a 保留旧 / b 保留新 / both 两条都保留 */
+/** 处理冲突：keep=a 保留旧 / b 保留新 / both 两条都保留（判它理解错了时用，可带一句 reason） */
 export function resolveConflict(db, aid, cid, body = {}) {
   agent(db, aid)
   const c = db.prepare('SELECT * FROM conflicts WHERE id=? AND agent_id=?').get(cid, aid)
@@ -405,19 +348,15 @@ export function resolveConflict(db, aid, cid, body = {}) {
   if (c.state !== 'open') err(409, 'CONFLICT', '该冲突已经处理过')
   const keep = String(body.keep || '')
   if (!['a', 'b', 'both'].includes(keep)) err(400, 'INVALID_ARGUMENT', 'keep 只能是 a / b / both')
-  // 时效索引里「冲突期间谁作废过」照留：复活记 REACTIVATE，不靠清空 invalid_at 抹历史
-  const at = now()
-  const inv = (id, on) => (on
-    ? invalidateMemory(db, aid, id, { at, reason: 'resolve', causeId: cid })
-    : reactivateMemory(db, aid, id, { at, reason: 'resolve', causeId: cid }))
+  const reason = body.reason == null ? null : String(body.reason).slice(0, 160)
+  const inv = (id, on) => db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(on ? now() : null, id)
   if (keep === 'a') { inv(c.a_id, false); inv(c.b_id, true) }
   else if (keep === 'b') { inv(c.a_id, true); inv(c.b_id, false) }
   else { inv(c.a_id, false); inv(c.b_id, false) }
-  db.prepare("UPDATE conflicts SET state='resolved', resolution=?, resolved_at=? WHERE id=?").run(keep, at, cid)
-  disputeClose(db, aid, [c.a_id, c.b_id], cid, { at })
+  db.prepare("UPDATE conflicts SET state='resolved', resolution=?, reason=?, resolved_at=? WHERE id=?").run(keep, reason, now(), cid)
   try { db.prepare("UPDATE alerts SET state='resolved' WHERE agent_id=? AND kind='data' AND title LIKE '%冲突%' AND state='open'").run(aid) } catch { /* 老库没有告警表 */ }
-  event(db, aid, 'memory.conflict_resolved', { conflict_id: cid, keep })
-  return { id: cid, state: 'resolved', keep }
+  event(db, aid, 'memory.conflict_resolved', { conflict_id: cid, keep, reason })
+  return { id: cid, state: 'resolved', keep, reason }
 }
 
 /** query：活跃记忆（供影子/概览，禁止外域直读 memory_items） */

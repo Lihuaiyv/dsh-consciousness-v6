@@ -29,6 +29,21 @@ export const AXIS_DEFAULTS = { ei: 0.6, sn: 0.5, tf: 0.5, jp: 0.5, sensitivity: 
 export const STEP = 0.05
 export const COOLDOWN_ROUNDS = 6
 export const MID = 0.05
+// 手动轴：只有用户能改，经历不推它。
+// 敏感度从「自动漂」退役：它只有「被刺→更敏感」一条正向通路，没有反向证据，
+// 自动挡下必然一路往上爬；而它又是三条主效应（摆幅/门槛/恢复）的总开关，误漂代价最大。
+export const MANUAL_AXES = Object.freeze(new Set(['sensitivity']))
+export function isManualAxis(key) { return MANUAL_AXES.has(String(key)) }
+// 证据来源权重：主人一侧（养育方向）> 她自己长出来的 > 低权事件。
+// 放在 traits 是因为 rope（算净力）和 axis_evidence（记证据）都要用，避免循环 import。
+export const SOURCE_WEIGHTS = Object.freeze({
+  user_style: 1.2,   // 主人怎么待她：养成方向，最高
+  reply: 1.0, act: 1.0, relation: 1.0, boundary: 1.0, event: 1.0,
+  mem: 0.7, diary: 0.6, narrative: 0.4,
+  praise: 0.4, critic: 0.4, emotion: 0.25, self_praise: 0.2,
+  browse: 0.8, browse_shallow: 0.15,
+  judge: 0.9,        // 模型第二判：比她自己说出来的低一档
+})
 
 const num = (v, d) => {
   const n = Number(v)
@@ -79,10 +94,7 @@ export function readAxes(db, aid) {
 }
 
 export function isMid(v) {
-  // 按「百分位整数」比，避免 0.45 在 IEEE 下变成 0.4499… 被判成中间
-  const cents = Math.round(Number(v) * 100)
-  if (!Number.isFinite(cents)) return true
-  return Math.abs(cents - Math.round(NEUTRAL * 100)) < Math.round(MID * 100)
+  return Math.abs(Number(v) - NEUTRAL) < MID
 }
 
 /** 只写「偏」的那几条；全中间时给一句兜底 */
@@ -96,27 +108,25 @@ export function axisWords(axes = {}) {
   return words.length ? words.join(' · ') : '中间'
 }
 
-/** 展示用字母（只读投影，永远不写库） */
-export function axisLetters(axes = {}) {
-  const pick = (k, hi, lo) => (num(axes[k], NEUTRAL) > NEUTRAL + MID ? hi : num(axes[k], NEUTRAL) < NEUTRAL - MID ? lo : 'X')
-  return pick('ei', 'E', 'I') + pick('sn', 'S', 'N') + pick('tf', 'T', 'F') + pick('jp', 'J', 'P')
-}
-
 /**
  * 大框用的类型投影：四字母 + 标签强度（0~1）。
  * 它是「标签」不是新状态：四个轴还是唯一真源；强度 = 四轴偏离 0.5 的平均幅度。
  */
-const POLES = { ei: ['I', 'E'], sn: ['S', 'N'], tf: ['F', 'T'], jp: ['P', 'J'] }
+export const POLES = { ei: ['I', 'E'], sn: ['S', 'N'], tf: ['F', 'T'], jp: ['P', 'J'] }
 // 显示阈值：偏过 60/40 才写字母。用 1e-9 的余量，避免 0.6-0.5 = 0.0999… 被浮点判成没过线。
 const SHOW_LEAN = 0.1 - 1e-9
 /**
  * 显不显字，按「页面上显示出来的两位小数」判，而不是原始值。
  * 轴会慢慢漂（0.598、0.599），右边那列 toFixed(2) 已经写着 0.60；
  * 老规则拿原始 lean 比 0.1，就会出现「写着 0.60 却没有 E」——这就是字母消失的那天。
+ *
+ * 迟滞：出 0.10、收回到中线（0.50）才收——这条不动。
+ * 一次最多翻一个字母（方向反转）：四轴各漂各的，几天内整组类型从 ISFP 变 ENTJ 太离谱。
  */
-export function typeProfile(axes = {}) {
+export function typeProfile(axes = {}, shownState = null) {
   const letters = []
   let sum = 0
+  const flips = []
   for (const k of ['ei', 'sn', 'tf', 'jp']) {
     const v = num(axes[k], NEUTRAL)
     const d = v - NEUTRAL
@@ -124,13 +134,85 @@ export function typeProfile(axes = {}) {
     sum += lean
     const shown = Math.round(v * 100) / 100
     const shownLean = Math.abs(shown - NEUTRAL)
+    const dirWant = d > 0 ? 1 : d < 0 ? -1 : 0
+    const prev = shownState && Number.isFinite(Number(shownState[k])) ? Math.sign(Number(shownState[k]) || 0) : 0
+    let show
+    let dir
+    if (prev === 0) {
+      show = shownLean >= SHOW_LEAN
+      dir = dirWant
+    } else if (dirWant !== 0 && dirWant !== prev && shownLean >= SHOW_LEAN) {
+      show = true           // 真跨到另一边了：想翻，先记下，整轮只放一个
+      dir = prev
+      flips.push({ axis: k, dir: dirWant, lean })
+    } else if (prev > 0) {
+      show = shown > NEUTRAL + 1e-9 || shownLean >= SHOW_LEAN
+      dir = prev
+    } else {
+      show = shown < NEUTRAL - 1e-9 || shownLean >= SHOW_LEAN
+      dir = prev
+    }
     letters.push({
-      axis: k, letter: d >= 0 ? POLES[k][1] : POLES[k][0], mid: lean < MID,
-      show: shownLean >= SHOW_LEAN, value: v, shown,
+      axis: k, letter: dir > 0 ? POLES[k][1] : dir < 0 ? POLES[k][0] : (d >= 0 ? POLES[k][1] : POLES[k][0]),
+      mid: lean < MID, show, value: v, shown, dir: show ? dir : 0,
     })
+  }
+  // 一次最多翻一个：留偏离最大的那条翻过去，其余这一轮仍按上次的极显示
+  if (flips.length) {
+    flips.sort((a, b) => b.lean - a.lean)
+    const one = flips[0]
+    const x = letters.find((l) => l.axis === one.axis)
+    if (x) { x.dir = one.dir; x.letter = one.dir > 0 ? POLES[one.axis][1] : POLES[one.axis][0] }
   }
   const strength = Math.max(0, Math.min(1, (sum / 4) / 0.5))
   return { letters, name: letters.map((x) => x.letter).join(''), strength, mids: letters.filter((x) => x.mid).length }
+}
+
+/** 上一次「显示到哪些字母」存在 persona 表里（axis.shown.*），迟滞要用它 */
+export function readShown(db, aid) {
+  const out = {}
+  try {
+    for (const r of db.prepare("SELECT path, value FROM persona WHERE agent_id=? AND path LIKE 'axis.shown.%'").all(aid)) {
+      out[String(r.path).slice(11)] = Math.sign(Number(r.value) || 0)
+    }
+  } catch { /* 没有表就当没显示过 */ }
+  return out
+}
+
+/** 轴值对象 → 纯数值表（typeProfile 要的是 {ei:0.6,...}） */
+function axisValues(db, aid) {
+  const rows = axisRows(db, aid)
+  const out = {}
+  for (const k of Object.keys(rows)) out[k] = rows[k].value
+  return out
+}
+
+/** 带迟滞的类型投影；算完把结果记回去，下次读才有「已经显示过」的上下文 */
+export function typeWithMemory(db, aid) {
+  const prev = readShown(db, aid)
+  const t = typeProfile(axisValues(db, aid), prev)
+  for (const x of t.letters) {
+    const nowDir = x.show ? x.dir : 0
+    if ((prev[x.axis] || 0) === nowDir) continue
+    try {
+      db.prepare('INSERT OR REPLACE INTO persona(agent_id, path, value, origin, updated_at) VALUES(?,?,?,?,?)')
+        .run(aid, 'axis.shown.' + x.axis, String(nowDir), 'auto', now())
+    } catch { /* 记不住就退化成无迟滞 */ }
+  }
+  return t
+}
+
+/**
+ * 人格锚：长会话里最容易被一句话带跑，注一句「你现在是什么样、这是长出来的」。
+ * 只写真正显示出来的字母；全在中间时给一句「还在中间」而不是编一个类型。
+ */
+export function anchorLine(db, aid) {
+  const t = typeWithMemory(db, aid)
+  const shown = t.letters.filter((x) => x.show)
+  const name = shown.map((x) => x.letter).join('')
+  const style = mbtiStyleLine(axisValues(db, aid), readShown(db, aid))
+  if (!shown.length) return '鱼格锚：四轴都还在中间，别急着演一个类型。'
+  return '鱼格锚：' + name + (style ? '，' + style : '') + '。这是长期经历长出来的，别为一句话就改口。'
 }
 
 /**
@@ -144,8 +226,8 @@ const MBTI_STYLE = {
   jp: { hi: '给结论和下一步', lo: '留一点弹性' },
 }
 
-export function mbtiStyleLine(axes = {}) {
-  const t = typeProfile(axes)
+export function mbtiStyleLine(axes = {}, shownState = null) {
+  const t = typeProfile(axes, shownState)
   const words = []
   for (const x of t.letters) {
     const pair = MBTI_STYLE[x.axis]
@@ -160,13 +242,23 @@ export function mbtiStyleLine(axes = {}) {
  * 四字母给模型一个整体印象，后面的短语只来自真正偏出的轴；
  * 四轴全在中间时不注入，避免拿一个假类型去演。
  */
-export function mbtiPromptLine(axes = {}) {
-  const style = mbtiStyleLine(axes)
+export function mbtiPromptLine(axes = {}, shownState = null) {
+  const style = mbtiStyleLine(axes, shownState)
   if (!style) return ''
-  const t = typeProfile(axes)
+  const t = typeProfile(axes, shownState)
   // 只写真正偏出阈值的字母：没有的轴不写，轴漂了下一轮自动跟着变。
   const name = t.letters.filter((x) => x.show).map((x) => x.letter).join('')
   return 'MBTI：' + name + ' ' + style
+}
+
+/**
+ * 宿主注入入口：先按迟滞更新一次「显示到哪些字母」，再拼那一句。
+ * 只读轴值，写也只是写 axis.shown.*（迟滞记录），不碰轴本身。
+ */
+export function mbtiPrompt(db, aid) {
+  const axes = axisValues(db, aid)
+  typeWithMemory(db, aid)
+  return mbtiPromptLine(axes, readShown(db, aid))
 }
 
 /**
@@ -238,11 +330,8 @@ export function releaseAxis(db, aid, key, why = '交回经历') {
   db.prepare('UPDATE persona SET origin=?, updated_at=? WHERE agent_id=? AND path=?')
     .run('auto', now(), aid, axisPath(key))
   try {
-    const cid = nid('chg_')
     db.prepare('INSERT INTO changes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(cid, null, aid, 'persona.' + axisPath(key), String(cur.value), String(cur.value), now(), 'system', 'user', 'manual:unlock', null, null)
-    const w = String(why || '').slice(0, 80)
-    if (w) db.prepare('INSERT OR REPLACE INTO change_reasons VALUES(?,?,?,?)').run(cid, aid, w, now())
+      .run(nid('chg_'), null, aid, 'persona.' + axisPath(key), String(cur.value), String(cur.value), now(), 'system', 'user', 'manual:unlock', String(why).slice(0, 80), null)
   } catch { /* changes 表不可用时不影响解锁 */ }
   return { key, path: axisPath(key), value: cur.value, origin: 'auto' }
 }
@@ -361,14 +450,9 @@ function writeAxis(db, aid, key, value, origin, why) {
   const before = axisRows(db, aid)[key]
   const v = Math.round(num(value, NEUTRAL) * 1000) / 1000
   db.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)').run(aid, path, String(v), origin, now())
-  // 原因进 change_reasons，不进 rolled_back_at：那一列是「什么时候被撤销的」，
-  // 写说明文字会让统计误判成回滚（曾经就是这么坏的）。
-  const cid = nid('chg_')
   try {
     db.prepare('INSERT INTO changes VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(cid, null, aid, 'persona.' + path, String(before.value), String(v), now(), 'system', 'system', origin, null, null)
-    const w = String(why || '').slice(0, 80)
-    if (w) db.prepare('INSERT OR REPLACE INTO change_reasons VALUES(?,?,?,?)').run(cid, aid, w, now())
+      .run(nid('chg_'), null, aid, 'persona.' + path, String(before.value), String(v), now(), 'system', 'system', origin, String(why || '').slice(0, 80), null)
   } catch { /* changes 表不可用时不影响写入 */ }
   return { path, key, before: before.value, after: v, origin, why: why || '' }
 }
@@ -380,6 +464,8 @@ function writeAxis(db, aid, key, value, origin, why) {
  */
 export function setAxisAuto(db, aid, key, delta, why) {
   if (!AXIS_KEYS.includes(key)) return { changed: false, skipped: 'unknown-axis' }
+  // 手动轴：经历不推，只有 setAxisManual 能改
+  if (isManualAxis(key)) return { changed: false, skipped: 'manual-axis' }
   const rows = axisRows(db, aid)
   const cur = rows[key]
   if (cur.origin === 'manual') return { changed: false, skipped: 'manual' }
@@ -415,10 +501,17 @@ export function setAxisAuto(db, aid, key, delta, why) {
   return { changed: out.before !== out.after, ...out }
 }
 
-/** 长期没变化：10 天没动过，之后每次回 2% 到 0.5（只动 auto） */
+/** 长期没变化：10 天没动过，之后每次回 2% 到基线（只动 auto） */
 export function shrinkAxes(db, aid) {
   const rows = db.prepare("SELECT * FROM persona WHERE agent_id=? AND origin='auto' AND path LIKE 'axis.%'").all(aid)
   const out = []
+  const baseOf = (key) => {
+    try {
+      const r = db.prepare('SELECT base FROM axis_rope WHERE agent_id=? AND axis=?').get(aid, key)
+      const b = Number(r && r.base)
+      return Number.isFinite(b) && b > 0 ? Math.max(0, Math.min(1, b)) : NEUTRAL
+    } catch { return NEUTRAL }
+  }
   for (const r of rows) {
     const key = String(r.path).slice(5)
     if (!AXIS_KEYS.includes(key)) continue
@@ -427,12 +520,24 @@ export function shrinkAxes(db, aid) {
     const last = db.prepare('SELECT applied_at FROM changes WHERE agent_id=? AND field=? ORDER BY applied_at DESC LIMIT 1').get(aid, 'persona.' + r.path)
     const idle = last ? Date.now() - Date.parse(last.applied_at) : Infinity
     if (idle < 10 * 86400000) continue
-    const next = Math.round((v + (NEUTRAL - v) * 0.02) * 1000) / 1000
+    const target = baseOf(key)
+    const next = Math.round((v + (target - v) * 0.02) * 1000) / 1000
     if (next === v) continue
     const one = writeAxis(db, aid, key, next, 'auto', 'shrink')
     out.push({ path: one.path, from: v, to: next })
   }
   return out
+}
+
+/** 回弹 / 基线用：直接挪 slow、不走轮次冷却（只给慢过程用，别拿它写证据） */
+export function nudgeAxis(db, aid, key, value, why = 'spring') {
+  if (!AXIS_KEYS.includes(key)) return { changed: false, skipped: 'unknown-axis' }
+  if (isManualAxis(key)) return { changed: false, skipped: 'manual-axis' }
+  const cur = axisRows(db, aid)[key]
+  if (cur.origin === 'manual') return { changed: false, skipped: 'manual' }
+  const v = Math.round(num(value, cur.value) * 1000) / 1000
+  if (Math.abs(v - cur.value) < 0.0005) return { changed: false, skipped: 'noop' }
+  return writeAxis(db, aid, key, v, 'auto', why)
 }
 
 /**

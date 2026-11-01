@@ -75,6 +75,3 @@ export function similarity(query, text) {
 }
 
 /** 指纹分 → 证据分的折算：完全同句 1.0 → 0.6；共享一半以上的用字 → 过 S3 门。 */
-export function fingerprintEvidence(query, text) {
-  return Math.round(clamp01(similarity(query, text) * 0.6) * 1e4) / 1e4
-}

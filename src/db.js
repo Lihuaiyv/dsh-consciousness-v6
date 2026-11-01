@@ -131,13 +131,6 @@ CREATE TABLE IF NOT EXISTS relations(
 CREATE TABLE IF NOT EXISTS persona_values(
   agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.1, evidence TEXT,
   updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key));
--- 世界观 / 人生观：连续维 ∈[0,1]，初值 0.5，不要求 Σ=1（与 Schwartz 价值观不同）
-CREATE TABLE IF NOT EXISTS persona_worldview(
-  agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
-  updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key));
-CREATE TABLE IF NOT EXISTS persona_lifeview(
-  agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
-  updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key));
 CREATE TABLE IF NOT EXISTS preferences(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, tag TEXT NOT NULL, aversion REAL NOT NULL DEFAULT 0.0,
   origin TEXT NOT NULL DEFAULT 'auto', created_at TEXT NOT NULL);
@@ -172,8 +165,7 @@ CREATE TABLE IF NOT EXISTS chat_turns(
 CREATE INDEX IF NOT EXISTS idx_chat_agent ON chat_turns(agent_id, created_at);
 CREATE TABLE IF NOT EXISTS proactive(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, text TEXT NOT NULL, reason TEXT,
-  dim TEXT, state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, delivered_at TEXT,
-  session_id TEXT);
+  dim TEXT, state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, delivered_at TEXT);
 CREATE TABLE IF NOT EXISTS bindings(
   session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS flags(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -196,8 +188,7 @@ CREATE TABLE IF NOT EXISTS agent_bindings(
 CREATE TABLE IF NOT EXISTS thoughts(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
   self_text TEXT, other_text TEXT, world_text TEXT, want_text TEXT,
-  other_label TEXT, source TEXT NOT NULL DEFAULT 'model', created_at TEXT NOT NULL,
-  payload TEXT);
+  other_label TEXT, source TEXT NOT NULL DEFAULT 'model', created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_thoughts_agent ON thoughts(agent_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS persona_views(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, text TEXT NOT NULL,
@@ -217,15 +208,13 @@ CREATE INDEX IF NOT EXISTS idx_raw_session ON raw_turns(session_id, seq);
 CREATE VIRTUAL TABLE IF NOT EXISTS raw_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
 
 -- T2 纪要层（温）：一次会话 / 一天的压缩，日记的原料。
--- seg：同会话多段（静默切段 / 轮次窗）；旧库 openDb 补列。
 CREATE TABLE IF NOT EXISTS episodes(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, session_id TEXT, day TEXT NOT NULL,
-  seg INTEGER NOT NULL DEFAULT 0,
   start_at TEXT, end_at TEXT, turns INTEGER NOT NULL DEFAULT 0,
-  title TEXT, summary TEXT, topics TEXT, beats TEXT, mood TEXT, open_loops TEXT,
+  title TEXT, summary TEXT, topics TEXT, mood TEXT, open_loops TEXT,
   importance REAL NOT NULL DEFAULT 0.5, hits INTEGER NOT NULL DEFAULT 0,
   last_hit_at TEXT, source TEXT NOT NULL DEFAULT 'rules', created_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ep_uniq ON episodes(agent_id, session_id, day, seg);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ep_uniq ON episodes(agent_id, session_id, day);
 
 -- T3 日记层（温偏冷）：一天一篇，第一人称，可重建不覆盖。
 CREATE TABLE IF NOT EXISTS diaries(
@@ -251,15 +240,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_fa_mem ON fact_archive(agent_id, memory_id
 CREATE INDEX IF NOT EXISTS idx_fa_agent ON fact_archive(agent_id, created_at DESC);
 CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
 
--- G1 时效索引（只追加、无正文）：记每条记忆何时出生 / 改写 / 作废 / 复活 / 争议 / 隐藏。
--- 回答「某天当时什么算数」；正文一律从 fact_archive / raw_turns 取。只有硬删、整删、回滚会删行。
-CREATE TABLE IF NOT EXISTS memory_timeline(
-  seq INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, memory_id TEXT NOT NULL,
-  op TEXT NOT NULL, at TEXT NOT NULL, valid_from TEXT, reason TEXT, cause_id TEXT,
-  text_ref TEXT, actor TEXT, approx INTEGER NOT NULL DEFAULT 0);
-CREATE INDEX IF NOT EXISTS idx_tl_mem ON memory_timeline(agent_id, memory_id, seq);
-CREATE INDEX IF NOT EXISTS idx_tl_at ON memory_timeline(agent_id, at);
-
 -- 检索回放日志：每次召回一行，用来调阈值（scene / 候选数 / 过门数 / 注入量 / 耗时）。
 -- 只用于观测，不进任何召回路径；默认留 30 天。
 CREATE TABLE IF NOT EXISTS retrieval_log(
@@ -268,6 +248,32 @@ CREATE TABLE IF NOT EXISTS retrieval_log(
   counts TEXT, kept TEXT, dropped TEXT,
   items INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, ms INTEGER);
 CREATE INDEX IF NOT EXISTS idx_rlog_agent ON retrieval_log(agent_id, at DESC);
+
+-- 开环：还没闭合的事（答应过的 / 要提醒的 / 没做完的）。
+-- 它不参与召回打分，也不受相关度门控：到期或久未提及，就自己浮上来一条。
+CREATE TABLE IF NOT EXISTS open_loops(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'task', text TEXT NOT NULL,
+  memory_id TEXT, source_turn_id TEXT,
+  due_at TEXT, stale_after TEXT,
+  state TEXT NOT NULL DEFAULT 'open',
+  fired_at TEXT, fire_count INTEGER NOT NULL DEFAULT 0,
+  closed_at TEXT, closed_by TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_loop_open ON open_loops(agent_id, state, due_at);
+CREATE INDEX IF NOT EXISTS idx_loop_mem ON open_loops(agent_id, memory_id);
+
+-- 反思游标：这一窗新记忆的 importance 累加。到阈值就把流水账压成一条「结论」。
+CREATE TABLE IF NOT EXISTS reflect_cursor(
+  agent_id TEXT PRIMARY KEY, acc REAL NOT NULL DEFAULT 0,
+  window_start TEXT, last_reflect_at TEXT, updated_at TEXT NOT NULL);
+
+-- 浮现观测：每轮注入了哪几条、回复里用没用上。只做观测，不进召回路径。
+CREATE TABLE IF NOT EXISTS surfaced_items(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  memory_id TEXT, kind TEXT NOT NULL DEFAULT 'related', text TEXT NOT NULL,
+  at TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0, used_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_surf_agent ON surfaced_items(agent_id, at DESC);
 
 -- 实体：人名 / 物件 / 项目。用来把「同一件事的不同说法」并到一起（「美式」和「咖啡」）。
 CREATE TABLE IF NOT EXISTS entities(
@@ -511,12 +517,28 @@ export function openDb(file) {
     total REAL NOT NULL DEFAULT 0, slow_at TEXT, fast_at TEXT);`)
   // 快情绪的时间锚：两次评价隔了多久，快情绪就按这个间隔自己退（不是一句话直接归零）
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN fast_at TEXT') } catch { /* 已存在 */ }
+  // 累积负荷：底色的第三层（日节律之外）。被慢情绪的持续偏离拖走一点，几天代谢回来。
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN base_off REAL DEFAULT 0') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN base_off_at TEXT') } catch { /* 已存在 */ }
   // 底色段表：一行一段，不靠 tick 累积
   db.exec(`CREATE TABLE IF NOT EXISTS affect_baseline(
     agent_id TEXT NOT NULL, seg_no INTEGER NOT NULL,
     started_at TEXT NOT NULL, duration_h REAL NOT NULL,
     from_val REAL NOT NULL, to_val REAL NOT NULL,
     seed TEXT NOT NULL, PRIMARY KEY(agent_id, seg_no));`)
+  // 空闲心跳的浮现队列：心跳只产候选，注入时最多取一条。
+  // 故意不升 schema 号：沿用 proactive_decisions 的做法，在 openDb 里补建。
+  db.exec(`CREATE TABLE IF NOT EXISTS surface_queue(
+    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, memory_id TEXT NOT NULL,
+    reason TEXT, state TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL, expires_at TEXT);`)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sq_agent ON surface_queue(agent_id, state, created_at)')
+  // 三观引擎：只增账本 + 投影缓存。开关（sangguan.enabled）关闭时只是空表，不影响其他模块。
+  try {
+    ensureSangguanSchema(db)
+  } catch (e) {
+    console.warn('[sangguan] 建表跳过：', e && e.message)
+  }
   // 一次性迁移：0~1 的 mood → -1~1 的 slow / total（已有记录不覆盖）
   try {
     const stamp = now()
@@ -582,23 +604,14 @@ export function openDb(file) {
       model TEXT NOT NULL, vec BLOB NOT NULL, at TEXT NOT NULL)`)
     db.exec('CREATE INDEX IF NOT EXISTS idx_vec_agent ON memory_vec(agent_id)')
   } catch { /* 建表失败只影响向量通道 */ }
-  // 想法刷新快照：affect_label / address / rel_sig / mem_max_created
-  try { db.exec('ALTER TABLE thoughts ADD COLUMN payload TEXT') } catch { /* 已存在 */ }
   // 日记带上写作时的状态快照（口吻解释 / 前端联动展示）
   try { db.exec('ALTER TABLE diaries ADD COLUMN context TEXT') } catch { /* 已存在 */ }
   // 补写标记：写作时已经不是那一天了（关机 / 休眠错过 23:00，下次打开补的）
   try { db.exec('ALTER TABLE diaries ADD COLUMN late INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
-  // E0 纪要多段：seg + beats；唯一键从 (agent,session,day) 升为含 seg
-  try { db.exec('ALTER TABLE episodes ADD COLUMN seg INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
-  try { db.exec('ALTER TABLE episodes ADD COLUMN beats TEXT') } catch { /* 已存在 */ }
-  try { db.exec('DROP INDEX IF EXISTS idx_ep_uniq') } catch { /* ignore */ }
-  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_ep_uniq ON episodes(agent_id, session_id, day, seg)') } catch { /* ignore */ }
   // 主动开口的结局追踪：回答 / 被忽略 / 回答时间
   try { db.exec('ALTER TABLE proactive ADD COLUMN answered INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE proactive ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE proactive ADD COLUMN answered_at TEXT') } catch { /* 已存在 */ }
-  // P4：投递绑会话，settle 只结本会话，不全表刷
-  try { db.exec('ALTER TABLE proactive ADD COLUMN session_id TEXT') } catch { /* 已存在 */ }
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS proactive_stats(
       agent_id TEXT NOT NULL, dim TEXT NOT NULL,
@@ -636,50 +649,6 @@ export function openDb(file) {
   } catch (e) {
     console.warn('[persona] big5 → axis 迁移跳过：', e && e.message)
   }
-  // 变更原因别塞进「回滚时间」列：老代码把 why 写进 changes.rolled_back_at，
-  // 统计侧（selfmod 回滚率 / proxies 近期损伤）一看到这列有字就当「被撤销」。
-  // 现在原因单独一表；历史脏值搬出来、时间列还原成 NULL。跑多次幂等。
-  try {
-    db.exec(`CREATE TABLE IF NOT EXISTS change_reasons(
-      change_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, why TEXT, at TEXT NOT NULL)`)
-    const isStamp = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)
-    const dirty = db.prepare('SELECT id,agent_id,rolled_back_at FROM changes WHERE rolled_back_at IS NOT NULL').all()
-    const insReason = db.prepare('INSERT OR REPLACE INTO change_reasons VALUES(?,?,?,?)')
-    const clear = db.prepare('UPDATE changes SET rolled_back_at=NULL WHERE id=?')
-    for (const r of dirty) {
-      if (isStamp(r.rolled_back_at)) continue
-      try { insReason.run(r.id, r.agent_id, String(r.rolled_back_at).slice(0, 200), now()) } catch { /* 原因表写不进去也别挡开库 */ }
-      try { clear.run(r.id) } catch { /* ignore */ }
-    }
-  } catch (e) {
-    console.warn('[changes] 原因列清洗跳过：', e && e.message)
-  }
-  // persona.values.* 老写法 → persona_values 真表；认不出（含废弃的 values.weight）的死行删掉。
-  // 以前只有「导入」时迁，老实例的 values.weight 一直留着；这里每次开库扫一遍，幂等。
-  try {
-    const VKEYS = ['benevolence', 'universalism', 'selfDirection', 'security', 'tradition', 'conformity', 'achievement', 'hedonism', 'stimulation', 'power']
-    const VLABELS = { 仁善: 'benevolence', 普世: 'universalism', 自主: 'selfDirection', 安全: 'security', 传统: 'tradition', 从众: 'conformity', 成就: 'achievement', 享乐: 'hedonism', 刺激: 'stimulation', 权力: 'power' }
-    const resolve = (p) => {
-      const bare = String(p || '').replace(/^values\./, '')
-      return VKEYS.includes(bare) ? bare : (VLABELS[bare] || null)
-    }
-    const rows = db.prepare("SELECT agent_id,path,value FROM persona WHERE path LIKE 'values.%'").all()
-    const put = db.prepare('INSERT OR REPLACE INTO persona_values VALUES(?,?,?,?,?)')
-    const del = db.prepare('DELETE FROM persona WHERE agent_id=? AND path=?')
-    for (const r of rows) {
-      const key = resolve(r.path)
-      let raw = r.value
-      try { raw = JSON.parse(r.value) } catch { /* 原样 */ }
-      const w = Number(raw)
-      if (key && Number.isFinite(w)) {
-        const weight = Math.max(0, Math.min(1, w))
-        try { put.run(r.agent_id, key, weight, JSON.stringify([{ kind: 'migrate', text: 'persona.' + r.path, value: weight }]), now()) } catch { continue }
-      }
-      try { del.run(r.agent_id, r.path) } catch { /* ignore */ }
-    }
-  } catch (e) {
-    console.warn('[persona] values.* 迁移跳过：', e && e.message)
-  }
   // 出生初值调整：E/I 从 0.50 → 0.60（其余仍 0.50）。
   // 只碰「从没漂过」的 auto 0.5，不覆盖有经历痕迹的实例；跑多次幂等。
   try {
@@ -695,6 +664,13 @@ export function openDb(file) {
       AND NOT EXISTS (SELECT 1 FROM changes WHERE agent_id=persona.agent_id AND field='persona.axis.sensitivity')`).run()
   } catch (e) {
     console.warn('[persona] 敏感度初值调整跳过：', e && e.message)
+  }
+  // 敏感度退役成「手动挡」：它只有「被刺→更敏感」一条正向通路、没有反向证据，自动挡下必然一路爬。
+  // 老实例的 origin 还是 auto，这里统一收成 manual，界面上才不会写着「自动」却一直不动。
+  try {
+    db.prepare("UPDATE persona SET origin='manual' WHERE path='axis.sensitivity' AND origin='auto'").run()
+  } catch (e) {
+    console.warn('[persona] 敏感度改手动挡跳过：', e && e.message)
   }
   // 关系动力学 v1：习惯化计数（同一个人、同一类事反复来 → 冲击递减）。
   // 只存计数，不存结论；结论在 rel_person 三轴上，随时可从账本重放。
@@ -720,37 +696,51 @@ export function openDb(file) {
       ref_id TEXT, at TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0)`)
     db.exec('CREATE INDEX IF NOT EXISTS idx_axev ON axis_evidence(agent_id, axis, at DESC, used)')
   } catch { /* 证据表失败只影响轴漂移，不影响主流程 */ }
-  // P2：默认 retrieve 切到 v3。已有 agent_params 覆盖的不动；从没写过的实例落一行 v3（幂等）。
+  // 性格四轴「拔河」：左右各一个拉力池，证据只进池，池子明显偏了才推轴（v2）。
+  // src 存「按来源分桶」的原始力气（JSON）：flush 时先按来源算净力、再乘各来源权重——
+  // 不这样的话 reply 一天几百条会把 user_style(1.2) / 情绪(0.25) 这些权重全淹掉。
   try {
-    const stamp = now()
-    const has = db.prepare("SELECT 1 AS o FROM agent_params WHERE agent_id=? AND key='memory.retrieve.formula'")
-    const ins = db.prepare('INSERT INTO agent_params(agent_id,key,value,updated_at) VALUES(?,?,?,?)')
-    for (const a of db.prepare('SELECT id FROM agents').all()) {
-      if (has.get(a.id)) continue
-      ins.run(a.id, 'memory.retrieve.formula', 'v3', stamp)
-    }
-  } catch (e) {
-    console.warn('[retrieve] 默认 v3 迁移跳过：', e && e.message)
-  }
-  // schema 12：三观补世界观 / 人生观表（老库 CREATE IF NOT EXISTS 已覆盖；此处只抬版本号）
+    db.exec(`CREATE TABLE IF NOT EXISTS axis_rope(
+      agent_id TEXT NOT NULL, axis TEXT NOT NULL,
+      pos REAL NOT NULL DEFAULT 0, pos_n INTEGER NOT NULL DEFAULT 0, pos_s REAL NOT NULL DEFAULT 0,
+      neg REAL NOT NULL DEFAULT 0, neg_n INTEGER NOT NULL DEFAULT 0, neg_s REAL NOT NULL DEFAULT 0,
+      base REAL NOT NULL DEFAULT 0.5,
+      at TEXT NOT NULL, base_at TEXT, src TEXT,
+      PRIMARY KEY(agent_id, axis))`)
+    try { db.exec('ALTER TABLE axis_rope ADD COLUMN src TEXT') } catch { /* 已存在 */ }
+  } catch { /* 拉力池表失败时退回旧逻辑（flush 会自己判断） */ }
+  // 性格证据的「第二判」队列：词表拿不准的那一轮先排队，夜间交给模型判，
+  // 判出来的结果还要过一遍原文核对（quote 必须在她的回复里逐字出现）。
   try {
-    db.exec(`CREATE TABLE IF NOT EXISTS persona_worldview(
-      agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
-      updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key))`)
-    db.exec(`CREATE TABLE IF NOT EXISTS persona_lifeview(
-      agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
-      updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key))`)
-  } catch (e) {
-    console.warn('[schema12] worldview/lifeview 跳过：', e && e.message)
-  }
-  // 三观引擎：只增账本 + 投影缓存。开关（sangguan.enabled）关闭时只是空表，不影响其他模块。
-  try { ensureSangguanSchema(db) } catch (e) {
-    console.warn('[sangguan] 建表跳过：', e && e.message)
-  }
+    db.exec(`CREATE TABLE IF NOT EXISTS persona_judge(
+      id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, turn_id TEXT,
+      user_text TEXT, reply_text TEXT, at TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'pending', reason TEXT,
+      verdict TEXT, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL)`)
+    db.exec('CREATE INDEX IF NOT EXISTS idx_pjudge ON persona_judge(agent_id, state, at DESC)')
+    // refs：这一轮词表已经下了哪几条弱证据（JSON 数组）；模型不认就把它们撤掉
+    try { db.exec('ALTER TABLE persona_judge ADD COLUMN refs TEXT') } catch { /* 已存在 */ }
+  } catch { /* 判定队列失败只影响第二判 */ }
+  // 每周情境探针：只做校准，不进拉力池
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS persona_probe(
+      agent_id TEXT NOT NULL, week TEXT NOT NULL, at TEXT NOT NULL,
+      n INTEGER NOT NULL DEFAULT 0, counts TEXT, agree REAL,
+      PRIMARY KEY(agent_id, week))`)
+  } catch { /* 探针表失败不影响判定 */ }
+  try {
+    const cols = db.prepare('PRAGMA table_info(axis_evidence)').all().map((c) => String(c.name))
+    if (!cols.includes('pole')) db.exec('ALTER TABLE axis_evidence ADD COLUMN pole TEXT')
+    if (!cols.includes('w')) db.exec('ALTER TABLE axis_evidence ADD COLUMN w REAL')
+    // 为什么算这条证据（人话），界面/排查要看，不然只有数字没法问「凭什么」
+    if (!cols.includes('why')) db.exec('ALTER TABLE axis_evidence ADD COLUMN why TEXT')
+    // 弱证据（靠长度、靠单个数字这类）打标记：复核时模型不认就撤票
+    if (!cols.includes('weak')) db.exec('ALTER TABLE axis_evidence ADD COLUMN weak INTEGER DEFAULT 0')
+  } catch { /* 老库补列失败不影响写入（写入时会再试） */ }
   const row = db.prepare('SELECT version FROM schema_meta').get()
-  // schema 12：世界观 + 人生观；11 = 行动层
-  if (!row) db.prepare('INSERT INTO schema_meta(version) VALUES(12)').run()
-  else db.prepare('UPDATE schema_meta SET version=12').run()
+  // schema 11：行动层（action_config / research_seen / research_runs），关系域仍是 schema 10 的投影
+  if (!row) db.prepare('INSERT INTO schema_meta(version) VALUES(11)').run()
+  else db.prepare('UPDATE schema_meta SET version=11').run()
   return db
 }
 
@@ -771,20 +761,8 @@ export function recover(db) {
     try {
       const p = JSON.parse(r.payload)
       if (r.op === 'insert_memory' && p.memory_id) {
-        const mid = p.memory_id
-        db.prepare('DELETE FROM memory_items WHERE id=?').run(mid)
-        try { db.prepare('DELETE FROM memory_fts WHERE id=?').run(mid) } catch { /* ignore */ }
-        // 顺带清存根 / 向量 / 图边，别留下半截写入
-        try {
-          const pre = mid + ':'
-          db.prepare('DELETE FROM fact_fts WHERE id IN (SELECT id FROM fact_archive WHERE memory_id=? OR substr(memory_id,1,?)=?)').run(mid, pre.length, pre)
-          db.prepare('DELETE FROM fact_archive WHERE memory_id=? OR substr(memory_id,1,?)=?').run(mid, pre.length, pre)
-        } catch { /* 老库 */ }
-        try { db.prepare('DELETE FROM memory_timeline WHERE memory_id=?').run(mid) } catch { /* 老库 */ }
-        try { db.prepare('DELETE FROM memory_vec WHERE memory_id=?').run(mid) } catch { /* 老库 */ }
-        try {
-          db.prepare('DELETE FROM memory_links WHERE from_id=? OR to_id=?').run(mid, mid)
-        } catch { /* 老库 */ }
+        db.prepare('DELETE FROM memory_items WHERE id=?').run(p.memory_id)
+        db.prepare('DELETE FROM memory_fts WHERE id=?').run(p.memory_id)
       }
     } catch { /* 损坏的 intent 直接标记回滚 */ }
     db.prepare("UPDATE journal SET state='rolled_back' WHERE seq=?").run(r.seq)

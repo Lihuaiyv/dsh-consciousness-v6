@@ -16,50 +16,47 @@ import path from 'node:path'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
 import { attachHostLlm } from './src/model.js'
-import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, affectLabels, applyDriverToDrive, getProactivePrefs, autoGrowPreferences } from './src/features.js'
-import { nid, purgeExpired, appraise, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraftTaxonomy, maybeDraft, TARGET_IDS, listDrafts, latestUserEmotion } from './src/core.js'
+import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences } from './src/features.js'
+import { nid, purgeExpired, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraft, TARGET_IDS, latestUserEmotion } from './src/core.js'
 import { seedRuleBindings } from './src/modules/artifacts.js'
-import { readViews } from './src/modules/sangguan/bridge.js'
-import { readAxes } from './src/modules/traits.js'
+import { DIMS } from './src/modules/values.js'
+import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
-import { expressionFrom, expressionLine } from './src/algo/expression.js'
-import { mannerLine } from './src/algo/manner.js'
-import { leansFromMeter, matchStance } from './src/algo/stance.js'
-import { speakTurn, selfInquiry } from './src/modules/sangguan/speak.js'
-import { getAffect } from './src/modules/affect.js'
+import { expressionState } from './src/modules/expression_state.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
-import { appendTurn, buildEpisode, recentDiaryLines, migrateArchive, backfillFactArchive, recomputeRawDays } from './src/modules/archive.js'
+import { appendTurn, buildEpisode, recentDiaryLines, migrateArchive, backfillFactArchive, sessionBridge } from './src/modules/archive.js'
 import { pushTurn, hydrateFromRaw } from './src/modules/buffer.js'
 import { retrieve, contextualQuery } from './src/modules/retrieve.js'
 import { prefetchExpand, takeExpansion } from './src/modules/expand.js'
 import { prefetchEmbedding, takeEmbedding } from './src/modules/vector.js'
 import { backfillEntities } from './src/modules/entities.js'
 import { packInjection, oneLine } from './src/modules/pack.js'
-import { asofInjectItems } from './src/modules/asof.js'
+import { loopLineFor, markLoopsFired, expireLoops } from './src/modules/loops.js'
+import { recordSurfaced, markSurfacedUsed } from './src/modules/surfacing.js'
+import { surfaceQueueTick, takeSurface } from './src/modules/pulse.js'
+import { applySelfRead } from './src/modules/self_read.js'
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { enqueueExtraction, tickExtraction } from './src/modules/extract_queue.js'
 import { tickEscalation } from './src/modules/conflict.js'
+import { runNightly, dueDiaryDays, hasDiaryMaterial } from './src/modules/nightly.js'
+import { readViews } from './src/modules/sangguan/bridge.js'
+import { speakTurn, selfInquiry } from './src/modules/sangguan/speak.js'
 import { afterTurn as sangguanAfterTurn } from './src/modules/sangguan/fast.js'
 import { promptHook as sangguanPrompt } from './src/modules/sangguan/inject.js'
-import { runNightly, localDay, dueDiaryDays, hasDiaryMaterial } from './src/modules/nightly.js'
 import { ensureHeatBootstrapped, touch } from './src/modules/tiers.js'
-import { ensureTimelineBootstrapped } from './src/modules/timeline.js'
 import { model } from './src/kernel.js'
 import * as R from './src/modules/relations.js'
 import { enqueueRelationRead, tickRelationRead } from './src/modules/relations_extract.js'
 import { moodValenceOf } from './src/modules/affect.js'
-import { AFFECT_CN } from './src/modules/selfview.js'
 import { createActionTools, attachActionDeps } from './src/modules/actions/index.js'
 
-// 情绪注入的人话化：数字只给分档，避免「强度 0.36」这种模型用不上的假精度
-const emotionWord = (v) => (Number(v) >= 0.66 ? '强' : Number(v) >= 0.33 ? '中' : '弱')
-const moodWord = (v) => (Number(v) >= 0.2 ? '偏正面' : Number(v) <= -0.2 ? '偏负面' : '中性')
-const baselineWord = (v) => (Number(v) >= 0.2 ? '偏亮' : Number(v) <= -0.15 ? '略低' : '平稳')
+// 情绪注入的人话化交给 modules/expression_state.js（第一人称感受 + 软愿望），
+// 这里不再保留「强度 / 心情 / 底色」的数字分档函数。
 
 // 必须与 package.json / cordis.patch.yml 的包名一致，否则 loader 挂载异常。
 export const name = 'dsh-consciousness-v6'
@@ -128,7 +125,6 @@ function ensureDb() {
     applyActiveRules(db)
     // 分层记忆：老库补一次热度；顺手把最近三天缺的日记补上（后台，失败不影响启动）
     try { ensureHeatBootstrapped(db) } catch { /* 热度补齐失败下次再来 */ }
-    try { ensureTimelineBootstrapped(db) } catch { /* 时效索引补录失败下次再来 */ }
     setTimeout(() => {
       try {
         // 补数据不挑 status：paused 的也要补（paused 只是不主动开口，不是不存在）
@@ -136,10 +132,6 @@ function ensureDb() {
         if (!aid) return
         const migrated = migrateArchive(db, aid)
         if (migrated) __probe('archive-migrated n=' + migrated)
-        try {
-          const fixed = recomputeRawDays(db, aid)
-          if (fixed) __probe('raw-day-local-fixed n=' + fixed)
-        } catch { /* 日界回填失败下次再来 */ }
         const archived = backfillFactArchive(db, aid)
         if (archived) __probe('fact-archive-backfilled n=' + archived)
         // 实体路回填：按放宽后的规则把已有记忆重新认一遍实体（一次就够，之后靠增量）
@@ -270,6 +262,8 @@ function startMaintenance() {
         for (const tid of TARGET_IDS) { try { maybeDraft(ensureDb(), r.id, tid) } catch { /* 单目标起草失败跳过 */ } }
         try { applyDriverToDrive(ensureDb(), r.id) } catch { /* 驱动推缺口失败跳过 */ }
         try { pulseDriveFromSignals(ensureDb(), r.id) } catch { /* 事件脉冲失败跳过 */ }
+        // 空闲心跳：不调模型，只给「自己浮上来」补候选（下一轮注入时最多取一条）
+        try { surfaceQueueTick(ensureDb(), r.id) } catch { /* 心跳失败跳过 */ }
         try { tickOneShadow(ensureDb()) } catch { /* 影子推进失败跳过 */ }
       }
     } catch { /* ignore */ }
@@ -292,45 +286,57 @@ function str(row, path, d = '') {
 
 /** 一段可读的意识体自述，直接进系统提示。 */
 export const recentRecall = new Map()
-/** 这一轮碰上的那一句做法。60 秒内有效，和小召回同一拍。 */
-export const recentSpeak = new Map()
 
-function turnSpeak(db, aid, q) {
-  let spoken = { line: '', summary: '' }
-  try { spoken = speakTurn(db, aid, q) || spoken } catch { spoken = { line: '', summary: '' } }
-  if (spoken.line) return spoken.line
+/** 开环那一行：六十秒内复用，避免同一次系统提示被调多次时重复记账。 */
+const loopCache = new Map()
+/** 自发浮现也一分钟内复用：一次对话里模型可能多次拼提示，别把队列抽干。 */
+const spontaneousCache = new Map()
+
+/** 该浮现的开环（一条），并记一次「提过」。 */
+export function surfaceLoopLine(db, aid) {
+  if (String(getParam(db, aid, 'memory.float.enable') || 'on') === 'off') return ''
+  const c = loopCache.get(aid)
+  if (c && Date.now() - c.at < 60000) return c.text
+  let text = ''
   try {
-    const views = readViews(db, aid)
-    const hit = matchStance(q, leansFromMeter({
-      world: views.W && views.W.items,
-      life: views.L && views.L.items,
-      values: views.V && views.V.items,
-    }))
-    if (hit && hit.line) return hit.line + '。'
-  } catch { /* 仪表读不到就只看自传 */ }
-  if (selfInquiry(q) && spoken.summary) return spoken.summary
-  return ''
+    const lim = Math.max(1, Math.min(3, Number(getParam(db, aid, 'memory.float.loop')) || 1))
+    const th = Math.max(1, Math.min(72, Number(getParam(db, aid, 'memory.float.loop.throttle')) || 6))
+    const L = loopLineFor(db, aid, { limit: lim, throttleHours: th })
+    if (L.ids.length) {
+      markLoopsFired(db, L.ids)
+      text = '（你自己心里还挂着的事，可以自然提起，不用解释来源）：\n' + L.text
+      expireLoops(db, aid)
+    }
+  } catch { text = '' }
+  loopCache.set(aid, { at: Date.now(), text })
+  return text
 }
 
-function consciousnessBlock(db, aid) {
+export function consciousnessBlock(db, aid) {
   const a = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
   if (!a || a.status === 'soft_deleted') return ''
   let persona = []
   try { persona = db.prepare('SELECT path,value FROM persona WHERE agent_id=?').all(aid) } catch { /* 老库 */ }
-  // 与面板同一套读权威（含 AXIS_DEFAULTS）；禁止手扫 axis.* / 另兜 0.5
-  let axisVals = { ei: 0.6, sn: 0.5, tf: 0.5, jp: 0.5, sensitivity: 0.8 }
-  try { axisVals = readAxes(db, aid) } catch { /* 老库 */ }
-  // 与面板 / API 同一套「此刻」读数（含衰减），别直接 SELECT 库里的峰值
-  let affect = null
-  try { affect = getAffect(db, aid) } catch { /* 还没情绪数据 */ }
-  // 整体心情 = 慢情绪 valence；关系温度同源映射到 0~1
-  let moodValence = 0
-  try { moodValence = moodValenceOf(db, aid) } catch {
-    moodValence = affect && affect.v3 && Number.isFinite(Number(affect.v3.slow))
-      ? Number(affect.v3.slow) : 0
+  const axisVals = {}
+  for (const x of persona) {
+    if (!x.path.startsWith('axis.')) continue
+    const v = Number(x.value)
+    if (Number.isFinite(v)) axisVals[x.path.slice(5)] = v
   }
+  const axesLine = Object.keys(axisVals).length ? axisWords(axisVals) : ''
+  // MBTI 四字母：AI 自己也得看得见，不然界面上写着 ENTJ、脑子里却只有「偏外向·偏情感·敏感」。
+  let mbtiLine = ''
+  try { mbtiLine = mbtiPrompt(db, aid) } catch { mbtiLine = '' }
+  const affect = db.prepare('SELECT * FROM affect_state WHERE agent_id=?').get(aid)
+  try {
+    const v3 = db.prepare('SELECT * FROM affect_v3 WHERE agent_id=?').get(aid)
+    if (affect && v3) affect.v3 = v3
+  } catch { /* 老库没有 v3 表 */ }
   const drive = db.prepare('SELECT * FROM drive_state WHERE agent_id=?').get(aid)
   const taboos = db.prepare('SELECT text,level FROM taboos WHERE agent_id=?').all(aid)
+  let vals = []
+  try { vals = db.prepare('SELECT key,weight FROM persona_values WHERE agent_id=? ORDER BY weight DESC LIMIT 3').all(aid) } catch { /* 老库还没有价值观 */ }
+  // 三观：世界观 / 人生观 / 价值观三行；开关关闭时是旧维度折算的那三行
   let worldLine = ''
   let lifeLine = ''
   let valLine = ''
@@ -356,33 +362,46 @@ function consciousnessBlock(db, aid) {
   const mem = db.prepare("SELECT text FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY heat DESC, weight DESC, created_at DESC LIMIT 10").all(aid)
   const dyn = recentRecall.get(aid)
   const dynText = dyn && Date.now() - dyn.at < 60000 ? dyn.text : ''
-  const said = recentSpeak.get(aid)
-  const speakLine = said && Date.now() - said.at < 60000 ? said.line : ''
   // T3 日记层：只带最近两天，压成两行；它是叙事，不占“相关记忆”的名额。
   let diaryLines = []
   try { diaryLines = recentDiaryLines(db, aid, 2, 160) } catch { diaryLines = [] }
+  // 开环：心里的「还挂着」。它不参与相关度，到了时候或者久没提就自己冒出来一条。
+  const loopText = surfaceLoopLine(db, aid)
+  // 会话续接：隔天再来的时候，先说一句「上次到哪儿」。同一天的事上下文里本来就有，不重复。
+  let bridgeText = ''
+  try { bridgeText = sessionBridge(db, aid) } catch { bridgeText = '' }
+
+  // 自己浮上来：心跳排的候选，最多取一条。它不一定跟这一轮的话有关——
+  // 人本来就会说着说着想起别的事。先取，再拼记忆块，免得同一条占两个名额。
+  let spontaneousLine = ''
+  let spontaneousText = ''
+  try {
+    const cached = spontaneousCache.get(aid)
+    if (cached && Date.now() - cached.at < 60000) {
+      spontaneousLine = cached.text
+      spontaneousText = cached.text
+    } else {
+      const sp = takeSurface(db, aid)
+      if (sp && sp.text) {
+        const line = oneLine(sp.text, 60)
+        if (line) { spontaneousLine = line; spontaneousText = line }
+      }
+      spontaneousCache.set(aid, { at: Date.now(), text: spontaneousText })
+    }
+  } catch { spontaneousLine = '' }
 
   // 记忆块：优先用这一轮真召回的结果；没有就用热度兜底，但只留 4 条，每条压成一句。
-  const memText = dynText || (mem.length ? mem.slice(0, 4).map((m) => '- ' + oneLine(m.text, 60)).join('\n') : '')
+  // 兜底时剔掉刚浮上来的那条，避免同一件事说两遍。
+  const memFallback = mem.filter((m) => oneLine(m.text, 60) !== spontaneousText)
+  const memText = dynText || (memFallback.length ? memFallback.slice(0, 4).map((m) => '- ' + oneLine(m.text, 60)).join('\n') : '')
+  if (spontaneousText && memText.includes(spontaneousText)) spontaneousLine = ''
 
-  // 主动消息：push 开时只走 push 投递，注入不抢同一行（避免双份）。
-  // push 关：注入时原子 claim + delivered_at=now()。
   let proactiveLine = ''
   try {
-    let prefs = null
-    try { prefs = getProactivePrefs(db, aid) } catch { prefs = null }
-    if (!(prefs && prefs.push)) {
-      const pp = db.prepare("SELECT id,text FROM proactive WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT 1").get(aid)
-      if (pp) {
-        const at = now()
-        let claimed = 0
-        try {
-          claimed = Number(db.prepare(
-            "UPDATE proactive SET state='delivered', delivered_at=? WHERE id=? AND state='pending'",
-          ).run(at, pp.id).changes || 0)
-        } catch { claimed = 0 }
-        if (claimed) proactiveLine = pp.text
-      }
+    const pp = db.prepare("SELECT id,text FROM proactive WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT 1").get(aid)
+    if (pp) {
+      proactiveLine = pp.text
+      db.prepare("UPDATE proactive SET state='delivered', delivered_at=? WHERE id=?").run(now(), pp.id)
     }
   } catch { /* 老库没有这张表 */ }
 
@@ -393,23 +412,51 @@ function consciousnessBlock(db, aid) {
     userEmotion = latestUserEmotion(db, aid)
   } catch { userEmotion = null }
 
-  // 关系不再报数字。当前这个人收进说话那句；其余人只留名字。
-  let who = ''
-  let tone = null
-  if (rel[0]) {
-    who = rel[0].name || ''
-    tone = toneOf({
+  // 心情只认 v3 总情绪（-1~1）；mood(0~1) 只是它的换算式，两套数字到此为止。
+  const moodUnit = (() => {
+    const t = affect && affect.v3 && affect.v3.total != null ? Number(affect.v3.total) : null
+    if (Number.isFinite(t)) return 0.5 + 0.5 * Math.max(-1, Math.min(1, t))
+    const m = Number(affect && affect.mood)
+    return Number.isFinite(m) ? m : 0.5
+  })()
+  // 关系 → 表达（C7）：同一条关系，三轴不同，说话的温度/正式度/披露/主动就不同。
+  // 只给第一个人展开（当前对话对象），其余人保留数字，控制注入长度。
+  // 语气只有一个出口：expressionState（关系只提供温度，不决定句长）。
+  const relTone = rel.length
+    ? toneOf({
       closeness: rel[0].closeness,
       trust: rel[0].trust,
       kind: rel[0].kind || 'acquaintance',
-      mood: Math.max(0, Math.min(1, (moodValence + 1) / 2)),
-      extraversion: axisVals.ei,
+      mood: moodUnit,
+      extraversion: axisVals && axisVals.ei != null ? axisVals.ei : 0.6,
     })
-  }
-  const manner = mannerLine({ axes: axisVals, tone, who })
-  const others = rel.slice(1).map((r) => r.name).filter(Boolean)
-  const relLine = others.length ? '还认识：' + others.join('、') + '。' : ''
-  const askLine = sg.ask ? '合适时可以问一句：' + oneLine(sg.ask, 60) + '。别生硬，也别每轮都问。' : ''
+    : null
+  // 情绪注入的权重：0~1，默认 0.35（低权重 = 推测口吻，只当底子）。
+  // 想更强势就读实例参数 affect.inject.weight，别改代码。
+  const injectWeight = (() => {
+    const raw = Number(getParam(db, aid, 'affect.inject.weight'))
+    return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.35
+  })()
+  const expr = affect
+    ? expressionState({
+      affect,
+      relation: relTone
+        ? { ...relTone, closeness: rel[0].closeness, trust: rel[0].trust }
+        : null,
+      ei: axisVals && axisVals.ei != null ? axisVals.ei : 0.6,
+      weight: injectWeight,
+    })
+    : null
+  const relLine = rel.length
+    ? '关系：' + rel.map((r, i) => {
+      const n2 = (x) => Number(x || 0).toFixed(2)
+      const head = r.name + '（亲近 ' + n2(r.closeness) + ' / 信任 ' + n2(r.trust) + ' / 依赖 ' + n2(r.dependence)
+      if (i > 0) return head + '）'
+      return head + '；' + relTone.label + ' ' + relTone.warmth.toFixed(2)
+        + '，正式度 ' + relTone.formality.toFixed(2)
+        + '，可以说到 ' + Math.round(relTone.disclosure * 100) + '%，主动 ' + relTone.initiative.toFixed(2) + '）'
+    }).join('；') + '。'
+    : ''
 
   const lines = [
     // ① 身份（§8 注入顺序第 1 段）
@@ -419,30 +466,32 @@ function consciousnessBlock(db, aid) {
     str(persona, 'style.tone') ? '语气：' + str(persona, 'style.tone') + '。' : '',
     str(persona, 'style.address') ? '你称呼对方为「' + str(persona, 'style.address') + '」。' : '',
     str(persona, 'style.catchphrase') ? '口头禅：' + str(persona, 'style.catchphrase') + '。' : '',
-    // ② 关系：其余人只留名字。当前这个人的分寸在下面的「说话时」。
+    axesLine && axesLine !== '中间' ? '鱼格倾向：' + axesLine + '。' : '',
+    mbtiLine || '',
+    vals.length ? '你看重：' + vals.map((v) => ((DIMS.find((d) => d[0] === v.key) || [0, v.key])[1])).join('、') + '。' : '',
+    sg.worldLine ? '世界观：' + sg.worldLine + '。' : '',
+    sg.lifeLine ? '人生观：' + sg.lifeLine + '。' : '',
+    sg.valLine ? '价值观：' + sg.valLine + '。' : '',
+    sg.ask ? '合适时可以问一句：' + oneLine(sg.ask, 60) + '。别生硬，也别每轮都问。' : '',
+    // ② 关系（对谁、什么分寸）：第一个人带温度，其余人只留数字
     relLine,
-    // ③ 情绪（只说结论：标签 + 力度 + 心情/底色分档；具体行为交给下一行的「分寸」）
-    affect ? '此刻情绪：' + (AFFECT_CN[affect.primary_label] || affect.primary_label || '说不上来')
-      + '，力度' + emotionWord(affect.intensity)
-      + '；整体心情' + moodWord(moodValence)
-      + (affect.v3 && affect.v3.baseline != null ? '，底色' + baselineWord(affect.v3.baseline) : '') + '。' : '',
-    affect ? '这一轮的说话分寸：' + expressionLine(expressionFrom({
-      slow: moodValence,
-      intensity: Number(affect.intensity) || 0.4,
-      ei: Number(axisVals.ei),
-    })) + '。' : '',
-    manner ? '说话时：' + manner + '。' : '',
+    // ③ 情绪：只给「感觉现在大概…」的推测 + 一句软愿望。
+    //    不再有「说话分寸 + 语气偏冷」这种命令行——命令会让她照着演。
+    expr ? expr.felt : '',
+    expr ? '我想怎么说：' + expr.wish : '',
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
       + (userEmotion.raw_label ? '（我按你以前的纠正改的：我一开始读成' + userEmotion.raw_label + '）' : '')
       + '。只作共情参考，不要照搬成你自己的情绪。' : '',
     drive ? '需求缺口档位：' + drive.band + '。' : '',
     // ④ 记忆（≤5 条，带来源与时间）
-    speakLine || '',
-    askLine,
     proactiveLine ? '（你之前想主动说一句：' + proactiveLine + ' —— 如果时机合适，自然提起，不要解释这是提醒。）' : '',
     diaryLines.length ? '最近我自己写下的（日记，不是用户说的）：\n' + diaryLines.join('\n') : '',
+    bridgeText ? '（' + bridgeText + ' —— 如果自然，接着这个往下说，不用解释来源。）' : '',
+    loopText || '',
+    spontaneousLine ? '（你心里忽然浮上来的一件事，不一定是这一轮在说的；自然提起，不想提也别硬提）：\n- ' + spontaneousLine : '',
     (memText)
-      ? '关于这句话，你能想起的事（只引用相关的，不要编造，也不要全倒出来）：\n'
+      ? '关于这句话，你能想起的事（只引用相关的，不要编造，也不要全倒出来；'
+        + '带「一直记着的」「今天刚发生」的是你自己先想起来的，可以自然提起，不必解释来源）：\n'
         + memText
       : '你还没有关于对方的记忆。',
     '引用记忆时说「上次 / 你之前说过」；不确定就说「我可能记错」。',
@@ -478,15 +527,14 @@ function summarizeForDiary() {
 
 /** 冷层衍生：纪要与日记。都是后台，失败不影响对话。 */
 function narrativeAfterTurn(db, aid, sid) {
-  // 本地日历日，与 raw_turns.day / 夜巡日记对齐（禁止 now().slice(0,10) 的 UTC 日）
-  const day = localDay(new Date())
+  const day = now().slice(0, 10)
   const key = aid + ':' + sid
   const n = (narrativeTick.get(key) || 0) + 1
   narrativeTick.set(key, n)
   if (n % 6 === 0) {
     try { buildEpisode(db, aid, { session: sid, day }) } catch { /* 纪要失败下次再来 */ }
   }
-  // 日记交给每天 23:00（DSHC_DIARY_HOUR）的巩固 worker，不在对话热路径抢跑。
+  // 日记交给每天 10:00 的巩固 worker，不在第一条消息时抢跑。
 }
 
 function commitTurn(db, aid, sid) {
@@ -509,7 +557,7 @@ function commitTurn(db, aid, sid) {
     // 用户真的回了：把之前投递过的主动消息结账（回答/忽略的统计靠这个）
     // 主动推消息自己引发的那一轮不算「用户回了」，别把回复率刷高。
     if (!pushed) {
-      try { settleProactiveAnswered(db, aid, { sessionId: sid }) } catch { /* 统计失败不影响对话 */ }
+      try { settleProactiveAnswered(db, aid) } catch { /* 统计失败不影响对话 */ }
     }
     __probe('commit u=' + u.slice(0, 10) + ' aLen=' + aText.length + (pushed ? ' push-turn' : ''))
   } catch (e) { __probe('insert-err:' + (e && e.message)) }
@@ -530,6 +578,8 @@ function commitTurn(db, aid, sid) {
     Promise.resolve().then(async () => {
       let res = null
       try { res = await appraiseWithEdges(db, aid, u) } catch { /* 情绪失败不影响对话 */ }
+      // 回读：她刚说出来的那句跟当下慢情绪对一对，差得远才小步挪（不是一句话定情绪）
+      try { applySelfRead(db, aid, aText) } catch { /* 回读失败不影响对话 */ }
       if (learning) { try { learnFromTurn(db, aid, u, res) } catch { /* 学习失败不影响对话 */ } }
     }).catch(() => {})
     // 自动记忆开关：关掉之后这一轮不再自动抽出记忆 / 偏好；对话档案（原文）照旧落。
@@ -553,11 +603,10 @@ function commitTurn(db, aid, sid) {
 function captureTurn(db, aid, session, event) {
   if (!event || !session || !session.id) return
   const sid = String(session.id)
+  lastSessions.set(aid, { sid: session.id, at: Date.now() })
   // 事件名和 data 形状归宿主适配层管（host/dsh.js），这里只认「是谁说的」。
   const turn = readEvent(event)
   if (turn.kind === 'user') {
-    // 推送目标只认「最近有用户说话」的会话，别被工具步 / 助手事件抢走
-    lastSessions.set(aid, { sid: session.id, at: Date.now() })
     const t = cleanUserText(turn.text)
     if (t) {
       lastUser.set(sid, t)
@@ -584,6 +633,8 @@ function captureTurn(db, aid, session, event) {
   }
   const reply = turn.text
   if (!reply) return // 工具调用步没有正文，继续等
+  // 浮现观测：回复里有没有真的用上这几轮注入的记忆（十轮内只判一次）。
+  try { markSurfacedUsed(db, aid, reply) } catch { /* 观测失败不影响对话 */ }
   pendingReply.set(sid, reply)
   const old = commitTimers.get(sid)
   if (old) clearTimeout(old)
@@ -864,9 +915,7 @@ function hostSpec() {
           const qRaw = q
           if (q) q = contextualQuery(prevUser, q)
           if (q) {
-            try { recentSpeak.set(aid, { at: Date.now(), line: turnSpeak(d, aid, q) }) }
-            catch { recentSpeak.set(aid, { at: Date.now(), line: '' }) }
-            const mode = String(getParam(d, aid, 'memory.retrieve.formula') || 'v3')
+            const mode = String(getParam(d, aid, 'memory.retrieve.formula') || 'v2')
             const t0 = Date.now()
             if (mode === 'v3') {
               const lambda = Number(getParam(d, aid, 'memory.decay.lambda')) || 0.02
@@ -906,10 +955,22 @@ function hostSpec() {
                   opt.mood = moodValenceOf(d, aid)
                 } catch { /* 情绪拿不到就只走字面 */ }
               }
+              // 配额浮现：重要度锚点 / 24h 新近各留一席；off 时退回纯相关度。
+              if (String(getParam(d, aid, 'memory.float.enable') || 'on') === 'off') opt.float = false
+              else {
+                const na = Number(getParam(d, aid, 'memory.float.anchor'))
+                if (Number.isFinite(na)) opt.anchor = Math.max(0, Math.min(3, Math.round(na)))
+                const nf = Number(getParam(d, aid, 'memory.float.fresh'))
+                if (Number.isFinite(nf)) opt.fresh = Math.max(0, Math.min(3, Math.round(nf)))
+                const fh = Number(getParam(d, aid, 'memory.float.fresh_hours'))
+                if (Number.isFinite(fh) && fh > 0) opt.freshHours = Math.max(1, Math.min(720, Math.round(fh)))
+              }
               // 向量通道：查询向量在收到消息时就算好了，这里只等一小会儿；没有就只走词法。
               if (String(getParam(d, aid, 'memory.retrieve.vector') || 'auto') !== 'off') {
                 try {
-                  const qv = (await takeEmbedding(q, 150)) || (q !== qRaw ? await takeEmbedding(qRaw, 0) : null)
+                  // 等待上限走参数：bge-m3 冷启动经常超过原来的 150ms，等不到就白算一次向量。
+                  const vwait = Math.max(0, Math.min(3000, Number(getParam(d, aid, 'memory.retrieve.vector.wait')) || 400))
+                  const qv = (await takeEmbedding(q, vwait)) || (q !== qRaw ? await takeEmbedding(qRaw, 0) : null)
                   if (qv) opt.queryVec = qv
                 } catch { /* 向量失败不影响词法 */ }
               }
@@ -939,22 +1000,19 @@ function hostSpec() {
               }
               // 缓冲不再直接注入：运行时本来就把最近几轮给了模型，再塞一遍纯属重复占 token。
               // buffer 仍保留（重启重放、调试），只在 retrieve 内部当「没落盘的候选」用。
-              // G1：问句带过去时间（「上个月」「去年三月」）时补「那时」行；memory.asof.auto=off 时恒为空
-              try {
-                const ao = asofInjectItems(d, aid, qRaw)
-                if (ao.items.length) {
-                  r = { ...r, items: [...ao.items, ...(r.items || [])], why: (r.why || []).concat('那时：' + ao.items.length + ' 条') }
-                }
-              } catch (e) { __probe('asof-err:' + (e && e.message)) }
-              const packed = packInjection({ items: r.items }, { budget: 400 })
+              // 记忆块的预算是整段注入预算的一半（整段由下面的 clampInjection 按同一个参数收口）。
+              const allBudget = Math.max(200, Math.min(4000, Number(getParam(d, aid, 'memory.inject.budget')) || 800))
+              const memBudget = Math.max(150, Math.min(800, Math.round(allBudget / 2)))
+              const packed = packInjection({ items: r.items }, { budget: memBudget })
               // 被想起来 = 强化一次：hits+1、稳定度上涨、衰减锚点拨回现在。
               // v3 之前只召回不记账，等于「想过一次」在系统里不留痕——热度榜和冷热迁移都靠它。
-              // 「那时」行是翻旧账，只读：不记账，免得把作废的旧事实重新加热。
               try {
-                const ids = (r.items || []).filter((x) => x.partition === 'T1' && !x.asof).map((x) => x.id)
+                const ids = (r.items || []).filter((x) => x.partition === 'T1').map((x) => x.id)
                 if (ids.length) touch(d, ids)
               } catch { /* 记账失败不影响注入 */ }
               recentRecall.set(aid, { at: Date.now(), q: q.slice(0, 40), text: packed.text })
+              // 浮现观测：记下这一轮注入了哪些（anchor / fresh / related），回复后再判用没用上。
+              try { recordSurfaced(d, aid, r.items || []) } catch { /* 观测失败不影响注入 */ }
               logRetrieval(d, aid, {
                 scene: r.scene, query: q, why: r.why, counts: r.debug && r.debug.counts,
                 kept: r.debug && r.debug.kept, dropped: packed.dropped.map((x) => x.section),
@@ -1031,8 +1089,8 @@ function hostSpec() {
             schema: schemaVersion(ensureDb()),
             recovered,
             db: DB_PATH,
+            pending: getFlag(ensureDb(), 'pending_agent'),
             active_agent: activeAgentId(ensureDb()),
-            single_active: true,
             push_port: !!pushPort(),
             host: host ? host.report() : null,
             error: dbError ? String(dbError.message || dbError) : undefined,

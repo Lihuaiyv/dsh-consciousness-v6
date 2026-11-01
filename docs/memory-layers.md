@@ -396,3 +396,51 @@ docs/
   口吻由 `diaryTone(context)` 推出，模板选开句、模型进 prompt。
 - 前端组件：`VaultCard`（仓库 + 导出/打开）、`DiaryView`（只读日记 + 状态标签，补写的天带「补写」）。
 - 已删除：`DiaryPanel`、`ArchivePanel`、`TierPanel`、`DiaryFolder`（年/月树，入口「所有日记」已去掉）。
+
+## 20. 「浮上来」：开环 / 配额 / 反思 / 观测
+
+前面的召回是**被问才想起来**：`retrieve()` 只在有查询时跑，相关度是硬门，重要但跟这句话无关的东西永远不会出现。
+第 20 节加的是「没人问也自己冒出来」的四条通道，全部挂在既有管线上，不替换打分。
+
+### 20.1 开环 `open_loops`（时间通道）
+
+- 表：`open_loops(id, agent_id, kind, text, memory_id, source_turn_id, due_at, stale_after, state, fired_at, fire_count, closed_at, closed_by, created_at, updated_at)`。
+- 写入：`features.ingest` 对新落库的条目跑 `detectLoop()`（答应 / 明天 / 回头 / 还没 / 待办 …）；带 due 的按 `parseDue()` 算到点时间，没 due 的两天后算「挂着」。
+- 浮现：`index.js` 每轮 `surfaceLoopLine()` 取一条进系统提示（section `loop`），不参与召回打分、不过证据门。
+- 节流：同一条 6 小时内只提一次；提满 5 次自动 `expired`；用户说「好了 / 搞定了」且两小时内提过 → `user_done` 关掉。
+- 参数：`memory.float.loop`（每轮几条，默认 1）、`memory.float.loop.throttle`（默认 6 小时）。
+
+### 20.2 配额制（重要度锚点 + 24h 新近）
+
+- 相关度照旧（RRF → rerank → MMR → 相对门），但给锚点和今日新近各留一席：`k - anchor - fresh` 条给相关通道。
+- `importanceAnchors()`：钉住的（mark=locked）排最前，其次 `type ∈ fact / conflict` 且 `importance ≥ 0.7`。
+  **不收 reflection / appraisal**：线上 455 条 reflection 里大半是每日摘要，importance 顶到 0.95 也是流水账，
+  让它们占锚点位等于每轮复读摘要。
+- `freshFacts()`：`fresh_hours`（默认 24h）内新落的条目，**不收 reflection**（摘要不算「今天发生的」）。
+- 自动升级到 S3 的轮次**也算**每轮注入——那正是「什么都没命中」的时候，最需要翻出重要的。
+- 工具查询（`keepAll`）不掺配额，它要的是「我要查的那层」。
+- 参数：`memory.float.enable`、`memory.float.anchor`、`memory.float.fresh`、`memory.float.fresh_hours`。
+
+### 20.3 累计重要性 → 反思
+
+- 表：`reflect_cursor(agent_id, acc, window_start, last_reflect_at, updated_at)`。
+- 每次 ingest 后把新条目的 `importance` 加进游标；过 `memory.reflect.acc`（默认 5.0）就后台 `reflectFrom()`：
+  这一段流水账压成一条 `reflection`（≤100 字、跨事件），**只压 `importance < 0.5` 的**——身份 / 偏好 / 承诺原样留着。
+- 白天没跑成的，夜间巩固（`nightly` ⑤c）补一次。
+- `TYPE_WEIGHT.reflection` 0.55 → 0.75：不然反思写完就被类型权重压死。
+
+### 20.4 注入标注 + 会话续接
+
+- 锚点行带「（一直记着的）」、新近行带「（今天刚发生）」；记忆块标题注明「这几条是你自己先想起来的，可以自然提起」。
+- 跨天开场加一行「上次（YYYY-MM-DD）你们聊到…＋没收尾的事」（`archive.sessionBridge`），同一天不重复说。
+
+### 20.5 观测：浮现率
+
+- 表：`surfaced_items(id, agent_id, memory_id, kind, text, at, used, used_at)`。
+- 每轮注入后 `recordSurfaced()`；收到回复后 `markSurfacedUsed()` 按 2-gram 覆盖率 ≥0.3 判「用上了」。
+- `surfacingStats()` 给出 `surfaced / used / rate`（按 kind 分开：anchor / fresh / related）；观测表只留 60 天，不进任何召回路径。
+- `scripts/sim-float.mjs` 做同语料对比（关 / 开配额）；`test/float.test.mjs` **64/64**。
+
+### 20.6 回滚
+
+- `memory.float.enable=off` 退回纯相关度（配额与开环都关）；`reflect_cursor` / `surfaced_items` / `open_loops` 都是加表，删表即可复原，不改任何老字段。

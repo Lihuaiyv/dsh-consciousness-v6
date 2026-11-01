@@ -1,13 +1,11 @@
 import { now } from '../db.js'
 import { zipStore, unzipStore } from '../zip.js'
-import { err, nid, agent, active, modelStatus, getParam, getFlag } from '../kernel.js'
+import { err, nid, agent, active, modelStatus } from '../kernel.js'
 import { getDrive } from './drive.js'
 import { getAffect } from './affect.js'
 import { inbox, listProposals } from './selfmod.js'
-import { memoryStats, buildSearchText } from './memory.js'
+import { memoryStats } from './memory.js'
 import { rebuildMemoryFts, rebuildRawFts, rebuildFactFts } from './archive.js'
-import { purgeAgent as purgeSangguan, purgeOrphans as purgeSangguanOrphans } from './sangguan/purge.js'
-import { readEvents as sangguanEvents } from './sangguan/ledger.js'
 
 /**
  * 存储体检 + 自愈。
@@ -66,7 +64,8 @@ export function purgeExpired(db) {
     'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'condition_state', 'drive_state',
     'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'events',
     'metric_snapshots', 'metric_samples', 'chat_turns', 'bindings', 'agent_bindings', 'algo_bindings', 'agent_params', 'persona_views', 'thoughts',
-    'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log']
+    'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
+    'axis_rope', 'axis_evidence', 'persona_judge']
   for (const a of db.prepare("SELECT id FROM agents WHERE status='soft_deleted' AND deleted_at<?").all(cutoff)) {
     const arts = db.prepare('SELECT active_id,previous_id,pinned_id,v0_id FROM agent_bindings WHERE agent_id=?').all(a.id)
     for (const t of TABLES) { try { db.prepare(`DELETE FROM ${t} WHERE agent_id=?`).run(a.id) } catch { /* 表不存在或列不同 */ } }
@@ -84,24 +83,16 @@ export function purgeExpired(db) {
     try { db.prepare('DELETE FROM memory_fts WHERE id NOT IN (SELECT id FROM memory_items)').run() } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM raw_fts WHERE id NOT IN (SELECT id FROM raw_turns)').run() } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM fact_fts WHERE id NOT IN (SELECT id FROM fact_archive)').run() } catch { /* 忽略 */ }
-    // 三观账本只增，唯一例外是整 agent 清除（自身一个事务）；失败不挡 agent 清除
-    try { purgeSangguan(db, a.id) } catch { /* 老库没有三观表 */ }
     db.prepare('DELETE FROM agents WHERE id=?').run(a.id)
     agents++
   }
-  // 上面三观清除失败留下的孤儿行，这里补清
-  try { purgeSangguanOrphans(db) } catch { /* 老库没有三观表 */ }
   for (const m of db.prepare("SELECT id FROM memory_items WHERE status='soft_deleted' AND deleted_at<?").all(cutoff)) {
     try { db.prepare('DELETE FROM memory_fts WHERE id=?').run(m.id) } catch { /* 忽略 */ }
     // 明确硬删 = 连 T4 的事实存根一起清：说好要忘的，不能只在主表忘
-    // 改写留下的旧版本（memory_id = '<id>:hist:…'）也要删；前缀比较不用 LIKE（id 里的 _ 是通配符）
-    const pre = m.id + ':'
-    try {
-      db.prepare('DELETE FROM fact_fts WHERE id IN (SELECT id FROM fact_archive WHERE memory_id=? OR substr(memory_id,1,?)=?)')
-        .run(m.id, pre.length, pre)
-    } catch { /* 老库没有存根 */ }
-    try { db.prepare('DELETE FROM fact_archive WHERE memory_id=? OR substr(memory_id,1,?)=?').run(m.id, pre.length, pre) } catch { /* 老库没有存根 */ }
-    try { db.prepare('DELETE FROM memory_timeline WHERE memory_id=?').run(m.id) } catch { /* 老库没有时效索引 */ }
+    try { db.prepare('DELETE FROM fact_fts WHERE id IN (SELECT id FROM fact_archive WHERE memory_id=?)').run(m.id) } catch { /* 老库没有存根 */ }
+    try { db.prepare('DELETE FROM fact_archive WHERE memory_id=?').run(m.id) } catch { /* 老库没有存根 */ }
+    // 记忆硬删了，挂在它上面的开环也一起清，否则会指着一条不存在的记忆。
+    try { db.prepare('DELETE FROM open_loops WHERE memory_id=?').run(m.id) } catch { /* 老库没有开环 */ }
     db.prepare('DELETE FROM memory_items WHERE id=?').run(m.id)
     memories++
   }
@@ -114,21 +105,16 @@ export function purgeExpired(db) {
 // ---------------- export / import ----------------
 const TABLES = ['agents', 'memory_items', 'memory_links', 'conflicts', 'persona', 'relations',
   'affect_state', 'affect_episodes', 'condition_state', 'drive_state', 'proposals', 'changes',
-  'inbox_items', 'events', 'metric_snapshots', 'traces', 'tokens', 'budgets', 'action_ports', 'alerts', 'persona_views', 'thoughts']
+  'inbox_items', 'events', 'metric_snapshots', 'traces', 'tokens', 'budgets', 'action_ports', 'alerts', 'persona_views', 'thoughts', 'open_loops']
 
 export function exportZip(db, aid) {
   agent(db, aid)
   const rows = db.prepare('SELECT * FROM memory_items WHERE agent_id=?').all(aid)
   const nd = rows.map((r) => JSON.stringify(r)).join('\n')
-  const files = {
+  return zipStore({
     'manifest.json': JSON.stringify({ agent_id: aid, schema_version: 1, exported_at: now(), tables: TABLES }, null, 2),
     'memory.ndjson': nd,
-  }
-  // 三观账本只做存档（事件按 seq，fold 可重放）；导入不回放，没有账本就不出这个文件
-  let sg = []
-  try { sg = sangguanEvents(db, aid) } catch { /* 老库没有三观表 */ }
-  if (sg.length) files['sangguan.ndjson'] = sg.map((e) => JSON.stringify(e)).join('\n')
-  return zipStore(files)
+  })
 }
 
 export function importZip(db, aid, buffer) {
@@ -152,15 +138,8 @@ export function importZip(db, aid, buffer) {
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(mid, aid, m.type || 'fact', m.mark || 'normal', m.text || '', 'import',
           0.5, 0.5, 1, 5, now(), null, null, m.status || 'active', m.created_at || now(), m.deleted_at || null, 1)
-      const searchText = String(m.search_text || '').trim()
-        || buildSearchText(m.text || '', m.fact_key || m.key, m.terms)
-      try {
-        db.prepare('UPDATE memory_items SET search_text=?, fact_key=?, terms=? WHERE id=?')
-          .run(searchText || null, String(m.fact_key || m.key || '').trim().slice(0, 120) || null,
-            Array.isArray(m.terms) ? m.terms.join(' ') : (m.terms || null), mid)
-      } catch { /* 老列没有就只索引 */ }
       db.prepare('DELETE FROM memory_fts WHERE id=?').run(mid)
-      db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(mid, searchText || m.text || '')
+      db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(mid, m.text || '')
       n++
     }
   }
@@ -211,6 +190,7 @@ export function overview(db, aid) {
       mood: f.mood,
       total: f.v3 ? f.v3.total : null,
       baseline: f.v3 ? f.v3.baseline : null,
+      base_off: f.v3 ? (f.v3.base_off == null ? null : f.v3.base_off) : null,
       slow: f.v3 ? f.v3.slow : null,
       fast: f.v3 ? f.v3.fast : null,
     }
@@ -221,24 +201,12 @@ export function overview(db, aid) {
     unread = Number(db.prepare("SELECT COUNT(*) n FROM proposals WHERE agent_id=? AND state='shadowed' AND shadow_done>=shadow_total").get(aid).n || 0)
   } catch { unread = 0 }
 
-  // 嘀咕：观测层，不进 memory_items；开关默认开
-  const mutterOn = getParam(db, aid, 'ui.mutter.enabled') !== false
-  let mutter = null
-  try {
-    const raw = getFlag(db, 'ui.mutter.' + aid)
-    if (raw) {
-      const j = JSON.parse(raw)
-      if (j && j.text) mutter = { text: String(j.text), tokens: Number(j.tokens) || null, at: j.at || null }
-    }
-  } catch { mutter = null }
-
   return {
     id: a.id, name: a.name, mode: a.mode, state: a.status, unread,
     status, alerts, warn, inbox: { todo: box.todo.length, change: box.change.length },
     conflicts_open: Number(stats.open_conflicts || 0),
     memory_count: stats.count,
     recent: { last_interaction: last, idle_days: +idleDays.toFixed(1), last_memory: stats.last_memory },
-    mutter: { enabled: mutterOn, ...(mutter || {}) },
     drive, affect,
   }
 }

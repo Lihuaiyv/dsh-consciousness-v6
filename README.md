@@ -1,56 +1,11 @@
 # 意识体 · dsh-consciousness-v6
 
-DSH 插件。设置里有一页「意识」：同一时间一个意识体，带着记忆、情绪、驱力和关系，接进所有会话。
-
-| | |
-|---|---|
-| 版本 | 0.6.2 |
-| 运行 | Node.js 22 及以上（使用内置 `node:sqlite`） |
-| 许可 | [MIT](LICENSE) |
-| 数据 | 本机 `~/.dsh/consciousness/app.db`。聊天记录、Cookie、微信配置都在这里，**不进仓库** |
-
-## 目录
-
-```
-index.js            宿主侧：注入什么、回合后写什么、挂哪些接口
-client.js           设置页
-src/host/dsh.js     唯一认识 DSH 的文件
-src/                记忆、情绪、驱力、关系、三观、行动
-test/               测试
-scripts/            体检、回放、记忆评估
-docs/               分层记忆和升级记录
-locale/  icon.svg   文案和图标
-```
-
-## 测试
-
-```bash
-node test/run-tests.mjs   # 全量
-npm run check:arch        # 归属、参数、宿主契约
-npm run doctor            # 只读体检，不触发生成
-```
-
-## 仓库里不放这些
-
-- 数据库和日志（`*.db`、`*.log`）
-- 带日期的 `.bak` 副本，以及 `src.bak-*` 整目录
-- `_audit/`、`_baseline/`、测试跑出来的 `run-tests*.txt`
-
-版本记录在 git 提交里。改错了回退提交，不再在目录里复制一份旧文件。
-
-## 使用说明
-
 设置 → 意识。整页由 Client 半注册进 `settings.section`（React 组件，在设置内容区里渲染），
 不再往页面注入浮层，也不开 iframe。宿主半在插件进程内提供 `/dsh-consciousness/api`。
 
 ## 数据
 
-`~/.dsh/consciousness/app.db`（node:sqlite + FTS5，schema 12，含 `algo_bindings`、`affect_user_read`、`action_config`、`research_seen`、`research_runs`）。
-
-## 运行模型
-
-同一时间**最多一个** `status=active` 的意识体；所有会话共用它（人格 / 记忆 / 行动工具）。
-新建 / 恢复 / 继续 / 手动激活都会排他（其它 active → paused）。按会话绑定已废弃。
+`~/.dsh/consciousness/app.db`（node:sqlite + FTS5，schema 11，含 `algo_bindings`、`affect_user_read`、`action_config`、`research_seen`、`research_runs`）。
 
 ## 接口
 
@@ -76,17 +31,14 @@ POST /dsh-consciousness/api
 - 关系的时间效应：R09 —— 14 天没有共同活动亲近 −0.02（每 14 天最多一次，回合结束时自动跑）；F7 修复 —— POST …/relations/:rid/repair（道歉/补偿/时间），信任 +0.03，7 天内第 3 次把安全维拉回基线 0.60。
 - 冲突悬置（R05）：冲突超过 7 天未解 → 涉及的两条记忆权重 ×0.8（只罚一次，conflicts.opened_at / penalized_at，留痕 memory.conflict_decay）；每回合自动检查。
 - 火气门（R03）：情绪是 irritated / frustrated 且强度 > 0.7 时，主动开口直接判「不主动」，决策里留一道 	emper 门。- 注入顺序按 6 号 §8：身份（含 MBTI 表达倾向，on 时）→ 关系 → 情绪（含语气档）→ 记忆 → 约束（禁忌/禁用词/理想自我卡）。- 价值观不是人填的：src/modules/values.js 从记忆、禁忌、偏好、关系、五维、情绪长出 Schwartz 十维（初值各 0.10）；三组张力（仁善↔权力 / 传统↔自主 / 安全↔刺激）互相压上限但不归零；同一维 ≥5 条证据进惯习、步幅减半。GET …/values 自动长，POST …/values/grow 强制重长，GET …/values/explain 给张力与证据。
-- 世界观不是人填的：src/modules/worldview.js 八维（安全世界 / 丰饶迷人 / 有机有意 / 公正可期 / 人能作为 / 人性可托 / 情境复杂 / 知可修订），初值 0.50、各维独立不要求 Σ=1；拼装 Primals + WAS + Social Axioms + 认识谦逊。GET …/worldview，POST …/worldview/grow，GET …/worldview/explain。
-- 人生观不是人填的：src/modules/lifeview.js 七维（连贯 / 朝向 / 事关重要 / 求索 / 生长 / 与他者成全 / 远景）+ 派生 presence 与 telos 命题（MEMS / MLQ / Ryff / 交融 / 时间视野）。GET …/lifeview 返回 `{ items, derived }`，POST …/lifeview/grow，GET …/lifeview/explain。
-- 夜间巩固默认顺手重长价值观 / 世界观 / 人生观（`persona.*.nightly`，均可关）。
-- 自述接口：GET|POST /v1/agents/:id/persona/selfview（默认 7 天缓存，可手动重想）；来源权重：Big Five 1.00 / 记忆 0.60 / 价值观 0.40 / 世界观 0.35 / 人生观 0.35 / 关系 0.30 / 人格卡 0.25 / 情绪 0.20，逐条规则在技术视图「这段自述是怎么来的」。
+- 自述接口：GET|POST /v1/agents/:id/persona/selfview（默认 7 天缓存，可手动重想）；来源权重：Big Five 1.00 / 记忆 0.60 / 价值观 0.40 / 关系 0.30 / 人格卡 0.25 / 情绪 0.20，逐条规则在技术视图「这段自述是怎么来的」。
 - 视觉：膨胀点（Orb 呼吸环、状态点脉冲、浮点粒子、点阵、扫描线、按钮微光），
   全部走 `--dsw-alias-*` 主题 token，跟随明暗主题，`prefers-reduced-motion` 时关闭动效。
 
 ## 测试
 
 ```bash
-node test/run-tests.mjs     # 520/520
+node test/run-tests.mjs     # 456/456
 node scripts/render-audit.mjs  # 40 个页面组合渲染审计（含设置页分组 / 参数行）
 npm run check:host          # 宿主契约自检：19 条 mock 宿主用例，不启 DSH
 npm run check:arch          # INV9 / 参数 / 归属 / 依赖图 / 宿主契约
@@ -150,25 +102,10 @@ D 分布、与线上档位一致率，以及“主动开口那条的维度当时
   成本 = 基础 0.2 + 近 7 天发得太勤（每条 +0.05，封顶 0.3）+ 忽略率 ×0.35。
 - 五道门：依据 / 空闲 / 频率 / 打扰 / 内容，每条门的结论都写进 `proactive_decisions`。
 - 模型回 `SILENT`、或句子没过内容门，就不投递；模型超时/失败退回规则句（`source=rules`）。
-- 主动发消息（`push`，默认关）：打开后先原子 claim（`pending → delivered` + `delivered_at`），再
-  `sessionController.prompt` 推进你最近的会话；失败退回 pending。开着时注入**不**再抢同一行（避免双份）。
-  关着时只在下一轮对话注入并标 delivered。结算按会话（`session_id`）结账。
+- 主动发消息（`push`，默认关）：打开后心跳把待发那句通过 `sessionController.prompt` 推进你最近的会话，
+  不再等你先开口；会话里会先出现一句括号提示，再是它说的话。关着时只在下一轮对话里自然提起。
 - 接口：`GET /v1/agents/:id/proactive/why`（现在为什么说 / 不说）、
   `GET /v1/agents/:id/proactive/decisions`（最近每次判断的完整理由链）。
-
-## 属性真源（勿混表）
-
-| 属性 | 读/写权威 | 说明 |
-|------|-----------|------|
-| 鱼格五轴 | `persona` + `readAxes` | 缺行用 `AXIS_DEFAULTS`；注入禁止手扫另兜 |
-| 价值观 | `persona_values` | 导入写十维数组；旧 `persona.values.*` 会迁走 |
-| 关系三轴 | `rel_person` | `relations` 只镜像/兜底；导入经 `upsertRelation` 双写 |
-| 整体心情 | `moodValenceOf`（慢情绪） | 注入与关系温度同源；`affect_state.mood` 为 0~1 投影 |
-
-## 记忆召回
-
-- 默认 `memory.retrieve.formula=v3`：分层（T1–T4）+ RRF + 实体/扩词/向量通道；显式写成 `v2` 才走老 `recall`。
-- 老库无覆盖时启动会落一行 `v3`；写入后有 embedding 能力会异步补向量。
 
 ## 宿主接缝
 

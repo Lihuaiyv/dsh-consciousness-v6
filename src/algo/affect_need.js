@@ -26,7 +26,7 @@ export const AFFECT_NEED = {
   joy: { C: +1.0, R: +0.6 },
   peaceful: { S: +1.0, R: +0.3 },
   calm: { S: +0.7 },
-  curious: { E: -1.0 },
+  curious: { E: +1.0 },
   confused: { E: -0.8, S: -0.2 },
   lost: { E: -0.9, S: -0.5 },
   irritated: { A: -0.7, C: -0.5 },
@@ -57,8 +57,7 @@ const DIMS = ['R', 'E', 'C', 'A', 'S']
 
 /**
  * 纯函数：一条情绪事件 → 五维的满足度增量。
- * intensity = episode 强度（主信号）；sig（若给）作增益 0.5~1.0，别再拿 sig 冒充强度。
- * @param {{label:string,intensity?:number,rel?:number,arousal?:number,sig?:number}} ev
+ * @param {{label:string,intensity?:number,rel?:number,arousal?:number}} ev
  * @returns {{ deltas: Record<string,number>, gain:number, why:string }}
  */
 export function affectNeedDeltas(ev = {}) {
@@ -71,9 +70,7 @@ export function affectNeedDeltas(ev = {}) {
   // 目标相关性放大，唤醒再抬一点：同样强度的「烦」，很在意的和很吵的会有一点点差别
   const rel = clamp(ev.rel, 0, 1)
   const arousal = clamp(ev.arousal, -1, 1)
-  // sig：这一下「有多算事」；没传就 1（单测 / 老调用保持原口径）
-  const sigGain = ev.sig == null ? 1 : (0.5 + 0.5 * clamp(ev.sig, 0, 1))
-  const gain = intensity * (0.35 + 0.65 * rel) * (1 + 0.25 * Math.max(0, arousal)) * sigGain
+  const gain = intensity * (0.35 + 0.65 * rel) * (1 + 0.25 * Math.max(0, arousal))
   const deltas = {}
   for (const [dim, sign] of Object.entries(table)) {
     if (!DIMS.includes(dim)) continue

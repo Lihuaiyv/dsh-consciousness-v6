@@ -142,13 +142,4 @@ export async function takeExpansion(text, waitMs = EXPAND_WAIT_MS) {
 }
 
 /** 兼容旧调用：只要关键词串。 */
-export async function expandQuery(text, timeout = EXPAND_TIMEOUT_MS) {
-  const out = await expandRecall(text, timeout)
-  return out ? out.terms.join(' ') : ''
-}
-
 /** 测试 / 运维用：清缓存。 */
-export function clearExpansionCache() {
-  CACHE.clear()
-  INFLIGHT.clear()
-}

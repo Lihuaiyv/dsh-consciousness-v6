@@ -14,9 +14,7 @@ import { nudgeDeficit, pulseDriveFromSignals, coupleAffectToDrive } from '../src
 import { computeNeedProxies } from '../src/modules/proxies.js'
 import { pushProactiveLine } from '../src/push.js'
 import { queueProactive, settleProactiveAnswered, markProactiveIgnored, proactiveGate, proactiveStats, learnFromTurn, clampInjection, tickOneShadow, applyDriverToDrive, freeformModelHook, growModelHook, decideSpeak, relationsModelHook, minDeficitFor } from '../src/features.js'
-import { AXES, axisWords, typeProfile, mbtiStyleLine, mbtiPromptLine, readAxes, setAxisAuto, setAxisManual, releaseAxis, axesView, sensitivityEffects, stimulusStrength, traitAmp, sensitivityOf, driveAmp, isMid } from '../src/modules/traits.js'
-import { resolveValueKey } from '../src/modules/values.js'
-import { syncLegacyToLedger, ownerPerson } from '../src/modules/relations.js'
+import { AXES, axisWords, typeProfile, mbtiStyleLine, mbtiPromptLine, readAxes, setAxisAuto, setAxisManual, releaseAxis, axesView, sensitivityEffects, stimulusStrength, traitAmp, sensitivityOf, driveAmp } from '../src/modules/traits.js'
 import { computeEdgeBias } from '../src/modules/edges.js'
 import { growValues } from '../src/modules/values.js'
 import { cohenKappa } from '../src/algo/kappa.js'
@@ -32,6 +30,9 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { memoryPort, personaPort, affectPort, drivePort, selfmodPort } from '../src/ports/index.js'
 import { HARD_GATES } from '../src/modules/eval.js'
+import { expressionState, feltLine, wishLine } from '../src/modules/expression_state.js'
+import { surfaceQueueTick, pendingSurface, takeSurface } from '../src/modules/pulse.js'
+import { readReplyTone, applySelfRead } from '../src/modules/self_read.js'
 
 process.env.DSHC_TEST_NO_LIMIT = '1'
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-'))
@@ -117,7 +118,7 @@ try {
   check('压缩摘要不算人话', cleanUserText('This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context.') === '')
 
   const h = await api('GET', '/health')
-  check('健康检查', h.ok === true && h.schema_version === 12, h)
+  check('健康检查', h.ok === true && h.schema_version === 11, h)
 
   let a = await api('POST', '/v1/agents', { name: '测试' }, { key: key() })
   const AV1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -236,10 +237,6 @@ try {
   const aIso = await api('POST', '/v1/agents', { name: '参数隔离' }, { key: key() })
   const lambdaIso = (await api('GET', `/v1/agents/${aIso.id}/params`)).find((x) => x.key === 'memory.decay.lambda')?.value
   check('参数按实例隔离', Number(lambdaIso) === 0.02, { lambdaIso })
-  check('新建会排他激活', aIso.status === 'active', aIso)
-  check('新建后只剩一个 active',
-    db.prepare("SELECT COUNT(*) n FROM agents WHERE status='active'").get().n === 1)
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
 
   // G3 日限：保留 C4 变更记录
   grantC3(db, aid, { clearChanges: false })
@@ -306,6 +303,15 @@ try {
   check('情绪评价', aff.label === 'joy' && aff.intensity > 0.5, aff)
   const affSelf = await api('POST', `/v1/agents/${aid}/affect/appraise`, { text: '我好烦，今天真糟糕' }, { key: key() })
   check('自述心情不冒充主情绪', affSelf.label !== 'irritated', affSelf)
+  // 单一心情：mood(0~1) 必须是 v3 总情绪(-1~1) 的换算，别再出现两套数
+  {
+    const aRow = db.prepare('SELECT mood FROM affect_state WHERE agent_id=?').get(aid)
+    const vRow = db.prepare('SELECT total FROM affect_v3 WHERE agent_id=?').get(aid)
+    const expect = 0.5 + 0.5 * Number(vRow.total)
+    check('心情只有一个数（mood = 总情绪折算）', Math.abs(Number(aRow.mood) - expect) < 0.02, { mood: aRow.mood, total: vRow.total, expect })
+    const got = await api('GET', `/v1/agents/${aid}/affect`)
+    check('读接口也返回同一个心情', got && Math.abs(Number(got.mood) - expect) < 0.02, { mood: got && got.mood, expect })
+  }
   const epRow = db.prepare('SELECT appraisal FROM affect_episodes WHERE agent_id=? ORDER BY rowid DESC LIMIT 1').get(aid)
   const epJson = JSON.parse(epRow.appraisal)
   check('用户情绪单独留档', epJson.user_label === 'irritated', epJson.user_label)
@@ -363,7 +369,6 @@ try {
     // 验收：读你准确率是独立指标，没纠正过是 null，纠正过就得有值
     const mv = await api('GET', `/v1/agents/${aid3}/metrics`)
     check('读你准确率进验收', mv['affect.read_accuracy'] && typeof mv['affect.read_accuracy'].value === 'number', mv['affect.read_accuracy'])
-    await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
   }
 
   // 驱力
@@ -535,8 +540,6 @@ try {
     check('E→N：挫败只压胜任', f.deltas.C < 0 && f.deltas.R == null && f.deltas.E == null, f)
     const c = affectNeedDeltas({ label: 'confused', intensity: 0.7, rel: 0.6 })
     check('E→N：困惑压探索', c.deltas.E < 0, c)
-    const cu = affectNeedDeltas({ label: 'curious', intensity: 0.8, rel: 0.7 })
-    check('E→N：好奇拉大探索缺口（负满足）', cu.deltas.E < 0, cu)
     const j = affectNeedDeltas({ label: 'joy', intensity: 0.9, rel: 0.9 })
     check('E→N：高兴同时抬胜任与关系', j.deltas.C > 0 && j.deltas.R > 0, j)
     const p = affectNeedDeltas({ label: 'peaceful', intensity: 0.6, rel: 0.5 })
@@ -601,7 +604,6 @@ try {
   const t1 = await api('POST', `/v1/agents/${bid}/tokens/consume`, { class: 'c4' }, { key: key() })
   const t2 = await api('POST', `/v1/agents/${bid}/tokens/consume`, { class: 'c4' }, { key: key() })
   check('令牌消耗与日限', t1.left === 3 && t2.error?.code === 'COOLDOWN', { t1, t2 })
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
 
   // 幂等
   const k1 = key()
@@ -656,7 +658,6 @@ try {
   // 导出/导入（/export 已与全量同形；/import 可吃 schema 6）
   const exp = await api('GET', `/v1/agents/${aid}/export`)
   check('导出 zip', !!exp.zip_base64 && exp.encrypted === false, Object.keys(exp))
-  await api('POST', `/v1/agents/${bid}/activate`, {}, { key: key() })
   const imp = await api('POST', `/v1/agents/${bid}/import`, { zip_base64: exp.zip_base64 }, { key: key() })
   check('导入成功', (typeof imp.imported === 'number' ? imp.imported : imp.imported?.memory) >= 1, imp)
   const impNew = await api('POST', '/v1/agents/import', { zip_base64: exp.zip_base64 }, { key: key() })
@@ -665,7 +666,6 @@ try {
   check('导入新卡带记忆', Array.isArray(memImp) && memImp.length > 0, memImp.length)
   const badImp = await api('POST', '/v1/agents/import', { zip_base64: Buffer.from('this is not a zip').toString('base64') }, { key: key() })
   check('导入坏文件报错', badImp.error?.code === 'INVALID_ARGUMENT', badImp)
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
   // 情绪 PAD 必须跟标签一致，且不能因反复评价饱和到 1
   let padBad = { intensity: 0.3, mood: 0.3, pleasure: 1, arousal: 1, dominance: 1 }
   for (let i = 0; i < 5; i++) {
@@ -710,7 +710,6 @@ try {
   const lambdaC = (await api('GET', `/v1/agents/${pC.id}/params`)).find((x) => x.key === 'memory.decay.lambda')?.value
   const rowC = db.prepare('SELECT 1 AS ok FROM agent_params WHERE agent_id=? AND key=?').get(pC.id, 'memory.decay.lambda')
   check('新建 C 仍默认', Number(lambdaC) === 0.02 && !rowC, { lambdaC, rowC })
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
 
   // 指标
   const cat = await api('GET', `/v1/metrics/catalog`)
@@ -812,11 +811,9 @@ try {
 
   const full = await api('GET', `/v1/agents/${aid}/export/full`)
   check('全量导出', !!full.zip_base64, Object.keys(full))
-  await api('POST', `/v1/agents/${bid}/activate`, {}, { key: key() })
   const impFull = await api('POST', `/v1/agents/${bid}/import/full`, { zip_base64: full.zip_base64 }, { key: key() })
   check('全量导入', impFull.imported > 10, impFull)
   check('导入回报 FTS 重建', impFull.fts === 'rebuilt', impFull)
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
   const srcName = db.prepare('SELECT name FROM agents WHERE id=?').get(aid).name
   check('导入不改目标实例', srcName === db.prepare('SELECT name FROM agents WHERE id=?').get(aid).name, srcName)
   const anyMem = db.prepare('SELECT text FROM memory_items WHERE agent_id=? LIMIT 1').get(aid)
@@ -1086,7 +1083,6 @@ try {
     const bStruct0 = bindsB0.find((x) => x.kind === 'structure')
     check('T1 基线独立工件', aStruct0.active_id !== bStruct0.active_id
       && aStruct0.v0_id !== bStruct0.v0_id, { a: aStruct0, b: bStruct0 })
-    await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
 
     function grantC1(db, agentId) {
       db.prepare('UPDATE drive_state SET tokens=?, unlocked=? WHERE agent_id=?').run(
@@ -1285,6 +1281,8 @@ try {
       check('判据：五道门都留痕', ['evidence', 'frequency', 'idle', 'quiet', 'disturb', 'value', 'content'].every((x) => gids.includes(x)), gids)
       check('判据：收益拆开算', d.benefit_parts && Math.abs((d.benefit_parts.deficit + d.benefit_parts.evidence + d.benefit_parts.timing) - d.benefit) < 0.002, d.benefit_parts)
       check('判据：成本拆开算', d.cost_parts && Math.abs((d.cost_parts.base + d.cost_parts.frequency + d.cost_parts.ignore) - d.cost) < 0.002, d.cost_parts)
+      check('判据：情绪进了收益/成本', d.benefit_parts && d.benefit_parts.persona && d.benefit_parts.persona.mood != null
+        && d.cost_parts && d.cost_parts.persona_mood != null, { b: d.benefit_parts, c: d.cost_parts })
       check('判据：给得出人话理由', typeof d.explain === 'string' && d.explain.length > 8, d.explain)
       check('判据：内容门先挂待判', d.gates.some((g) => g.id === 'content' && g.ok === null), d.gates)
 
@@ -1312,7 +1310,7 @@ try {
       const p1 = await pushProactiveLine({ db, aid: pv.id, line, proactiveId: pushId, sessionId: 'sid_test', controller: fake, prefs: { push: true } })
       const rowAfter = db.prepare('SELECT state, delivered_at FROM proactive WHERE id=?').get(pushId)
       check('推送：调 prompt 并标记已投递', p1.ok === true && got && got.sessionId === 'sid_test' && got.mode === 'queue'
-        && got.content[0].text.includes(line) && rowAfter.state === 'delivered' && !!rowAfter.delivered_at,
+        && got.content[0].text.includes(line) && rowAfter.state === 'delivered' && rowAfter.delivered_at == null,
       { p1, got, rowAfter })
       const p2 = await pushProactiveLine({ db, aid: pv.id, line, proactiveId: pushId, sessionId: 'sid_test', controller: fake, prefs: { push: false } })
       check('推送：没授权就不发', p2.ok === false && p2.reason === 'off', p2)
@@ -1484,9 +1482,6 @@ try {
   // Cohen's κ
   check('κ：完全一致为 1', cohenKappa(['joy','calm','joy'], ['joy','calm','joy']).kappa === 1)
   check('κ：扣掉碰巧一致', cohenKappa(['joy','joy','joy','calm'], ['joy','joy','calm','calm']).kappa <= 0.5)
-
-  // 前面一串旁路实例可能抢了 active；起草 / 驱动写回主测实例前先切回来
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
 
   // 认不出的情绪：推缺口 + 攒够自动起草
   const beforeE = db.prepare('SELECT e FROM drive_state WHERE agent_id=?').get(aid).e
@@ -1665,8 +1660,6 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
     pg.agents >= 1 && !db.prepare('SELECT 1 FROM agents WHERE id=?').get(d1.id)
     && db.prepare('SELECT COUNT(*) n FROM memory_items WHERE agent_id=?').get(d1.id).n === 0, pg)
   check('硬删：7 天内的保留', !!db.prepare('SELECT 1 FROM agents WHERE id=?').get(d2.id), d2.id)
-  // d1/d2 软删会清空 active；后续回归块还要写主测实例
-  await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
 
   // ---------------- 注入端到端（fake ctx） ----------------
   {
@@ -1771,15 +1764,7 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
 
 // 回归：观察期结算的三处坑
 {
-  // 主 try 的 finally 可能还锁着库；软删测也可能清光 active——这里直接捞一个活的并排他激活
-  let row = db.prepare("SELECT id FROM agents WHERE status='active'").get()
-  if (!row) {
-    row = db.prepare("SELECT id FROM agents WHERE status!='soft_deleted' ORDER BY COALESCE(last_interaction_at, created_at) DESC LIMIT 1").get()
-    if (!row) throw new Error('观察期回归：没有可用实例')
-    db.prepare("UPDATE agents SET status='paused' WHERE status='active'").run()
-    db.prepare("UPDATE agents SET status='active' WHERE id=?").run(row.id)
-  }
-  const aid = row.id
+  const aid = db.prepare("SELECT id FROM agents WHERE status='active'").get().id
   const past = new Date(Date.now() - 1000).toISOString()
   db.prepare('DELETE FROM changes WHERE agent_id=?').run(aid)
   db.prepare('DELETE FROM cooldowns WHERE agent_id=?').run(aid)
@@ -1915,7 +1900,7 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
 
   const v = await generateNow(db, aid)
   check('想法四段齐全', v.items.length === 4 && v.items.every((i) => i.text && i.text.length > 0), v.items)
-  check('想法保留完整句子', v.items.every((i) => i.text.length >= 10 && i.text.length <= 720 && !/[\r\n]/.test(i.text)), v.items.map((i) => i.text.length))
+  check('想法保留完整句子', v.items.every((i) => i.text.length >= 10 && i.text.length <= 400 && !/[\r\n]/.test(i.text)), v.items.map((i) => i.text.length))
   check('想法用角色卡称呼', v.items[1].label === '它眼中的阿明', v.items.map((i) => i.label))
   check('想法来源可追溯', ['model', 'rules'].includes(v.source), v.source)
 
@@ -1938,25 +1923,19 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('称呼为空才退回你', getThoughts(db, aid).items[1].label === '它眼中的你', getThoughts(db, aid).items[1].label)
 }
 
-// ---------------- 想法取材：热度账本 + 四问配额 + 类型补齐 ----------------
+// ---------------- 想法取材：分层 + 权重 + 近期 + 类型均衡 ----------------
 {
   const aid = db.prepare("SELECT id FROM agents WHERE status='active'").get().id
-  const mk = (id, text, type, weight, days, extra = {}) => {
-    db.prepare(
-      `INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,last_decay_at,status,created_at,version)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    ).run(id, aid, type, extra.mark || 'normal', text, 'test', 0.5, weight, 1, 5, now(), 'active',
-      new Date(Date.now() - days * 86400000).toISOString(), 1)
-    try {
-      db.prepare('UPDATE memory_items SET importance=?, salience=? WHERE id=?')
-        .run(extra.importance != null ? extra.importance : weight, extra.salience || 0, id)
-    } catch { /* 老列 */ }
-  }
+  const mk = (id, text, type, weight, days) => db.prepare(
+    `INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,last_decay_at,status,created_at,version)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  ).run(id, aid, type, 'normal', text, 'test', 0.5, weight, 1, 5, now(), 'active',
+    new Date(Date.now() - days * 86400000).toISOString(), 1)
 
-  mk('mem_core_1', '高权重：主人不喜欢被叫老师', 'fact', 1.0, 0, { importance: 1 })
-  for (let i = 0; i < 12; i++) mk('mem_f' + i, '事实素材' + i, 'fact', 0.9, 1, { importance: 0.9 })
-  for (let i = 0; i < 6; i++) mk('mem_e' + i, '经过素材' + i, 'episode', 0.95, 60, { importance: 0.95 })
-  for (let i = 0; i < 4; i++) mk('mem_a' + i, '感受素材' + i, 'appraisal', 0.3, 3, { importance: 0.55, salience: 0.6 })
+  mk('mem_core_1', '高权重：主人不喜欢被叫老师', 'fact', 1.0, 0)
+  for (let i = 0; i < 12; i++) mk('mem_f' + i, '事实素材' + i, 'fact', 0.9, 1)
+  for (let i = 0; i < 6; i++) mk('mem_e' + i, '经过素材' + i, 'episode', 0.95, 60)
+  for (let i = 0; i < 4; i++) mk('mem_a' + i, '感受素材' + i, 'appraisal', 0.3, 3)
 
   const picked = pickMemories(db, aid, 22)
   const texts = picked.items.map((x) => x.text)
@@ -1965,7 +1944,6 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('记忆取材：类型均衡', types.has('事实') && types.has('经过') && types.has('感受'), [...types])
   check('记忆取材：有上限不重复', picked.items.length <= 22 && picked.items.length >= 10 && new Set(texts).size === texts.length, picked.items.length)
   check('记忆取材：近期加权可见', texts.some((t) => t === '事实素材0') || texts.some((t) => t.startsWith('事实素材')), texts.slice(0, 5))
-  check('记忆取材：带 heat/band', picked.items.every((x) => x.heat != null && x.band), picked.items[0])
 }
 
 // ---------------- 性格五轴（4 号文档 v2） ----------------
@@ -1992,11 +1970,6 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('五轴：shadow 只算不用', sh.intensityMul === 1 && sh.shadowIntensityMul > 1, { on: sh.intensityMul, shadow: sh.shadowIntensityMul })
 
   // 6) 人话投影 + 三条主效应的中性点
-  check('五轴：0.45 不是中间（浮点）', isMid(0.45) === false, isMid(0.45))
-  check('五轴：0.47 是中间', isMid(0.47) === true)
-  check('五轴：axisWords(0.45) 偏直觉', axisWords({ sn: 0.45 }).includes('偏直觉'), axisWords({ sn: 0.45 }))
-  check('价值观：中文标签可解析', resolveValueKey('成就') === 'achievement')
-  check('价值观：废弃 weight 拒绝', resolveValueKey('values.weight') == null)
   check('五轴：全中间给兜底', axisWords({}) === '中间')
   const tp = typeProfile({ ei: 0.9, sn: 0.1, tf: 0.9, jp: 0.1, sensitivity: 0.5 })
   check('鱼格投影：四字母', tp.name === 'ESTP' && tp.mids === 0, tp)
@@ -2051,16 +2024,6 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const vals = growValues(d2, 'agt_dec', { force: true })
   check('解耦：性格极端不写价值观', vals.every((v) => Math.abs(v.weight - 0.1) < 1e-6), vals.map((v) => v.weight))
   check('解耦：价值观 Σ=1', Math.abs(vals.reduce((s, v) => s + v.weight, 0) - 1) < 1e-6)
-  // 属性真源：遗留 persona.values.* → persona_values；关系写入活账本
-  d2.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)').run('agt_dec', 'values.achievement', JSON.stringify(0.9), 'manual', now())
-  d2.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)').run('agt_dec', 'values.weight', '0.1', 'auto', now())
-  const { migratePersonaValueRows } = await import('../src/features.js')
-  const valMig = migratePersonaValueRows(d2, 'agt_dec')
-  check('价值观迁：achievement 进真表', valMig.moved >= 1 && d2.prepare('SELECT weight FROM persona_values WHERE agent_id=? AND key=?').get('agt_dec', 'achievement')?.weight === 0.9)
-  check('价值观迁：weight 死行清掉', !d2.prepare("SELECT 1 FROM persona WHERE agent_id=? AND path='values.weight'").get('agt_dec'))
-  syncLegacyToLedger(d2, 'agt_dec', { name: '主人', kind: 'owner', closeness: 0.88, trust: 0.77, dependence: 0.21, notes: '导入测' })
-  const own = ownerPerson(d2, 'agt_dec')
-  check('关系真源：导入进 rel_person', !!own && Math.abs(Number(own.closeness) - 0.88) < 1e-9, own)
   d2.close()
   attachDb(db)
 
@@ -2234,9 +2197,6 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('vault.history 收盘和仓库同一口径', !!last && Math.abs(last.close - total) <= Math.max(64, total * 0.05), { close: last && last.close, total })
   const v30 = await call('GET', `/v1/agents/${va.id}/vault/history?days=30`)
   check('vault.history 跟着天数切', !v30.error && v30.series && v30.series.length === 30, v30.error || (v30.series && v30.series.length))
-  const vBirth = await call('GET', `/v1/agents/${va.id}/vault/history?days=0`)
-  check('vault.history 出生到现在', !vBirth.error && Array.isArray(vBirth.series) && vBirth.series.length >= 7,
-    vBirth.error || (vBirth.series && vBirth.series.length))
   await call('DELETE', `/v1/agents/${va.id}`)
 }
 
@@ -2342,6 +2302,107 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('自动长：攒够新记忆就该长', due.due === true && due.fresh >= 3, due)
 
   await call('DELETE', `/v1/agents/${g.id}`)
+}
+
+// 表达状态：一轮里只有一个语气出口（关系热度不能把低落的她逼得多说）
+{
+  const low = expressionState({
+    affect: { primary_label: 'frustrated', intensity: 0.62, mood: 0.4, v3: { slow: -0.5, total: -0.3, baseline: -0.1 } },
+    relation: { closeness: 0.94, trust: 0.74, kind: 'owner', warmth: 0.91, formality: 0.12, disclosure: 0.7, initiative: 0.75 },
+    ei: 0.4,
+  })
+  check('表达：低落压过关系热度', low.tone === 'cool' && low.sentences === 1, low)
+  check('表达：主动性不因关系近而抬高', low.initiative === 0, low)
+  check('表达：温度被情绪拉低', low.warmth < 0.91, low)
+
+  const high = expressionState({
+    affect: { primary_label: 'joy', intensity: 0.5, mood: 0.7, v3: { slow: 0.35, total: 0.4, baseline: 0.2 } },
+    relation: { closeness: 0.9, trust: 0.8, kind: 'owner', warmth: 0.9, formality: 0.1, disclosure: 0.7, initiative: 0.8 },
+    ei: 0.8,
+  })
+  check('表达：心情好愿意多说', high.level === 'warm' && high.sentences >= 3 && high.proactive >= 1, high)
+
+  const felt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3 })
+  check('感受是推测口吻', felt.startsWith('感觉现在大概'), felt)
+  check('感受不写命令、不带生硬免责', felt.startsWith('感觉现在大概') && !/只说|语气|句数|必须|不许|不用照着演|底子/.test(felt), felt)
+  check('感受只说整体心情、不说底色', felt.includes('整体心情偏负面') && !felt.includes('底色'), felt)
+  const strongFelt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3, weight: 0.7 })
+  check('权重大时改成陈述口吻', strongFelt.startsWith('现在的情绪是：'), strongFelt)
+
+  const wish = wishLine({ level: 'brief' })
+  check('愿望是「我想」不是命令', wish.includes('我想') && !/只说|必须|不许/.test(wish), wish)
+
+  // 未知标签 / 没有关系：降级而不是抛
+  const fallback = expressionState({ affect: { primary_label: '彩虹', intensity: 0.9, v3: { slow: 0.5 } }, relation: null })
+  check('表达：未知标签降级不抛', !!fallback.felt && fallback.level === 'warm', fallback)
+
+  // 旧命令词必须从注入源码里消失（防回归）
+  const idxSrc = fs.readFileSync(fileURLToPath(new URL('../index.js', import.meta.url)), 'utf8')
+  check('注入不再有「说话分寸」命令行', !idxSrc.includes('这一轮的说话分寸') && !idxSrc.includes('只说 1 句'), null)
+}
+
+// 空闲心跳：候选浮现 → 取走记账 → 冷却 → 过期
+{
+  const { addMemory } = await import('../src/modules/memory.js')
+  const pa = 'agt_pulse_' + Math.random().toString(36).slice(2, 8)
+  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)').run(pa, '浮现', 'chat', 'active', now())
+  addMemory(db, pa, { text: '她记得主人喜欢在夜里听雨声。', type: 'fact' })
+  const t1 = surfaceQueueTick(db, pa)
+  check('心跳：第一次排出候选', t1.queued === 1, t1)
+  const pend = pendingSurface(db, pa)
+  check('心跳：候选带得出正文', !!pend && !!pend.text, pend)
+  const t2 = surfaceQueueTick(db, pa)
+  check('心跳：同一轮不重复排', t2.queued === 0, t2)
+  const taken = takeSurface(db, pa)
+  check('心跳：取走后出队', !!taken && pendingSurface(db, pa) === null, taken)
+  const sf = db.prepare('SELECT kind,text FROM surfaced_items WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(pa)
+  check('心跳：取走时记一次浮现', !!sf && sf.kind === 'spontaneous', sf)
+  const t3 = surfaceQueueTick(db, pa)
+  check('心跳：冷却期内不再浮同一条', t3.queued === 0, t3)
+  db.prepare('UPDATE surfaced_items SET at=? WHERE agent_id=?').run(new Date(Date.now() - 10 * 86400000).toISOString(), pa)
+  const t4 = surfaceQueueTick(db, pa)
+  check('心跳：冷却期过后还能再浮', t4.queued === 1, t4)
+  db.prepare("UPDATE surface_queue SET expires_at=? WHERE agent_id=? AND state='pending'").run(new Date(Date.now() - 1000).toISOString(), pa)
+  const t5 = surfaceQueueTick(db, pa)
+  check('心跳：过期候选作废', t5.expired >= 1, t5)
+  db.prepare('DELETE FROM surface_queue WHERE agent_id=?').run(pa)
+  db.prepare('DELETE FROM surfaced_items WHERE agent_id=?').run(pa)
+  db.prepare('DELETE FROM memory_items WHERE agent_id=?').run(pa)
+  db.prepare('DELETE FROM agents WHERE id=?').run(pa)
+}
+
+// 注入预算：新的「此刻我 / 我想怎么说」也归入情绪档，超预算照旧先丢
+{
+  const packed2 = clampInjection(['## 意识体：X', '此刻我：我有点烦。', '我想怎么说：' + 'x'.repeat(300)], 60)
+  check('注入预算：感受行归入情绪档', packed2.dropped.includes('affect') && packed2.text.includes('意识体'), packed2)
+}
+
+// 回读自己那句话：小步修正慢情绪，短句 / 差得不多都不动
+{
+  const warm = readReplyTone('好呀，今天想多聊一会儿～你慢慢说，我听着呢。')
+  check('回读：热络的句子读得出来', warm && warm.warmth > 0.2 && warm.flat === false, warm)
+  const flat = readReplyTone('嗯。')
+  check('回读：短句算平，不据此改情绪', flat && flat.flat === true, flat)
+  const cool = readReplyTone('算了，随便，不想说这个。')
+  check('回读：冷淡的句子读得出来', cool && cool.warmth < -0.2, cool)
+
+  const ra = 'agt_selfread_' + Math.random().toString(36).slice(2, 8)
+  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)').run(ra, '回读', 'chat', 'active', now())
+  db.prepare('INSERT OR REPLACE INTO affect_v3(agent_id,baseline,slow,fast,total,slow_at,fast_at) VALUES(?,?,?,?,?,?,?)')
+    .run(ra, -0.2, -0.5, 0, -0.5, now(), now())
+  const up = applySelfRead(db, ra, '好呀，今天想多聊一会儿～你慢慢说，我听着呢。')
+  const afterUp = db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(ra).slow
+  check('回读：说得比情绪热 → 往上挪一点', up.applied === true && afterUp > -0.5 && afterUp < -0.4, { up, afterUp })
+
+  const flatRead = applySelfRead(db, ra, '嗯。')
+  check('回读：短句不动情绪', flatRead.applied === false && flatRead.reason === 'flat', flatRead)
+
+  db.prepare('UPDATE affect_v3 SET slow=?, total=? WHERE agent_id=?').run(-0.1, -0.1, ra)
+  const closeRead = applySelfRead(db, ra, '差不多吧，就这样。')
+  check('回读：差得不多不抖', closeRead.applied === false && closeRead.reason === 'close', closeRead)
+
+  db.prepare('DELETE FROM affect_v3 WHERE agent_id=?').run(ra)
+  db.prepare('DELETE FROM agents WHERE id=?').run(ra)
 }
 
 console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)

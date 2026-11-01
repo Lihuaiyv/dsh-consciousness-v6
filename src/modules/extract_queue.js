@@ -7,13 +7,10 @@
  */
 
 import crypto from 'node:crypto'
-import { now, localDay } from '../db.js'
-import { shouldDeferExtract, llmBudgetAllow, llmBudgetBump, deferExtractForDay } from './llm_budget.js'
+import { now } from '../db.js'
 
 export const MAX_ATTEMPTS = 5
 const KEEP_DONE_DAYS = 7
-/** running 超过这个时间视为卡死（进程崩溃 / worker 挂起），下一轮 reclaim 回 pending。 */
-export const STUCK_RUNNING_MS = 10 * 60 * 1000
 
 /** 入队。返回 {id, duplicate}；空输入返回 null。 */
 export function enqueueExtraction(db, aid, turns) {
@@ -45,35 +42,11 @@ export function queueStats(db, aid) {
 }
 
 /**
- * 把卡在 running 的任务捞回 pending（崩溃 / 重叠 tick 留下的僵尸）。
- * @returns {number} 回收条数
- */
-export function reclaimStuck(db, aid, olderThanMs = STUCK_RUNNING_MS) {
-  const ms = Math.max(60_000, Number(olderThanMs) || STUCK_RUNNING_MS)
-  const cutoff = new Date(Date.now() - ms).toISOString()
-  const at = now()
-  try {
-    return Number(db.prepare(`UPDATE extract_queue SET state='pending', next_at=?, updated_at=?
-      WHERE agent_id=? AND state='running' AND updated_at<?`).run(at, at, aid, cutoff).changes || 0)
-  } catch { return 0 }
-}
-
-/**
  * 跑一批待办。runner(turns) 由调用方给（通常是 ingest），失败会自动退避。
  * @returns {Promise<Array<{id:string, ok:boolean}>>}
  */
 export async function tickExtraction(db, aid, runner, opt = {}) {
   const max = Math.max(1, Math.min(5, Number(opt.max) || 1))
-  try { reclaimStuck(db, aid, opt.stuckMs) } catch { /* 回收失败不影响本轮 */ }
-
-  // U0：蒸馏已满或日模型硬顶见底 → 同日 pending 延后，避免与夜巡双烧
-  const day = localDay()
-  let deferred = 0
-  try {
-    const def = shouldDeferExtract(db, aid, day)
-    if (def.defer) deferred = deferExtractForDay(db, aid, day, def.reason || 'budget')
-  } catch { deferred = 0 }
-
   const at = now()
   let rows = []
   try {
@@ -82,25 +55,12 @@ export async function tickExtraction(db, aid, runner, opt = {}) {
   } catch { return [] }
 
   const out = []
-  if (deferred) out.push({ id: null, ok: true, deferred, reason: 'budget_defer' })
   for (const r of rows) {
-    if (!llmBudgetAllow(db, aid, day, 1).ok) {
-      try { deferExtractForDay(db, aid, day, 'daily_cap') } catch { /* ignore */ }
-      out.push({ id: r.id, ok: false, skipped: true, reason: 'llm_budget' })
-      break
-    }
-    // 原子领取：只有仍是 pending 才变成 running，避免 commit 与 30s timer 双跑
-    let claimed = 0
-    try {
-      claimed = Number(db.prepare("UPDATE extract_queue SET state='running', updated_at=? WHERE id=? AND state='pending'")
-        .run(now(), r.id).changes || 0)
-    } catch { claimed = 0 }
-    if (!claimed) continue
+    try { db.prepare("UPDATE extract_queue SET state='running', updated_at=? WHERE id=?").run(now(), r.id) } catch { /* 抢占失败就跳过 */ }
     try {
       const turns = JSON.parse(r.turns)
       const result = await runner(turns)
       db.prepare("UPDATE extract_queue SET state='done', last_error=NULL, updated_at=? WHERE id=?").run(now(), r.id)
-      try { llmBudgetBump(db, aid, 'extract', day, 1) } catch { /* ignore */ }
       out.push({ id: r.id, ok: true, result })
     } catch (e) {
       const attempts = Number(r.attempts || 0) + 1

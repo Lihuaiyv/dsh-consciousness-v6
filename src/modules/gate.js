@@ -11,17 +11,11 @@
  * 门控只作用于「模型自己抽出来的」那批。
  */
 
-import { heatOf, bandOf } from './tiers.js'
-import { getParam, savepoint } from '../kernel.js'
-import { archiveFact } from './archive.js'
-import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
-
 const NEG = new Set([...'不没别无取消换改'])
 
 export const GATE = Object.freeze({
   MERGE: 0.92,
   MERGE_WITH_ENTITY: 0.80,
-  UPDATE: 0.72, // 同实体高相似同极性 → 改写而非堆新行
   CONFLICT: 0.50,
   MIN_LEN: 4,
 })
@@ -47,14 +41,33 @@ export function similarity(a, b) {
 }
 
 /** 两句话里有没有一段 ≥4 字的公共片段（「喜欢喝美式咖啡」这种）。 */
-export function sharedRun(a, b, n = 4) {
-  const A = String(a || '')
-  const B = String(b || '')
-  const short = A.length <= B.length ? A : B
-  const long = A.length <= B.length ? B : A
-  if (short.length < n) return false
-  for (let i = 0; i + n <= short.length; i++) {
-    if (long.includes(short.slice(i, i + n))) return true
+/* 否定词：不/没/未/无/别。但「别」是两义的：
+ *   「别的东西 / 别人 / 别处」里的 别 = 其他，不是否定；
+ *   真的否定是「别去 / 别想」这种 别+动词。
+ * 所以 别 后面跟这些字时不算否定词——否则「优化别的东西」会被当成否定句。
+ */
+const NEG_ONE = new Set([...'不没未无别'])
+const NOT_NEG_AFTER_BIE = new Set([...'的人处样边个'])
+
+/* 这类公共片段只是虚词尾巴：撞上了不代表在说同一件事。 */
+const TAIL_NOISE = new Set(['的东西', '的时候', '的地方', '的事情', '的问题', '这样的', '一样的', '一个人'])
+
+function isNegationAt(text, i) {
+  const c = text[i]
+  if (!c || !NEG_ONE.has(c)) return false
+  if (c === '别') {
+    const next = text[i + 1] || ''
+    if (!next || NOT_NEG_AFTER_BIE.has(next)) return false
+  }
+  return true
+}
+
+/** 公共片段前面 2 个字里有没有否定词（否定词本来就该贴在被否定的那截前面）。 */
+function negationBefore(text, pos) {
+  for (let k = 1; k <= 2; k++) {
+    const i = pos - k
+    if (i < 0) break
+    if (isNegationAt(text, i)) return true
   }
   return false
 }
@@ -65,87 +78,48 @@ export function sharedRun(a, b, n = 4) {
  * 不用「整句里有没有不」：那会把「不加糖」当成否定命题，把「喜欢咖啡，不加糖」和
  * 「不喜欢咖啡了」判成同极性。正确做法是看**共享片段前面**有没有否定词：
  *   「喜欢喝美式咖啡」 vs 「不喜欢喝美式咖啡」→ 一边有不、一边没有 → 翻转。
+ *
+ * 但共享片段太短时几乎必然是巧合（「…的东西」「…的时候」这种虚词尾巴），
+ * 所以要求公共片段 ≥4 字，并且挡掉几个纯虚词尾巴：
+ *   「快情绪…喜欢的东西」 vs「情绪…优化别的东西」只有「的东西」3 字 + 别（其他）
+ *   不该被当成同一件事的两个相反说法。
  */
-export function polarityFlip(a, b) {
+export function polarityFlip(a, b, minRun = 4) {
   const A = String(a || '')
   const B = String(b || '')
   const short = A.length <= B.length ? A : B
   const long = A.length <= B.length ? B : A
-  if (!short) return false
-  for (let n = Math.min(6, short.length); n >= 3; n--) {
+  if (!short || short.length < minRun) return false
+  for (let n = Math.min(6, short.length); n >= minRun; n--) {
     for (let i = 0; i + n <= short.length; i++) {
       const run = short.slice(i, i + n)
+      if (TAIL_NOISE.has(run)) continue
       const pos = long.indexOf(run)
       if (pos < 0) continue
-      const negLong = /[不没别]/.test(long.slice(Math.max(0, pos - 2), pos))
-      const negShort = /[不没别]/.test(short.slice(Math.max(0, i - 2), i))
+      const negLong = negationBefore(long, pos)
+      const negShort = negationBefore(short, i)
       if (negLong !== negShort) return true
     }
   }
   return false
 }
 
-function reconcileOn(db, aid) {
-  try { return String(getParam(db, aid, 'memory.write.reconcile') || 'on') !== 'off' } catch { return true }
-}
-
-/**
- * 改口（极性翻转）策略：
- *   conflict（默认）→ 开冲突案，两条都留，等人裁决
- *   update → 静默改写旧条（仅当显式想「改口即覆盖」时）
- * U6：默认黄灯，禁止被 UPDATE/merge 悄悄吃掉。
- */
-function flipPolicy(db, aid) {
-  try {
-    const v = String(getParam(db, aid, 'memory.write.flip_policy') || 'conflict').toLowerCase()
-    return v === 'update' ? 'update' : 'conflict'
-  } catch { return 'conflict' }
-}
-
-/** 极性翻转时的动作：默认 conflict；flip_policy=update 且 reconcile 开着才允许静默改写。 */
-function actionOnFlip(db, aid, target, score, reason = 'polarity_flip') {
-  if (flipPolicy(db, aid) === 'update' && reconcileOn(db, aid) && target) {
-    return { action: 'update', score, target, reason: reason + ':flip_update' }
-  }
-  return { action: 'conflict', score, target, reason }
-}
-
 /**
  * 判定一个候选该怎么写。
- * @param {{text:string, entity_id?:string|null, fact_key?:string|null, key?:string|null, op?:string}} cand
- * @returns {{action:'new'|'merge'|'update'|'conflict'|'drop'|'noop', score:number, target?:object, reason?:string}}
+ * @param {{text:string, entity_id?:string|null}} cand
+ * @returns {{action:'new'|'merge'|'conflict'|'drop', score:number, target?:object, reason?:string}}
  */
 export function decideWrite(db, aid, cand = {}) {
   const text = String(cand.text || '').trim()
-  const op = String(cand.op || '').toLowerCase()
-  if (op === 'noop' || op === 'ignore') return { action: 'noop', score: 1, reason: 'op=noop' }
-  if (op === 'delete' || op === 'forget') {
-    // 删除交给 applyWrite 找目标；这里先按相似找
-  }
-  if (text.length < GATE.MIN_LEN && op !== 'delete') return { action: 'drop', score: 0, reason: '太短' }
+  if (text.length < GATE.MIN_LEN) return { action: 'drop', score: 0, reason: '太短' }
   if (NOISE.test(text)) return { action: 'drop', score: 0, reason: '运行时噪音' }
 
-  const factKey = String(cand.fact_key || cand.key || '').trim().slice(0, 120) || null
   let rows = []
   try {
-    rows = db.prepare(`SELECT id,text,entity_id,weight,fact_key FROM memory_items
+    rows = db.prepare(`SELECT id,text,entity_id,weight FROM memory_items
       WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type IN ('fact','appraisal')
       ORDER BY created_at DESC LIMIT 200`).all(aid)
   } catch { rows = [] }
-
-  // 同 fact_key 优先：UPDATE / delete 的锚点
-  if (factKey) {
-    const byKey = rows.find((r) => String(r.fact_key || '') === factKey)
-    if (byKey) {
-      if (op === 'delete' || op === 'forget') return { action: 'delete', score: 1, target: byKey }
-      const flip = polarityFlip(text, byKey.text)
-      if (flip) return actionOnFlip(db, aid, byKey, 0.9, 'same_fact_key_flip')
-      if (reconcileOn(db, aid) && text !== String(byKey.text || '')) {
-        return { action: 'update', score: 1, target: byKey, reason: 'same_fact_key' }
-      }
-      return { action: 'merge', score: 1, target: byKey, reason: 'same_fact_key_identical' }
-    }
-  }
 
   let best = null
   for (const r of rows) {
@@ -155,27 +129,15 @@ export function decideWrite(db, aid, cand = {}) {
     if (s > 1) s = 1
     if (!best || s > best.score) best = { row: r, score: s, sameEntity }
   }
-  if (!best) {
-    if (op === 'delete' || op === 'forget') return { action: 'drop', score: 0, reason: 'delete_miss' }
-    return { action: 'new', score: 0 }
-  }
-
-  if (op === 'delete' || op === 'forget') {
-    if (best.score >= GATE.CONFLICT) return { action: 'delete', score: best.score, target: best.row }
-    return { action: 'drop', score: best.score, reason: 'delete_miss' }
-  }
+  if (!best) return { action: 'new', score: 0 }
 
   const mergeLine = best.sameEntity ? GATE.MERGE_WITH_ENTITY : GATE.MERGE
-  // 同一件事、极性相反：先于 merge / UPDATE（U6 黄灯默认）
+  // 同一件事、极性相反：先判矛盾再判合并（「不喜欢喝美式咖啡了」vs「喜欢喝美式咖啡，不加糖」）
   const flip = polarityFlip(text, best.row.text)
-  if (flip) return actionOnFlip(db, aid, best.row, best.score, 'polarity_flip')
+  if (flip) return { action: 'conflict', score: best.score, target: best.row }
   if (best.score >= mergeLine) return { action: 'merge', score: best.score, target: best.row }
-  // U2：同实体 + 较高相似 + 同极性 → UPDATE 改写（可关参）
-  if (reconcileOn(db, aid) && best.sameEntity && best.score >= GATE.UPDATE
-    && text !== String(best.row.text || '')) {
-    return { action: 'update', score: best.score, target: best.row, reason: 'entity_paraphrase' }
-  }
   if (best.score >= GATE.CONFLICT) {
+    // 相近但没到合并线、极性也一样：可能是换了说法，也可能只是用词接近 → 新增
     return { action: 'new', score: best.score, reason: '相近但不确定' }
   }
   return { action: 'new', score: best.score }
@@ -187,64 +149,13 @@ export function decideWrite(db, aid, cand = {}) {
  */
 export function applyWrite(db, aid, cand, write, opt = {}) {
   const d = decideWrite(db, aid, cand)
-  if (d.action === 'drop' || d.action === 'noop') {
-    return { action: d.action, reason: d.reason, score: d.score }
-  }
-  if (d.action === 'delete' && d.target) {
-    try { deleteMemoryByGate(db, aid, d.target.id) } catch { /* ignore */ }
-    return { action: 'delete', id: d.target.id, score: d.score }
-  }
+  if (d.action === 'drop') return { action: 'drop', reason: d.reason, score: d.score }
   if (d.action === 'merge') {
     try {
-      const stamp = new Date().toISOString()
       db.prepare('UPDATE memory_items SET hits=hits+1, last_hit_at=?, weight=MIN(1, COALESCE(weight,0.5)+?), version=version+1 WHERE id=?')
-        .run(stamp, Number(opt.strengthen || 0.02), d.target.id)
-      const row = db.prepare('SELECT * FROM memory_items WHERE id=?').get(d.target.id)
-      if (row) {
-        const h = heatOf(row)
-        db.prepare('UPDATE memory_items SET heat=?, band=? WHERE id=?').run(h, bandOf(row, h), d.target.id)
-      }
+        .run(new Date().toISOString(), Number(opt.strengthen || 0.02), d.target.id)
     } catch { /* 强化失败不影响判定 */ }
     return { action: 'merge', id: d.target.id, score: d.score }
-  }
-  if (d.action === 'update' && d.target) {
-    const at = new Date().toISOString()
-    const newText = String(cand.text || '').trim()
-    try {
-      // 旧句入冷库 + 改正文 + 改索引是一笔：旧句存不进去就整笔回退，宁可多一行也不丢旧版本
-      savepoint(db, () => {
-        const old = db.prepare('SELECT * FROM memory_items WHERE id=?').get(d.target.id)
-        if (!old) throw new Error('update_target_gone')
-        const histId = old.id + ':hist:' + Number(old.version || 1)
-        const ar = archiveFact(db, aid, {
-          memory_id: histId,
-          text: old.text,
-          type: old.type,
-          importance: old.importance,
-          source: 'update_history',
-          payload: { superseded_by_update: true, parent_id: old.id, version: Number(old.version || 1), at },
-        })
-        let histRef = ar && ar.id
-        if (ar && ar.duplicate) {
-          const kept = db.prepare('SELECT id,text FROM fact_archive WHERE agent_id=? AND memory_id=?').get(aid, histId)
-          histRef = kept && kept.text === old.text ? kept.id : null
-        }
-        if (!histRef) throw new Error('update_history_not_archived')
-        reviseMemory(db, aid, old.id, newText, { at, textRef: histRef, reason: d.reason || 'gate' })
-        try {
-          db.prepare('UPDATE memory_fts SET text=? WHERE id=?').run(newText, old.id)
-        } catch {
-          db.prepare('DELETE FROM memory_fts WHERE id=?').run(old.id)
-          db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(old.id, newText)
-        }
-        const row = db.prepare('SELECT * FROM memory_items WHERE id=?').get(old.id)
-        if (row) {
-          const h = heatOf(row)
-          db.prepare('UPDATE memory_items SET heat=?, band=? WHERE id=?').run(h, bandOf(row, h), old.id)
-        }
-      })
-    } catch { /* 改写失败则退回 new */ return { action: 'new', id: write(cand)?.id, score: d.score, fallback: 'update_failed' } }
-    return { action: 'update', id: d.target.id, score: d.score, reason: d.reason }
   }
 
   const r = write(cand)
@@ -252,23 +163,15 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
 
   // 门控判了冲突，就必须落一条可追溯的冲突记录：
   // 不能让 addMemory 自己的相似度判定（可能更低、可能被「不加糖」这类词带偏）把它放过。
-  // 回调没传 skipConflict 时 addMemory 可能已经给同一对开了案：复用，否则一边裁决完另一边永远挂着
-  let dup = null
-  try {
-    dup = r && db.prepare(`SELECT id FROM conflicts WHERE agent_id=? AND state='open'
-      AND ((a_id=? AND b_id=?) OR (a_id=? AND b_id=?)) LIMIT 1`).get(aid, d.target.id, r.id, r.id, d.target.id)
-  } catch { dup = null }
-  if (dup) return { action: 'conflict', id: r.id, conflict_id: dup.id, score: d.score }
   const cid = 'cfl_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
   const at = new Date().toISOString()
   try {
-    invalidateMemory(db, aid, d.target.id, { at, reason: 'conflict', causeId: r && r.id })
+    db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(at, d.target.id)
     db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,evidence,escalation_level)
       VALUES(?,?,?,?, 'open', ?, 'high','polarity',?,0)`).run(
       cid, aid, d.target.id, r.id, at,
       JSON.stringify({ similarity: d.score, via: 'gate', a_text: String(d.target.text || '').slice(0, 120), b_text: String(cand.text || '').slice(0, 120) }).slice(0, 800),
     )
-    disputeOpen(db, aid, [d.target.id, r && r.id], cid, { at })
     db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
       'memory.conflict', JSON.stringify({ conflict_id: cid, a: d.target.id, b: r.id, via: 'gate' }), at)
     db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)').run('alr_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,

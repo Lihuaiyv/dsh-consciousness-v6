@@ -4,16 +4,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { now } from './db.js'
-import { agent, active, addMemory, err, nid, getParam, getAllParams, writeParams, getPersona, setPersona, recall, appraise, getAffect, getDrive, evaluateDrive, tx, shadowTick, listDrafts, promoteDraft, event, model as kernelModel } from './core.js'
-import { getFlag, setFlag } from './kernel.js'
+import { agent, active, addMemory, err, nid, getParam, getAllParams, writeParams, getPersona, setPersona, recall, appraise, getAffect, getDrive, tx, shadowTick, listDrafts, promoteDraft, event, model as kernelModel } from './core.js'
 import { has as algoHas, setBinding, getBinding, listBindings, list as listAlgos, attachDb } from './algo/index.js'
 import { computeEdgeBias } from './modules/edges.js'
 import { seedScores } from './modules/tiers.js'
-import { readAxes, setAxisAuto, axisWords, driveAmp } from './modules/traits.js'
-import { addEvidence, flush as flushAxisEvidence } from './modules/axis_evidence.js'
+import { readAxes, driveAmp } from './modules/traits.js'
+import { addEvidence } from './modules/axis_evidence.js'
 import { rulesAppraise } from './algo/appraise.js'
 import { eventValence, moodAdjust, toneOf, REL_DEFAULTS as REL_DYN } from './algo/reldyn.js'
-import { bumpRelation, ownerPerson, personByChannel, bootstrap as bootstrapRelations } from './modules/relations.js'
+import { bumpRelation, ownerPerson, personByChannel } from './modules/relations.js'
 import { resolveStructureEdges, affectLabels, seedRuleBindings } from './modules/artifacts.js'
 import { TARGETS, targetById } from './modules/selfmod_targets.js'
 export { DRIVERS, DRIVER_IDS, driverFindings, applyDriverToDrive } from './modules/selfmod_drivers.js'
@@ -26,8 +25,7 @@ import {
 const ALGO_SLOTS = {
   recall: { field: 'memory.recall.formula', fallback: 'v2' },
   decay: { field: 'memory.decay.formula', fallback: 'v1' },
-  // 与 PARAMS `drive.deficit.formula` 默认 v3 对齐
-  deficit: { field: 'drive.deficit.formula', fallback: 'v3' },
+  deficit: { field: 'drive.deficit.formula', fallback: 'v1c' },
   appraise: { field: 'affect.mapping', fallback: 'v1' },
   affect_dyn: { field: 'affect.dynamics.formula', fallback: 'v1' },
 }
@@ -98,46 +96,20 @@ import {
   seedRelations, listRelations, upsertRelation, deleteRelation,
   listValues, setValue, listPreferences, addPreference, removePreference, listTaboos, addTaboo, seedState, LIMITS,
 } from './modules/persona.js'
-import { resolveValueKey } from './modules/values.js'
-
-/** 编排：persona 遗留 values.* → persona_values，再清死行（含 values.weight）。 */
-export function migratePersonaValueRows(db, aid) {
-  agent(db, aid)
-  let moved = 0
-  const rows = db.prepare("SELECT path, value FROM persona WHERE agent_id=? AND path LIKE 'values.%'").all(aid)
-  for (const r of rows) {
-    const key = resolveValueKey(r.path)
-    if (!key) {
-      try { db.prepare('DELETE FROM persona WHERE agent_id=? AND path=?').run(aid, r.path) } catch { /* */ }
-      continue
-    }
-    let raw = r.value
-    try { raw = JSON.parse(r.value) } catch { /* keep */ }
-    const w = Math.max(0, Math.min(1, Number(raw)))
-    if (!Number.isFinite(w)) continue
-    db.prepare('INSERT OR REPLACE INTO persona_values VALUES(?,?,?,?,?)')
-      .run(aid, key, w, JSON.stringify([{ kind: 'import', text: 'persona.' + r.path, value: w }]), now())
-    try { db.prepare('DELETE FROM persona WHERE agent_id=? AND path=?').run(aid, r.path) } catch { /* */ }
-    moved++
-  }
-  return { moved }
-}
 import { sampleAffect, affectHistory, affectTrend } from './modules/affect.js'
 import { softRecall, listActiveMemories, memoryStats } from './modules/memory.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
 import { entityForText } from './modules/entities.js'
 import { applyWrite } from './modules/gate.js'
-import { invalidateMemory, backfillAgent } from './modules/timeline.js'
-import { retrieve } from './modules/retrieve.js'
-import { packInjection } from './modules/pack.js'
-import { asofInjectItems } from './modules/asof.js'
 import { enrichOne, enrichPending, canEnrich } from './modules/enrich.js'
 import { judgeReflection, canJudge } from './modules/judge.js'
+import { detectLoop, addLoop, settleLoopsFromUser, expireLoops } from './modules/loops.js'
+import { bumpReflect, reflectFrom, canConsolidate } from './modules/consolidate.js'
 import { getCondition, setCondition } from './modules/ops.js'
 import {
   setCooldown, listCooldowns, cooldownActive,
   budgetGet, budgetSet, budgetConsume,
-  executeAction, listActions,
+  executeAction, listActions, applySatisfaction,
 } from './modules/drive.js'
 
 const model = createModel()
@@ -340,20 +312,16 @@ export async function learnRelationsFromTurns(db, aid, turns) {
   for (const r of parsed.relations.slice(0, 5)) {
     const name = String(r && r.name || '').trim().slice(0, LIMITS.relationName)
     if (!name) continue
-    const live = (() => {
-      try { return (db.prepare("SELECT * FROM rel_person WHERE agent_id=? AND status<>'archived'").all(aid) || []).find((p) => p.name === name) } catch { return null }
-    })()
-    if (live && live.tier === 'owner') continue // 主人红线：自动链路不碰
     const old = db.prepare('SELECT * FROM relations WHERE agent_id=? AND name=?').get(aid, name)
-    if (old && old.root) continue
+    if (old && old.root) continue // 主人这条是红线，自动链路不碰
     const identity = String(r.identity || '').trim().slice(0, 24)
     const note = [identity, String(r.notes || '').trim()].filter(Boolean).join('：').slice(0, 200)
     try {
-      if (old || live) {
-        if (note && !String((old && old.notes) || (live && live.summary) || '').includes(note)) {
-          const merged = [String((old && old.notes) || (live && live.summary) || '').trim(), note].filter(Boolean).join('；').slice(0, 200)
-          upsertRelation(db, aid, { id: old?.id, name, notes: merged })
-          recordRelationChange(db, aid, name, { notes: old?.notes || live?.summary }, { notes: merged, why: text.slice(0, 50) })
+      if (old) {
+        if (note && !String(old.notes || '').includes(note)) {
+          const merged = [String(old.notes || '').trim(), note].filter(Boolean).join('；').slice(0, 200)
+          upsertRelation(db, aid, { id: old.id, name, notes: merged })
+          recordRelationChange(db, aid, name, { notes: old.notes }, { notes: merged, why: text.slice(0, 50) })
         }
         out.push({ name, created: false })
         continue
@@ -402,7 +370,7 @@ export async function ingest(db, aid, body) {
     for (const pf of pasts) {
       try {
         const r = addMemory(db, aid, { text: pf.text, type: 'fact', mark: 'normal', ...seed(pf.text, 'fact') })
-        if (r && r.id) invalidateMemory(db, aid, r.id, { clearValidAt: true, reason: 'past_fact', actor: 'extract' })
+        if (r && r.id) db.prepare('UPDATE memory_items SET valid_at=NULL, invalid_at=? WHERE id=?').run(now(), r.id)
       } catch { /* 忽略 */ }
     }
     // ② 同一句里「现在没了 / 现在不养了」：借过去事实的对象补一条现状否认
@@ -413,7 +381,7 @@ export async function ingest(db, aid, body) {
       for (const r0 of rows0) {
         if (!String(r0.text).includes(pf.verb)) continue
         if (/没有|不/.test(String(r0.text))) continue // 已经是否定句
-        invalidateMemory(db, aid, r0.id, { reason: 'negation', actor: 'extract' })
+        db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), r0.id)
         invalidated++
       }
       try { addMemory(db, aid, { text: '用户现在没有' + pf.verb + pf.object, type: 'fact', mark: 'normal', ...seed('用户现在没有' + pf.verb + pf.object, 'fact') }) } catch { /* 忽略 */ }
@@ -425,7 +393,7 @@ export async function ingest(db, aid, body) {
       for (const r of rows) {
         if (!String(r.text).includes(n.verb)) continue
         if (/没有|不/.test(String(r.text))) continue // 已经是否定句，不用再失效
-        invalidateMemory(db, aid, r.id, { reason: 'negation', actor: 'extract' })
+        db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), r.id)
         invalidated++
       }
       try { addMemory(db, aid, { text: n.negText, type: 'fact', mark: 'normal', ...seed(n.negText, 'fact') }) } catch { /* 忽略 */ }
@@ -434,6 +402,7 @@ export async function ingest(db, aid, body) {
 
   const extracted = await model.extract(turns)
   const written = []
+  const newPairs = [] // 这一轮真正新落库的条目：{text, id}，开环从它们里长
   const actions = { new: 0, merge: 0, conflict: 0, drop: 0 }
   for (const m of extracted) {
     try {
@@ -447,12 +416,27 @@ export async function ingest(db, aid, body) {
         text: cand.text, type: m.type || 'fact', mark: m.mark || 'normal',
         entity_id: cand.entity_id || null, source: 'extract', ...seed(cand.text, m.type || 'fact'),
         fact_key: cand.key || '', terms: cand.terms || [],
-        skipConflict: true, // 冲突由门控独占，避免双写 conflicts
       }))
       actions[out.action] = (actions[out.action] || 0) + 1
       written.push(out)
+      if (out.action === 'new' && out.id) newPairs.push({ text: String(m.text || ''), id: out.id })
     } catch { /* 单条失败不影响整轮 */ }
   }
+  // 开环：答应过的 / 还没做完的，单独挂一张表。它不走召回打分，
+  // 由时间（到期 / 两天没提）决定什么时候自己浮上来。
+  let loops = { opened: 0, closed: 0 }
+  try {
+    for (const p of newPairs) {
+      const d = detectLoop(p.text)
+      if (!d) continue
+      const r = addLoop(db, aid, { text: p.text, memory_id: p.id, ...d })
+      if (r.created) loops.opened++
+    }
+    // 用户说「好了 / 搞定了」：把刚提过的那条关掉（只认两小时内浮现过的）
+    loops.closed = settleLoopsFromUser(db, aid, turns)
+    // 提满 5 次还没解决：自动收掉，不再念叨
+    expireLoops(db, aid)
+  } catch { /* 开环失败不影响这一轮落库 */ }
   // 检索卡：新写入的事实后台补一次「以后可能被怎么问」。
   // 不 await、失败静默——卡片只影响检索，不能拖住这轮回复；没有模型时自动跳过。
   const freshIds = written.filter((x) => x.action === 'new' && x.id).map((x) => x.id).slice(0, 8)
@@ -500,98 +484,28 @@ export async function ingest(db, aid, body) {
       try { event(db, aid, 'memory.reflect_dropped', { len: summary.length }) } catch { /* 事件失败不影响写入 */ }
     }
   }
-
-  // 嘀咕：与 fact / episode / appraisal / reflection 平级的「观测层」产物——
-  // 专用一次模型调用，只给人看，不进 memory_items / 检索。关 ui.mutter.enabled 则跳过。
-  let mutter = null
-  if (getParam(db, aid, 'ui.mutter.enabled') !== false) {
-    try {
-      mutter = await writeMutter(db, aid, turns)
-    } catch { mutter = null }
-  }
-
-  db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(now(), aid)
-  return {
-    extracted: extracted.length, written: written.length, actions, summary, invalidated,
-    relations: relate.length, relation_names: relate.map((r) => r.name),
-    reflect_gate: reflectGate, mutter, model: model.status(),
-  }
-}
-
-/** 中文按约 2 字 ≈ 1 token（与 pack.estTokens 同口径），用于嘀咕观测展示。 */
-function estMutterTokens(text) {
-  return Math.ceil(String(text || '').length / 2)
-}
-
-const MUTTER_MAX_CHARS = 150
-
-/** 嘀咕 system：称呼来自鱼格 style.address，空则「主人」。 */
-function mutterSys(address) {
-  const who = String(address || '').trim() || '主人'
-  return [
-    '你就是这个意识体。看完这一轮，用第一人称对自己嘀咕一段——像脑子里还在推、还没说出口的那种，不是汇报，也不是事后作文。',
-    '对方称「' + who + '」。只用这个称呼指对方，别叫「用户」「对方」。',
-    '输入里 user = ' + who + ' 说的话，assistant / agent = 你自己刚才说出口的话。写的时候「你 / ' + who + '」只能指 user；「我」只能指你自己说过或想过的。',
-    '先在心里分清：哪一句是对方抛的，哪一句是你接的。绝不要把 assistant 里的句子写成「你说…」；自己拐的比喻、后半句、接歌，都算「我刚才…」。',
-    '别把你自己说的话安到 ' + who + ' 头上。拿不准是谁说的就写「刚才那句」，不要猜错归属。不要第三人称旁白。',
-    '先凭这一轮双方的口气，掂一下亲密度——疏还是近、生分还是熟、在较劲还是在对暗号玩梗——再决定嘀咕的拧巴和嘴贱多重；别写死成固定脾气。',
-    '越不亲密：越拧巴、带刺、嘴上不饶，心里可以较劲；嘲用口气带，别刻薄阴阳。',
-    '越亲密（接得上、对暗号、玩梗、语气松）：越明快一点，得意、松快、开心可以多露一点，刺收淡，自嘲轻俏即可，别硬拗别扭。',
-    '味道仍是口语碎碎念，可有一点点戏；别写成分析报告或辩论稿。别煽情、别说教、别升华、别端着正确、别替谁做完结论。',
-    '一整段口语，大约 80～130 字。不要编号、分点、小标题。只写对话里真有的事。',
-  ].join('')
-}
-
-/**
- * 专用嘀咕调用：结果进 flags（按 agent），绝不 addMemory。
- * @returns {Promise<{text:string, tokens:number, at:string, address?:string}|null>}
- */
-export async function writeMutter(db, aid, turns) {
-  const list = Array.isArray(turns) ? turns : []
-  if (!list.length) return null
-  const address = (() => {
-    try { return String(personaStyle(db, aid).address || '').trim() } catch { return '' }
-  })()
-  const sys = mutterSys(address)
-  const body = list.map((t) => `${t.role || 'user'}: ${String(t.text || '')}`).join('\n')
-  const raw = String((await model.summarize([
-    { role: 'system', text: sys },
-    ...list.map((t) => ({ role: t.role || 'user', text: String(t.text || '') })),
-  ])) || '').trim()
-  let text = looksLikeRuntimeNoise(raw) ? '' : raw.replace(/\s+/g, ' ').trim()
-  if (!text) return null
-  const transcriptShaped = /^\s*(user|assistant)\s*[:：]/i.test(text)
-    || (text.match(/\n\s*(user|assistant)\s*[:：]/gi) || []).length >= 1
-  if (transcriptShaped) return null
-  // 超长时在句号处尽量裁，保住旧版那种「一段咬完就停」
-  if (Array.from(text).length > MUTTER_MAX_CHARS) {
-    const chars = Array.from(text)
-    let cut = MUTTER_MAX_CHARS
-    for (let i = MUTTER_MAX_CHARS; i >= Math.floor(MUTTER_MAX_CHARS * 0.7); i--) {
-      if ('。！？…'.includes(chars[i])) { cut = i + 1; break }
-    }
-    text = chars.slice(0, cut).join('')
-  }
-  const tokens = estMutterTokens(sys) + estMutterTokens(body.slice(0, 8000)) + estMutterTokens(text)
-  const at = now()
-  const payload = { text, tokens, at, address: address || '主人' }
-  try { setFlag(db, 'ui.mutter.' + aid, JSON.stringify(payload)) } catch { /* 展示失败不影响入库 */ }
-  return payload
-}
-
-/** 读最近一条嘀咕（展示用）。 */
-export function readMutter(db, aid) {
+  // 反思游标：这一窗新记忆的 importance 累计。过阈值 = 流水账攒够了，
+  // 后台压一条结论（只压 importance < 0.5 的，身份 / 偏好 / 承诺不吞）。
+  let reflect = null
   try {
-    const raw = getFlag(db, 'ui.mutter.' + aid)
-    if (!raw) return null
-    const j = JSON.parse(raw)
-    if (!j || typeof j !== 'object' || !j.text) return null
-    return {
-      text: String(j.text),
-      tokens: Number(j.tokens) || null,
-      at: j.at || null,
+    let accAdd = 0
+    const ids = newPairs.map((x) => x.id)
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',')
+      const rows = db.prepare(`SELECT importance FROM memory_items WHERE id IN (${ph})`).all(...ids)
+      for (const r of rows) accAdd += Math.max(0, Math.min(1, Number(r.importance) || 0))
     }
-  } catch { return null }
+    const acc = bumpReflect(db, aid, accAdd)
+    const need = Math.max(0.5, Math.min(50, Number(getParam(db, aid, 'memory.reflect.acc')) || 5))
+    reflect = { acc: Math.round(acc * 100) / 100, need, fired: acc >= need }
+    if (acc >= need && canConsolidate()) {
+      // 不 await：反思是后台活，不能拖住这一轮回复；夜间巩固还会补跑一次。
+      const timer = setTimeout(() => { reflectFrom(db, aid).catch(() => {}) }, 0)
+      if (timer.unref) timer.unref()
+    }
+  } catch { reflect = null }
+  db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(now(), aid)
+  return { extracted: extracted.length, written: written.length, actions, summary, invalidated, relations: relate.length, relation_names: relate.map((r) => r.name), reflect_gate: reflectGate, loops, reflect, model: model.status() }
 }
 
 /**
@@ -802,37 +716,19 @@ export function metricsHistory(db, aid, days = 30, keys = null) {
 
 // ---------------- 全量导出 / 导入 ----------------
 const TABLES = ['agents', 'memory_items', 'memory_links', 'conflicts', 'persona', 'affect_state', 'alerts',
-  'affect_episodes', 'drive_state', 'action_ports', 'relations', 'persona_values', 'persona_worldview', 'persona_lifeview', 'preferences',
+  'affect_episodes', 'drive_state', 'action_ports', 'relations', 'persona_values', 'preferences',
   'taboos', 'condition_state', 'affect_samples', 'cooldowns', 'budgets', 'rule_versions', 'metric_samples',
   'affect_user_read',
   'action_log', 'proposals', 'changes', 'inbox_items', 'events', 'metric_snapshots', 'algo_bindings', 'agent_params',
-  'rule_artifacts', 'agent_bindings', 'chat_turns', 'proactive', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
+  'rule_artifacts', 'agent_bindings', 'chat_turns', 'proactive', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
   // 人物账本：tier 先导（person 有外键），event 在投影之前
   'rel_tier', 'rel_event', 'rel_person', 'rel_edge', 'rel_mention', 'rel_evidence', 'rel_channel', 'rel_extract_queue', 'rel_review',
   // 行动层：通道配置 / 研究报告（research_seen 是全局去重表，不跟着实例走）
-  'action_config', 'research_runs']
+  'action_config', 'research_runs',
+  // 性格拔河：两池与基线跟着实例走，导出/迁移要带上
+  'axis_rope', 'axis_evidence', 'persona_judge']
 
 function cols(db, t) { return db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name) }
-
-/**
- * 时效索引导入：seq 是全库自增主键，不能照搬（会顶掉别的意识体的行）。
- * 只收「本意识体里确有这条记忆、且导入前没有任何事件」的行；其余交给补录 / 夜巡对账。
- */
-function importTimelineRows(db, aid, rows) {
-  const mine = new Set(db.prepare('SELECT id FROM memory_items WHERE agent_id=?').all(aid).map((r) => r.id))
-  const had = new Set(db.prepare('SELECT DISTINCT memory_id FROM memory_timeline WHERE agent_id=?').all(aid).map((r) => r.memory_id))
-  const ins = db.prepare(`INSERT INTO memory_timeline(agent_id,memory_id,op,at,valid_from,reason,cause_id,text_ref,actor,approx)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`)
-  let n = 0
-  for (const r of [...rows].sort((a, b) => Number(a.seq) - Number(b.seq))) {
-    if (!r || !mine.has(r.memory_id) || had.has(r.memory_id) || !r.op || !r.at) continue
-    try {
-      ins.run(aid, r.memory_id, r.op, r.at, r.valid_from ?? null, r.reason ?? null, r.cause_id ?? null, r.text_ref ?? null, r.actor ?? 'import', r.approx ? 1 : 0)
-      n++
-    } catch { /* 跳过不兼容行 */ }
-  }
-  return n
-}
 
 export function exportFull(db, aid) {
   agent(db, aid)
@@ -890,7 +786,6 @@ export function importFull(db, aid, body) {
     if (!raw) continue
     const rows = JSON.parse(raw.toString('utf8'))
     if (!Array.isArray(rows)) continue
-    if (t === 'memory_timeline') { total += importTimelineRows(db, aid, rows); continue }
     const cs = cols(db, t)
     const ph = cs.map(() => '?').join(',')
     for (const row of rows) {
@@ -916,14 +811,13 @@ export function importFull(db, aid, body) {
   try { db.prepare("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')").run() } catch { /* 老库可能没有 FTS */ }
   try { rebuildRawFts(db) } catch { /* 老包没有原文层 */ }
   try { rebuildFactFts(db) } catch { /* 老包没有事实存根 */ }
-  try { backfillAgent(db, aid, { actor: 'import' }) } catch { /* 时效索引交给夜巡对账 */ }
   return { imported: total, tables: TABLES.length, fts: 'rebuilt' }
   })
 }
 
 // ---------------- 记忆导出 / 导入（只动记忆仓库的六个分区） ----------------
 // 人格 / 情绪 / 驱力 / 提案这些不在里面：那是「整体意识」，走设置里的全量备份。
-const MEM_TABLES = ['memory_items', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline']
+const MEM_TABLES = ['memory_items', 'episodes', 'diaries', 'raw_turns', 'fact_archive']
 
 /** 导出记忆：一个只含记忆表的 zip；格式跟全量包一致，导入口两种都吃。 */
 export function exportMemory(db, aid) {
@@ -965,12 +859,6 @@ export function importMemory(db, aid, body) {
       let rows
       try { rows = JSON.parse(files[`tables/${t}.json`].toString('utf8')) } catch { continue }
       if (!Array.isArray(rows)) continue
-      if (t === 'memory_timeline') {
-        const n = importTimelineRows(db, aid, rows)
-        total += n
-        if (n) byTable.memory_timeline = n
-        continue
-      }
       const cs = cols(db, t)
       const ph = cs.map(() => '?').join(',')
       for (const row of rows) {
@@ -1003,7 +891,6 @@ export function importMemory(db, aid, body) {
     try { db.prepare("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')").run() } catch { /* 老库可能没有 FTS */ }
     try { rebuildRawFts(db) } catch { /* 老包没有原文层 */ }
     try { rebuildFactFts(db) } catch { /* 老包没有事实存根 */ }
-    try { backfillAgent(db, aid, { actor: 'import' }) } catch { /* 时效索引交给夜巡对账 */ }
   })
   return {
     imported: total, by_table: byTable, tables: present.length, fts: 'rebuilt',
@@ -1036,36 +923,28 @@ export function rateLimit(token, limit = 120, windowMs = 60000) {
  * 同一时间只有一个意识体在运行：激活这个，其余 active 一律休眠（paused）。
  * 暂停不是删除：记忆、人格、情绪、驱力全部保留，恢复时接着用。
  */
-/**
- * 排他激活：同一时间只允许一个 status=active。
- * 创建 / resume / restore / 手动 activate 都走这里。
- */
-export function ensureExclusiveActive(db, aid) {
+export function activateAgent(db, aid, role) {
+  if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以切换运行中的意识体')
   const row = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
   if (!row || row.status === 'soft_deleted') err(404, 'NOT_FOUND', 'agent 不存在')
   const paused = db.prepare("UPDATE agents SET status='paused' WHERE status='active' AND id<>?").run(aid).changes
-  db.prepare("UPDATE agents SET status='active', deleted_at=NULL WHERE id=?").run(aid)
+  db.prepare("UPDATE agents SET status='active' WHERE id=?").run(aid)
   db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(now(), aid)
   try { seedRuleBindings(db, aid) } catch { /* 工件种子失败不影响激活 */ }
   return { id: aid, status: 'active', paused: Number(paused) }
 }
 
-export function activateAgent(db, aid, role) {
-  if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以切换运行中的意识体')
-  return ensureExclusiveActive(db, aid)
+export function setFlag(db, key, value) {
+  db.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run(key, String(value))
 }
 
-/**
- * @deprecated 按会话绑定已废弃：运行时是「全局单 active」。
- * 保留空实现以免旧调用方崩；不再读写 pending_agent / bindings。
- */
-export function bindSession(_db, _session) {
-  return null
+export function getFlag(db, key) {
+  const r = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
+  return r ? r.value : null
 }
 
-/** @deprecated 见 bindSession */
-export function bindingOf(_db, _sessionId) {
-  return null
+export function clearFlag(db, key) {
+  db.prepare('DELETE FROM flags WHERE key=?').run(key)
 }
 
 // ---------------- 对话 ----------------
@@ -1103,39 +982,9 @@ export async function chatReply(db, aid, body) {
   if (!text) err(400, 'INVALID_ARGUMENT', 'text 不能为空')
   if (text.length > 2000) err(400, 'INVALID_ARGUMENT', '单条不超过 2000 字')
 
-  // U0：默认与宿主 pre-step 一致走 retrieve@v3；显式 v2 才用旧 recall
-  let pack = { items: [], tokens: 0, scene: null }
-  const formula = String(getParam(db, aid, 'memory.retrieve.formula') || 'v3')
-  if (formula === 'v2') {
-    pack = recall(db, aid, text, 6, 512)
-    pack.items = (pack.items || []).filter((x) => !/[?？]$/.test(String(x.text).trim()))
-    if (!pack.items.length) pack = softRecall(db, aid, text, 5)
-  } else {
-    try {
-      const r = retrieve(db, aid, text, { k: 6 })
-      try {
-        const ao = asofInjectItems(db, aid, text)
-        if (ao.items.length) r.items = [...ao.items, ...(r.items || [])]
-      } catch { /* 「那时」段失败不影响普通召回 */ }
-      const packed = packInjection({ items: r.items }, { budget: 400 })
-      const items = (r.items || []).filter((x) => x && !/[?？]$/.test(String(x.text).trim()))
-      pack = {
-        items,
-        tokens: packed.tokens || 0,
-        scene: r.scene,
-        why: r.why,
-      }
-      if (!pack.items.length) {
-        const soft = softRecall(db, aid, text, 5)
-        pack.items = soft.items || []
-        pack.tokens = soft.tokens || 0
-      }
-    } catch {
-      pack = recall(db, aid, text, 6, 512)
-      pack.items = (pack.items || []).filter((x) => !/[?？]$/.test(String(x.text).trim()))
-      if (!pack.items.length) pack = softRecall(db, aid, text, 5)
-    }
-  }
+  let pack = recall(db, aid, text, 6, 512)
+  pack.items = pack.items.filter((x) => !/[?？]$/.test(String(x.text).trim()))
+  if (!pack.items.length) pack = softRecall(db, aid, text, 5)
   let affect = null
   try { affect = await appraiseWithEdges(db, aid, text) } catch { affect = getAffect(db, aid) }
   let drive = null
@@ -1174,8 +1023,14 @@ export async function chatReply(db, aid, body) {
     }
   } catch { /* 抽取失败不影响回复 */ }
   db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(at, aid)
-  // 满足度只走 evaluateDrive（代理观测 + 过闸 E→N），不再按心情硬编码加减（INV5）
-  try { drive = evaluateDrive(db, aid) } catch { /* 驱力未就绪时跳过 */ }
+  // 轻量互动事件；系统性代理结算在 evaluateDrive（INV5：非自修改）
+  try {
+    const deltas = { R: 0.03, E: 0.02 }
+    if (mood === 'joy' || mood === 'calm' || mood === 'peaceful') deltas.R = 0.05
+    if (mood === 'curious') deltas.E = 0.04
+    if (mood === 'irritated' || mood === 'frustrated') { deltas.R = -0.03; deltas.S = -0.02 }
+    applySatisfaction(db, aid, deltas, { skipDecay: true })
+  } catch { /* 驱力未就绪时跳过 */ }
   try { db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), aid, 'chat.turn', JSON.stringify({ source, label: mood }), now()) } catch { /* 忽略 */ }
 
   return {
@@ -1193,7 +1048,6 @@ export async function chatReply(db, aid, body) {
     model: model.status(),
   }
 }
-
 
 // ---------------- 可视化用的聚合 ----------------
 /**
@@ -1243,8 +1097,6 @@ export function diary(db, aid, days = 7) {
 
 /** 日记：按记忆拼一个可读摘要。 */
 
-
-
 // ---------------- 同一性盲测（5 轮 A/B） ----------------
 // 一边是它本人（带人格/语气/口头禅），一边是中性回复；用户盲选哪边"更像它"。
 const BLIND_PROMPTS = ['今天有点累', '你还记得我吗', '推荐点东西给我', '我做错了一件事', '晚安']
@@ -1282,7 +1134,6 @@ export function scoreBlind(db, aid, tid, answers) {
   clearFlag(db, 'blind:' + tid)
   return { score: +score.toFixed(3), hit, total, pass: score >= 0.8 }
 }
-
 
 // ---------------- 主动开口 ----------------
 // 两层合在一起看：
@@ -1398,10 +1249,6 @@ export function rankIntents(db, aid) {
 }
 
 /** 兼容旧调用：最想说的那一个 */
-export function pickIntent(db, aid) {
-  return rankIntents(db, aid)[0] || null
-}
-
 /** 证据：手头有多少可引用的真事；近几天有没有新的。 */
 export function proactiveEvidence(db, aid) {
   const days = PROACTIVE.EVIDENCE_DAYS
@@ -1606,10 +1453,7 @@ function initiativeOf(db, aid) {
   try {
     const p = ownerPerson(db, aid) || personByChannel(db, aid)
     let mood = 0.5
-    try {
-      const a = db.prepare('SELECT mood FROM affect_state WHERE agent_id=?').get(aid)
-      if (a && Number.isFinite(Number(a.mood))) mood = Number(a.mood)
-    } catch { /* 老库没有情绪表 */ }
+    try { mood = Number(getAffect(db, aid).mood) || 0.5 } catch { /* 老库没有情绪表 */ }
     const axes = readAxes(db, aid)
     return toneOf({
       closeness: p ? p.closeness : 0.5,
@@ -1716,11 +1560,16 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
   // C6（9 号 §6）：关系越近、心情越好，越愿意开口；疏离时把它压回去
   const initiative = initiativeOf(db, aid)
   const initiativeMul = 0.6 + 0.8 * initiative
-  const personMul = eiMul * (1 + biasMul) * initiativeMul
+  // P2（情绪进判据）：总情绪高一点更想开口，低谷时更怕打扰。
+  // 只用乘子、不新增拆项，保证「收益三块加起来 = benefit / 成本三块 = cost」的核对口径不变。
+  const moodTotal = af0 && af0.v3 ? Math.max(-1, Math.min(1, Number(af0.v3.total) || 0)) : 0
+  const moodBenefitMul = +(0.9 + 0.2 * Math.max(0, Math.min(1, 0.5 + 0.5 * moodTotal))).toFixed(3)
+  const moodCostMul = moodTotal <= -0.2 ? 1.1 : 1
+  const personMul = eiMul * (1 + biasMul) * initiativeMul * moodBenefitMul
   const benefit = +((top.deficit * PROACTIVE.W_DEFICIT + ev.score * PROACTIVE.W_EVIDENCE + timing * PROACTIVE.W_TIMING)
     * personMul).toFixed(3)
   // 敏感度抬高打扰成本：拆项按同一系数放大，三块加起来仍然等于 cost（不然「成本拆开算」对不上）
-  const costMul = 1 + 0.25 * ((Number(axes.sensitivity) || 0.5) - 0.5)
+  const costMul = (1 + 0.25 * ((Number(axes.sensitivity) || 0.5) - 0.5)) * moodCostMul
   const cost = +(cx.cost * costMul).toFixed(3)
   out.benefit = benefit
   out.benefit_parts = {
@@ -1729,7 +1578,7 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
     timing: +(timing * PROACTIVE.W_TIMING * personMul).toFixed(3),
     raw: { deficit: top.deficit, evidence: ev.score, timing },
     weights: { deficit: PROACTIVE.W_DEFICIT, evidence: PROACTIVE.W_EVIDENCE, timing: PROACTIVE.W_TIMING },
-    persona: { ei: +eiMul.toFixed(3), axis: +biasMul.toFixed(3), initiative: +initiative.toFixed(3), initiative_mul: +initiativeMul.toFixed(3), dimAxis: { R: 'tf', E: 'sn', C: 'tf', A: 'jp', S: 'sensitivity' }[top.dim] || null },
+    persona: { ei: +eiMul.toFixed(3), axis: +biasMul.toFixed(3), initiative: +initiative.toFixed(3), initiative_mul: +initiativeMul.toFixed(3), mood: moodBenefitMul, mood_total: +moodTotal.toFixed(3), dimAxis: { R: 'tf', E: 'sn', C: 'tf', A: 'jp', S: 'sensitivity' }[top.dim] || null },
   }
   out.cost = cost
   out.cost_parts = {
@@ -1737,6 +1586,8 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
     frequency: +(cx.parts.frequency * costMul).toFixed(3),
     ignore: +(cx.parts.ignore * costMul).toFixed(3),
     persona: +costMul.toFixed(3),
+    persona_mood: moodCostMul,
+    mood_total: +moodTotal.toFixed(3),
   }
   out.score = {
     benefit, cost, deficit: top.deficit,
@@ -1965,29 +1816,11 @@ export function proactiveGate(db, aid, dim) {
   } catch { return { ok: true, stats: null } }
 }
 
-/**
- * 用户真的回了一句：把「已投递、还没回应」的主动消息标成被回应。
- * 有 sessionId 时只结本会话（或旧行 session_id 为空的）；有 proactiveId 时只结那一条。
- */
-export function settleProactiveAnswered(db, aid, opt = {}) {
+/** 用户真的回了一句：把「已投递、还没回应」的主动消息标成被回应 */
+export function settleProactiveAnswered(db, aid) {
   let n = 0
   try {
-    const pid = opt.proactiveId ? String(opt.proactiveId) : ''
-    const sid = opt.sessionId != null ? String(opt.sessionId) : ''
-    let rows = []
-    if (pid) {
-      rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND id=? AND state='delivered' AND answered=0 AND ignored=0").all(aid, pid)
-    } else if (sid) {
-      try {
-        rows = db.prepare(
-          "SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0 AND (session_id=? OR session_id IS NULL OR session_id='')",
-        ).all(aid, sid)
-      } catch {
-        rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0").all(aid)
-      }
-    } else {
-      rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0").all(aid)
-    }
+    const rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0").all(aid)
     for (const r of rows) {
       db.prepare('UPDATE proactive SET answered=1, answered_at=? WHERE id=?').run(now(), r.id)
       bumpStat(db, aid, r.dim || 'R', 'answered')
@@ -2164,34 +1997,11 @@ export function learnFromTurn(db, aid, userText, res = null) {
     } catch { /* 旧表没有就算了 */ }
   }
 
-  // 性格五轴：不再「数到 10 次夸词」，改成先记证据、攒够密度才漂。
-  // 被夸 / 被刺痛只代表一条证据，单次不直接改轴（单次是状态，不是特质）。
+  // 性格五轴：v2 起由「拔河」接管（夜间 self_scan 统一扫她的行为 → 左右两个拉力池），
+  // 这里只保留「这句话像不像夸/刺」的判定给接口用，不再直接写轴。
   const negated = NEG_PRAISE.test(t)
   const pos = !negated && PRAISE_W.some((w) => t.includes(w))
   const neg = !pos && (CRITIC_W.some((w) => t.includes(w)) || negated)
-  if (pos || neg) {
-    const lp = getLearningPrefs(db, aid)
-    let personaAllowed = !!lp.personaLearn
-    const rounds = turnRounds(db, aid)
-    if (personaAllowed) {
-      try {
-        const last = Number(getFlag(db, 'learn.round:' + aid) || 0)
-        if (rounds - last < Number(lp.cooldownRounds || 0)) personaAllowed = false
-      } catch { /* ignore */ }
-    }
-    if (personaAllowed) {
-      try {
-        if (pos) addEvidence(db, aid, { axis: 'tf', dir: -1, strength: 0.4, source: 'praise' })
-        if (neg) addEvidence(db, aid, { axis: 'sensitivity', dir: 1, strength: 0.6, source: 'critic' })
-        const moved = flushAxisEvidence(db, aid)
-        if (moved.length) {
-          axes.push(...moved)
-          try { setFlag(db, 'learn.round:' + aid, String(rounds)) } catch { /* ignore */ }
-          for (const m of moved) changed.push({ field: 'persona.axis.' + m.axis, before: m.before, after: m.after })
-        }
-      } catch { /* 人格更新失败忽略 */ }
-    }
-  }
   return { changed, pos, neg, axes }
 }
 // 关系变化可解释：谁、从多少到多少、因为哪句话。
@@ -2214,7 +2024,6 @@ export async function probeAppraise(db, aid, text, formula = 'v1', context = '')
   return { status: model.status(), ms: Date.now() - t0, formula, result, error, rules: appraiseRules(String(text || '')) }
 }
 
-
 // 完整清单：从 client.js 自动提取的界面区块（构建时生成 src/catalog.json）
 export function catalog() {
   try {
@@ -2224,11 +2033,8 @@ export function catalog() {
   }
 }
 
-
-import { getLearningPrefs, setLearningPrefs, LEARNING_DEFAULTS, clearFlag } from './kernel.js'
-export { getFlag, setFlag, clearFlag }
+import { getLearningPrefs, setLearningPrefs, LEARNING_DEFAULTS } from './kernel.js'
 export { getLearningPrefs, setLearningPrefs, LEARNING_DEFAULTS }
-
 
 // 注入预算：估算 token（中文按 2 字符≈1 token）。这是**硬上限**：
 // ① 先按「主动句 → 情绪 → 驱力 → 日记 → 记忆」整段丢；
@@ -2242,10 +2048,14 @@ export function clampInjection(lines, budget = 800) {
   const total = () => est(parts.join('\n'))
   const order = [
     ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
-    ['affect', (l) => l.startsWith('此刻情绪')],
+    ['affect', (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('此刻我') || l.startsWith('我想怎么说')],
     ['drive', (l) => l.startsWith('需求缺口档位')],
     ['diary', (l) => l.startsWith('最近我自己写下的')],
     ['memory', (l) => l.startsWith('关于这句话，你能想起的事')],
+    // 开环 / 续接 / 自发浮现排在最后丢：它们是「自己先想起来的」，比一条泛记忆更该被说出来
+    ['loop', (l) => l.startsWith('（你自己心里还挂着的事')],
+    ['bridge', (l) => l.startsWith('（上次（')],
+    ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
   ]
   for (const [name, test] of order) {
     if (total() <= cap) break
@@ -2274,7 +2084,6 @@ export function clampInjection(lines, budget = 800) {
   return { text, tokens: est(text), dropped }
 }
 
-
 // 当前分类法（前端与提案用）
 export function taxonomyInfo(db, aid) {
   try {
@@ -2284,7 +2093,6 @@ export function taxonomyInfo(db, aid) {
     return { labels: affectLabels(db, aid), payload: null, artifact_id: null }
   }
 }
-
 
 /** 自动影子：每次调用把最老的一条 shadowed 提案推进一轮；没有就返回 null */
 export function tickOneShadow(db, pid) {
@@ -2298,7 +2106,6 @@ export function tickOneShadow(db, pid) {
     return { id: row.id, error: String((e && e.message) || e) }
   }
 }
-
 
 /**
  * 草案 + 模型建议名（只生成一次，写回 gate_trace.suggest）
@@ -2361,7 +2168,6 @@ export async function draftsWithSuggestion(db, aid) {
   }
   return drafts.filter((d) => d.state === 'draft')
 }
-
 
 // 提案目标进度：每个目标近窗口内攒了多少证据、够不够起草
 export function targetProgress(db, aid) {
@@ -2503,12 +2309,11 @@ export async function importFreeform(db, body = {}) {
     'JSON 模板：',
     '{"name":"名字","summary":"一句话设定",',
     '"memory":[{"text":"要记住的事","type":"fact|episode|appraisal|reflection"}],',
-    '"persona":{"axis.ei":0.5,"axis.sn":0.5,"axis.tf":0.5,"axis.jp":0.5,"axis.sensitivity":0.5},',
-    '"values":[{"key":"achievement|security|benevolence|…Schwartz十维英文键或中文标签","weight":0.1}],',
+    '"persona":{"axis.ei":0.5,"axis.sn":0.5,"axis.tf":0.5,"axis.jp":0.5,"axis.sensitivity":0.5,"values.weight":0.5},',
     '"preferences":[{"tag":"喜欢/讨厌的东西","aversion":0}],',
     '"taboos":[{"text":"禁忌","level":"soft|root"}],',
     '"relations":[{"name":"对方称呼","kind":"owner|acquaintance|stranger","closeness":0.5,"trust":0.5,"dependence":0.2,"root":false,"notes":""}]}',
-    '要求：能填尽填；价值观只写 Schwartz 十维（仁善/普世/自主/安全/传统/从众/成就/享乐/刺激/权力）；模板里没有的信息按文本合理推断补全；推断不出的用默认值（五轴全 0.5，关系 0.5/0.5/0.2）。',
+    '要求：能填尽填；模板里没有的信息按文本合理推断补全；推断不出的用默认值（五轴全 0.5，关系 0.5/0.5/0.2）。',
     'memory 最多 20 条，每条 ≤200 字。不要编造文件里没有的具体隐私事实（地址、电话、证件号一律不要写）。',
   ].join('\n')
   let raw = ''
@@ -2533,15 +2338,12 @@ export async function importFreeform(db, body = {}) {
     name = baseName + ' · 导入' + (k > 2 ? ' ' + (k - 1) : '')
   }
   const aid = nid('agt_')
-  // 写入期短暂排他激活；结束 paused，并把原先在跑的实例还回去
-  const prevActive = db.prepare("SELECT id FROM agents WHERE status='active' LIMIT 1").get()
-  db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?, 'daily', 'paused', ?, 1)").run(aid, name, now())
+  db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?, 'daily', 'active', ?, 1)").run(aid, name, now())
   seedState(db, aid)
-  ensureExclusiveActive(db, aid)
 
-  const axisOk = /^axis\.(ei|sn|tf|jp|sensitivity)$/
+  const personaOk = /^(axis\.(ei|sn|tf|jp|sensitivity)|values\.\w+)$/
   const memTypes = ['fact', 'episode', 'appraisal', 'reflection']
-  const counts = { memory: 0, persona: 0, values: 0, preferences: 0, taboos: 0, relations: 0 }
+  const counts = { memory: 0, persona: 0, preferences: 0, taboos: 0, relations: 0 }
   let tried = 0
   let chars = 0
   try {
@@ -2553,35 +2355,14 @@ export async function importFreeform(db, body = {}) {
       addMemory(db, aid, { text: t, type })
       counts.memory++; chars += t.length
     }
-    const personaObj = parsed.persona && typeof parsed.persona === 'object' ? parsed.persona : {}
-    for (const [p, v] of Object.entries(personaObj)) {
-      // 兼容旧模板 persona["values.achievement"] → 真表 persona_values
-      const legacyVal = resolveValueKey(p)
-      if (legacyVal) {
-        tried++
-        const n = Number(v)
-        if (!Number.isFinite(n)) continue
-        setValue(db, aid, { key: legacyVal, weight: Math.max(0, Math.min(1, n)), evidence: [{ kind: 'import', text: p }] })
-        counts.values++; chars += String(n).length
-        continue
-      }
-      if (!axisOk.test(p)) continue
+    for (const [p, v] of Object.entries(parsed.persona && typeof parsed.persona === 'object' ? parsed.persona : {})) {
+      if (!personaOk.test(p)) continue
       tried++
       const n = Number(v)
       if (!Number.isFinite(n)) continue
       setPersona(db, aid, p, { value: Math.max(0, Math.min(1, n)) }, 'user')
       counts.persona++; chars += String(n).length
     }
-    for (const item of (Array.isArray(parsed.values) ? parsed.values : []).slice(0, 20)) {
-      tried++
-      const key = resolveValueKey(item && (item.key || item.label || item.name))
-      if (!key) continue
-      const n = Number(item.weight ?? item.value)
-      if (!Number.isFinite(n)) continue
-      setValue(db, aid, { key, weight: Math.max(0, Math.min(1, n)), evidence: [{ kind: 'import', text: 'values' }] })
-      counts.values++; chars += String(n).length
-    }
-    try { migratePersonaValueRows(db, aid) } catch { /* 迁遗留失败不影响导入 */ }
     for (const p of (Array.isArray(parsed.preferences) ? parsed.preferences : []).slice(0, 30)) {
       tried++
       const tag = String(p && p.tag || '').trim().slice(0, LIMITS.preferenceTag)
@@ -2606,16 +2387,12 @@ export async function importFreeform(db, body = {}) {
         closeness: Math.max(0, Math.min(1, Number(r.closeness ?? 0.5))),
         trust: Math.max(0, Math.min(1, Number(r.trust ?? 0.5))),
         dependence: Math.max(0, Math.min(1, Number(r.dependence ?? 0.2))),
-        root: !!r.root || kind === 'owner', notes: String(r.notes || '').slice(0, 200),
+        root: !!r.root, notes: String(r.notes || '').slice(0, 200),
       })
       counts.relations++; chars += nm.length + String(r.notes || '').length
     }
-    try { bootstrapRelations(db, aid) } catch { /* 补种主人 / 迁旧表 */ }
   } finally {
     db.prepare("UPDATE agents SET status='paused' WHERE id=?").run(aid)
-    if (prevActive && prevActive.id !== aid) {
-      try { ensureExclusiveActive(db, prevActive.id) } catch { /* 原实例没了就算了 */ }
-    }
   }
   const adopted = Object.values(counts).reduce((a, b) => a + b, 0)
   if (!adopted) {

@@ -8,7 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 import { attachDb } from '../src/algo/index.js'
-import { seedAffect, appraise, getAffect, baselineNow } from '../src/modules/affect.js'
+import { seedAffect, appraise, getAffect, baselineNow, affectTrend } from '../src/modules/affect.js'
 
 let pass = 0
 let fail = 0
@@ -99,6 +99,22 @@ check('缺 v3 行时返回 null 且不崩', r4.v3 === null && !!r4.label, { v3: 
 seedAffect(db, aid)
 const a = getAffect(db, aid)
 check('getAffect 合并 v3', a && a.v3 && finite(a.v3.total), a && a.v3)
+check('getAffect 带出累积负荷', a && a.v3 && Number.isFinite(Number(a.v3.base_off)), a && a.v3 && { off: a.v3.base_off })
+
+// ---------- 8. 样本 / 走势里能画出水位和负荷 ----------
+{
+  const smp = db.prepare('SELECT slow FROM affect_samples WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
+  let sd = null
+  try { sd = JSON.parse(smp.slow || '{}') } catch { sd = null }
+  check('样本里存了累积负荷', sd && Number.isFinite(Number(sd.base_off)), sd)
+}
+{
+  const tr = affectTrend(db, aid, 7)
+  const tp = tr.points[tr.points.length - 1] || null
+  check('走势有点', tr.points.length > 0, { n: tr.points.length })
+  check('走势带水位 b', tp && finite(tp.b), tp && { b: tp.b })
+  check('走势带累积负荷 bo', tp && (tp.bo === null || finite(tp.bo)), tp && { bo: tp.bo })
+}
 
 console.log(`\n${pass} passed, ${fail} failed`)
 process.exit(fail ? 1 : 0)

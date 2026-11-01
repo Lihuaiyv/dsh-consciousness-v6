@@ -46,4 +46,3 @@ export function researchObserver() {
   return []
 }
 
-export const OBSERVER_SOURCES = SOURCES

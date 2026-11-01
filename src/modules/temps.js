@@ -100,7 +100,3 @@ export function tempStats(db, aid) {
 }
 
 /** S1 每轮是否该看这条：cold / archived 不参与每轮注入。 */
-export function isWarm(row) {
-  const s = String((row && row.temp_state) || 'warm')
-  return s === 'hot' || s === 'warm'
-}

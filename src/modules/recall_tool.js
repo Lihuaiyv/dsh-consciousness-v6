@@ -33,41 +33,9 @@ const MAX_PHRASINGS = 4
 /** 第 2、3、4 种说法打点折：主查询仍是主角，只是允许别的说法补漏。 */
 const PHRASE_W = [1, 0.75, 0.6, 0.5]
 const FLOOR = 0.12          // 低于这个证据分当噪声丢掉（工具不设高门，只挡明显无关）
-/** 无字面重合时，指纹/向量软匹配至少要到这档才算「沾边」——挡「量子色动力学→气泡」硬凑。 */
-const SOFT_FLOOR = 0.45
 const FULL_MAX = 1200       // detail=full 时单条最多多少字
 const BRIEF_MAX = 120
 const TOTAL_MAX = 9000      // 一次返回的正文上限，超了截断并明说
-
-/** 查询与正文有没有 ≥2 字实义重合（工具侧用来挡纯软匹配噪声）。 */
-export function hasLexOverlap(q, text) {
-  const Q = String(q || '')
-  const T = String(text || '')
-  if (!Q || !T) return false
-  if (T.includes(Q)) return true
-  for (let i = 0; i + 2 <= Q.length; i++) {
-    const g = Q.slice(i, i + 2)
-    if (!/[\u4e00-\u9fffA-Za-z0-9]/.test(g[0])) continue
-    if (T.includes(g)) return true
-  }
-  return false
-}
-
-/**
- * 候选过不过门：实体/图扩散放行；有字面重合用低门；纯向量/指纹软匹配抬高门槛。
- * days 窗：缺时间戳时**收紧**（不当放行），避免 vec 通道没带 created_at 就漏过旧条。
- */
-function keepToolHit(x, q, since) {
-  if (!x || (Number(x.e) || 0) < FLOOR) return false
-  if (since) {
-    if (!x.at) return false
-    if (x.at < since) return false
-  }
-  const via = String(x.via || '')
-  if (via === 'entity' || via === 'link') return true
-  if (hasLexOverlap(q, x.text)) return true
-  return (Number(x.e) || 0) >= SOFT_FLOOR
-}
 
 // ---------------------------------------------------------------- 参数
 
@@ -155,21 +123,6 @@ function coldStates(db, ids) {
   return out
 }
 
-/** 向量/图通道常不带 created_at：按 id 补时间，days 窗才挡得住旧条。 */
-function createdAts(db, ids) {
-  const out = new Map()
-  if (!ids || !ids.length) return out
-  for (let i = 0; i < ids.length; i += 400) {
-    const part = ids.slice(i, i + 400)
-    try {
-      const rows = db.prepare(`SELECT id,created_at FROM memory_items WHERE id IN (${part.map(() => '?').join(',')})`)
-        .all(...part)
-      for (const r of rows) if (r.created_at) out.set(String(r.id), String(r.created_at))
-    } catch { /* ignore */ }
-  }
-  return out
-}
-
 /**
  * T1 的四个通道各排各的名次，**不合成一个分**。
  *
@@ -225,15 +178,8 @@ function memoryChannels(db, aid, q, opt) {
     }
   } catch { /* 图扩散失败就当没有邻居 */ }
 
-  const ids = lists.flat().map((x) => x.id)
-  const states = coldStates(db, ids)
-  const ats = createdAts(db, ids)
-  for (const arr of lists) {
-    for (const it of arr) {
-      it.cold = ['cold', 'archived'].includes(states.get(it.id) || '') || it.cold
-      if (!it.at && ats.has(it.id)) it.at = ats.get(it.id)
-    }
-  }
+  const states = coldStates(db, lists.flat().map((x) => x.id))
+  for (const arr of lists) for (const it of arr) it.cold = ['cold', 'archived'].includes(states.get(it.id) || '') || it.cold
   return lists
 }
 
@@ -380,8 +326,8 @@ export async function recallTool(db, aid, args = {}) {
       try { lists = collectLayer(db, aid, layer, q, { ...opt, queryVec: vecs[i] || null }) } catch { lists = [] }
       const w = PHRASE_W[i] || 0.4
       for (const list of lists) {
-        // 时间窗 + 字面/软匹配门槛；缺 at 时 days>0 收紧（见 keepToolHit）
-        const kept = (list || []).filter((x) => keepToolHit(x, q, since))
+        // 时间窗和噪声底线在同一处过，各层行为一致；过完再按原名次投票
+        const kept = (list || []).filter((x) => (x.e >= FLOOR) && (!since || !x.at || x.at >= since))
         if (kept.length) voters.push({ w, items: kept })
       }
     })

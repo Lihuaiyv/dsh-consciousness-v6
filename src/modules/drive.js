@@ -3,9 +3,8 @@ import { err, nid, agent, active, event, getParam, getFlag, setFlag } from '../k
 import { runBound } from '../algo/index.js'
 import { learnSetpoint, SP_FLOOR, SP_CEIL } from '../algo/deficit.js'
 import { affectNeedDeltas, capDayDeltas, E2N_DAY_CAP, moodTilt } from '../algo/affect_need.js'
-import { createInboxItem, updateInboxState, recordSystemChange, countChangesOnDay } from './selfmod_store.js'
+import { createInboxItem, recordSystemChange, countChangesOnDay } from './selfmod_store.js'
 import { computeNeedProxies } from './proxies.js'
-import { readViews } from './sangguan/bridge.js'
 
 const DORMANT_DAYS = 14
 const EVENT_CAP = 0.08
@@ -66,8 +65,15 @@ function personaNumbers(db, aid) {
 
 /** 价值观十维（权重），给 v3 的重要度用；老库没有 persona_values 时返回空对象（按 0.1 均匀算）。 */
 function valueNumbers(db, aid) {
-  try { return readViews(db, aid).V.weights } catch { /* 老库没有价值观表 */ }
-  return {}
+  const out = {}
+  try {
+    const rows = db.prepare('SELECT key,weight FROM persona_values WHERE agent_id=?').all(aid)
+    for (const r of rows) {
+      const v = Number(r.weight)
+      if (Number.isFinite(v)) out[r.key] = v
+    }
+  } catch { /* 老库没有价值观表 */ }
+  return out
 }
 
 /**
@@ -266,12 +272,6 @@ export function applySatisfaction(db, aid, deltas = {}, opts = {}) {
 }
 
 /** F7：连续三次修复后，安全维回基线（驱动归 drive 域，关系域只调用） */
-export function resetSafety(db, aid) {
-  const r = db.prepare('SELECT 1 FROM drive_state WHERE agent_id=?').get(aid)
-  if (!r) return false
-  db.prepare('UPDATE drive_state SET s=0.6 WHERE agent_id=?').run(aid)
-  return true
-}
 export function hasDriveState(db, aid) {
   return !!db.prepare('SELECT 1 FROM drive_state WHERE agent_id=?').get(aid)
 }
@@ -327,33 +327,14 @@ export function coupleAffectToDrive(db, aid) {
   const since = String(getFlag(db, key) || '') || new Date(Date.now() - 86400000).toISOString()
   let rows = []
   try {
-    // 强度取 episode；sig 作增益。没有 episode 时退回 sig（影子期 / 测试行）
     rows = db.prepare(
-      `SELECT e.id, e.at, e.label, e.rel, e.sig, e.episode_id, ep.intensity AS ep_intensity
-       FROM affect_events e
-       LEFT JOIN affect_episodes ep ON ep.id=e.episode_id
-       WHERE e.agent_id=? AND e.gate=1 AND e.at>?
-       ORDER BY e.at ASC LIMIT 20`,
+      "SELECT id,at,label,rel,sig,episode_id FROM affect_events WHERE agent_id=? AND gate=1 AND at>? ORDER BY at ASC LIMIT 20",
     ).all(aid, since)
-  } catch {
-    try {
-      rows = db.prepare(
-        "SELECT id,at,label,rel,sig,episode_id FROM affect_events WHERE agent_id=? AND gate=1 AND at>? ORDER BY at ASC LIMIT 20",
-      ).all(aid, since)
-    } catch { rows = [] }
-  }
+  } catch { rows = [] } // 老库还没有 affect_events
   if (!rows.length) return { applied: {}, events: 0 }
 
-  const per = rows.map((r) => {
-    const epI = r.ep_intensity != null ? Number(r.ep_intensity) : NaN
-    const intensity = Number.isFinite(epI) ? epI : (Number(r.sig) || 0)
-    return affectNeedDeltas({
-      label: r.label,
-      intensity,
-      rel: r.rel,
-      sig: Number(r.sig) || 0,
-    })
-  })
+  // 强度用显著性 sig：它本来就是「这一下有多算事」，比单看情绪标签靠谱
+  const per = rows.map((r) => affectNeedDeltas({ label: r.label, intensity: r.sig, rel: r.rel }))
   const capped = capDayDeltas(per, E2N_DAY_CAP)
   const lastAt = rows[rows.length - 1].at
   setFlag(db, key, lastAt)
@@ -560,23 +541,10 @@ export function budgetSet(db, aid, body) {
 
 export function budgetConsume(db, aid, kind, amount = 1) {
   const b = budgetGet(db, aid)
-  if (kind === 'disturb' && b.disturb_used + amount > b.disturb_limit) err(409, 'BUDGET', '本月打扰预算已用完')
+  if (kind === 'disturb' && b.disturb_used + amount > b.disturb_limit) err(409, 'BUDGET', '今日打扰预算已用完')
   if (kind === 'token' && b.token_limit && b.token_used + amount > b.token_limit) err(409, 'BUDGET', 'token 预算已用完')
   if (kind === 'disturb') db.prepare('UPDATE budgets SET disturb_used=disturb_used+?, updated_at=? WHERE agent_id=?').run(amount, now(), aid)
   if (kind === 'token') db.prepare('UPDATE budgets SET token_used=token_used+?, updated_at=? WHERE agent_id=?').run(amount, now(), aid)
-  return budgetGet(db, aid)
-}
-
-/** 失败退款：把刚扣的打扰/token 加回来（不低于 0）。 */
-export function budgetRefund(db, aid, kind, amount = 1) {
-  const n = Math.max(0, Number(amount) || 0)
-  if (!n) return budgetGet(db, aid)
-  if (kind === 'disturb') {
-    db.prepare('UPDATE budgets SET disturb_used=MAX(0, disturb_used-?), updated_at=? WHERE agent_id=?').run(n, now(), aid)
-  }
-  if (kind === 'token') {
-    db.prepare('UPDATE budgets SET token_used=MAX(0, token_used-?), updated_at=? WHERE agent_id=?').run(n, now(), aid)
-  }
   return budgetGet(db, aid)
 }
 
@@ -668,7 +636,6 @@ export function listActions(db, aid) {
   agent(db, aid)
   return db.prepare('SELECT * FROM action_log WHERE agent_id=? ORDER BY created_at DESC LIMIT 50').all(aid)
 }
-
 
 /**
  * 事件驱动的缺口脉冲（6 号 §3 的 E4 与安全维）：

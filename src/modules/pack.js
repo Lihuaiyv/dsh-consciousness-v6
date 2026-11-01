@@ -104,10 +104,13 @@ export function packInjection(input = {}, opt = {}) {
     push('buffer', (b.role === 'user' ? '你刚才：' : '我刚说：') + b.text)
   }
   // 被新说法取代的旧记忆（只在回看/深查里出现）：标出来，免得它拿旧版本当现状讲。
-  // 「那时」行（G1 as-of）：调用方已裁好长度，且整句带标签，不能再按句号截。
+  // 配额补位的两条带来源：锚点=一直记着的，新近=今天才发生的。
+  // 标记只影响模型怎么用（「这是你自己先想起来的」），不影响预算。
   for (const it of items) {
-    if (it.asof) { push(it.partition, '- ' + Array.from(String(it.text)).slice(0, 160).join('')); continue }
-    push(it.partition, (it.stale ? '- （已更新，旧说法）' : '- ') + oneLine(it.text, 60))
+    const tag = it.stale ? '（已更新，旧说法）'
+      : it.via === 'anchor' ? '（一直记着的）'
+        : it.via === 'fresh' ? '（今天刚发生）' : ''
+    push(it.partition, '- ' + tag + oneLine(it.text, 60))
   }
 
   const lines = []

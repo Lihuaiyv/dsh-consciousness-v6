@@ -100,9 +100,8 @@ function scoreAndPick(rows, opt, decayRun, ctx) {
     const rel = 1 / (1 + Math.max(0, -bm))
     const R = Number(decayRun(r).R || 0)
     if (floor > 0 && R < floor) return null
-    // 跟面板一样现算：库里的 heat/band 是巡检快照，白天会飘，不能拿来加档位偏置
-    const h = heatOf(r, nowMs)
-    const band = bandOf(r, h, nowMs)
+    const h = r.heat != null ? Number(r.heat) : heatOf(r, nowMs)
+    const band = r.band || bandOf(r, h)
     const relation = relationMap && relationW ? relationW * (relationMap.get(r.id) || 0) : 0
     const valence = Math.max(-1, Math.min(1, Number(r.valence) || 0))
     const moodBonus = moodW && mood ? moodW * mood * valence : 0

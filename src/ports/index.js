@@ -92,10 +92,4 @@ export const selfmodPort = {
   },
 }
 
-export const chatPort = {
-  query: {
-    recentUserTexts: chat.listRecentUserTexts,
-  },
-}
-
 export { OWNERSHIP, SHARED, tablesForFile, isTableAllowed } from './ownership.js'

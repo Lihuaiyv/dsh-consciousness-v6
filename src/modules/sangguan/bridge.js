@@ -2,8 +2,7 @@
  * 三观读口。下游只从这里拿三行提示词、telos 和十维权重。
  * source 为 meter 时，算法与改读口之前各处直接读旧表相同，不写账本。
  */
-import { DIMS } from '../values.js'
-import { listValuesRich, growValues } from '../values.js'
+import { DIMS, PAIRS } from '../values.js'
 import { listWorldviewRich, growWorldview, explainWorldview, worldviewPromptLine, INIT as WV_INIT } from '../worldview.js'
 import { listLifeviewRich, growLifeview, explainLifeview, lifeviewPromptLine } from '../lifeview.js'
 import { getFlag, setFlag } from '../../kernel.js'
@@ -14,6 +13,7 @@ import { SIGMA_OPEN, isTerminal, isCoreKind } from './catalog.js'
 import { isHollowSeed } from './fold.js'
 import { rJOf } from './verdict.js'
 import { assignDims, foldDims, shadowPush, shadowVerdict } from './tags.js'
+import { foldValueWeights } from './vweights.js'
 
 function weightsOf(items) {
   const out = {}
@@ -25,9 +25,11 @@ function weightsOf(items) {
 }
 
 function valueLine(items) {
-  const rows = [...(items || [])].sort((a, b) => Number(b.weight) - Number(a.weight))
-  const ws = rows.map((v) => Number(v.weight) || 0)
+  const all = [...(items || [])].sort((a, b) => Number(b.weight) - Number(a.weight))
+  const ws = all.map((v) => Number(v.weight) || 0)
   const spread = ws.length > 1 ? Math.max(...ws) - Math.min(...ws) : 0
+  // 只说「抬起来的」：折算后低于均值的维不撑这句话，否则会出现「看重：仁善、普世…」里混进 0.06 的怪句子
+  const rows = all.filter((v) => Number(v.weight) > 0.1 + 0.005)
   if (!rows.length || spread < 0.03) return ''
   return '你看重：' + rows.slice(0, 3).map((v) => ((DIMS.find((d) => d[0] === v.key) || [0, v.key])[1])).join('、') + '。'
 }
@@ -50,7 +52,6 @@ export function readViews(db, aid, opt = {}) {
   const force = opt.force ? { force: true } : {}
   const only = opt.only || null
   const want = (k) => !only || only === k
-  const values = want('V') ? (grow ? growValues(db, aid, force) : listValuesRich(db, aid)) : []
   const worldview = want('W') ? (grow ? (growWorldview(db, aid, force) || []) : (listWorldviewRich(db, aid) || [])) : []
   const lifeview = want('L') ? (grow ? (growLifeview(db, aid, force) || []) : (listLifeviewRich(db, aid) || [])) : []
   const lifeEx = want('L') ? explainLifeview(db, aid) : null
@@ -60,14 +61,17 @@ export function readViews(db, aid, opt = {}) {
     source: { W: 'meter', L: 'meter', V: 'meter' },
     W: { items: worldview, line: worldLineOf(worldview), explain: worldEx },
     L: { items: lifeview, line: lifeviewPromptLine(lifeview, stance), stance, derived: lifeEx && lifeEx.derived, explain: lifeEx },
-    V: { items: values, line: valueLine(values), weights: weightsOf(values), tensions: null },
+    V: { items: [], line: '', weights: {}, tensions: [] },
+  }
+  if (want('V')) {
+    // 只折算，不再从任何旧表迁：迁移器已随旧价值观一起删掉
+    applyValueFold(db, aid, view)
   }
   let cfg = null
   try { cfg = sangguanConfig(db, aid) } catch { cfg = null }
   if (cfg && cfg.enabled) {
     if (want('W') && cfg.replace.W === 'engine') applyEngineLine(db, aid, view, 'W', '你对世界的基本看法：')
     if (want('L') && cfg.replace.L === 'engine') applyEngineLine(db, aid, view, 'L', '你的人生观：')
-    if (want('V')) applyEngineValues(db, aid, view, opt.at)
     if (want('V')) view.V.shadow = noteShadow(db, aid, opt.at)
   }
   return view
@@ -75,17 +79,21 @@ export function readViews(db, aid, opt = {}) {
 
 const shadowKey = (aid) => 'sangguan.shadow:' + aid
 
-function applyEngineValues(db, aid, view) {
-  let cfg
-  try { cfg = sangguanConfig(db, aid) } catch { return }
-  if (!cfg.enabled || cfg.replace.V !== 'engine') return
-  let claims = []
+function uniformValues(view) {
+  const items = DIMS.map(([key, label, hint]) => ({
+    key, label, hint, weight: 0.1, evidence: [], habit: false, origin: 'engine',
+  }))
+  view.V.items = items
+  view.V.weights = weightsOf(items)
+  view.V.line = ''
+  view.source.V = 'engine'
+}
+
+function applyValueFold(db, aid, view) {
+  uniformValues(view)
   try {
     const s = loadState(db, aid)
     const tx = new Map(db.prepare('SELECT id, text FROM persona_claims WHERE agent_id=?').all(aid).map((r) => [r.id, r.text || '']))
-    claims = Object.values(s.claims)
-      .filter((c) => c.layer === 'V' && !isTerminal(c.status))
-      .map((c) => ({ id: c.id, text: tx.get(c.id) || '', pi: c.pi, n: c.n }))
     const open = Object.values(s.kappas).filter((k) => SIGMA_OPEN.includes(k.sigma))
     view.V.tensions = open.map((k) => ({
       pair: (tx.get(k.pos_id) || '') + ' ↔ ' + (tx.get(k.neg_id) || ''),
@@ -93,20 +101,29 @@ function applyEngineValues(db, aid, view) {
       weak: tx.get(k.neg_id) || '',
       gap: 0,
     }))
-    const assigned = assignDims(claims)
-    if (!assigned || !assigned.length) return
-    const folded = foldDims(assigned)
+    const folded = foldValueWeights(db, aid)
+    if (!folded) return
+    // 折叠时会按三组张力压对侧；这里把「确实偏出」的对报出来，页面/自述/提示词都有话可说。
+    // 未决矛盾（κ）也并进来：那是「两句话还没分出高下」，和「哪一维更重」是两种张力。
+    const pairTensions = []
+    for (const [a, b] of PAIRS) {
+      const gap = Math.abs(Number(folded.weights[a] || 0) - Number(folded.weights[b] || 0))
+      if (gap < 0.02) continue
+      const strongKey = Number(folded.weights[a] || 0) >= Number(folded.weights[b] || 0) ? a : b
+      const weakKey = strongKey === a ? b : a
+      const label = (k) => (DIMS.find((d) => d[0] === k) || [0, k])[1]
+      pairTensions.push({ pair: label(a) + ' ↔ ' + label(b), strong: label(strongKey), weak: label(weakKey), gap: +gap.toFixed(4) })
+    }
+    view.V.tensions = pairTensions.concat(view.V.tensions || [])
     const items = DIMS.map(([key, label, hint]) => ({
       key, label, hint, weight: folded.weights[key], evidence: [], habit: false, origin: 'engine',
     })).sort((a, b) => b.weight - a.weight)
     view.V.items = items
     view.V.weights = folded.weights
     view.V.line = valueLine(items)
-    const spoken = headsLine(db, aid, 'V', '你更看重：')
-    if (spoken) view.V.line = spoken
     view.V.fold = folded
     view.source.V = 'engine'
-  } catch { /* 折算失败就继续用旧表 */ }
+  } catch { /* 折算失败就留在初值 */ }
 }
 
 export function shadowOf(db, aid) {

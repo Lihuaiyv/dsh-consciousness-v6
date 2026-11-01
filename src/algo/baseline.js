@@ -140,3 +140,46 @@ export function valueAtTime(segs, tMs) {
   }
   return segs[segs.length - 1].to
 }
+
+/* ================= 底色的另外两层：日节律 + 累积负荷 =================
+ *
+ * 上面那条段式慢波是「几天一个来回」的主浪。只有它的话，底色看起来像一条
+ * 慢慢爬的直线——不像激素。真正的激素曲线是三层叠出来的：
+ *
+ *   1. 段式慢波（planSegments）  —— 几天一个周期，±0.2~0.3
+ *   2. 日节律（circadianAt）     —— 一天一个来回，很轻，±0.06
+ *   3. 累积负荷（stepLoad）      —— 被经历推高、几天才代谢掉，±0.35 封顶
+ *
+ * 第三层是这次加的：持续偏着的时候，水位本身会被拖走一点（allostatic load）；
+ * 没有新刺激就慢慢代谢回来。这样「一次连着几天的低谷」才是真的低谷，
+ * 而不是第二天早上就被日程表拽回去。
+ */
+
+/** 日节律：一天一个来回，相位由 agent 定（每个个体不一样），amplitude=0 时关掉 */
+export function circadianAt(tMs, seed, amplitude) {
+  const amp = Number(amplitude)
+  if (!Number.isFinite(amp) || amp <= 0) return 0
+  const s = hashSeed('circ:' + String(seed))
+  const phaseH = (s % 1440) / 60 // 0~24 小时，按分钟散开
+  const h = ((Number(tMs) / 3600000) % 24 + 24) % 24
+  return amp * Math.sin((2 * Math.PI * (h - phaseH)) / 24)
+}
+
+export const LOAD_CAP = 0.35
+
+/**
+ * 累积负荷一步：被「慢情绪偏离水位多少」拖着走，自己按 tauH 代谢。
+ *   dL/dt = gain·(s − bPlan − L) − L/tauH
+ * 精确解：L ← L* + (L − L*)·exp(−Λ·dt)，Λ = gain + 1/tauH，L* = (gain/Λ)(s − bPlan)
+ *
+ * gain 大 / tau 长 = 记仇（几天缓不过来）；两者都小 = 没心没肺。
+ */
+export function stepLoad({ load = 0, s = 0, bPlan = 0, dtHours = 1, gain = 0.01, tauH = 168 } = {}) {
+  const k = Math.max(0, Number(gain) || 0)
+  const tau = Math.max(1e-6, Number(tauH) || 168)
+  const lam = k + 1 / tau
+  const target = (k / lam) * ((Number(s) || 0) - (Number(bPlan) || 0))
+  const dt = Math.max(0, Number(dtHours) || 0)
+  const out = target + ((Number(load) || 0) - target) * Math.exp(-lam * dt)
+  return Math.round(clamp(out, -LOAD_CAP, LOAD_CAP) * 1000) / 1000
+}

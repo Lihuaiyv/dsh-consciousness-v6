@@ -1,0 +1,1630 @@
+﻿diff --git a/client.js.bak-emotext-20261101-205941 b/client.js
+index 5ceaef4..c8fba6f 100644
+--- a/client.js.bak-emotext-20261101-205941
++++ b/client.js
+@@ -43,7 +43,7 @@ window.__ModuleLoader__.load({
+     /* ========================================================== vocabulary */
+ 
+     const TABS = [
+-      ['overview', '概览'], ['memory', '记忆'], ['persona', '鱼格'], ['affect', '情绪'], ['sangguan', '三观'],
++      ['overview', '概览'], ['memory', '记忆'], ['persona', '鱼格'], ['affect', '情绪'],
+       ['drive', '驱力'], ['relation', '关系'], ['self', '自修改'], ['metrics', '验收'], ['settings', '设置'],
+     ]
+     const TYPE_LABEL = { fact: '事实', episode: '情景', appraisal: '评价', reflection: '自省', conflict: '冲突' }
+@@ -69,7 +69,6 @@ window.__ModuleLoader__.load({
+       'style.tone': 8, 'style.address': 4, 'style.catchphrase': 6, 'style.banned': 15, 'style.card': 60,
+     }
+     const DEFAULT_LIMITS = { valueKey: 24, relationName: 12, preferenceTag: 16, tabooText: 60 }
+-    const PORTS = [['send_message', '自动发消息'], ['browse', '浏览 / 检索'], ['research', '研究搜集'], ['remind', '提醒']]
+     const BLIND_SIGNAL = (s) => !s ? '—' : ([
+       s.address ? '称呼' : '', s.catchphrase ? '口头禅' : '',
+       s.banned ? '禁用词×' + s.banned : '', s.tone ? '语气（' + s.tone + '）' : '',
+@@ -745,7 +744,7 @@ window.__ModuleLoader__.load({
+ .dshc-vault-acts .dshc-btn:hover::after{opacity:1;animation:dshc-vault-btn-sheen .75s ease-out}
+ @keyframes dshc-vault-btn-sheen{from{transform:translateX(0)}to{transform:translateX(360%)}}
+ 
+-/* —— 记忆增量（默认展开：只有一条线，从底边左边往右上走） —— */
++/* —— 记忆增量（默认收起：只有一条线，从底边左边往右上走） —— */
+ .dshc-vault-delta{margin-top:12px;padding-top:8px;border-top:1px dashed var(--line)}
+ .dshc-vault-delta>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;
+   color:var(--muted);font-size:12px;padding:3px 0;transition:color .15s}
+@@ -1153,25 +1152,30 @@ window.__ModuleLoader__.load({
+     const TR_Y = [1, 0.5, 0, -0.5, -1]
+     const trP2 = (n) => (Number(n) < 10 ? '0' + Number(n) : '' + Number(n))
+ 
+-    /** 标题下面那行：此刻积极还是消极、快情绪由什么拼出来（情绪名看卡里那个大字，不重复） */
+-    function TrendNow({ data, raw, demo }) {
++    /** 标题下面那行：此刻积极还是消极、快情绪由什么拼出来（情绪名看卡里那个大字，不重复）。
++     *  「此刻」优先用接口现算的 v3：走势最后一点是采样时的值，快情绪会按分钟回落，
++     *  两者差一点就会让标题和卡里的「此刻」对不上。 */
++    function TrendNow({ data, raw, cur }) {
+       const pts = (data && data.points) || []
+       let last = null
+       for (let i = pts.length - 1; i >= 0; i--) if (Number.isFinite(Number(pts[i].f))) { last = pts[i]; break }
+       if (!last) return h('span', { style: { opacity: 0.55 } }, '此刻还没有记录')
+-      const fV = Number(last.f) || 0
+-      const tV = Number.isFinite(Number(last.t)) ? Number(last.t) : (Number(last.s) || 0) + 0.35 * fV
++      const v3 = (cur && cur.v3) || null
++      const live = !!v3 && Number.isFinite(Number(v3.total)) && Number.isFinite(Number(v3.fast))
++      const fV = live ? Number(v3.fast) : Number(last.f) || 0
++      const tV = live ? Number(v3.total)
++        : (Number.isFinite(Number(last.t)) ? Number(last.t) : (Number(last.s) || 0) + 0.35 * fV)
+       const pos = tV >= 0
+       const sg = (x) => (Number(x) >= 0 ? '+' : '') + Number(x).toFixed(2)
+       const fsV = last.fs === null || last.fs === undefined ? null : Number(last.fs)
+       const feV = last.fe === null || last.fe === undefined ? null : Number(last.fe)
++      /* 拆项要能加得回去才写：旧采样里的「自己 + 共情」可能已经对不上回落后的快情绪 */
++      const decomp = fsV !== null && feV !== null && Math.abs(fsV + feV - fV) <= 0.02
+       const rawName = raw && raw !== last.lb ? (AFFECT_KEY[raw] || raw) : ''
+       return h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 9px' } },
+-        demo ? h('b', { style: { fontWeight: 600, color: '#ffd479' } }, '模拟') : null,
+         h('b', { style: { fontWeight: 600, color: pos ? '#7fd8ff' : '#ff9b9b' } }, (pos ? '积极' : '消极') + ' ' + sg(tV)),
+         h('span', { style: { opacity: 0.72 } },
+-          '快情绪 ' + sg(fV)
+-          + (fsV === null ? '' : ' = 自己 ' + sg(fsV) + (feV === null ? '' : ' + 共情 ' + sg(feV)))),
++          '快情绪 ' + sg(fV) + (decomp ? ' = 自己 ' + sg(fsV) + ' + 共情 ' + sg(feV) : '')),
+         rawName ? h('span', { style: { opacity: 0.55 } }, '· 这一句被判断成「' + rawName + '」') : null)
+     }
+ 
+@@ -2287,9 +2291,6 @@ window.__ModuleLoader__.load({
+       const [saving, setSaving] = useState(0)
+       const [saveErr, setSaveErr] = useState('')
+       const [ov, reloadOv] = useAsync(() => call('GET', '/v1/agents/' + enc(agent.id) + '/overview'), [agent.id])
+-      // 嘀咕/互动是聊完后后台写的：停在概览时定时重拉，切回概览或窗口聚焦也补一次（不然只能靠点「观测」才刷新）
+-      useLive(reloadOv, tab === 'overview' ? 8000 : 0)
+-      useEffect(() => { if (tab === 'overview') reloadOv() }, [tab, reloadOv])
+       const [focus, setFocus] = useState(null)
+       useEffect(() => {
+         NAV.handler = (dest) => {
+@@ -2336,7 +2337,6 @@ window.__ModuleLoader__.load({
+           case 'memory': return h(MemoryPage, common)
+           case 'persona': return h(PersonaPage, common)
+           case 'affect': return h(AffectPage, common)
+-          case 'sangguan': return h(SangguanPage, common)
+           case 'drive': return h(DrivePage, common)
+           case 'relation': return h(RelationPage, common)
+           case 'self': return h(SelfPage, common)
+@@ -2410,7 +2410,6 @@ window.__ModuleLoader__.load({
+       const mood = a.data || {}
+       const label = mood.primary_label || 'calm'
+       const d = drv.data || {}
+-      const dims = d.dims || {}
+       const defs = d.deficits || {}
+       // 概览和驱力页说同一件事：比的是缺口，不是「谁过得最差」。
+       const needRows = ['r', 'e', 'c', 'a', 's'].map((k) => [NEED_WORD[k], Number(defs[k] || 0), 1])
+@@ -2501,12 +2500,7 @@ window.__ModuleLoader__.load({
+       if (o.inbox && Number(o.inbox.todo || 0) > 0) pending.push({ tab: 'drive' })
+       if ((o.warn || []).some((w) => w.id === 'expiring')) pending.push({ tab: 'self' })
+       const [jumpIdx, setJumpIdx] = useState(0)
+-      const onDot = () => {
+-        if (!pending.length || !jump) return
+-        const dest = pending[jumpIdx % pending.length]
+-        setJumpIdx((i) => i + 1)
+-        jump(dest)
+-      }
++      const lastMem = o.recent && o.recent.last_memory
+       const [th, reloadTh] = useAsync(() => call('GET', '/v1/agents/' + enc(agent.id) + '/thoughts'), [agent.id])
+       const thData = th.data || {}
+       const thTries = useRef(0)
+@@ -2534,92 +2528,34 @@ window.__ModuleLoader__.load({
+           headActions, actions: [],
+         }),
+ 
+-        h(ThoughtsSec, { aid: agent.id, thData, th, reloadTh, view, act }),
+-
+-        h(MutterSec, { aid, ov: o, act, reloadOv }))
+-    }
++        h(Sec, { title: '它的想法', desc: '把记忆、情绪、关系、手头的事交给它自己想一想，只读。' },
++          h(Card, null,
++            thData.items
++              ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
++                thData.items.map((it, i) => h('div', { key: it.key },
++                  h('div', { className: 'dshc-q' }, it.label),
++                  h('div', { className: 'dshc-answer', title: it.text },
++                    h(Typer, { text: it.text, delay: 120 + i * 180 })))))
++              : h('div', { className: 'dshc-sub' },
++                thData.status === 'generating' ? '它正在把这些天记下的东西理一遍，稍等一下…'
++                  : (th.error ? '读取失败：' + th.error : '还没有想法。'))),
++          view === 'tech' && thData.updated_at
++            ? h('div', { className: 'dshc-sub dshc-mono', style: { marginTop: 8 } },
++              '生成于 ' + thData.updated_at + ' · 来源 ' + (thData.source || '?') + ' · 每 ' + (thData.interval_days || 30) + ' 天刷新')
++            : null),
+ 
+-    /** 概览「它的想法」：四段只读 + 手动重新想一遍 */
+-    function ThoughtsSec({ aid, thData, th, reloadTh, view, act }) {
+-      const [busy, setBusy] = useState(false)
+-      async function rethink() {
+-        if (busy || !act) return
+-        setBusy(true)
+-        try {
+-          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/thoughts', {}, true))
+-          if (reloadTh) await reloadTh()
+-        } catch { /* act 已提示 */ } finally { setBusy(false) }
+-      }
+-      const generating = thData.status === 'generating' || busy
+-      return h(Sec, {
+-        title: '它的想法',
+-        desc: '把记忆、情绪、关系、手头的事交给它自己想一想，只读。',
+-        right: h(Btn, {
+-          ghost: true, sm: true, disabled: generating,
+-          onClick: () => rethink(),
+-          title: '立刻再想一遍（不进记忆库）',
+-        }, busy ? '在想…' : '重新想一遍'),
+-      },
+-        h(Card, null,
+-          thData.items
+-            ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14 } },
+-              thData.items.map((it, i) => h('div', { key: it.key },
+-                h('div', { className: 'dshc-q' }, it.label),
+-                h('div', { className: 'dshc-answer', title: it.text },
+-                  h(Typer, { text: it.text, delay: 120 + i * 180 })))))
+-            : h('div', { className: 'dshc-sub' },
+-              generating ? '它正在把这些天记下的东西理一遍，稍等一下…'
+-                : (th.error ? '读取失败：' + th.error : '还没有想法。'))),
+-        view === 'tech' && thData.updated_at
+-          ? h('div', { className: 'dshc-sub dshc-mono', style: { marginTop: 8 } },
+-            '生成于 ' + thData.updated_at
+-              + ' · 来源 ' + (thData.source || '?')
+-              + ' · 每 ' + (thData.interval_days || 30) + ' 天刷新'
+-              + (thData.refresh_reason ? ' · 触发 ' + thData.refresh_reason : ''))
+-          : null)
+-    }
++        h(Sec, { title: '最近', desc: '上次互动与最近一条记忆。' },
++          h(Card, null,
++            h(Row, { label: '上次互动', value: ago(o.recent && o.recent.last_interaction) }),
++            h(Row, { label: '最近记忆', value: lastMem ? (TYPE_LABEL[lastMem.type] || lastMem.type) : '—' }),
++            h('div', { className: 'dshc-sub' }, lastMem ? lastMem.text : '还没有记忆。'))),
+ 
+-    /** 嘀咕：专用调用、不进 T1；观测开关默认开，开时显示约耗 token */
+-    function MutterSec({ aid, ov, act, reloadOv }) {
+-      const m = (ov && ov.mutter) || {}
+-      const on = m.enabled !== false
+-      const [busy, setBusy] = useState(false)
+-      async function toggle() {
+-        if (busy || !act) return
+-        setBusy(true)
+-        try {
+-          await act(() => call('PUT', '/v1/agents/' + enc(aid) + '/params/' + enc('ui.mutter.enabled'), { value: !on }, true))
+-          if (reloadOv) await reloadOv()
+-        } catch { /* act 已提示 */ } finally { setBusy(false) }
+-      }
+-      const tokenHint = on && m.tokens
+-        ? h('span', {
+-          className: 'dshc-sub dshc-mono',
+-          style: { opacity: 0.45, fontSize: 11.5, marginLeft: 8, fontWeight: 400 },
+-          title: '本次嘀咕调用约耗 token（按字数估算）',
+-        }, '约 ' + m.tokens + ' token')
+-        : null
+-      return h(Sec, {
+-        title: '上一句它在嘀咕',
+-        right: h('label', {
+-          style: { display: 'inline-flex', alignItems: 'center', gap: 6, cursor: busy ? 'wait' : 'pointer', userSelect: 'none' },
+-          title: on ? '观测开：聊完会专门写一段嘀咕（不进记忆库）' : '观测关：不再调用嘀咕',
+-        },
+-          h('span', { className: 'dshc-sub', style: { fontSize: 12 } }, '观测'),
+-          h('input', {
+-            type: 'checkbox', checked: on, disabled: busy,
+-            onChange: () => toggle(),
+-          }),
+-          tokenHint),
+-      },
+-        h(Card, null,
+-          h('div', { className: 'dshc-sub', style: { marginBottom: 10 } },
+-            '上次说话 · ' + ago(ov && ov.recent && ov.recent.last_interaction)
+-            + (on ? '' : ' · 已关闭观测')),
+-          m.text
+-            ? h('div', { style: { fontSize: 14.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', opacity: on ? 1 : 0.55 } }, m.text)
+-            : h('div', { className: 'dshc-sub' },
+-              on ? '还没聊过，或那次没写下嘀咕。' : '观测已关；打开后下一轮对话会再写。')))
++        h(Sec, { title: '我能做什么', desc: '这一屏只回答「接下来点哪里」。' },
++          h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
++            h(Btn, { primary: true, onClick: () => setTab('memory') }, '看记忆'),
++            h(Btn, { onClick: () => setTab('persona') }, '调说话风格'),
++            h(Btn, { onClick: () => setTab('drive') }, '看驱力'),
++            h(Btn, { onClick: () => setTab('self') }, '看它想改什么'))))
+     }
+ 
+     /* ============================================================= memory */
+@@ -3195,113 +3131,100 @@ window.__ModuleLoader__.load({
+ 
+     const removePendingLabel = () => null
+ 
+-    /** 最清楚的记忆：事实层按「此刻」heat 取前 99；卡片格式与时间线对齐，按档位折叠。 */
+-    const HEAT_BANDS = [
+-      { key: 'short', label: '短期', hint: '桌面 · 最清楚' },
+-      { key: 'mid', label: '中期', hint: '还热着' },
+-      { key: 'long', label: '长期', hint: '抽屉里' },
+-    ]
++    /** 最清楚的记忆：事实层按「此刻」的 heat 取前 99，一行一条，点开看原话。 */
+     function TopMemory({ aid, tick, row, act, onWrote }) {
+-      const [openN, setOpenN] = useState(0)
++      const [open, setOpen] = useState(false)
+       const [msg, setMsg] = useState('')
+       const [busy, setBusy] = useState(false)
+       const [s, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/memory/top?limit=99'), [aid, tick])
+-      // 有档展开才轮询；跟时间线一样走卡片折叠，不必关着也刷
+-      useLive(reload, openN > 0 ? 10000 : 0)
++      // 只在折叠打开时轮询：关着的时候没必要一直问服务端
++      useLive(reload, open ? 10000 : 0)
+       const items = (s.data && s.data.items) || []
+-      const total = Number((s.data && s.data.total) || items.length) || 0
+-      const counts = (s.data && s.data.counts) || null
+       const at = (s.data && s.data.at) || ''
+       if (s.loading && !s.data) return h(Empty, null, '读取热度榜…')
+       if (s.error && !s.data) return h(LoadErr, { error: s.error, retry: reload })
+ 
+-      const byBand = { short: [], mid: [], long: [] }
+-      for (const m of items) {
+-        const k = (m.band && byBand[m.band]) ? m.band : 'mid'
+-        byBand[k].push(m)
+-      }
+-      const filled = counts
+-        ? HEAT_BANDS.filter((b) => Number(counts[b.key] || 0) > 0).length
+-        : HEAT_BANDS.filter((b) => byBand[b.key].length > 0).length
+-      // 本地 mix，避免依赖后面才声明的 tlMix（有的加载器不按函数提升）
+-      const mixOf = (arr) => {
+-        const m = new Map()
+-        for (const it of arr || []) m.set(it.type, (m.get(it.type) || 0) + 1)
+-        return [...m.entries()].sort((a, b) => b[1] - a[1])
+-      }
+-
+       // 把此刻算出来的热度写回库：每轮注入是按库里的 heat 排序取前 10 条的，
+       // 只现算不写库，注入那头用的还是上一次巡检的数。
+-      async function writeHeats(e) {
+-        if (e && e.stopPropagation) e.stopPropagation()
++      async function writeHeats() {
+         setBusy(true); setMsg('重算中…')
+         try {
+           const r = await act(() => call('POST', '/v1/agents/' + enc(aid) + '/tiers/refresh', {}, true))
+           setMsg('已写回 · 短期 ' + Number((r && r.short) || 0) + ' / 中期 ' + Number((r && r.mid) || 0) + ' / 长期 ' + Number((r && r.long) || 0))
+           await reload()
+           if (onWrote) onWrote()
+-        } catch (err) { setMsg(err.message || String(err)) } finally { setBusy(false) }
++        } catch (e) { setMsg(e.message || String(e)) } finally { setBusy(false) }
+       }
+ 
+-      const countLine = counts
+-        ? ('短 ' + Number(counts.short || 0) + ' · 中 ' + Number(counts.mid || 0) + ' · 长 ' + Number(counts.long || 0))
+-        : (items.length + ' 条' + (total > items.length ? ' / 共 ' + total : ''))
+-
+-      return h(Card, null,
+-        h('div', { className: 'dshc-tl-meta' },
+-          h('span', { className: 'dshc-sub' }, '按热度'),
+-          h('span', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' } },
+-            h('span', { className: 'dshc-mono' },
+-              countLine +
+-              ' · ' + filled + '/3 档有记' +
+-              (at ? ' · 算于 ' + clockOf(at) : '')),
+-            h(Btn, { ghost: true, sm: true, disabled: busy, onClick: writeHeats, title: '把现在这套热度写进库，注入排序也跟着更新' },
+-              busy ? '写回中…' : '写回库'),
+-            msg ? h('span', { className: 'dshc-note' }, msg) : null)),
++      return h('details', {
++        className: 'dshc-fold', style: { marginTop: 10 },
++        onToggle: (e) => setOpen(!!e.currentTarget.open),
++      },
++        h('summary', null, '最清楚的 ' + items.length + ' 条 · 按热度'),
++        h('div', { className: 'dshc-sub', style: { marginTop: 8, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' } },
++          h('span', null, '热度按此刻现算' + (at ? '，算于 ' + clockOf(at) : '') + '；展开时每 10 秒重算一次。'),
++          h(Btn, { ghost: true, sm: true, disabled: busy, onClick: writeHeats, title: '把现在这套热度写进库，注入排序也跟着更新' },
++            busy ? '写回中…' : '把现在的热度写回库'),
++          msg ? h('span', { className: 'dshc-note' }, msg) : null),
+         items.length === 0
+-          ? h(Empty, null, '还没有能排上号的记忆。')
+-          : h('div', { className: 'dshc-tl' }, HEAT_BANDS.map((b) => {
+-            const list = byBand[b.key]
+-            const nAll = counts ? Number(counts[b.key] || 0) : list.length
+-            const mx = mixOf(list)
+-            return h('details', {
+-              key: b.key,
+-              className: 'dshc-tl-day',
+-              // 必须先读 open：setState 回调里再碰 currentTarget 会是 null，整页直接白屏
+-              onToggle: (e) => {
+-                const open = !!(e && e.currentTarget && e.currentTarget.open)
+-                setOpenN((n) => Math.max(0, n + (open ? 1 : -1)))
+-              },
+-            },
+-              h('summary', null,
+-                h('span', { className: 'dshc-tl-date' },
+-                  b.label,
+-                  h('em', null, b.hint)),
+-                h('span', {
+-                  className: 'dshc-tl-mix',
+-                  title: mx.map(([k, n]) => (TYPE_LABEL[k] || k) + ' ' + n).join(' · ') || '空',
+-                }, mx.length
+-                  ? mx.slice(0, 3).map(([k, n]) => h('i', { key: k, 'data-t': k, style: { flex: String(n) } }))
+-                  : null),
+-                h('span', { className: 'dshc-tl-spacer' }),
+-                h('span', { className: 'dshc-tl-count' },
+-                  nAll + ' 条' + (list.length && list.length < nAll ? ' · 展 ' + list.length : '')),
+-                h('svg', { className: 'dshc-tl-chev', viewBox: '0 0 12 12', 'aria-hidden': 'true' },
+-                  h('path', {
+-                    d: 'M4 2.5 L8 6 L4 9.5', fill: 'none', stroke: 'currentColor',
+-                    strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round',
+-                  }))),
+-              list.length === 0
+-                ? h('div', { className: 'dshc-tl-body' }, h('div', { className: 'dshc-sub' },
+-                    nAll > 0 ? '这档有 ' + nAll + ' 条，当前榜没展到（配额给了更烫的档）。' : '这档还没有。'))
+-                : h('div', { className: 'dshc-tl-body' },
+-                    list.slice(0, 10).map((m) => row(m)),
+-                    list.length > 10
+-                      ? h('details', { className: 'dshc-fold dshc-tl-more' },
+-                          h('summary', null, '另外 ' + (list.length - 10) + ' 条 · 点开'),
+-                          list.slice(10).map((m) => row(m)))
+-                      : null))
+-          })))
++          ? h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '还没有能排上号的记忆。')
++          : h('div', { className: 'dshc-list', style: { marginTop: 10 } }, items.map(row)))
++    }
++
++    /**
++     * 它拿不准的事：两条记忆看起来互相矛盾。
++     * 只给三种判决——留先记的 / 留后记的 / 它理解错了（两条都留）。
++     * 不做成表单：这里要的是「判一句」，不是「填一张词卡」。
++     */
++    function ConflictPanel({ list, loading, error, busyId, onResolve }) {
++      const all = Array.isArray(list) ? list : []
++      const open = all.filter((c) => c.state === 'open')
++      const done = all.filter((c) => c.state !== 'open').slice(0, 3)
++      const KEEP_WORD = { a: '留先记的', b: '留后记的', both: '两条都留' }
++      if (loading && !all.length) return h('div', { className: 'dshc-sub' }, '读取冲突…')
++      if (error && !all.length) return h('div', { className: 'dshc-err' }, error)
++      if (!open.length) {
++        return h('div', null,
++          h('div', { className: 'dshc-sub' }, '没有拿不准的事。'),
++          done.length
++            ? h('div', { className: 'dshc-sub', style: { marginTop: 6 } },
++              '最近处理过：' + done.map((d) => KEEP_WORD[d.resolution] || '已处理').join(' / '))
++            : null)
++      }
++      return h('div', { className: 'dshc-list' },
++        open.map((c) => {
++          let ev = {}
++          try { ev = JSON.parse(c.evidence || '{}') } catch { ev = {} }
++          const sim = Number(ev.similarity)
++          const meta = [
++            ago(c.opened_at),
++            Number.isFinite(sim) ? '字面相似 ' + (sim * 100).toFixed(0) + '%' : null,
++            c.kind === 'polarity' ? '说法相反' : (c.kind || null),
++            c.severity === 'high' ? '它自己有被卡住' : null,
++          ].filter(Boolean).join(' · ')
++          const side = (which, m, tip) => h('div', {
++            key: which, className: 'dshc-item',
++          },
++            h(Pill, { tone: which === 'a' ? 'warn' : undefined, title: tip },
++              which === 'a' ? '先记的' : '后记的'),
++            h('div', { className: 't' }, (m && m.text) || '（这条记忆已经找不到了）'),
++            m && m.invalid_at ? h('span', { className: 'dshc-sub' }, '已被判失效') : null,
++            h(Btn, {
++              sm: true, ghost: true, disabled: busyId === c.id,
++              onClick: () => onResolve(c.id, which),
++            }, '就是这条'))
++          return h(Card, { key: c.id, style: { padding: 12, marginBottom: 10 } },
++            h('div', { className: 'dshc-sub', style: { marginBottom: 8 } }, meta),
++            side('a', c.a, '更早记下的那句'),
++            side('b', c.b, '刚记下的那句'),
++            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 } },
++              h(Btn, {
++                disabled: busyId === c.id,
++                onClick: () => onResolve(c.id, 'both'),
++                title: '判它理解错了：两句其实不矛盾，都留着，并在冲突里记一句原因',
++              }, busyId === c.id ? '处理中…' : '它理解错了，两条都留'),
++              h('span', { className: 'dshc-sub' }, '判完这里就不再是「需处理」了')))
++        }))
+     }
+ 
+     function MemoryPage({ aid, view, act, setTab, focus, jump }) {
+@@ -3310,46 +3233,41 @@ window.__ModuleLoader__.load({
+       const [jumpMsg, setJumpMsg] = useState('')
+       const [jumpBusy, setJumpBusy] = useState(false)
+       const [cf, reloadCf] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/conflicts'), [aid, tick])
++      const [cfBusy, setCfBusy] = useState('')
+       const [vault] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/vault'), [aid])
+       // 旧进程里的 vault 还不会返回 v，此时不要触发导出，免得把新格式覆盖回去
+       const vaultFresh = Number((vault.data || {}).v) >= 2
+-      const vaultRoot = ((vault.data || {}).docs || {}).root || ''
+-      const openConflicts = (cf.data || []).filter((x) => x.state === 'open')
+       useEffect(() => {
+         if (focus && focus.focus === 'conflicts') {
+           try { document.getElementById('dshc-conflicts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* ignore */ }
+         }
+       }, [focus && focus.at])
++      /** keep=a 留先记的 / b 留后记的 / both=「它理解错了」，两条都留并记一句原因 */
+       async function resolveConflict(cid, keep) {
++        setCfBusy(cid); setErr('')
+         try {
+-          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/conflicts/' + enc(cid), { keep }, true))
+-          await reloadCf(); setErr('')
+-        } catch (e) { setErr(e.message || String(e)) }
++          const body = keep === 'both'
++            ? { keep, reason: '手动判定：它理解错了（顶多只是说得像，不是同一个命题）' }
++            : { keep }
++          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/conflicts/' + enc(cid), body, true))
++          await reloadCf()
++        } catch (e) { setErr(e.message || String(e)) } finally { setCfBusy('') }
+       }
+       const metricSlice = useMetricSlice(aid, 0, 9)
+ 
+-      // 与时间线 TLRow 同骨架：圆点 + 正文 + 热度；标记跟右侧，原话单独一行
+-      const memRow = (m) => h('div', { key: m.id },
+-        h('div', { className: 'dshc-tl-row' },
+-          h('span', { className: 'dshc-tl-dot', 'data-t': m.type, title: TYPE_LABEL[m.type] || m.type }),
+-          h('div', { className: 't', title: m.text }, m.text),
+-          m.source_badge
+-            ? h('span', {
+-                className: 'dshc-sub',
+-                style: { flex: '0 0 auto', fontSize: 11, opacity: 0.75, alignSelf: 'center', marginRight: 4 },
+-                title: m.source || m.source_badge,
+-              }, m.source_badge)
+-            : null,
+-          m.heat != null ? h('span', { className: 'dshc-tl-strength' }, h(Strength, { m })) : null,
++      const memRow = (m) => h('div', {
++        key: m.id, className: 'dshc-item',
++      },
++        h(Pill, null, TYPE_LABEL[m.type] || m.type),
++        h('div', { className: 't' }, m.text),
++        m.heat != null ? h(Strength, { m }) : null,
++        m.source_turn_id ? h(SourceLine, { aid, turnId: m.source_turn_id }) : null,
++        h('div', { className: 'm' },
+           h('select', {
+-            className: 'dshc-sel', style: { width: 84, flex: '0 0 auto', alignSelf: 'center' },
+-            value: m.mark || 'normal',
++            className: 'dshc-sel', style: { width: 92 }, value: m.mark || 'normal',
+             title: '这条记忆怎么处理：普通 / 高权重 / 加速遗忘 / 锁定',
+             onChange: (e) => mark(m, e.target.value),
+-          }, Object.entries(MARKS).map(([k, v]) => h('option', { key: k, value: k }, v)))),
+-        m.source_turn_id
+-          ? h('div', { style: { margin: '0 0 6px 14px' } }, h(SourceLine, { aid, turnId: m.source_turn_id }))
+-          : null)
++          }, Object.entries(MARKS).map(([k, v]) => h('option', { key: k, value: k }, v)))))
+ 
+       async function mark(m, value) {
+         await act(() => call('PATCH', '/v1/memory/' + enc(m.id), { mark: value }, true))
+@@ -3396,11 +3314,21 @@ window.__ModuleLoader__.load({
+         h(Sec, { title: '时间线', desc: '最近 5 天它记住了什么，按天排；点开某天看细节。' },
+           h(TimelineView, { aid })),
+ 
+-        h(Sec, { title: view === 'user' ? '它记得的事' : '记忆（FTS / decay / tiers）', desc: view === 'user' ? '最清楚的那些，按热度分档；点开某档看细节与原话。' : '列表 + 分层 + 索引；检索与衰减的细节在公式里。' },
+-          view === 'tech' ? h(Tech, null, 'recall = FTS5 trigram（≥3 字子串）；短问句（≤6 字）走 LIKE 兜底\nweight = w0·e^{-λ·days}（decay@v1，λ 默认 0.02）\n分层：T0 桌面 / T1 事实 / T2 纪要(L0规则·L1精修·L2簇修) / T3 日记 / T4 原文\n写入：extract · episode · consolidate · remember；改口默认 conflict（memory.write.flip_policy）\n习惯：habit.* 抬重要度 + S1 冷层窄穿透（memory.retrieve.habit_cold）\n观测：GET /memory-health · /retrieval-stats · /consolidation\n键：memory.inject.pool · memory.episode.distill* · memory.write.flip_policy · memory.retrieve.habit_cold · memory.diary.prefer_cluster') : null,
++        h(Sec, { title: view === 'user' ? '它记得的事' : '记忆（FTS / decay / tiers）', desc: view === 'user' ? '翻一翻它记得的；点开看原话。' : '列表 + 分层 + 索引；检索与衰减的细节在公式里。' },
++          view === 'tech' ? h(Tech, null, 'recall = FTS5 trigram（≥3 字子串）；短问句（≤6 字）走 LIKE 兜底\nweight = w0·e^{-λ·days}（decay@v1，λ 默认 0.02）\n分层：T0 桌面 / T1 事实 / T2 纪要 / T3 日记 / T4 原文；失效标记 invalid_at\n键：memory.inject.pool(C4)、memory.recall.formula(C3)') : null,
+           h(TopMemory, { aid, tick, row: memRow, act, onWrote: () => setTick((t) => t + 1) }),
+           err ? h('div', { className: 'dshc-err', style: { marginTop: 6 } }, err) : null),
+ 
++        h('div', { id: 'dshc-conflicts' },
++          h(Sec, {
++            title: '它拿不准的事',
++            desc: '两条记忆看起来互相矛盾。挑一条「就是这条」，或者说它「理解错了」——判完状态就不挂在「需处理」了。',
++          },
++            h(ConflictPanel, {
++              list: cf.data, loading: cf.loading, error: cf.error,
++              busyId: cfBusy, onResolve: resolveConflict,
++            }))),
++
+         h(Sec, { techOnly: true, title: '验收指标（9 条 · 地基附录 E）', desc: '有动作的给「去处理」；否则标仅观察。' },
+           h(Card, null, h(MetricList, {
+             from: 0, to: 9, view, setTab,
+@@ -3424,17 +3352,15 @@ window.__ModuleLoader__.load({
+     function PersonaPage({ aid, view, act, setTab }) {
+       const [s, reload, bump] = useList(aid, '/persona')
+       const [vals, , bumpVals] = useList(aid, '/values')
+-      const [world, , bumpWorld] = useList(aid, '/worldview')
+-      const [life, , bumpLife] = useList(aid, '/lifeview')
+       const [prefs, , bumpPrefs] = useList(aid, '/preferences')
+       const [taboos, , bumpTaboos] = useList(aid, '/taboos')
+       const [drift] = useList(aid, '/persona/drift')
++      const [rope] = useList(aid, '/persona/rope')
++      const [judge, , bumpJudge] = useList(aid, '/persona/judge')
+       const [sv, reloadSv] = useList(aid, '/persona/selfview')
+       const [form, setForm] = useState({ tone: '', address: '', catch: '', banned: '', card: '' })
+       const [err, setErr] = useState('')
+       const [growing, setGrowing] = useState(false)
+-      const [growingW, setGrowingW] = useState(false)
+-      const [growingL, setGrowingL] = useState(false)
+       const inited = useRef(false)
+       const tries = useRef(0)
+       const metricSlice = useMetricSlice(aid, 9, 17)
+@@ -3504,53 +3430,12 @@ window.__ModuleLoader__.load({
+         } catch (e) { setErr(e.message) } finally { setGrowing(false) }
+       }
+ 
+-      async function growWorld() {
+-        if (growingW) return
+-        setGrowingW(true); setErr('')
+-        try {
+-          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/worldview/grow', {}, true))
+-          bumpWorld()
+-        } catch (e) { setErr(e.message) } finally { setGrowingW(false) }
+-      }
+-
+-      async function growLife() {
+-        if (growingL) return
+-        setGrowingL(true); setErr('')
+-        try {
+-          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/lifeview/grow', {}, true))
+-          bumpLife()
+-        } catch (e) { setErr(e.message) } finally { setGrowingL(false) }
+-      }
+-
+-      function beliefNodes(rows) {
+-        return (rows || []).map((r) => {
+-          const ev = (r.evidence || []).length
+-            ? h('details', { style: { marginTop: 4 } },
+-              h('summary', { className: 'dshc-fold' }, '证据 ' + r.evidence.length + ' 条'),
+-              h('div', { className: 'dshc-list' }, r.evidence.map((e, i) => h('div', { key: i, className: 'dshc-item' },
+-                h(Pill, null, e.kind || '证据'),
+-                h('div', { className: 't' }, e.text || '')))))
+-            : null
+-          const lean = Number(r.weight) >= 0.5
+-          return h('div', { key: r.key, style: { padding: '6px 0', borderBottom: '1px dashed var(--line)' } },
+-            h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+-              h('b', { style: { fontSize: 12.5 } }, r.label || r.key),
+-              r.habit ? h(Pill, { on: true }, '惯习') : null,
+-              h('div', { className: 'dshc-spacer' }),
+-              h(Bar, { value: Number(r.weight) }),
+-              h('span', { className: 'm dshc-mono' }, Number(r.weight).toFixed(2))),
+-            h('div', { className: 'dshc-sub' }, lean ? (r.hint || '') : (r.low || r.hint || '')),
+-            ev)
+-        })
+-      }
+-
+       /**
+        * 「喜欢 / 讨厌」是它自己长的：后台每 10 分钟看一次该不该长（有新材料才长），
+        * 不需要人点。这里只负责把状态说清楚——长了几条、哪几条、上一次是什么时候。
+        */
+       const prefRows = prefs.data || []
+       const autoPrefs = prefRows.filter((r) => r.origin === 'auto')
+-      const manualPrefs = prefRows.filter((r) => r.origin !== 'auto')
+       const lastAuto = autoPrefs.reduce((acc, r) => (!acc || String(r.created_at) > String(acc.created_at) ? r : acc), null)
+       const grownAt = lastAuto ? ago(lastAuto.created_at) : null
+ 
+@@ -3622,6 +3507,47 @@ window.__ModuleLoader__.load({
+                 h('span', { className: 'dshc-sub', style: { minWidth: 40 } }, hi),
+                 h('span', { className: 'm dshc-mono' }, Number(t.value).toFixed(2)))
+             }),
++            // 两池拉力：左右各一根，谁长谁在赢；净力到 0.30 才可能挪一步
++            (rope && rope.axes && rope.axes.length)
++              ? h('div', { style: { marginTop: 12, borderTop: '1px dashed var(--line)', paddingTop: 10 } },
++                h('div', { className: 'dshc-note', style: { marginBottom: 6 } },
++                  '两池拉力（7 天半衰期）· 净力 ≥0.30、且赢的一边 ≥3 条，才挪一步（≤0.05）'),
++                rope.axes.filter((x) => ['ei', 'sn', 'tf', 'jp'].includes(x.axis)).map((x) => {
++                  const pos = Math.max(0, Number(x.pos) || 0)
++                  const neg = Math.max(0, Number(x.neg) || 0)
++                  const total = Math.max(0.001, pos + neg)
++                  const POL = { ei: ['I', 'E'], sn: ['S', 'N'], tf: ['F', 'T'], jp: ['P', 'J'] }[x.axis] || ['-', '+']
++                  const f = Number(x.force) || 0
++                  const col = f > 0 ? 'var(--ok)' : f < 0 ? 'var(--warn)' : 'var(--muted)'
++                  return h('div', { key: x.axis, style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 } },
++                    h('span', { className: 'dshc-sub', style: { width: 12, textAlign: 'right' } }, POL[0]),
++                    h('div', { style: { flex: 1, height: 6, borderRadius: 3, background: 'var(--line)', display: 'flex', overflow: 'hidden' } },
++                      h('div', { style: { width: (neg / total * 100) + '%', background: 'color-mix(in srgb, var(--warn) 65%, transparent)' } }),
++                      h('div', { style: { width: (pos / total * 100) + '%', background: 'color-mix(in srgb, var(--ok) 65%, transparent)' } })),
++                    h('span', { className: 'dshc-sub', style: { width: 12 } }, POL[1]),
++                    h('span', { className: 'm dshc-mono', style: { width: 52, textAlign: 'right', color: col } },
++                      (f > 0 ? '+' : '') + f.toFixed(2)),
++                    h('span', { className: 'dshc-sub dshc-mono', style: { width: 60, textAlign: 'right' } },
++                      String(x.pos_n || 0) + '/' + String(x.neg_n || 0)))
++                }),
++                rope.scan_at ? h('div', { className: 'dshc-note dshc-mono', style: { marginTop: 6 } },
++                  '上次扫：' + String(rope.scan_at).slice(0, 16).replace('T', ' ')) : null,
++                h('div', { className: 'dshc-note', style: { marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
++                  h('span', null,
++                    '第二判（模型判 + 原文核对）：待判 ' + (judge && judge.pending != null ? judge.pending : '—')
++                    + ' · 今日 ' + (judge && judge.today != null ? judge.today : '—') + '/' + (judge && judge.cap ? judge.cap : '—')),
++                  h(Btn, {
++                    sm: true, ghost: true,
++                    onClick: async () => {
++                      try {
++                        await call('POST', '/v1/agents/' + enc(aid) + '/persona/judge', { limit: 12 }, true)
++                        bumpJudge()
++                      } catch (e) { setErr(String((e && e.message) || e)) }
++                    },
++                  }, '跑一批')),
++                h('div', { className: 'dshc-note dshc-mono', style: { marginTop: 4 } },
++                  (sv && sv.now && sv.now.anchor) ? sv.now.anchor : ''))
++              : null,
+             view === 'tech' ? h('div', { className: 'dshc-note' }, '当前挡位 ' + modeLabel) : null)),
+ 
+         // ② 它的自述：第一人称，放在鱼格框下面
+@@ -3748,69 +3674,24 @@ window.__ModuleLoader__.load({
+                 + (budget ? ' · 五个字段合计上限 ' + budget.chars + ' 字（≈' + budget.tokens + ' token / 轮）。' : '')) : null),
+             err ? h('div', { className: 'dshc-err' }, err) : null)),
+ 
+-        // ⑤ 价值观：由三观账本的命题折算出来（不是人填的，也不是词表扫出来的）
++        // ⑤ 价值观：自己长出来的（不是人填的）
+         h(Sec, {
+-          title: view === 'user' ? '它的价值观' : '价值观（命题折算）',
++          title: view === 'user' ? '它的价值观' : '价值观（自己长出来的）',
+           desc: view === 'user'
+-            ? '不是填进去的；它自己认下的事、和你的关系、一次次的经历，折算成这十个维。'
+-            : '十维由三观命题折算（foldDims）：没有命题时各 0.10；三组张力互相压上限；手写只进命题，不直接改权重。',
++            ? '不是填进去的；从它记得的事、不能碰的线、和你的关系里慢慢长出来。'
++            : '十维初值各 0.10；三组张力互相压上限；≥5 条证据进惯习（步幅减半）。',
++          right: h(Btn, { ghost: true, disabled: growing, onClick: grow }, growing ? '正在长…' : '重新长一遍'),
+         },
+           h(Card, null,
+             !(vals.data || []).length
+-              ? h('div', { className: 'dshc-sub' }, '还没有价值观命题；聊几句、记几条，它会自己认下一些事。')
++              ? h('div', { className: 'dshc-sub' }, '还没有长出价值观；聊几句、记几条，它会自己长。')
+               : h('div', null,
+                 h(ValuesRadar, { rows: vals.data || [] }),
+                 h(TensionBlock, { rows: vals.data || [] }),
+                 h('details', { className: 'dshc-fold', style: { marginTop: 12 } },
+-                  h('summary', null, '全部十维（' + (vals.data || []).length + ' 项 · 点开看来源）'),
++                  h('summary', null, '全部十维（' + (vals.data || []).length + ' 项 · 点开看证据）'),
+                   h('div', { className: 'dshc-list' }, valueNodes))),
+-            h('div', { className: 'dshc-note' }, '改它只能靠新的经历或直接说出「我更看重…」；手写区只影响说话方式。'))),
+-
+-        // ⑤b 世界观（Primals / WAS / Social Axioms）
+-        h(Sec, {
+-          title: view === 'user' ? '它眼中的世界' : '世界观（自己长出来的）',
+-          desc: view === 'user'
+-            ? '世界安不安全、公不公正、人可不可信——从经历里慢慢偏出来，不是填的。'
+-            : '八维初值 0.50；Primals(Safe/Enticing/Alive) + WAS + Social Axioms + 知可修订；不要求 Σ=1。',
+-        },
+-          h(Card, null,
+-            !(world.data || []).length
+-              ? h('div', { className: 'dshc-sub' }, '还没有世界观偏向；多经历、多冲突与关系，它会慢慢立住。')
+-              : h('div', null,
+-                h(ValuesRadar, { rows: world.data || [], size: 150 }),
+-                h('details', { className: 'dshc-fold', style: { marginTop: 12 } },
+-                  h('summary', null, '全部八维（' + (world.data || []).length + ' 项）'),
+-                  h('div', { className: 'dshc-list' }, beliefNodes(world.data || [])))),
+-            h('div', { className: 'dshc-note' }, '世界观比价值观更稳：惯习门槛更高，大冲击才大幅偏离中线。'))),
+-
+-        // ⑤c 人生观（MEMS / MLQ / 角色目的论）
+-        (() => {
+-          const lifePayload = life.data || {}
+-          const lifeRows = Array.isArray(lifePayload) ? lifePayload : (lifePayload.items || [])
+-          const stance = (!Array.isArray(lifePayload) && lifePayload.derived && lifePayload.derived.stance) || null
+-          return h(Sec, {
+-            title: view === 'user' ? '它觉得自己为何在' : '人生观（自己长出来的）',
+-            desc: view === 'user'
+-              ? '连贯、朝向、重要、求索、生长、与人成全、时间视野——再凝成一句目的。'
+-              : 'MEMS 三元 + MLQ 求索 + Ryff 成长 + 交融 + 远景；派生 presence 与 telos。',
+-          },
+-            h(Card, null,
+-              stance ? h('div', { style: { marginBottom: 10 } },
+-                h('div', { style: { fontSize: 13, fontWeight: 600, lineHeight: 1.5 } }, stance.telos || ''),
+-                stance.attitude ? h('div', { className: 'dshc-sub', style: { marginTop: 4 } }, stance.attitude) : null,
+-                lifePayload.derived && lifePayload.derived.presence != null
+-                  ? h('div', { className: 'dshc-note' }, '意义在场 presence=' + Number(lifePayload.derived.presence).toFixed(2))
+-                  : null)
+-                : null,
+-              !lifeRows.length
+-                ? h('div', { className: 'dshc-sub' }, '还没有人生观命题；日记、志向与关系会把它慢慢写清楚。')
+-                : h('div', null,
+-                  h(ValuesRadar, { rows: lifeRows, size: 150 }),
+-                  h('details', { className: 'dshc-fold', style: { marginTop: 12 } },
+-                    h('summary', null, '全部七维（' + lifeRows.length + ' 项）'),
+-                    h('div', { className: 'dshc-list' }, beliefNodes(lifeRows)))),
+-              h('div', { className: 'dshc-note' }, '默认角色目的：扩展所陪伴之人的能动——不是假装独立灵魂目的。')))
+-        })(),
++            h('div', { className: 'dshc-note' }, '改它只能靠新的经历：手写区只影响说话方式，不改它看重什么。'))),
+ 
+         // ⑦ 固定偏好（自己长的 + 手写的，同一种行；自己长的删不掉）
+         h(Sec, {
+@@ -3949,32 +3830,26 @@ window.__ModuleLoader__.load({
+       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+     }
+ 
+-    /** 字节量级：B → KB → MB → GB → TB，跟总量涨。 */
+-    function fmtBytes(bytes) {
+-      const b = Number(bytes) || 0
+-      if (!(b > 0)) return '<0.1 KB'
+-      if (b < 1024) return (Math.round(b * 10) / 10) + ' B'
+-      const u = ['KB', 'MB', 'GB', 'TB']
+-      let v = b / 1024
+-      let i = 0
+-      while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
+-      const n = v >= 100 ? Math.round(v) : Math.round(v * 10) / 10
+-      return n + ' ' + u[i]
+-    }
+-
+     /**
+-     * 记忆量曲线：只有一条线，从底边左角起笔往右上走。
+-     * 固定「从出生到现在」；跨度大时横轴改成 YYYY-MM，免得跨年看不清。
++     * 记忆量曲线：只有一条线，从底边左角起笔往右上走，近一年。
+      * 数据走 /vault/history（新接口；宿主没重启时只留一句提示）。
+      */
+     function VaultDelta({ aid }) {
+-      const [s] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/vault/history?days=0'), [aid])
++      const [range, setRange] = useState(365)
++      const [s] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/vault/history?days=' + range), [aid, range])
++
++      const tools = h('div', { className: 'dshc-c-tools' },
++        h(Seg, {
++          items: [['365', '1 年'], ['90', '90 天'], ['30', '30 天']],
++          value: String(range),
++          onChange: (k) => setRange(Number(k)),
++        }))
+ 
+       if (s.error) {
+         const stale = /接口不存在|NOT_FOUND/.test(s.error)
+-        return h('div', { className: 'dshc-c' }, h('div', { className: 'dshc-k-err' }, stale ? '宿主重启一次就能画' : s.error))
++        return h('div', { className: 'dshc-c' }, tools, h('div', { className: 'dshc-k-err' }, stale ? '宿主重启一次就能画' : s.error))
+       }
+-      if (!s.data) return h('div', { className: 'dshc-c' }, h('div', { className: 'dshc-c-skel' }))
++      if (!s.data) return h('div', { className: 'dshc-c' }, tools, h('div', { className: 'dshc-c-skel' }))
+ 
+       const all = s.data.series || []
+       const first = all.findIndex((x) => x.close > 0 || x.add_b > 0)
+@@ -3999,31 +3874,17 @@ window.__ModuleLoader__.load({
+       }
+       const area = d + 'L' + W + ' ' + H + ' L0 ' + H + ' Z'
+ 
+-      // 跨度 ≥90 天或跨年 → YYYY-MM；否则 MM-DD
+-      const spanDays = Math.max(0, n - 1)
+-      const y0 = String(rows[0].day || '').slice(0, 4)
+-      const y1 = String(rows[n - 1].day || '').slice(0, 4)
+-      const useYm = spanDays >= 90 || (y0 && y1 && y0 !== y1)
+-      const tickLab = (x) => {
+-        const s = String(x || '')
+-        return useYm ? s.slice(0, 7) : s.slice(5)
+-      }
+-      // 纵轴：三格共用顶刻度那一档（KB/MB/…），半档不会写成别的单位
+-      const yUnit = (() => {
+-        const t = fmtBytes(max)
+-        const sp = t.lastIndexOf(' ')
+-        return sp > 0 ? t.slice(sp + 1) : 'KB'
+-      })()
+-      const yDiv = ({ B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 })[yUnit] || 1024
+-      const yNum = (v) => {
+-        if (!(v > 0)) return '0'
+-        const n = v / yDiv
+-        return n >= 100 ? String(Math.round(n)) : String(Math.round(n * 10) / 10)
++      const kbText = (b) => {
++        const kb = b / 1024
++        return kb >= 10 ? String(Math.round(kb)) : String(Math.round(kb * 10) / 10)
+       }
+-      const yTicks = [yNum(max) + ' ' + yUnit, yNum(max / 2), '0']
+-      const xTicks = [0, 1 / 3, 2 / 3, 1].map((k) => tickLab(rows[Math.round(k * (n - 1))].day))
++      const md = (x) => String(x || '').slice(5)
++      const yTicks = [max, max / 2, 0].map((v) => kbText(v))
++      yTicks[0] += ' KB'
++      const xTicks = [0, 1 / 3, 2 / 3, 1].map((k) => md(rows[Math.round(k * (n - 1))].day))
+ 
+       return h('div', { className: 'dshc-c' },
++        tools,
+         h('div', { className: 'dshc-c-grid' },
+           h('div', { className: 'dshc-c-y' }, yTicks.map((t, i) => h('span', { key: i }, t))),
+           h('div', { className: 'dshc-c-plot' },
+@@ -4055,7 +3916,7 @@ window.__ModuleLoader__.load({
+       // 注水：先画 0 宽，下一帧再放到目标宽度
+       const [grow, setGrow] = useState(false)
+       // 增量图默认收起；展开时才去拉时间线
+-      const [delta, setDelta] = useState(true)
++      const [delta, setDelta] = useState(false)
+ 
+       const d = s.data || {}
+       const parts = d.parts || []
+@@ -4068,7 +3929,7 @@ window.__ModuleLoader__.load({
+       const tokensOf = (x) => Math.ceil((Number(x.bytes) || 0) / 2)
+       // 只有两种真数据：存量（条数 / 字节）和每轮注入用量（token）
+       const unitOf = (x) => ({ T3: '篇', T4: '轮' })[x.key] || '条'
+-      const sizeText = (x) => fmtBytes(x.bytes)
++      const kbText = (x) => (Number(x.kb) > 0 ? x.kb + ' KB' : '<0.1 KB')
+       const LABEL = { T2: '书签', T4: '对话档案', FA: '事实档案' }
+       const labelOf = (x) => LABEL[x.key] || x.label
+       // 后端还没重载时 inject 为空，就用 history 接口的日均值兜底
+@@ -4078,12 +3939,12 @@ window.__ModuleLoader__.load({
+       const injPct = inj && inj.budget ? Math.max(1, Math.min(100, Math.round(Number(inj.avg) / Number(inj.budget) * 100))) : 0
+       const injTone = injPct >= 95 ? 'bad' : injPct >= 80 ? 'warn' : 'ok'
+       // 彩带 = 六个分区在总字节里的比例，和下面的行一一对应
+-      const byteSum = parts.reduce((n, x) => n + (Number(x.bytes) || 0), 0)
+-      const ribbonPct = (x) => Math.max(2, Math.round(((Number(x.bytes) || 0) / (byteSum || 1)) * 1000) / 10)
+-      const totalBytesTarget = Number(d.total_bytes) || byteSum || 0
++      const kbSum = parts.reduce((n, x) => n + (Number(x.kb) || 0), 0)
++      const ribbonPct = (x) => Math.max(2, Math.round(((Number(x.kb) || 0) / (kbSum || 1)) * 1000) / 10)
++      const totalKbTarget = Number(d.total_kb) || Math.round(kbSum) || 0
+ 
+       // 数字滚动 + 注水：钩子必须无条件调用，所以放在两个早退之前
+-      const totalShown = useCountUp(totalBytesTarget, 900)
++      const totalShown = useCountUp(totalKbTarget, 900)
+       const injShown = useCountUp(inj ? (Number(inj.avg) || 0) : 0, 900)
+       useEffect(() => {
+         const t = setTimeout(() => setGrow(true), 80)
+@@ -4167,14 +4028,14 @@ window.__ModuleLoader__.load({
+           h('div', { className: 'dshc-vault-head' },
+             h(VaultMark, { size: 32 }),
+             h('div', { className: 'dshc-vault-stat' },
+-              h('b', { className: 'dshc-vault-total' }, fmtBytes(totalShown)),
++              h('b', { className: 'dshc-vault-total' }, Math.round(totalShown) + ' KB'),
+               h('span', { className: 'dshc-vault-cap' }, '总记忆 · ' + parts.length + ' 个分区'))),
+ 
+           // 六段彩带：每段宽度 = 这个分区占全部记忆的比例
+           parts.length ? h('div', { className: 'dshc-vault-ribbon', 'aria-hidden': true },
+             parts.map((x, i) => h('i', {
+               key: x.key,
+-              title: labelOf(x) + ' · ' + sizeText(x),
++              title: labelOf(x) + ' · ' + kbText(x),
+               'data-hi': hi === x.key ? '1' : '0',
+               onMouseEnter: () => setHi(x.key),
+               onMouseLeave: () => setHi((k) => (k === x.key ? '' : k)),
+@@ -4204,7 +4065,7 @@ window.__ModuleLoader__.load({
+                   h('div', { style: { flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-secondary, #333)' } },
+                     h('div', { style: { width: bar(x) + '%', height: 8, borderRadius: 4, background: color(x) } })),
+                   h('span', { className: 'dshc-mono', style: { width: 200, flex: 'none', textAlign: 'right', whiteSpace: 'nowrap' } },
+-                    x.pct + '% · ' + sizeText(x))),
++                    x.pct + '% · ' + kbText(x))),
+                 h('div', { className: 'dshc-sub', style: { marginLeft: 104 } },
+                   x.rows + ' / ' + (x.cap || '—') + ' 条' + (full(x) ? '（已满）' : '') + ' · ' + x.hint + ' · ≈' + tokensOf(x).toLocaleString('en-US') + ' token'))
+               : h('div', { key: x.key, className: 'dshc-vault-row', ...rowHover(x.key), style: { '--i': i } },
+@@ -4212,15 +4073,14 @@ window.__ModuleLoader__.load({
+                 h('span', { className: 'dshc-vault-lab' }, labelOf(x)),
+                 h('span', { className: 'dshc-vault-num dshc-mono' }, x.rows + ' ' + unitOf(x)),
+                 h('span', { className: 'dshc-vault-sep' }, '·'),
+-                h('span', { className: 'dshc-vault-kb dshc-mono' }, sizeText(x))))),
++                h('span', { className: 'dshc-vault-kb dshc-mono' }, kbText(x))))),
+ 
+           tech ? h('div', { className: 'dshc-note', style: { marginTop: 10 } },
+-            '整库 ' + (d.db_bytes ? fmtBytes(d.db_bytes) : '—') + ' · 文本合计 ' + fmtBytes(d.total_bytes || totalBytesTarget)) : null,
++            '整库 ' + (d.db_bytes ? Math.round(d.db_bytes / 1024) + ' KB' : '—') + ' · 文本合计 ' + (d.total_kb || 0) + ' KB') : null,
+ 
+-          // 增量图：默认展开
++          // 增量图：默认收起，展开才请求时间线
+           h('details', {
+             className: 'dshc-vault-delta',
+-            open: delta,
+             onToggle: (e) => setDelta(e.currentTarget.open),
+           },
+             h('summary', null, '记忆增量'),
+@@ -4387,47 +4247,21 @@ window.__ModuleLoader__.load({
+ 
+     function DiaryView({ aid, day, extra }) {
+       const [s, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/diaries/' + enc(day)), [aid, day])
+-      const [rewriting, setRewriting] = useState(false)
+-      const [rewriteMsg, setRewriteMsg] = useState('')
+       if (s.loading) return h(Empty, null, '读取 ' + day + ' 的日记…')
+       if (s.error) return h(LoadErr, { error: s.error, retry: reload })
+       const d = s.data || {}
+       const ctx = d.context || {}
+-      const write = (ctx && ctx.write) || {}
+-      const pack = write.pack || {}
+       const ax = ctx.axes || {}
+       const short = { ei: '外', sn: '实', tf: '思', jp: '判', sensitivity: '敏' }
+-      const packBits = []
+-      if (Number(pack.n_cluster) > 0) packBits.push('簇修 ' + pack.n_cluster)
+-      if (Number(pack.n_model) > 0) packBits.push('精修 ' + pack.n_model)
+-      if (Number(pack.n_rules) > 0) packBits.push('规则 ' + pack.n_rules)
+-      if (pack.prefer_cluster) packBits.push('忙天优先簇')
+-      if (pack.retry_of) packBits.push('缩包重试')
+-      if (Number(pack.skipped_low) > 0) packBits.push('跳过低分 ' + pack.skipped_low)
+       const chips = [
+         d.mood ? '心情 ' + d.mood : '',
+         ctx.affect ? '情绪 ' + ctx.affect.label + ' ' + Number(ctx.affect.intensity).toFixed(2) : '',
+-        write.mood_source === 'day' ? '心情按当日' : (write.mood_source === 'live' ? '心情按此刻' : ''),
+         ctx.drive ? '驱力 ' + ctx.drive.band : '',
+         Object.keys(ax).length ? '性格 ' + Object.entries(ax).map(([k, v]) => (short[k] || k) + Number(v).toFixed(2)).join(' ') : '',
+         (ctx.values || []).length ? '看重 ' + ctx.values.map((v) => v.key).join('/') : '',
+         d.source === 'model' ? '模型写的' : '模板拼的',
+         Number(d.late) ? '补写' : '',
+-        ...packBits,
+       ].filter(Boolean)
+-      const doRewrite = async () => {
+-        if (rewriting) return
+-        if (!window.confirm('按当前纪要重写 ' + day + ' 的日记？会覆盖这篇（版本号 +1）。')) return
+-        setRewriting(true)
+-        setRewriteMsg('')
+-        try {
+-          const out = await call('POST', '/v1/agents/' + enc(aid) + '/diaries/rewrite', { day }, true)
+-          setRewriteMsg(out && out.source === 'model' ? '已用模型重写（v' + out.version + '）' : '已用模板重写（v' + (out && out.version) + '）')
+-          reload()
+-        } catch (e) {
+-          setRewriteMsg(e.message || String(e))
+-        } finally { setRewriting(false) }
+-      }
+       return h(Card, null,
+         h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 } },
+           h(Pill, null, day),
+@@ -4436,32 +4270,10 @@ window.__ModuleLoader__.load({
+           className: 'dshc-ta', readOnly: true, value: String(d.text || ''),
+           style: { width: '100%', minHeight: 260, lineHeight: 1.9, resize: 'vertical', background: 'transparent', fontSize: 13.5 },
+         }),
+-        d.source === 'model'
+-          ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
+-            '日记由模型写成；原料来自纪要'
+-              + (Number(pack.n_cluster) ? '（含时段簇修）' : '')
+-              + (Number(pack.n_model) ? '（含精修段）' : '')
+-              + (Number(pack.n_rules) ? '（含规则要点）' : '')
+-              + '。')
+-          : null,
+         d.source !== 'model'
+           ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
+-            (() => {
+-              const why = write.fail_reason
+-              const map = {
+-                no_model: '当时没有可用的写日记模型，先用材料拼了一篇（不编造）。',
+-                empty: '模型回了空内容，先用材料拼了一篇（不编造）。',
+-                echo: '模型像在复读提示词，已拒收，先用材料拼了一篇（不编造）。',
+-                too_short: '模型写得太短，已拒收，先用材料拼了一篇（不编造）。',
+-              }
+-              if (why && map[why]) return map[why]
+-              if (why && String(why).startsWith('thrown:')) return '模型调用出错，先用材料拼了一篇（不编造）。'
+-              return '这次没用上模型正文，先用材料拼了一篇（不编造）。'
+-            })())
++            '这次模型没接上，先用材料拼了一篇（不编造）。')
+           : null,
+-        h('div', { style: { marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+-          h(Btn, { disabled: rewriting, onClick: doRewrite }, rewriting ? '重写中…' : '按当前纪要重写'),
+-          rewriteMsg ? h('span', { className: 'dshc-note' }, rewriteMsg) : null),
+         extra
+           ? h('div', { style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-secondary, #333)' } }, extra)
+           : null)
+@@ -4539,21 +4351,16 @@ window.__ModuleLoader__.load({
+       if (s.error && !s.data) return h(LoadErr, { error: s.error, retry: reload })
+       const d = s.data || {}
+       const groups = d.groups || []
+-      // 本地历日（不要 toISOString：UTC 会把中国凌晨标成昨天）
+-      const _pad = (n) => String(n).padStart(2, '0')
+-      const _local = (ms) => { const x = new Date(ms); return x.getFullYear() + '-' + _pad(x.getMonth() + 1) + '-' + _pad(x.getDate()) }
+-      const today = _local(Date.now())
+-      const yday = _local(Date.now() - 86400000)
+-      const filled = groups.filter((g) => g.count > 0).length
++      const today = new Date().toISOString().slice(0, 10)
++      const yday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+       return h(Card, null,
+         h('div', { className: 'dshc-tl-meta' },
+           h('span', { className: 'dshc-sub' }, '近 5 天'),
+-          h('span', { className: 'dshc-mono' }, (d.total || 0) + ' 条 · ' + filled + '/' + (d.days || groups.length || 5) + ' 天有记' +
++          h('span', { className: 'dshc-mono' }, (d.total || 0) + ' 条 · ' + groups.length + ' 天' +
+             (d.at ? ' · 算于 ' + clockOf(d.at) : ''))),
+-        !(d.total) ? h(Empty, null, '这阵子还没记住什么。')
+-          : h('div', { className: 'dshc-tl' }, groups.map((g) => {
+-          const items = g.items || []
+-          const mx = tlMix(items)
++        groups.length === 0 ? h(Empty, null, '这阵子还没记住什么。') : null,
++        h('div', { className: 'dshc-tl' }, groups.map((g) => {
++          const mx = tlMix(g.items)
+           return h('details', { key: g.day, className: 'dshc-tl-day' },
+             h('summary', null,
+               h('span', { className: 'dshc-tl-date' },
+@@ -4564,21 +4371,19 @@ window.__ModuleLoader__.load({
+                 title: mx.map(([k, n]) => (TYPE_LABEL[k] || k) + ' ' + n).join(' · '),
+               }, mx.slice(0, 3).map(([k, n]) => h('i', { key: k, 'data-t': k, style: { flex: String(n) } }))),
+               h('span', { className: 'dshc-tl-spacer' }),
+-              h('span', { className: 'dshc-tl-count' }, (g.count || items.length) + ' 条'),
++              h('span', { className: 'dshc-tl-count' }, g.count + ' 条'),
+               h('svg', { className: 'dshc-tl-chev', viewBox: '0 0 12 12', 'aria-hidden': 'true' },
+                 h('path', {
+                   d: 'M4 2.5 L8 6 L4 9.5', fill: 'none', stroke: 'currentColor',
+                   strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round',
+                 }))),
+-            items.length === 0
+-              ? h('div', { className: 'dshc-tl-body' }, h('div', { className: 'dshc-sub' }, '这天没记下什么。'))
+-              : h('div', { className: 'dshc-tl-body' },
+-                  items.slice(0, 10).map((m) => h(TLRow, { key: m.id, m })),
+-                  items.length > 10
+-                    ? h('details', { className: 'dshc-fold dshc-tl-more' },
+-                        h('summary', null, '另外 ' + (items.length - 10) + ' 条 · 点开'),
+-                        items.slice(10).map((m) => h(TLRow, { key: m.id, m })))
+-                    : null))
++            h('div', { className: 'dshc-tl-body' },
++              g.items.slice(0, 10).map((m) => h(TLRow, { key: m.id, m })),
++              g.items.length > 10
++                ? h('details', { className: 'dshc-fold dshc-tl-more' },
++                    h('summary', null, '另外 ' + (g.items.length - 10) + ' 条 · 点开'),
++                    g.items.slice(10).map((m) => h(TLRow, { key: m.id, m })))
++                : null))
+         })))
+     }
+ 
+@@ -4992,476 +4797,12 @@ window.__ModuleLoader__.load({
+ 
+     /* ============================================================= affect */
+ 
+-    /* ============================================================ 三观 */
+-    // 页面只读 /sangguan/* 投影，不在前端重算任何闸门或计数；用户视图零术语，tech 视图才露符号与 id
+-
+-    const SG_LAYER = { W: '世界观', L: '人生观', V: '价值观' }
+-    const SG_LEAD = { W: '它认定世界是这样的', L: '它觉得自己是来', V: '它此刻更看重' }
+-    const SG_CORE = { W: 'core', L: 'telos', V: 'principle' }
+-    const SG_STATUS = {
+-      active: '', contested: '在争', provisional: '试用中', superseded: '后来改了看法', falsified: '后来发现不对',
+-      sublated: '已被更完整的看法吸收', demoted: '旧地图', withdrawn: '试过，没站住',
+-    }
+-    const SG_SIGMA = { struggle: '正在想', suspended: '先放着', coexist: '两样都要', sub_trial: '找到一个说法，正在试', resolved: '已有结论', sublated: '想通了' }
+-    const SG_BRANCH = { RESOLVE: '分出了高下', SUB: '找了个合起来的说法', COEX: '两样都要了', SUSPEND: '先放下了' }
+-    const SG_TURN = ['SUB_CONFIRM', 'ELEV_COMMIT', 'COEX', 'RESOLVE', 'CORE_ESTABLISH']
+-    // 终态命题只进链浏览与史，不上主区
+-    const SG_TERMINAL_OF = (s) => ['superseded', 'falsified', 'sublated', 'demoted', 'withdrawn'].includes(s)
+-    const sgRank = (a, b) => (b.e - a.e) || (b.pi - a.pi) || String(b.id).localeCompare(String(a.id))
+-    const sgDay = (iso) => String(iso || '').slice(0, 10)
+-
+-    function SgClaim({ c, tech, onOpen, onWithdraw, big }) {
+-      const st = SG_STATUS[c.status] || ''
+-      const hollow = c.origin === 'seed' && c.pi === 0 && c.n === 0 && c.status === 'active'
+-      return h('div', {
+-        className: 'dshc-row', role: 'button', tabIndex: 0, style: { cursor: 'pointer', alignItems: 'baseline' },
+-        onClick: () => onOpen && onOpen(c.id),
+-      },
+-        h('span', { style: { flex: 1, fontSize: big ? 15 : 13, fontWeight: big ? 600 : 400, lineHeight: 1.55 } }, c.text),
+-        c.review ? h(Pill, { tone: 'warn' }, '在重新核对') : null,
+-        hollow ? h(Pill, null, '尚未立论') : null,
+-        st ? h(Pill, { tone: c.status === 'contested' ? 'warn' : undefined }, st) : null,
+-        hollow && onWithdraw ? h(Btn, { sm: true, onClick: (e) => { e.stopPropagation(); onWithdraw(c) } }, '撤回') : null,
+-        tech ? h('span', { className: 'v dshc-mono' }, 'π ' + Number(c.pi).toFixed(2) + ' · n ' + c.n + ' · ' + c.kind + ' · ' + c.id) : null)
+-    }
+-
+-    /** 两极对峙卡：在争 / 先放着 / 试用中（待验证）/ 两样都要 + 代价 */
+-    function SgPair({ k, tech, onOpen, onWithdraw, precedent }) {
+-      const word = k.sigma === 'sub_trial' && k.dormant_since ? '待验证' : (SG_SIGMA[k.sigma] || k.sigma)
+-      const lean = k.loss && k.loss.lean_pole ? (k.loss.lean_pole === 'pos' ? k.pos.text : k.neg.text) : ''
+-      return h(Card, { style: { marginBottom: 8 } },
+-        h('div', { className: 'dshc-sub', style: { marginBottom: 6 } }, k.q ? '「' + k.q + '」' : '两种看法', '　', h(Pill, { tone: k.sigma === 'struggle' ? 'warn' : undefined }, word)),
+-        h('div', { style: { display: 'flex', gap: 10, alignItems: 'stretch' } },
+-          h('div', { style: { flex: 1, cursor: 'pointer' }, onClick: () => onOpen(k.pos.id) }, k.pos.text),
+-          h('div', { className: 'dshc-sub', style: { alignSelf: 'center' } }, k.sigma === 'coexist' ? '和' : '还是'),
+-          h('div', { style: { flex: 1, cursor: 'pointer', textAlign: 'right' }, onClick: () => onOpen(k.neg.id) }, k.neg.text)),
+-        k.sub_id ? h('div', { className: 'dshc-note', style: { cursor: 'pointer' }, onClick: () => onOpen(k.sub_id) },
+-          (k.sigma === 'sublated' ? '想通了：' : '正在试的说法：') + (k.sub || '')) : null,
+-        k.sigma === 'coexist' && k.loss ? h('div', { className: 'dshc-note' },
+-          '平时偏向「' + lean + '」' + (k.loss.cost ? '，付出的是' + k.loss.cost : '') + '。') : null,
+-        precedent !== undefined ? h('div', { className: 'dshc-note' }, precedent || '没有可参照的旧事。') : null,
+-        tech ? h('div', { className: 'dshc-sub dshc-mono' }, k.id + ' · σ=' + k.sigma + ' · π⁺ ' + k.pos.pi.toFixed(2) + ' / π⁻ ' + k.neg.pi.toFixed(2)
+-          + (k.trial_until ? ' · 试用至 ' + sgDay(k.trial_until) : '') + ' · 审议 ' + (k.deliberations || 0) + ' 次') : null)
+-    }
+-
+-    /** 旧维度仪表（三观引擎之前的十维价值 / 八维世界 / 七维人生），只读 */
+-    function SgSideMeter({ vals, world, life }) {
+-      const lp = life || {}
+-      const lifeRows = Array.isArray(lp) ? lp : (lp.items || [])
+-      const box = (title, rows) => h('div', { style: { flex: '1 1 150px', minWidth: 150 } },
+-        h('div', { className: 'dshc-sub', style: { textAlign: 'center' } }, title),
+-        h(ValuesRadar, { rows: rows || [], size: 140 }))
+-      return h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 12 } },
+-        box('世界（旧八维）', world), box('人生（旧七维）', lifeRows), box('价值（旧十维）', vals))
+-    }
+-
+-    function SgSeed({ label, layer, base, act, done }) {
+-      const [text, setText] = useState('')
+-      const t = text.trim()
+-      return h('div', null,
+-        h('div', { className: 'dshc-sub' }, label + '：尚未立论。可以先种一句，之后看事实怎么说。'),
+-        h('div', { className: 'dshc-row', style: { gap: 6, marginTop: 4 } },
+-          h('input', { className: 'dshc-in', style: { flex: 1 }, value: text, maxLength: 200, placeholder: '一句话（4–200 字）', onChange: (e) => setText(e.target.value) }),
+-          h(Btn, { sm: true, disabled: t.length < 4, onClick: () => act(() => call('POST', base + '/seed', { layer, text: t }, true)).then(() => { setText(''); done() }).catch(() => {}) }, '种下')))
+-    }
+-
+-    function SangguanPage({ aid, view, act }) {
+-      const tech = view === 'tech'
+-      const base = '/v1/agents/' + enc(aid) + '/sangguan'
+-      const [tick, setTick] = useState(0)
+-      const bump = () => setTick((t) => t + 1)
+-      const [st, reloadSt] = useAsync(() => call('GET', base + '/status'), [aid, tick])
+-      const on = !!(st.data && st.data.enabled)
+-      const get = (p) => () => (on ? call('GET', base + p) : null)
+-      const [hd] = useAsync(get('/heads'), [aid, tick, on])
+-      const [kp] = useAsync(get('/kappa'), [aid, tick, on])
+-      const [pc] = useAsync(get('/precedents'), [aid, tick, on])
+-      const [pr] = useAsync(get('/predictions'), [aid, tick, on])
+-      const [ep] = useAsync(get('/epochs'), [aid, tick, on])
+-      const [lv] = useAsync(get('/liveness'), [aid, tick, on])
+-      const [tl] = useAsync(get('/timeline?days=365'), [aid, tick, on])
+-      const [el] = useAsync(get('/elev'), [aid, tick, on])
+-      const [evBefore, setEvBefore] = useState(0)
+-      const [ev] = useAsync(() => (on && tech ? call('GET', base + '/events?limit=30' + (evBefore ? '&before=' + evBefore : '')) : null), [aid, tick, on, tech, evBefore])
+-      const [pv] = useAsync(() => (on && tech ? call('GET', base + '/inject/preview') : null), [aid, tick, on, tech])
+-      const [vals] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/values'), [aid])
+-      const [world] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/worldview'), [aid])
+-      const [life] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/lifeview'), [aid])
+-      const [open, setOpen] = useState(null)
+-      const [chain] = useAsync(() => (on && open ? call('GET', base + '/claims/' + enc(open) + '/chain') : null), [aid, tick, on, open])
+-      const [why] = useAsync(() => (on && open ? call('GET', base + '/claims/' + enc(open) + '/explain') : null), [aid, tick, on, open])
+-      const [turnLayer, setTurnLayer] = useState('all')
+-      const [turnN, setTurnN] = useState(30)
+-      const [msg, setMsg] = useState('')
+-
+-      const side = h('details', { className: 'dshc-fold', style: { marginTop: 8 } },
+-        h('summary', null, '旧维度仪表（只读，仅供参照）'),
+-        h(SgSideMeter, { vals: vals.data, world: world.data, life: life.data }))
+-
+-      if (st.loading && !st.data) return h(Empty, null, '读取三观…')
+-      if (st.error && !st.data) return h(LoadErr, { error: st.error, retry: reloadSt })
+-      if (!on) {
+-        return h('div', null,
+-          h(Sec, {
+-            title: '三观', desc: '三观引擎未启用：下面是旧的维度仪表。打开后它会从对话里慢慢长出自己的看法，先观察 7 天再真正进入说话。',
+-            right: h(Btn, { primary: true, onClick: () => act(() => call('PUT', base + '/config', { enabled: true }, true)).then(bump).catch(() => {}) }, '打开三观引擎'),
+-          }, h(Card, null, h(SgSideMeter, { vals: vals.data, world: world.data, life: life.data }))))
+-      }
+-
+-      const S = st.data
+-      const layers = (hd.data && hd.data.layers) || {}
+-      const kappas = (kp.data && kp.data.kappas) || []
+-      const pIdx = new Map(((pc.data && pc.data.precedents) || []).map((p) => [p.id, p]))
+-      const cuts = (ep.data && ep.data.cuts) || []
+-      const summaries = (ep.data && ep.data.summaries) || []
+-      const days = (tl.data && tl.data.days) || []
+-      const allEv = days.flatMap((d) => d.events)
+-      const onOpen = (id) => setOpen((o) => (o === id ? null : id))
+-      const live = (l) => (layers[l] || []).filter((c) => !SG_TERMINAL_OF(c.status))
+-      const cores = (l) => live(l).filter((c) => c.kind === SG_CORE[l] && c.status === 'active').sort(sgRank)
+-      const belts = (l, kind) => live(l).filter((c) => c.kind !== SG_CORE[l] && (!kind || c.kind === kind)).sort(sgRank)
+-      const kOf = (l, pred) => kappas.filter((k) => k.layer === l && (!pred || pred(k)))
+-      const cap = (arr) => (tech ? arr : arr.slice(0, 5))
+-
+-      async function withdraw(c) {
+-        try {
+-          await act(() => call('POST', base + '/claims/' + enc(c.id) + '/withdraw', {}, true))
+-          setMsg('已撤回')
+-          bump()
+-        } catch (e) { setMsg(e.message || String(e)) }
+-      }
+-      const onWithdraw = withdraw
+-      async function judge(body, okText) {
+-        try {
+-          const r = await act(() => call('POST', base + '/verdict', body, true))
+-          setMsg(r && r.counted ? okText : '今天已经记过这一条了，明天再说。')
+-          bump()
+-        } catch (e) { setMsg(e.message || String(e)) }
+-      }
+-      const precedentLine = (k) => {
+-        const ps = (k.precedent_ids || []).map((id) => pIdx.get(id)).filter(Boolean).sort((a, b) => Math.abs(b.o) - Math.abs(a.o) || String(b.at).localeCompare(String(a.at)))
+-        const p = ps[0]
+-        if (!p) return ''
+-        return '上回类似的事「' + (p.q || p.pos) + '」，' + (SG_BRANCH[p.branch] || '做了决定') + '，' + (p.o > 0 ? '后来证明还行' : p.o < 0 ? '后来发现不太对' : '结果还没出来') + '。'
+-      }
+-
+-      // ---- 页头：每层一句 + 纪元戳 ----
+-      const stamp = (l) => {
+-        const c = cuts.filter((x) => x.layer === l).pop()
+-        const n = (S.epoch && S.epoch[l]) || 0
+-        return '第 ' + n + ' 季 · ' + (c ? '自 ' + sgDay(c.at) : '自启用起')
+-      }
+-      const established = (c) => !(c.origin === 'seed' && c.pi === 0 && c.n === 0)
+-      const headLine = (l) => {
+-        const cs = cores(l).filter(established)
+-        const bs = belts(l).filter((c) => c.status === 'active' && established(c))
+-        const pick = cs.length ? cs : bs
+-        if (!pick.length) return h('div', { className: 'dshc-row', key: l }, h('span', { className: 'l' }, SG_LAYER[l]), h('span', { className: 'dshc-sub', style: { flex: 1 } }, '尚未立论'), h('span', { className: 'v dshc-sub' }, stamp(l)))
+-        return h('div', { key: l },
+-          h('div', { className: 'dshc-row' }, h('span', { className: 'l' }, SG_LAYER[l]),
+-            h('span', { style: { flex: 1, fontWeight: 600, cursor: 'pointer' }, onClick: () => onOpen(pick[0].id) }, pick[0].text, cs.length ? null : h('span', { className: 'dshc-sub' }, '（还只是一种说法）')),
+-            h('span', { className: 'v dshc-sub' }, stamp(l))),
+-          tech ? pick.slice(1).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw })) : null)
+-      }
+-      const busy = kappas.filter((k) => k.sigma === 'struggle' || k.sigma === 'sub_trial')
+-      const judgeBar = busy.length
+-        ? h('div', { style: { marginTop: 10 } },
+-          h(SgPair, { k: busy[0], tech, onOpen, onWithdraw, precedent: precedentLine(busy[0]) }),
+-          busy.length > 1 ? h('div', { className: 'dshc-sub' }, '另有 ' + (busy.length - 1) + ' 件在想') : null)
+-        : null
+-
+-      // ---- 叙事弧 ----
+-      const chapters = belts('L', 'chapter')
+-      const arc = h('div', null,
+-        summaries.length ? h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 } },
+-          h('div', { style: { flex: '1 1 200px' } }, h('div', { className: 'dshc-sub' }, '当时它这样讲'), h('div', null, h('b', null, summaries[0].chapter || ''), '　', summaries[0].at_the_time || '')),
+-          h('div', { style: { flex: '1 1 200px' } }, h('div', { className: 'dshc-sub' }, '现在回头看'), h('div', null, summaries[0].hindsight || '')))
+-          : null,
+-        chapters.length ? cap(chapters).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw })) : h('div', { className: 'dshc-sub' }, '还没有成章的经历。'))
+-
+-      // ---- 预见与回流 ----
+-      const preds = (pr.data && pr.data.predictions) || []
+-      const predList = !preds.length ? h('div', { className: 'dshc-sub' }, '还没做过可以检验的预料。') : h('div', { className: 'dshc-list' },
+-        cap(preds).map((p) => h('div', { key: p.id, className: 'dshc-row', style: { alignItems: 'baseline' } },
+-          h('span', { style: { flex: 1 } }, '预计' + p.expect + '（把握 ' + Math.round(p.p * 10) + ' 成）',
+-            h('span', { className: 'dshc-sub' }, ' → ' + (p.outcome === 'hit' ? '对了' : p.outcome === 'miss' ? '没对' : p.outcome === 'void' ? '作废' : p.overdue ? '到期了，还没看到结果' : '等着看（' + sgDay(p.due_at) + ' 前）'))),
+-          p.outcome === 'pending' ? h('span', null,
+-            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'nu', target_id: p.id, sign: 1 }, '记下了：这次预料对了。') }, '对'),
+-            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'nu', target_id: p.id, sign: -1 }, '记下了：这次预料不对。') }, '不对')) : null,
+-          tech ? h('span', { className: 'v dshc-mono' }, p.id) : null)))
+-
+-      // ---- 它最近在想什么 ----
+-      const answered = new Set(allEv.filter((e) => e.type === 'INQUIRY' && e.payload && e.payload.answer_of).map((e) => e.payload.answer_of))
+-      const asks = allEv.filter((e) => e.type === 'INQUIRY' && e.payload && e.payload.mode === 'ask' && e.payload.question && !answered.has(e.id)).slice(0, 3)
+-      const thinking = allEv.filter((e) => ['INQUIRY', 'KAPPA_OPEN', 'DELIBERATE', 'NU_RESOLVE'].includes(e.type) && !(e.payload && e.payload.answer_of)).slice(0, 5)
+-      const L = lv.data || {}
+-      const liveBox = h('div', null,
+-        asks.map((e) => h(Card, { key: e.id, style: { marginBottom: 8 } },
+-          h('div', null, '它想问你：', h('b', null, e.payload.question)),
+-          e.payload.target_type === 'claim' ? h('div', { style: { marginTop: 6 } },
+-            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: e.payload.target_id, sign: 1, inquiry_id: e.id }, '它听到了。') }, '是这样'),
+-            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'claim', target_id: e.payload.target_id, sign: -1, inquiry_id: e.id }, '它听到了。') }, '不是这样')) : null)),
+-        thinking.length ? h('div', { className: 'dshc-list' }, thinking.map((e) => h('div', { key: e.id, className: 'dshc-row' },
+-          h('span', { className: 'l' }, sgDay(e.at).slice(5)), h('span', { style: { flex: 1 } }, e.word + (e.about.length ? '：' + e.about.join('；') : ''))))) : h('div', { className: 'dshc-sub' }, '最近很安静。'),
+-        tech && L.qi ? h(Tech, null, 'Qi ' + L.qi.qi + '（flow ' + L.qi.flow + ' · open ' + L.qi.open + ' · learn ' + L.qi.learn + ' · bal ' + L.qi.bal + '）'
+-          + ' · 用户活跃 ' + (L.user_active ? '是' : '否') + ' · r_J ' + (L.r_J == null ? '—' : L.r_J) + ' · 降权命题 ' + (L.low_weight || 0)
+-          + '\n' + ['W', 'L', 'V'].map((l) => l + ' churn ' + ((L.layers && L.layers[l] && L.layers[l].churn.churn) == null ? '—' : Number(L.layers[l].churn.churn).toFixed(2)) + (L.layers && L.layers[l] && L.layers[l].dogmatic ? ' 教条' : '')).join(' · ')) : null)
+-
+-      // ---- 史：转折时间线 ----
+-      const turns = allEv.filter((e) => SG_TURN.includes(e.type) && (turnLayer === 'all' || e.layer === turnLayer))
+-      const history = h('div', null,
+-        h(Seg, { items: [['all', '全部'], ['W', '世界观'], ['L', '人生观'], ['V', '价值观']], value: turnLayer, onChange: setTurnLayer }),
+-        !turns.length ? h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '还没有转折。') : h('div', { className: 'dshc-list', style: { marginTop: 8 } },
+-          turns.slice(0, turnN).map((e) => h('div', { key: e.id, className: 'dshc-row', style: { alignItems: 'baseline' } },
+-            h('span', { className: 'l' }, sgDay(e.at)),
+-            h('span', { style: { flex: 1 } }, (e.layer ? SG_LAYER[e.layer] + ' · ' : '') + e.word + (e.about.length ? '：' + e.about.join('；') : '')),
+-            tech ? h('span', { className: 'v dshc-mono' }, e.type + ' #' + e.seq) : null))),
+-        turns.length > turnN ? h(Btn, { ghost: true, sm: true, onClick: () => setTurnN((n) => n + 30) }, '再往前') : null,
+-        summaries.length > 1 ? h('details', { className: 'dshc-fold', style: { marginTop: 8 } }, h('summary', null, '更早的自传（' + (summaries.length - 1) + ' 段）'),
+-          summaries.slice(1).map((s) => h('div', { key: s.id, className: 'dshc-row' }, h('span', { className: 'l' }, sgDay(s.at)), h('span', { style: { flex: 1 } }, h('b', null, s.chapter || ''), '　', s.at_the_time || '', s.hindsight ? '（回头看：' + s.hindsight + '）' : ''),
+-            tech ? h('span', { className: 'v dshc-mono' }, '#' + s.from_seq + '–' + s.to_seq) : null))) : null)
+-
+-      // ---- 选中命题：为什么 + 链 + 对 / 不对 ----
+-      const C = chain.data
+-      const drawer = open ? h(Card, { style: { marginTop: 8, borderColor: 'var(--accent)' } },
+-        chain.loading && !C ? h(Empty, null, '读取…') : chain.error ? h(LoadErr, { error: chain.error }) : C ? h('div', null,
+-          h('div', { style: { fontWeight: 600, marginBottom: 6 } }, C.claim.text, SG_STATUS[C.claim.status] ? h(Pill, null, SG_STATUS[C.claim.status]) : null),
+-          h('div', { className: 'dshc-note' }, why.data ? why.data.sentence : '…'),
+-          !SG_TERMINAL_OF(C.claim.status) ? h('div', { style: { margin: '6px 0' } },
+-            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: 1 }, '记下了：你认同这一条。') }, '对'),
+-            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: -1 }, '记下了：你觉得这一条不对。') }, '不对')) : null,
+-          C.ancestors.length || C.successors.length ? h('div', { className: 'dshc-list' },
+-            (C.ancestors.length > 12 ? [...C.ancestors.slice(0, 6), null, ...C.ancestors.slice(-6)] : C.ancestors).slice().reverse().map((a, i) => a
+-              ? h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '之前'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))
+-              : h('div', { key: 'gap' + i, className: 'dshc-sub' }, '…')),
+-            C.successors.map((a) => h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '之后'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))))
+-            : null,
+-          tech ? h(Tech, null, C.claim.id + ' · ' + C.claim.layer + '/' + C.claim.kind + ' · π ' + C.claim.pi + ' · e ' + C.claim.e + ' · 纪元 ' + C.claim.epoch + '\n'
+-            + C.events.slice(-12).map((e) => '#' + e.seq + ' ' + sgDay(e.at) + ' ' + e.type + (e.precedent_ids && e.precedent_ids.length ? ' 先例 ' + e.precedent_ids.join(',') : '')).join('\n')) : null)
+-          : null,
+-        h('div', { style: { textAlign: 'right' } }, h('a', { href: '#', onClick: (e) => { e.preventDefault(); setOpen(null) } }, '收起'))) : null
+-
+-      // ---- tech：注入预览 / 体征 / 事件账 / 换代审批 ----
+-      const props = (el.data && el.data.proposals) || []
+-      const evs = (ev.data && ev.data.events) || []
+-      const techBox = tech ? h('div', null,
+-        h(Sec, { title: '注入（' + (S.inject.mode === 'live' ? '已进入说话' : '影子期') + '）', desc: '影子期 ' + S.inject.shadow_days + ' / 7 天' + (S.inject.ready ? '，可以切到真注入' : '') },
+-          h(Card, null, h(Tech, null, pv.data ? (pv.data.view.text || '（无链头，不注入）') + '\n— ' + pv.data.view.tokens + ' / ' + pv.data.view.budget + ' tokens · 变动 ' + pv.data.log.changes + ' 次' : '…'),
+-            h('div', { style: { marginTop: 6 } }, h(Btn, {
+-              sm: true, ghost: true,
+-              onClick: () => act(() => call('PUT', base + '/config', { inject: S.inject.mode === 'live' ? 'shadow' : 'live', force: !S.inject.ready }, true)).then(bump).catch((e) => setMsg(e.message || String(e))),
+-            }, S.inject.mode === 'live' ? '退回影子期' : (S.inject.ready ? '切到真注入' : '强制切到真注入'))))),
+-        h(Sec, { title: '切到新三观', desc: '人点了才切。条件写在按钮旁边。' },
+-          h(Card, null, ['W', 'L', 'V'].map((layer) => {
+-            const ready = (S.replace_ready && S.replace_ready[layer]) || { ok: false, reasons: [] }
+-            const cur = S.config && S.config.replace && S.config.replace[layer]
+-            const name = layer === 'W' ? '世界观' : layer === 'L' ? '人生观' : '价值观'
+-            return h('div', { key: layer, className: 'dshc-row' },
+-              h('span', { className: 'l' }, name),
+-              h('span', { style: { flex: 1 } }, cur === 'engine' ? '已经在用新的' : (ready.ok ? '可以切' : '还差：' + (ready.reasons || []).join('、'))),
+-              cur === 'engine'
+-                ? h(Btn, { sm: true, ghost: true, onClick: () => act(() => call('PUT', base + '/config', { replace: { ...S.config.replace, [layer]: 'meter' } }, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '退回旧表')
+-                : h(Btn, { sm: true, disabled: !ready.ok, onClick: () => act(() => call('PUT', base + '/config', { replace: { ...S.config.replace, [layer]: 'engine' } }, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '切过去'))
+-          }))),
+-        h(Sec, { title: '体征与预算' }, h(Card, null, h(Tech, null,
+-          '账本 seq ' + S.seq + ' · 判定 ' + S.judge.calls + ' 次 / 失败 ' + S.judge.fails + (S.judge.degraded ? '（降级中）' : '') + ' · 待放置候选 ' + S.pending.candidates
+-          + '\n' + Object.entries(S.budget.pools).map(([p, v]) => p + ' ' + v.used + '/' + v.cap).join(' · ') + ' · 月 tokens ' + S.budget.tokens.month + '/' + S.budget.tokens.cap
+-          + ((L.theta_changes || []).length ? '\n参数调整：' + L.theta_changes.map((t) => sgDay(t.at) + ' ' + t.key + '=' + t.value).join('；') : '')))),
+-        h(Sec, { title: '换代提案', desc: '旧核心持续受挫时提出；人生观 / 价值观必须你批。' },
+-          !props.length ? h(Empty, null, '没有待批的提案') : props.map((p) => h(Card, { key: p.id, style: { marginBottom: 8 } },
+-            h('div', null, SG_LAYER[p.layer], ' · 新核心：', h('b', null, p.new_core || '')),
+-            p.scope ? h('div', { className: 'dshc-note' }, '旧核心降为：仍适用于' + p.scope) : null,
+-            p.meta ? h('div', { className: 'dshc-sub' }, p.meta) : null,
+-            h('div', { className: 'dshc-sub' }, '截止 ' + sgDay(p.due) + ' · ' + p.id),
+-            h('div', null,
+-              h(Btn, { sm: true, primary: true, onClick: () => act(() => call('POST', base + '/elev/' + enc(p.id) + '/approve', {}, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '批准'),
+-              h(Btn, { sm: true, ghost: true, onClick: () => act(() => call('POST', base + '/elev/' + enc(p.id) + '/reject', {}, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '拒绝'))))),
+-        h(Sec, { title: '事件账', right: evBefore ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(0) }, '回到最新') : null },
+-          h(Card, null, ev.error ? h(LoadErr, { error: ev.error }) : h(Tech, null, evs.map((e) => '#' + e.seq + ' ' + e.at.slice(0, 16) + ' ' + e.type + (e.layer ? '(' + e.layer + ')' : '') + ' ' + e.actor + (e.about.length ? ' · ' + e.about.join('；') : '')).join('\n') || '（空）'),
+-            ev.data && ev.data.next_before ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(ev.data.next_before) }, '更早') : null))) : null
+-
+-      return h('div', null,
+-        msg ? h('div', { className: 'dshc-note', style: { marginBottom: 8 } }, msg) : null,
+-        h(Sec, { title: '三观', desc: S.inject.mode === 'live' ? '这些看法已经在影响它说话。' : '这些看法还在影子期：只记录，不影响它说话（' + S.inject.shadow_days + ' / 7 天）。' },
+-          h(Card, null, ['W', 'L', 'V'].map(headLine), judgeBar), drawer),
+-        h(Sec, { title: '世界观', desc: '它认定世界是怎样的，以及围着它的辅助说法。' },
+-          h(Card, null,
+-            cores('W').length ? cores('W').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '硬核', layer: 'W', base, act, done: bump }),
+-            cap(belts('W')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))),
+-          kOf('W').filter((k) => k.open).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw }))),
+-        h(Sec, { title: '人生观', desc: SG_LEAD.L + '做什么的；走过哪几章。' },
+-          h(Card, null,
+-            cores('L').length ? cores('L').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '志向', layer: 'L', base, act, done: bump }),
+-            arc,
+-            belts('L', 'role').length ? h('div', { style: { marginTop: 8 } }, h('div', { className: 'dshc-sub' }, '它在关系里的角色'), cap(belts('L', 'role')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null),
+-          kOf('L').filter((k) => k.open).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw }))),
+-        h(Sec, { title: '价值观', desc: SG_LEAD.V + '什么；冲突时偏向哪边、付出什么。' },
+-          h(Card, null,
+-            cores('V').length ? cores('V').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '原则', layer: 'V', base, act, done: bump }),
+-            belts('V', 'norm').length ? h('div', { style: { marginTop: 6 } }, h('div', { className: 'dshc-sub' }, '平时怎么做'), cap(belts('V', 'norm')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
+-            belts('V', 'ideal').length ? h('div', { style: { marginTop: 6 } }, h('div', { className: 'dshc-sub' }, '仰望什么'), cap(belts('V', 'ideal')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null),
+-          kOf('V').filter((k) => k.open).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw }))),
+-        h(Sec, { title: '预见与回流', desc: '它用自己的看法做过的预料，以及后来怎样。你可以告诉它对不对。' }, h(Card, null, pr.error ? h(LoadErr, { error: pr.error }) : predList)),
+-        h(Sec, { title: '它最近在想什么' }, h(Card, null, liveBox)),
+-        h(Sec, { title: '史', desc: '它的看法在哪些时候转了弯。' }, h(Card, null, tl.error ? h(LoadErr, { error: tl.error }) : history)),
+-        techBox,
+-        side)
+-    }
+-
+-    /* ================= 模拟预览：铺一个月「假想」的情绪曲线 =================
+-     * 只给「看形状」用：一次算完、不写库、不碰它真实的样本，切走就丢。
+-     * 公式照现行口径搬过来（src/algo/baseline.js + src/algo/emotion.js）；摆幅用她真实的
+-     * σ（persona/axes 里那个），其余常量写死在这里，免得预览和后端各说各话：
+-     *   底色 = 段式慢波（种子取 agent_id）+ 日节律 ±0.06
+-     *   慢情绪 ds/dt：α=0.09 追快情绪、β=0.07 回底色、ω=0.005 拉标签先验
+-     *   快情绪 = 自己那半（0.35 惯性）+ 共情（κe=0.25，closeness=0.98）
+-     *   总情绪 = 慢 + 0.35×快
+-     * 窗口跟着「现在」走，切一天/一周都连得上；这里没叠累积负荷（那层得真经历才有）。
+-     */
+-    const SIMC = {
+-      periodMinD: 3.5, periodMaxD: 9, periodJitter: 0.25,
+-      ampBase: 0.10, ampSpan: 0.20, ampGain: 1.5, segMinH: 48, edge: 0.68,
+-      /* 摆幅用她真实的 σ（persona/axes 里那个），拿不到才退回 0.5 */
+-      sigma: 0.5,
+-      circAmp: 0.06, alpha: 0.09, beta: 0.07, wLabel: 0.005,
+-      kappa: 0.35, empathy: 0.25, sway: 0.5, closeBase: 0.3, closeSpan: 0.7,
+-    }
+-    const SIMP = { joy: 0.7, peaceful: 0.5, curious: 0.3, calm: 0.4, confused: -0.2, lost: -0.3, irritated: -0.4, frustrated: -0.5 }
+-    const simClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, Number(x) || 0))
+-    const simR3 = (x) => Math.round(simClamp(x, -1, 1) * 1000) / 1000
+-    const simHash = (str) => {
+-      let h = 2166136261 >>> 0
+-      const s = String(str)
+-      for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0 }
+-      return h >>> 0
+-    }
+-    const simRnd = (seed) => {
+-      let a = seed >>> 0
+-      return () => {
+-        a = (a + 0x6d2b79f5) >>> 0
+-        let t = a
+-        t = Math.imul(t ^ (t >>> 15), t | 1)
+-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+-      }
+-    }
+-    /** 段式底色：同一个 agent_id 每次铺出来都一样 */
+-    const simSegments = (seed, startMs, untilMs, sigma) => {
+-      const periodD = SIMC.periodMinD + simRnd(simHash('period:' + seed))() * (SIMC.periodMaxD - SIMC.periodMinD)
+-      const sig = Number.isFinite(Number(sigma)) ? Math.max(0, Math.min(1, Number(sigma))) : SIMC.sigma
+-      const amp = SIMC.ampBase + SIMC.ampSpan * sig
+-      const out = []
+-      let xEnd = 0
+-      let t = startMs
+-      for (let no = 0; t < untilMs && no < 600; no++) {
+-        const rnd = simRnd(simHash(seed + '#' + no))
+-        const up = rnd() < simClamp(0.5 - 1.5 * simClamp(xEnd, -1, 1), 0.05, 0.95)
+-        const a = amp * SIMC.ampGain * (0.75 + 0.5 * rnd())
+-        const to = simClamp((up ? 1 : -1) * a - 0.15 * xEnd, -SIMC.edge, SIMC.edge)
+-        const hours = Math.max(SIMC.segMinH, periodD * 24 * (1 + SIMC.periodJitter * (rnd() * 2 - 1)))
+-        out.push({ from: simClamp(xEnd, -SIMC.edge, SIMC.edge), to, startMs: t, endMs: t + hours * 3600000 })
+-        xEnd = to
+-        t += hours * 3600000
+-      }
+-      return out
+-    }
+-    const simValAt = (segs, t) => {
+-      if (!segs.length) return 0
+-      if (t <= segs[0].startMs) return segs[0].from
+-      for (let i = 0; i < segs.length; i++) {
+-        const sg = segs[i]
+-        if (t < sg.endMs) {
+-          const span = sg.endMs - sg.startMs
+-          const u = span > 0 ? simClamp((t - sg.startMs) / span, 0, 1) : 0
+-          return sg.from + (sg.to - sg.from) * (1 - Math.cos(Math.PI * u)) / 2
+-        }
+-      }
+-      return segs[segs.length - 1].to
+-    }
+-    const simSlow = (s, b, p, fAvg, dtH) => {
+-      const lam = SIMC.alpha + SIMC.beta + SIMC.wLabel
+-      const target = (SIMC.alpha * fAvg + SIMC.beta * b + SIMC.wLabel * p) / lam
+-      return simR3(target + (s - target) * Math.exp(-lam * dtH))
+-    }
+-    const simFast = (fSelf, eUser, ePrev) => {
+-      const w = SIMC.empathy * Math.abs(eUser) * (SIMC.closeBase + SIMC.closeSpan * 0.98)
+-      return simClamp(fSelf + w * eUser + SIMC.sway * w * (eUser - ePrev), -1, 1)
+-    }
+-    const simTotal = (s, f) => simR3(s + SIMC.kappa * f)
+-
+-    /** 一个月：前面多烧 12 天让慢情绪走稳，每小时两个样本，只留最近 30 天 */
+-    function simMonthTrend(aid, days, sigma) {
+-      const H = 3600000
+-      const DAY = 86400000
+-      const toMs = Date.now()
+-      const fromMs = toMs - 30 * DAY
+-      const burnFrom = fromMs - 12 * DAY
+-      const seed = String(aid || 'demo')
+-      const segs = simSegments(seed, burnFrom, toMs, sigma)
+-      const phaseH = (simHash('circ:' + seed) % 1440) / 60
+-      const circ = (t) => SIMC.circAmp * Math.sin((2 * Math.PI * ((((t / H) % 24) + 24) % 24 - phaseH)) / 24)
+-      const rnd = simRnd(simHash(seed + ':trend-demo'))
+-      const LABELS = [['calm', 24], ['joy', 15], ['curious', 15], ['peaceful', 11], ['confused', 12], ['frustrated', 9], ['irritated', 7], ['lost', 7]]
+-      const wSum = LABELS.reduce((a, x) => a + x[1], 0)
+-      const draw = () => {
+-        let x = rnd() * wSum
+-        for (let i = 0; i < LABELS.length; i++) { x -= LABELS[i][1]; if (x <= 0) return LABELS[i][0] }
+-        return 'calm'
+-      }
+-      const points = []
+-      let s = simR3(simValAt(segs, burnFrom))
+-      let fPrev = 0
+-      let selfP = 0
+-      let eNow = 0
+-      let label = 'calm'
+-      let uLabel = 'calm'
+-      let hold = 0
+-      for (let t = burnFrom; t < toMs; t += H) {
+-        const hh = new Date(t).getHours()
+-        /* 白天聊得多、夜里少；每小时都留样本，图上是连的 */
+-        const chatty = hh < 7 ? 0.2 : hh < 12 ? 0.72 : hh < 19 ? 0.86 : 0.95
+-        if (hold-- <= 0) { label = draw(); hold = 1 + Math.floor(rnd() * 3) }
+-        if (rnd() < 0.55) uLabel = draw()
+-        const b = simR3(simValAt(segs, t) + circ(t))
+-        const p = SIMP[label] === undefined ? 0 : SIMP[label]
+-        const pu = SIMP[uLabel] === undefined ? 0 : SIMP[uLabel]
+-        for (let i = 0; i < 2; i++) {
+-          const at = t + Math.floor(((i + 0.5) / 2) * H)
+-          selfP = 0.35 * selfP + 0.65 * p
+-          const touch = 0.45 + chatty * 0.85
+-          const target = rnd() < 0.88 ? pu * (0.35 + rnd() * 0.75) * touch : 0
+-          eNow = eNow * 0.55 + target * 0.45
+-          const f = simFast(selfP, eNow, fPrev)
+-          if (at >= fromMs) {
+-            points.push({ at, b, s: simR3(s), f: simR3(f), fs: simR3(selfP), fe: simR3(f - selfP), t: simTotal(s, f), lb: label })
+-          }
+-          fPrev = f
+-        }
+-        s = simSlow(s, b, p, fPrev, 1)
+-      }
+-      const back = Math.max(1, Math.min(366, Number(days) || 30))
+-      const winFrom = toMs - back * DAY
+-      return {
+-        days: back,
+-        from: new Date(winFrom).toISOString(),
+-        to: new Date(toMs).toISOString(),
+-        demo: true,
+-        points: points.filter((q) => q.at >= winFrom),
+-      }
+-    }
+-
+     function AffectPage({ aid, view, act, setTab }) {
+       const [tick, setTick] = useState(0)
+       const [trange, setTrange] = useState(7)
+       const [a, reloadA] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect'), [aid, tick])
+       const [eps] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/episodes'), [aid, tick])
+-      const [sim, setSim] = useState(false)
+-      const [pax] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/persona/axes'), [aid])
+-      const simSigma = Number((pax.data && pax.data.effects && pax.data.effects.sigma))
+-      /* 模拟只换这一条走势：别的接口都还读真的，卡片上那几行数字不受影响 */
+-      const [trend] = useAsync(() => (sim
+-        ? Promise.resolve(simMonthTrend(aid, trange, simSigma))
+-        : call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange)), [aid, tick, trange, sim])
++      const [trend, reloadT] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange), [aid, tick, trange])
+       const [radar] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/radar'), [aid, tick])
+       const [cond, reloadC] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/condition'), [aid, tick])
+       const [poison] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/poisons'), [aid, tick])
+@@ -5470,8 +4811,10 @@ window.__ModuleLoader__.load({
+       const [text, setText] = useState('')
+       const [res, setRes] = useState(null)
+       const [err, setErr] = useState('')
+-      const [epLimit, setEpLimit] = useState(1)
+       const metricSlice = useMetricSlice(aid, 17, 25)
++      /* 快情绪按分钟回落、慢情绪按小时走：页面开着就隔一会儿重取一次，
++         不然停在开页那一刻的快照上，看着就像「算法没更新」。 */
++      useLive(() => { reloadA(); reloadT() }, 10000)
+       const cur = a.data || {}
+       const label = AFFECT_KEY[cur.primary_label] || cur.primary_label || '—'
+       /* 最新那条消息被判断成什么（还没被惯性压过的原始判断） */
+@@ -5514,21 +4857,20 @@ window.__ModuleLoader__.load({
+         const mood = Number(cur.mood)
+         return Number.isFinite(mood) ? (mood - 0.5) * 2 : 0
+       })()
+-      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉）。
+-         模拟只动下面那张走势图：这张卡的光一直对着真状态，不然会看岔。 */
+-      const look = emoLook(sim ? (Number.isFinite(Number(cur.mood)) ? Number(cur.mood) * 2 - 1 : 0) : tNow, cur.intensity)
++      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉） */
++      const look = emoLook(tNow, cur.intensity)
+ 
+       return h('div', null,
+         h(LoadErr, { error: a.error || eps.error, retry: () => { reloadA(); setTick((t) => t + 1) } }),
+         /* 此刻 + 走势合成一张卡：上面是「现在什么状态」，下面是「它怎么走到这一步」 */
+         h(Sec, {
+-          title: view === 'user' ? '情绪' : '主情绪（label / intensity / PAD）',
++          title: view === 'user' ? '情绪' : '主情绪（label / 强度 / 慢·快·总）',
+           desc: h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 12px' } },
+-            h(TrendNow, { data: trend.data || null, raw: sim ? '' : latestRaw, demo: sim }),
++            h(TrendNow, { data: trend.data || null, raw: latestRaw, cur }),
+             h('span', { style: { opacity: 0.5 } },
+               view === 'user'
+                 ? '· 上半是此刻，下半是它这一程怎么走过来的；虚线是它的水位。'
+-                : '· 大字=label；虚线=水位（底色+日节律+负荷），白线=慢情绪，蓝尾=这一下。')),
++                : '· 大字=label；虚线=水位（底色+日节律+负荷），白线=慢情绪，蓝尾=快情绪。')),
+         },
+           h(Card, {
+             className: 'dshc-emo',
+@@ -5560,7 +4902,7 @@ window.__ModuleLoader__.load({
+                   h('span', { className: 'dshc-mono' }, Number(cur.intensity || 0).toFixed(2)),
+                   h('span', { className: 'dshc-sub', style: { opacity: 0.38 } }, '0 到 1')),
+                 h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 } },
+-                  h('span', { className: 'dshc-sub', style: { minWidth: 30 }, title: '整体舒服不舒服，0 到 1；0.5 是不好不坏' }, '心情'),
++                  h('span', { className: 'dshc-sub', style: { minWidth: 30 }, title: '整体舒服不舒服，0 到 1；0.5 是不好不坏。和「此刻」是同一个数，只是换了刻度' }, '心情'),
+                   h(Bar, { value: cur.mood, color: look.bar }),
+                   h('span', { className: 'dshc-mono' }, Number(cur.mood || 0).toFixed(2)),
+                   h('span', { className: 'dshc-sub', style: { opacity: 0.38 } }, '0.5 是不好不坏')),
+@@ -5571,7 +4913,8 @@ window.__ModuleLoader__.load({
+                   const items = [
+                     ['水位', v3.baseline, '底色 + 日节律 + 累积负荷：慢情绪要去的地方'],
+                     ['负荷', v3.base_off, '累积负荷：被持续情绪拖走的那部分，几天代谢回来'],
+-                    ['心情', v3.slow, '慢情绪：最近几小时到几天的整体'],
++                    ['慢情绪', v3.slow, '慢情绪（v3.slow）：最近几小时到几天的整体；它不是上面那个 0~1 的「心情」'],
++                    ['快情绪', v3.fast, '快情绪（v3.fast）：这一下的反应 + 共情，按分钟回落'],
+                     ['此刻', v3.total, '总情绪：慢情绪 + 0.35×快情绪'],
+                   ]
+                   const shown = items.filter((it) => it[1] !== null && it[1] !== undefined && Number.isFinite(Number(it[1])))
+@@ -5584,19 +4927,12 @@ window.__ModuleLoader__.load({
+             h('div', { style: { height: 1, background: 'var(--line)', opacity: 0.6, margin: '14px 0 10px' } }),
+             h('div', { className: 'dshc-form', style: { marginBottom: 8 } },
+               [[1, '一天'], [7, '一周'], [30, '一月'], [365, '一年']].map(([d, t]) =>
+-                h(Btn, { key: d, primary: trange === d, onClick: () => setTrange(d) }, t)),
+-              h(Btn, {
+-                tint: sim,
+-                title: '铺一段假想曲线，只看形状：一次算完、不写库，也不动它真实的情绪',
+-                onClick: () => { const on = !sim; setSim(on); if (on && trange < 30) setTrange(30) },
+-              }, sim ? '模拟 · 开着' : '模拟一月')),
+-            sim ? h('div', { className: 'dshc-sub', style: { margin: '0 0 8px 2px', opacity: 0.62 } },
+-              '模拟：拿现行公式从「现在」往回铺 30 天（段式底色 + 日节律 + 慢/快情绪），不进库。挑「一年」时，没铺的那九个多月还是斜纹。') : null,
++                h(Btn, { key: d, primary: trange === d, onClick: () => setTrange(d) }, t))),
+             trend.error
+               ? h('div', { className: 'dshc-note', style: { padding: '12px 0' } },
+                 /接口不存在|NOT_FOUND/.test(trend.error) ? '宿主重启一次就能画' : trend.error)
+               : h(TrendChart, { data: trend.data || null, look })))),
+-        view === 'tech' ? h(Tech, null, 'intensity_t = clamp(0.3·intensity_{t-1} + 0.7·Δ, 0, 1)\nΔ = 0.3 + 0.3·|goal_congruence| + 0.1·novelty\nPAD_t = 0.45·PAD_{t-1} + 0.55·prior(label)\n\n底色不是一条线，是三层叠出来的（affect.baseline.*）：\nb = 段式慢波（几天一个来回，±0.2~0.3）\n  + 日节律 circ(t)（24h 一个来回，相位随个体，幅度 0.06）\n  + 累积负荷 L（allostatic load：一直偏着就把水位拖走，几天代谢回来，±0.35 封顶）\n\n慢情绪（真 EMA，2026-11-01 起）：\nds/dt = α·(fast − s) + β·(b − s) + ω·(prior − s)\ns* = (α·fast + β·b + ω·prior) / (α+β+ω)，λ = α+β+ω\ns_{t+Δt} = s* + (s_{t−1} − s*)·exp(−λ·Δt)\nα=0.09/h · β=0.07/h · ω=0.005/h → λ=0.165（τ≈6h，一夜退到三成）\n稳态：快情绪五成半 / 底色四成\n参数：affect.slow.alpha / affect.slow.beta / baseline.circadian / baseline.load.*\n慢情绪按余温积分 ∫fast dt，不再拿一个常数值糊过去；差 50 分钟也走一步，9.9 小时不截断\n\n快情绪：fast_t = level + (fast_{t-1} − level)·exp(−(Δt/τ)^shape)，τ=20min、shape=1.5\n惯性：label 连续 2 轮一致才切换\n闸门：只有事件才换主情绪；两次事件之间强度自己回落，标签留着\n用户情绪：user_label 单独进 episode，不写 primary_label') : null,
++        view === 'tech' ? h(Tech, null, '心情(0~1) = 0.5 + 0.5·总情绪(-1~1)：只是换刻度，不是第二套心情\n慢情绪 = v3.slow；快情绪 = v3.fast；此刻 = 慢情绪 + 0.35×快情绪\n\nintensity_t = clamp(0.3·intensity_{t-1} + 0.7·Δ, 0, 1)\nΔ = 0.3 + 0.3·|goal_congruence| + 0.1·novelty\nPAD_t = 0.45·PAD_{t-1} + 0.55·prior(label)\n\n底色不是一条线，是三层叠出来的（affect.baseline.*）：\nb = 段式慢波（几天一个来回，±0.2~0.3）\n  + 日节律 circ(t)（24h 一个来回，相位随个体，幅度 0.06）\n  + 累积负荷 L（allostatic load：一直偏着就把水位拖走，几天代谢回来，±0.35 封顶）\n\n慢情绪（真 EMA，2026-11-01 起）：\nds/dt = α·(fast − s) + β·(b − s) + ω·(prior − s)\ns* = (α·fast + β·b + ω·prior) / (α+β+ω)，λ = α+β+ω\ns_{t+Δt} = s* + (s_{t−1} − s*)·exp(−λ·Δt)\nα=0.09/h · β=0.07/h · ω=0.005/h → λ=0.165（τ≈6h，一夜退到三成）\n稳态：快情绪五成半 / 底色四成 → 底色的波浪透得到慢情绪上，事件又还留得住\n参数：affect.slow.alpha / affect.slow.beta / baseline.circadian / baseline.load.*\n慢情绪按余温积分 ∫fast dt，不再拿一个常数值糊过去；差 50 分钟也走一步，9.9 小时不截断\n\n快情绪：fast_t = level + (fast_{t-1} − level)·exp(−(Δt/τ)^shape)，τ=20min、shape=1.5\n惯性：label 连续 2 轮一致才切换\n闸门：只有事件才换主情绪；两次事件之间强度自己回落，标签留着\n用户情绪：user_label 单独进 episode，不写 primary_label') : null,
+         /* 「它现在觉得你」：它读你这句话得出的情绪（user_scores），不是它自己的情绪 */
+         (function () {
+           const g = (guess.data && guess.data.latest) || null
+@@ -5747,23 +5083,13 @@ window.__ModuleLoader__.load({
+         h(Sec, {
+           title: '最近的情绪事件',
+           desc: '只记过闸的那些：每一条记着触发它的那句话、它当时读到的你、它自己的情绪。哪条读错了，当场就能改。',
+-          right: h('select', {
+-            className: 'dshc-sel', style: { width: 92 },
+-            value: String(epLimit),
+-            onChange: (e) => setEpLimit(Number(e.target.value) || 1),
+-            title: '显示几条',
+-          },
+-            h('option', { value: '1' }, '最近 1 条'),
+-            h('option', { value: '10' }, '最近 10 条')),
+         },
+           h(Card, null, (function () {
+             const items = (guess.data && guess.data.items) || []
+             const st = (guess.data && guess.data.stats) || { n: 0, hits: 0 }
+             if (!items.length) return h('div', { className: 'dshc-sub' }, '还没有情绪 episode。')
+-            const shown = items.slice(0, epLimit)
+-            const hidden = Math.max(0, items.length - shown.length)
+             return h('div', null,
+-              h('div', { className: 'dshc-list' }, shown.map((it) =>
++              h('div', { className: 'dshc-list' }, items.map((it) =>
+                 h('div', { key: it.episode_id, className: 'dshc-readitem' },
+                   h('div', { className: 'dshc-readitem-top' },
+                     h(Pill, { title: it.dist ? '它读到的你' : '这条没留下对你的判断' },
+@@ -5778,10 +5104,6 @@ window.__ModuleLoader__.load({
+                   it.dist
+                     ? h(ReadFeedback, { aid, item: it, act, compact: true, onChange: () => setTick((t) => t + 1) })
+                     : h('div', { className: 'dshc-note' }, '这条老记录没留下它读你的分数。')))),
+-              hidden > 0 && epLimit < 10
+-                ? h('div', { className: 'dshc-note', style: { marginTop: 8 } },
+-                  '还有 ' + hidden + ' 条收着；右上角改成「最近 10 条」就能看。')
+-                : null,
+               h('div', { className: 'dshc-note', style: { marginTop: 8 } },
+                 st.n
+                   ? '你一共纠正过 ' + st.n + ' 条 · 它读你准 ' + st.hits + '/' + st.n + '。'
+@@ -5845,7 +5167,6 @@ window.__ModuleLoader__.load({
+         desc: '让我能把一件事放进你的收件箱，可带到期时间。它不会发微信 / QQ，也不会弹系统通知。',
+       },
+     ]
+-    const PORT_MAP = Object.fromEntries(PORT_META.map((m) => [m.name, m]))
+ 
+     function ActionPanel({ aid, act, po, apply, agent, reloadAgents }) {
+       const [cf, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/action-config'), [aid])
+@@ -7098,8 +6419,6 @@ window.__ModuleLoader__.load({
+       'memory.retrieve.formula': ['检索公式', '关键词和语义怎么混合；一般不动。'],
+       'persona.learn_rate': ['学习速率', '被夸、被刺痛、重复的事，一次最多让鱼格挪多少；和单次步幅上限取小（默认 0.05）。'],
+       'persona.axes.mode': ['MBTI 效应', '关 = 完全不算；只算不用 = 只更新数字，不影响说话；开 = 影响情绪强度和语气。默认开。'],
+-      'persona.worldview.nightly': ['夜间重长世界观', '每天巩固时重算八维世界观（Primals/WAS/公理）；关 = 跳过。默认开。'],
+-      'persona.lifeview.nightly': ['夜间重长人生观', '每天巩固时重算七维人生观并凝练 telos；关 = 跳过。默认开。'],
+       'affect.decay': ['情绪衰减', '说完一轮之后，情绪往平静回落多少；0 = 不回落。'],
+       'affect.mapping': ['情绪映射', '情绪词表认哪一版；一般不动。'],
+       'affect.dynamics.formula': ['情绪动力学', '情绪怎么升、怎么落用哪一版；一般不动。'],
+@@ -7120,7 +6439,7 @@ window.__ModuleLoader__.load({
+       },
+       {
+         key: 'persona', tab: '鱼格', title: '鱼格设置',
+-        keys: ['persona.learn_rate', 'persona.axes.mode', 'persona.worldview.nightly', 'persona.lifeview.nightly'],
++        keys: ['persona.learn_rate', 'persona.axes.mode'],
+       },
+       {
+         key: 'affect', tab: '情绪', title: '情绪设置',

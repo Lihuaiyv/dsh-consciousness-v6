@@ -9,15 +9,13 @@
  * 配置存 action_config 表，按点号 key 扁平保存，只存改过的项。
  */
 import { now } from '../../db.js'
-import { sha256 } from './util.js'
 import * as wechat from './wechat.js'
 import { biliStatus } from './bilibili.js'
 
 export const DEFAULTS = {
   'wechat.mode': 'uia', // uia | wecom | auto
   'wechat.backend': 'auto', // auto | wechatauto | uia
-  // 不再默认「文件传输助手」：发消息必须显式 target（P4.8）
-  'wechat.default_target': '',
+  'wechat.default_target': '文件传输助手',
   'wechat.wecom_webhook': '',
   'wechat.allow_keys_fallback': false,
   'wechat.launch': true,
@@ -32,12 +30,10 @@ export const DEFAULTS = {
   'research.depth': 'standard',
   'research.max_sources': 12,
   'research.seen_days': 60,
-  'browse.allow_private': false,
 }
 
-const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'browse.allow_private'])
+const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run'])
 const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days'])
-const SECRET_KEYS = new Set(['wechat.wecom_webhook', 'qq.token', 'bili.cookie'])
 const ENUMS = {
   'wechat.mode': ['uia', 'wecom', 'auto'],
   'wechat.backend': ['auto', 'wechatauto', 'uia'],
@@ -73,18 +69,9 @@ export function getConfig(db, agentId) {
 }
 
 export function saveConfig(db, agentId, patch) {
-  const prev = getConfig(db, agentId)
   const clean = {}
   for (const [k, v] of Object.entries(patch || {})) {
     if (!(k in DEFAULTS)) continue
-    // 密钥字段：空串 / 打码占位 = 保留原值，避免面板回写把密钥抹掉（P4.4）
-    if (SECRET_KEYS.has(k)) {
-      const s = v == null ? '' : String(v)
-      if (!s.trim() || s.includes('••••')) {
-        clean[k] = prev[k]
-        continue
-      }
-    }
     clean[k] = coerce(k, v)
   }
   const stmt = db.prepare('INSERT OR REPLACE INTO action_config(agent_id,key,value,updated_at) VALUES(?,?,?,?)')
@@ -249,16 +236,15 @@ export async function sendMessage(db, agentId, req) {
       const out = await sendWecom(webhook, text)
       return { ...out, channel: 'wecom', target: '企业微信群' }
     }
-    // 必须显式 target，不再回落到「文件传输助手」（P4.8）
-    const target = String(req.target || '').trim()
-    if (!target) throw new Error('没有给微信收件人：请写明联系人名（不要依赖默认目标）')
+    const target = String(req.target || cfg['wechat.default_target'] || '').trim()
+    if (!target) throw new Error('没有给微信收件人')
     const out = await wechat.send({
       target,
       text,
       backend: cfg['wechat.backend'] || 'auto',
       launch: cfg['wechat.launch'] !== false,
       allowKeysFallback: cfg['wechat.allow_keys_fallback'] === true,
-      dryRun: cfg['wechat.dry_run'] === true || req.dryRun === true,
+      dryRun: cfg['wechat.dry_run'] === true,
       timeoutMs: 65000,
     })
     if (!out.ok) throw new Error(out.message || ('微信发送失败：' + (out.code || 'UNKNOWN')))
@@ -273,8 +259,7 @@ export async function sendMessage(db, agentId, req) {
     }
   }
 
-  const target = String(req.target || '').trim()
-  if (!target) throw new Error('没有给 QQ 收件人：请写明 QQ 号或群号')
+  const target = String(req.target || cfg['qq.default_target'] || '').trim()
   const out = await sendOneBot({
     baseUrl: cfg['qq.base_url'],
     token: cfg['qq.token'],
@@ -349,11 +334,9 @@ export async function status(db, agentId, { fresh = false } = {}) {
   return value
 }
 
-export async function test(db, agentId, { channel, target, text, dryRun } = {}) {
+export async function test(db, agentId, { channel, target, text } = {}) {
   const cfg = getConfig(db, agentId)
   const ch = String(channel || 'wechat')
-  // 默认 dry-run；只有显式 dryRun:false 才真发（API testChannel 会强制 true）
-  const dry = dryRun !== false
   if (ch === 'wechat') {
     const backend = cfg['wechat.backend'] || 'auto'
     const pyOk = await wechat.wechatautoAvailable()
@@ -365,18 +348,16 @@ export async function test(db, agentId, { channel, target, text, dryRun } = {}) 
         return { ok: false, channel: 'wechat', status: 'not_logged_in', detail: '微信停在登录窗口' }
       }
     }
-    const to = String(target || '').trim()
-    if (!to) return { ok: false, channel: 'wechat', status: 'no_target', detail: '测试发送也要写明收件人' }
     const out = await wechat.send({
-      target: to,
+      target: String(target || cfg['wechat.default_target'] || '').trim(),
       text: String(text || '这是一条通道测试：' + new Date().toLocaleString('zh-CN')),
       backend,
       launch: false,
       allowKeysFallback: cfg['wechat.allow_keys_fallback'] === true,
-      dryRun: dry,
+      dryRun: false,
       timeoutMs: 65000,
     })
-    return { ok: !!out.ok, channel: 'wechat', status: out.ok ? (dry ? 'dry-run' : 'sent') : 'failed', detail: out.message || out.code, steps: out.steps }
+    return { ok: !!out.ok, channel: 'wechat', status: out.ok ? 'sent' : 'failed', detail: out.message || out.code, steps: out.steps }
   }
   if (ch === 'wecom') {
     const out = await sendWecom(cfg['wechat.wecom_webhook'], String(text || '这是一条企业微信通道测试'))
@@ -385,13 +366,11 @@ export async function test(db, agentId, { channel, target, text, dryRun } = {}) 
   if (ch === 'qq') {
     const p = await onebotProbe({ baseUrl: cfg['qq.base_url'], token: cfg['qq.token'] })
     if (!p.ok) return { ok: false, channel: 'qq', status: 'unreachable', detail: p.error }
-    const to = String(target || '').trim()
-    if (!to) return { ok: false, channel: 'qq', status: 'no_target', detail: '测试发送也要写明 QQ 号或群号' }
     const out = await sendOneBot({
       baseUrl: cfg['qq.base_url'],
       token: cfg['qq.token'],
       targetType: cfg['qq.default_target_type'],
-      target: to,
+      target: String(target || cfg['qq.default_target'] || '').trim(),
       text: String(text || '这是一条 QQ 通道测试'),
     })
     return { ok: true, channel: 'qq', status: out.status, detail: out.detail }
@@ -399,6 +378,3 @@ export async function test(db, agentId, { channel, target, text, dryRun } = {}) 
   throw new Error('不认识的通道：' + ch)
 }
 
-export function configDigest(cfg) {
-  return sha256(JSON.stringify(cfg)).slice(0, 12)
-}

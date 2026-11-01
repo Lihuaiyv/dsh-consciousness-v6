@@ -17,7 +17,6 @@ import * as ar from './modules/archive.js'
 import * as rt from './modules/retrieve.js'
 import * as pk from './modules/pack.js'
 import * as rl from './modules/retrieval_log.js'
-import * as asof from './modules/asof.js'
 import * as en from './modules/entities.js'
 import * as ex from './modules/extract_queue.js'
 import * as cf from './modules/conflict.js'
@@ -29,7 +28,11 @@ import * as vt from './modules/vault.js'
 import * as sd from './modules/study.js'
 import * as R from './modules/relations.js'
 import * as axe from './modules/axis_evidence.js'
-import { setAxisIntent, getAxisIntent, clearAxisIntent, releaseAxis, AXIS_KEYS } from './modules/traits.js'
+import * as rope from './modules/rope.js'
+import * as selfScan from './modules/self_scan.js'
+import * as personaJudge from './modules/persona_judge.js'
+import { setAxisIntent, getAxisIntent, clearAxisIntent, releaseAxis, AXIS_KEYS, anchorLine } from './modules/traits.js'
+import * as personaProbe from './modules/persona_probe.js'
 import { refreshHeat, tierStats } from './modules/tiers.js'
 import * as act from './modules/actions/index.js'
 import * as br from './modules/browse.js'
@@ -132,12 +135,7 @@ async function routes(db, method, path, body, role, bound) {
   if (path === '/health') {
     const v = db.prepare('SELECT version FROM schema_meta').get()
     const n = db.prepare('SELECT COUNT(*) n FROM agents').get()
-    const actives = Number(db.prepare("SELECT COUNT(*) n FROM agents WHERE status='active'").get()?.n || 0)
-    return {
-      ok: true, schema_version: Number(v?.version || 0), mode: 'ok',
-      agents: Number(n?.n || 0), model: c.modelStatus(),
-      active_agents: actives, single_active: actives <= 1,
-    }
+    return { ok: true, schema_version: Number(v?.version || 0), mode: 'ok', agents: Number(n?.n || 0), model: c.modelStatus(), pending_agent: f.getFlag(db, 'pending_agent') }
   }
   if (method === 'GET' && path.split('?')[0] === '/v1/agents') {
     const all = q(path, 'include_deleted') === '1'
@@ -151,11 +149,10 @@ async function routes(db, method, path, body, role, bound) {
     const dup = db.prepare("SELECT id FROM agents WHERE name=? AND status!='soft_deleted'").get(name)
     if (dup) err(409, 'NAME_TAKEN', '已经有同名的意识体了')
     const aid = c.nid('agt_')
-    // 新建即成为唯一运行中的实例（其它 active → paused）
-    db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)").run(aid, name, 'daily', 'paused', now())
+    db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)").run(aid, name, 'daily', 'active', now())
     c.seedState(db, aid)
     f.seedRelations(db, aid)
-    return f.activateAgent(db, aid, role)
+    return { id: aid, status: 'active' }
   }
   if (method === 'POST' && path === '/v1/agents/import/freeform') return f.importFreeform(db, body)
   if (method === 'POST' && path === '/v1/agents/import') {
@@ -180,27 +177,18 @@ async function routes(db, method, path, body, role, bound) {
       name = baseName + ' · 导入' + (k > 2 ? ' ' + (k - 1) : '')
     }
     const aid = c.nid('agt_')
-    // 导入期短暂排他激活（importFull 要写库）；结束后 paused，并把原先在跑的还回去
-    const prevActive = db.prepare("SELECT id FROM agents WHERE status='active' LIMIT 1").get()
-    db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?, 'daily', 'paused', ?, 1)").run(aid, name, now())
+    db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?, 'daily', 'active', ?, 1)").run(aid, name, now())
     c.seedState(db, aid)
     try {
-      f.ensureExclusiveActive(db, aid)
       const out = f.importFull(db, aid, body)
       if (!out || !Number(out.imported)) {
         db.prepare('DELETE FROM agents WHERE id=?').run(aid)
         err(400, 'INVALID_ARGUMENT', '包里没有可导入的意识数据（结构不对或不是本插件的导出）')
       }
       db.prepare("UPDATE agents SET status='paused' WHERE id=?").run(aid)
-      if (prevActive && prevActive.id !== aid) {
-        try { f.ensureExclusiveActive(db, prevActive.id) } catch { /* 原实例没了就算了 */ }
-      }
-      return { id: aid, name, status: 'paused', ...out }
+      return { id: aid, name, ...out }
     } catch (e) {
-      try { db.prepare('DELETE FROM agents WHERE id=?').run(aid) } catch { /* ignore */ }
-      if (prevActive) {
-        try { f.ensureExclusiveActive(db, prevActive.id) } catch { /* ignore */ }
-      }
+      db.prepare('DELETE FROM agents WHERE id=?').run(aid)
       throw e
     }
   }
@@ -245,14 +233,6 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'POST' && act === 'edges') return R.upsertEdgeApi(db, aid, { ...body, from_id: pid })
     err(405, 'METHOD_NOT_ALLOWED', '不支持的方法')
   }
-  // G1：单条记忆的版本时间线（Mem0 式 history）
-  const hm = path.split('?')[0].match(/^\/v1\/agents\/([^/]+)\/memory\/([^/]+)\/history$/)
-  if (hm && method === 'GET') {
-    scoped(bound, hm[1])
-    agent(db, hm[1])
-    const h = asof.memoryHistory(db, hm[1], decodeURIComponent(hm[2]), { axis: q(path, 'axis') || undefined })
-    return h || err(404, 'NOT_FOUND', '记忆不存在或已删除')
-  }
   // 三观引擎：路由与开关判断都在 sangguan/api.js，这里只转发
   const sgm = relUrl.match(/^\/v1\/agents\/([^/]+)\/sangguan(\/.*)?$/)
   if (sgm) {
@@ -271,8 +251,7 @@ async function routes(db, method, path, body, role, bound) {
     }
     if (method === 'POST' && sub === 'restore') {
       if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以恢复意识体')
-      c.restoreAgent(db, aid)
-      return f.activateAgent(db, aid, role)
+      return c.restoreAgent(db, aid)
     }
     if (method === 'POST' && sub === 'activate') return f.activateAgent(db, aid, role)
     if (method === 'POST' && sub === 'browse' && sub2 === 'ingest') return br.ingestBrowse(db, aid, body)
@@ -311,14 +290,6 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'memory' && sub2 === 'judge') {
       return jg.judgeSample(db, aid, { limit: Number(q(path, 'limit') || 30), floor: Number(q(path, 'floor') || 0.7) })
     }
-    // G1：「某天当时」查询 ?q=&at= 或 &from=&to=（或 q 里自带「去年三月」），axis 可选 said / recorded
-    if (method === 'GET' && sub === 'memory' && sub2 === 'as-of') {
-      const v = asof.retrieveAsOf(db, aid, String(q(path, 'q') || ''), {
-        at: q(path, 'at') || undefined, from: q(path, 'from') || undefined, to: q(path, 'to') || undefined,
-        axis: q(path, 'axis') || undefined, k: Number(q(path, 'k') || 6),
-      })
-      return { ...v, text: asof.renderAsOf(v) }
-    }
     if (method === 'GET' && sub === 'memory') return c.listMemory(db, aid, q(path, 'include_deleted') === '1')
     // 存量分级：把判得低的自省打成冷层（只动温度，不删不改内容）。dry_run=1 只统计。
     if (method === 'POST' && sub === 'memory' && sub2 === 'demote') {
@@ -346,11 +317,6 @@ async function routes(db, method, path, body, role, bound) {
       const batches = csl.planBatches(db, aid, { limit: Number(q(path, 'limit') || 10) })
       return { can: csl.canConsolidate(), batches: batches.map((b) => ({ size: b.length, ids: b.map((m) => m.id), texts: b.map((m) => String(m.text || '').slice(0, 80)) })) }
     }
-    // U5：显式 remember（走 gate；与工具 memory_remember 同口径）
-    if (method === 'POST' && sub === 'memory' && sub2 === 'remember') {
-      const { rememberFact } = await import('./modules/remember_tool.js')
-      return rememberFact(db, aid, body)
-    }
     if (method === 'POST' && sub === 'memory') return c.addMemory(db, aid, { ...body, source: body.source || 'manual' })
     if (method === 'GET' && sub === 'turns' && sub2) return sd.turnDetail(db, aid, sub2) || err(404, 'NOT_FOUND', '这句原话找不到了')
     if (method === 'POST' && sub === 'pack') {
@@ -368,6 +334,37 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'persona' && sub2 === 'drift') return f.personaDrift(db, aid)
     // 五轴证据账本 + 自陈意图 + 手动交回经历
     if (method === 'GET' && sub === 'persona' && sub2 === 'evidence') return { axes: axe.snapshot(db, aid) }
+    // 性格拔河：每根轴左右两个拉力池现在各有多少、谁领先、基线在哪
+    if (method === 'GET' && sub === 'persona' && sub2 === 'rope') return { axes: rope.snapshot(db, aid), scan_at: rope.lastScanAt(db, aid) }
+    // 手动扫一次（调试/界面按钮）：默认补最近 24 小时；hours=0 从上次扫到的地方接着补
+    if (method === 'POST' && sub === 'persona' && sub2 === 'scan') {
+      const hours = Number(body.hours)
+      const out = Number.isFinite(hours) && hours > 0
+        ? selfScan.scanRecent(db, aid, hours)
+        : selfScan.scan(db, aid, {})
+      return out
+    }
+    // 「交回经历」的另一半：把两池清零，但不碰慢值和基线
+    if (method === 'POST' && sub === 'persona' && sub2 === 'rope') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以清池子')
+      return rope.clearPools(db, aid, body.axis ? String(body.axis) : null)
+    }
+    // 第二判：词表拿不准的轮次，模型判、规则验；dryRun=1 只看不写
+    if (method === 'GET' && sub === 'persona' && sub2 === 'judge') return personaJudge.stats(db, aid)
+    if (method === 'POST' && sub === 'persona' && sub2 === 'judge') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以手动跑第二判')
+      const out = await personaJudge.run(db, aid, { limit: Number(body.limit || 24), dryRun: body.dryRun === true })
+      if (out && out.dryRun) out.preview = (out.preview || []).slice(0, 20)
+      return out
+    }
+    // 人格锚：一行「你现在是什么样」，界面展示 / 宿主注入都用它
+    if (method === 'GET' && sub === 'persona' && sub2 === 'anchor') return { line: anchorLine(db, aid) }
+    // 每周情境探针：校准用，只落表不进池
+    if (method === 'GET' && sub === 'persona' && sub2 === 'probe') return { weeks: personaProbe.recent(db, aid, Number(q(path, 'weeks') || 4)) }
+    if (method === 'POST' && sub === 'persona' && sub2 === 'probe') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以手动跑探针')
+      return personaProbe.run(db, aid, { force: body.force === true })
+    }
     if (method === 'GET' && sub === 'persona' && sub2 === 'intent') {
       return { intents: AXIS_KEYS.map((k) => ({ axis: k, target: getAxisIntent(db, aid, k) })).filter((x) => x.target != null) }
     }
@@ -454,7 +451,6 @@ async function routes(db, method, path, body, role, bound) {
       }
     }
     if (method === 'GET' && sub === 'retrieval-stats') return rl.retrievalStats(db, aid, Number(q(path, 'days') || 7))
-    if (method === 'GET' && sub === 'memory-health') return rl.memoryHealth(db, aid, Number(q(path, 'days') || 7))
     // ---- P2 写入侧：实体 / 抽取队列 ----
     if (method === 'GET' && sub === 'entities') {
       if (sub2) return { entity: sub2, items: en.factsOfEntity(db, aid, sub2, Number(q(path, 'limit') || 20)) }
@@ -482,20 +478,6 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'sessions') return ar.listSessions(db, aid, Number(q(path, 'limit') || 50))
     if (method === 'GET' && sub === 'episodes') return ar.listEpisodes(db, aid, { day: q(path, 'day'), limit: Number(q(path, 'limit') || 30) })
     if (method === 'GET' && sub === 'diaries' && sub2) return ar.getDiary(db, aid, sub2) || err(404, 'NOT_FOUND', '这一天没有日记')
-    if (method === 'POST' && sub === 'diaries' && sub2 === 'rewrite') {
-      const day = String(body.day || '').slice(0, 10)
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) err(400, 'INVALID_ARGUMENT', '需要 day=YYYY-MM-DD')
-      let summarize = null
-      try { if (c.model.status().primary === 'ok') summarize = (t) => c.model.summarize(t) } catch { summarize = null }
-      const late = ni.localDay(new Date()) === day ? 0 : 1
-      const diary = await ar.buildDiary(db, aid, day, {
-        summarize,
-        late,
-        force: true,
-      })
-      if (!diary) err(404, 'NOT_FOUND', '这一天没有原料，写不出日记')
-      return diary
-    }
     if (method === 'GET' && sub === 'tiers') return tierStats(db, aid)
     if (method === 'POST' && sub === 'tiers' && sub2 === 'refresh') return refreshHeat(db, aid)
     if (method === 'GET' && sub === 'diary') return f.diary(db, aid, Number(q(path, 'days') || 7))
@@ -508,14 +490,10 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'action-ports') return c.listPorts(db, aid)
     if (method === 'PUT' && sub === 'action-ports' && sub2) return c.setPort(db, aid, sub2, body, role)
     // ---- 行动层：通道配置 / 体检 / 测试发送 / 研究 ----
-    if (method === 'GET' && sub === 'action-config') {
-      // P4.4：对外只给打码视图，不回明文密钥
-      return act.publicConfig(act.getConfig(db, aid))
-    }
+    if (method === 'GET' && sub === 'action-config') return act.getConfig(db, aid)
     if (method === 'PUT' && sub === 'action-config') {
       if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改行动通道配置')
-      // saveConfig 对空串/•••• 保留原密钥；对外仍回 publicConfig
-      return act.publicConfig(act.saveConfig(db, aid, body))
+      return act.saveConfig(db, aid, body)
     }
     if (method === 'GET' && sub === 'action-status') {
       return await act.channelStatus(db, aid, { fresh: q(path, 'fresh') === '1' })
@@ -549,16 +527,10 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'changes') return c.listChanges(db, aid)
     if (method === 'GET' && sub === 'overview') return c.overview(db, aid)
     if (method === 'GET' && sub === 'thoughts') return th.getThoughts(db, aid)
-    if (method === 'POST' && sub === 'thoughts') return th.generateNow(db, aid)
     if (method === 'GET' && sub === 'vault' && !sub2) {
       return vt.warehouse(db, aid, { budget: Number(getParam(db, aid, 'memory.inject.budget')) || undefined })
     }
-    if (method === 'GET' && sub === 'vault' && sub2 === 'history') {
-      const daysQ = q(path, 'days')
-      // days=0 / birth → 从出生画到现在；其它数字按天数
-      const days = (daysQ === '0' || daysQ === 'birth') ? 0 : (Number(daysQ) || 365)
-      return vt.history(db, aid, { days })
-    }
+    if (method === 'GET' && sub === 'vault' && sub2 === 'history') return vt.history(db, aid, { days: Number(q(path, 'days')) || 365 })
     if (method === 'GET' && sub === 'vault' && sub2 === 'root') return { root: vt.getDocsRoot(db), v: vt.VAULT_VER }
     if (method === 'POST' && sub === 'vault' && sub2 === 'root') {
       try { return { root: vt.setDocsRoot(db, body.path) } }
@@ -614,21 +586,13 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'values' && sub2 === 'explain') return { ...vv.explainValues(db, aid), source: 'meter' }
     if (method === 'POST' && sub === 'values' && sub2 === 'grow') return vv.growValues(db, aid, { force: true })
     if (method === 'GET' && sub === 'values') return readViews(db, aid, { grow: true, only: 'V' }).V.items
-    if (method === 'PUT' && sub === 'values') {
-      // Schwartz 键 / 中文标签归一；其它自定义键仍允许（兼容旧面板）
-      const key = vv.resolveValueKey(body.key) || String(body.key || '').trim()
-      if (!key) err(400, 'INVALID_ARGUMENT', 'key 必填')
-      return f.setValue(db, aid, { ...body, key })
-    }
     if (method === 'GET' && sub === 'worldview' && sub2 === 'explain') return { ...wv.explainWorldview(db, aid), source: 'meter' }
     if (method === 'POST' && sub === 'worldview' && sub2 === 'grow') return wv.growWorldview(db, aid, { force: true })
     if (method === 'GET' && sub === 'worldview') return readViews(db, aid, { grow: true, only: 'W' }).W.items
     if (method === 'GET' && sub === 'lifeview' && sub2 === 'explain') return { ...lv.explainLifeview(db, aid), source: 'meter' }
     if (method === 'POST' && sub === 'lifeview' && sub2 === 'grow') return lv.growLifeview(db, aid, { force: true })
-    if (method === 'GET' && sub === 'lifeview') {
-      const view = readViews(db, aid, { grow: true, only: 'L' })
-      return { items: view.L.items, derived: view.L.derived, source: view.source.L }
-    }
+    if (method === 'GET' && sub === 'lifeview') return readViews(db, aid, { grow: true, only: 'L' }).L.items
+    if (method === 'PUT' && sub === 'values') return f.setValue(db, aid, body)
     // 必须排在通用 POST /preferences 之前：子路径也要先匹配
     if (method === 'POST' && sub === 'preferences' && sub2 === 'grow') return f.growPreferences(db, aid, body)
     if (method === 'DELETE' && sub === 'preferences' && sub2) return f.removePreference(db, aid, sub2)
@@ -672,7 +636,8 @@ async function routes(db, method, path, body, role, bound) {
       return { id: aid, status: 'paused' }
     }
     if (method === 'POST' && sub === 'resume') {
-      return f.activateAgent(db, aid, role)
+      db.prepare("UPDATE agents SET status='active' WHERE id=?").run(aid)
+      return { id: aid, status: 'active' }
     }
     // /export 与 /export/full 同为全量；旧「仅记忆」schema_version 1 仍可导入
     if (method === 'GET' && sub === 'export') return f.exportFull(db, aid)

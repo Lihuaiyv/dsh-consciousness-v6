@@ -9,7 +9,6 @@
 
 import { now } from '../db.js'
 import { nid } from '../kernel.js'
-import { timelineDrift } from './timeline.js'
 
 export const KEEP_DAYS = 30
 
@@ -101,79 +100,5 @@ export function retrievalStats(db, aid, days = 7) {
     empty_rate: total ? Number(empty / total) : 0,
     tokens: total ? Math.round(scenes.reduce((s, x) => s + x.tokens * x.calls, 0) / total) : 0,
     scenes,
-  }
-}
-
-/**
- * U8：记忆健康快照——召回空手率 + 冲突开案 + 习惯条数 + 最近巩固蒸馏。
- * 给面板 / 抽检用，不进热路径。
- */
-export function memoryHealth(db, aid, days = 7) {
-  const d = Math.max(1, Math.min(90, Number(days) || 7))
-  const since = new Date(Date.now() - d * 86400000).toISOString()
-  const retrieve = retrievalStats(db, aid, d)
-
-  let conflicts = { total: 0, open: 0 }
-  try {
-    const row = db.prepare(`SELECT COUNT(*) total,
-        SUM(CASE WHEN state='open' THEN 1 ELSE 0 END) open
-      FROM conflicts WHERE agent_id=?`).get(aid)
-    conflicts = { total: Number(row?.total || 0), open: Number(row?.open || 0) }
-  } catch { /* 老库 */ }
-
-  let updates = 0
-  try {
-    updates = Number(db.prepare(`SELECT COUNT(*) n FROM fact_archive
-      WHERE agent_id=? AND source='update_history' AND created_at>=?`).get(aid, since)?.n || 0)
-  } catch { updates = 0 }
-
-  let habits = { active: 0, cold: 0 }
-  try {
-    const rows = db.prepare(`SELECT temp_state, COUNT(*) n FROM memory_items
-      WHERE agent_id=? AND status='active' AND invalid_at IS NULL
-        AND (fact_key LIKE 'habit.%' OR text LIKE '%每周%' OR text LIKE '%每天%' OR text LIKE '%习惯%')
-      GROUP BY temp_state`).all(aid)
-    for (const r of rows) {
-      const n = Number(r.n || 0)
-      if (r.temp_state === 'cold' || r.temp_state === 'archived') habits.cold += n
-      else habits.active += n
-    }
-  } catch { /* ignore */ }
-
-  let distill = null
-  try {
-    const last = db.prepare('SELECT day,steps,ok,at FROM consolidation_log WHERE agent_id=? ORDER BY day DESC LIMIT 1').get(aid)
-    if (last) {
-      let steps = []
-      try { steps = JSON.parse(last.steps || '[]') } catch { steps = [] }
-      const ep = (steps || []).find((s) => s && s.step === 'episode_distill') || null
-      distill = { day: last.day, ok: !!last.ok, at: last.at, episode_distill: ep }
-    }
-  } catch { distill = null }
-
-  let sources = {}
-  try {
-    const rows = db.prepare(`SELECT COALESCE(source,'unknown') source, COUNT(*) n FROM memory_items
-      WHERE agent_id=? AND status='active' GROUP BY source`).all(aid)
-    sources = Object.fromEntries(rows.map((r) => [r.source, Number(r.n || 0)]))
-  } catch { sources = {} }
-
-  let tl = null
-  try { tl = timelineDrift(db, aid) } catch { tl = null }
-
-  return {
-    days: d,
-    retrieve: {
-      total: retrieve.total,
-      empty_rate: retrieve.empty_rate,
-      s1_empty_rate: (retrieve.scenes.find((s) => s.scene === 'S1') || {}).empty_rate ?? null,
-    },
-    conflicts,
-    updates_recent: updates,
-    habits,
-    sources,
-    distill,
-    timeline_drift: tl,
-    ok: retrieve.empty_rate < 0.5 && (conflicts.open == null || conflicts.open < 50),
   }
 }

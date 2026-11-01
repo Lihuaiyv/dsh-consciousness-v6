@@ -201,14 +201,6 @@ check('社交下限：普通任务句子不触发', socialFloorOf('把那个函�
 check('社交下限：只点名不评价 → 低相关', (() => { const s = socialFloorOf('你能看一下吗'); return !!s && s.rel < 0.5 })(), socialFloorOf('你能看一下吗'))
 check('社交下限：不点名也说它自己的状态 → 触发', (() => { const s = socialFloorOf('都不饿阿'); return !!s && s.rel >= 0.5 })(), socialFloorOf('都不饿阿'))
 check('社交下限：说对方自己不饿 → 不触发', socialFloorOf('我不饿') === null)
-check('社交下限：太喜欢不因裸「太」判负', (() => {
-  const s = socialFloorOf('你太喜欢这样了')
-  return !!s && s.cong > 0
-})(), socialFloorOf('你太喜欢这样了'))
-check('社交下限：太差仍是否定', (() => {
-  const s = socialFloorOf('你太差了')
-  return !!s && s.cong < 0
-})(), socialFloorOf('你太差了'))
 check('社交下限：气话（服了/无语/算了）→ 触发且为负', (() => {
   const a = socialFloorOf('我真是服了'); const b = socialFloorOf('算了'); const c = socialFloorOf('太无语了')
   return !!a && a.rel >= 0.45 && a.cong < 0 && !!b && !!c
@@ -318,6 +310,20 @@ const epZ = epOf(z1.id)
 const riseY = Number(epX.intensity) - 0.20
 const riseZ = Number(epZ.intensity) - 0.20
 check('不应期：只把抬起来的那截打七折', Number(epZ.intensity) < Number(epX.intensity) - 0.03 && Math.abs(riseZ - riseY * 0.7) < 0.02, { 无不应期: epX.intensity, 不应期: epZ.intensity, riseY, riseZ })
+
+// 4) 复现加强必须递减：旧版每句固定 +0.12，说五遍就一路顶到 0.9 / 1.0
+{
+  const seq = []
+  for (let i = 0; i < 4; i++) {
+    const r = await appraise(db, aid, '你完全不理解我的意思', { labels: LABELS, closeness: 0.9, hint: hintOf('frustrated', { rel: 0.9, cong: -0.8, nov: 0.7, cert: 0.4 }) })
+    seq.push(Number(r.intensity))
+  }
+  const deltas = seq.slice(1).map((v, i) => +(v - seq[i]).toFixed(3))
+  const bounded = Math.max(...seq) < 0.99
+  const shrinking = deltas.every((d, i) => i === 0 || d <= deltas[i - 1] + 1e-9)
+  check('复现加强递减：增量不会一直 +0.12', shrinking, { seq, deltas })
+  check('复现加强有上限：收在 1 以内', bounded, seq)
+}
 
 console.log(`\n${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

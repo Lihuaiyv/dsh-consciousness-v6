@@ -10,14 +10,10 @@ import { htmlToText } from './util.js'
 import { getConfig, saveConfig, publicConfig, sendMessage, status as channelStatus, test as channelTest } from './channels.js'
 import { searchVideos, popular, recommend, videoDetail, comments, postComment, biliStatus } from './bilibili.js'
 import { runResearch, listRuns, getRun } from './research.js'
-import { budgetConsume, budgetRefund } from '../drive.js'
+import { budgetConsume } from '../drive.js'
 import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
-import { asOfSearch, renderAsOf } from '../asof.js'
-import { rememberFact } from '../remember_tool.js'
 import { ingestBrowse } from '../browse.js'
-
-export const PORTS = ['send_message', 'browse', 'research', 'remind']
 
 export const PORT_LABELS = {
   send_message: '发消息（微信 / QQ）',
@@ -55,65 +51,25 @@ export async function executeSend(db, agentId, args = {}) {
   if (!text.trim()) throw new Error('要发的内容是空的')
   const channel = String(args.channel || 'auto').toLowerCase()
   const target = String(args.target || '').trim()
-  // 打扰预算：默认本月 3 条；先扣、失败退回
+  // 打扰预算：默认每天 3 条，和旧接口共用同一本账
   budgetConsume(db, agentId, 'disturb', 1)
-  try {
-    const out = await sendMessage(db, agentId, { channel, target, text })
-    logAction(db, agentId, 'send_message', { channel, target, len: text.length }, out, out.status)
-    return {
-      ok: true,
-      channel: out.channel,
-      target: out.target,
-      status: out.status,
-      detail: out.detail || '',
-      at: new Date().toISOString(),
-    }
-  } catch (e) {
-    try { budgetRefund(db, agentId, 'disturb', 1) } catch { /* ignore */ }
-    throw e
+  const out = await sendMessage(db, agentId, { channel, target, text })
+  logAction(db, agentId, 'send_message', { channel, target, len: text.length }, out, out.status)
+  return {
+    ok: true,
+    channel: out.channel,
+    target: out.target,
+    status: out.status,
+    detail: out.detail || '',
+    at: new Date().toISOString(),
   }
 }
 
 // ---------------- 浏览 ----------------
 
-/** 拦私网 / link-local / localhost，防 SSRF（P4.7）。可配置例外见 action_config browse.allow_private。 */
-export function isBlockedBrowseHost(hostname) {
-  const h = String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '')
-  if (!h) return true
-  if (h === 'localhost' || h === 'localhost.localdomain') return true
-  if (h === '::1' || h === '0:0:0:0:0:0:0:1') return true
-  // IPv4
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h)
-  if (m) {
-    const a = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])]
-    if (a.some((n) => n > 255)) return true
-    if (a[0] === 10) return true
-    if (a[0] === 127) return true
-    if (a[0] === 0) return true
-    if (a[0] === 169 && a[1] === 254) return true
-    if (a[0] === 172 && a[1] >= 16 && a[1] <= 31) return true
-    if (a[0] === 192 && a[1] === 168) return true
-    if (a[0] === 100 && a[1] >= 64 && a[1] <= 127) return true // CGNAT
-    return false
-  }
-  // IPv6 粗拦：fc/fd ULA、fe80 link-local
-  if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true
-  return false
-}
-
-function assertBrowseUrlAllowed(url, cfg = {}) {
-  let u
-  try { u = new URL(String(url || '').trim()) } catch { throw new Error('网址不合法') }
-  if (!/^https?:$/i.test(u.protocol)) throw new Error('只支持 http/https 的网址')
-  const allowPrivate = cfg['browse.allow_private'] === true || cfg['browse.allow_private'] === 'true'
-  if (!allowPrivate && isBlockedBrowseHost(u.hostname)) {
-    throw new Error('不能打开内网 / 本机地址（私网、link-local、localhost）')
-  }
-  return u.href
-}
-
-async function browseUrl(url, { web, signal, cfg }) {
-  const u = assertBrowseUrlAllowed(url, cfg)
+async function browseUrl(url, { web, signal }) {
+  const u = String(url || '').trim()
+  if (!/^https?:\/\//i.test(u)) throw new Error('只支持 http/https 的网址')
   if (web && typeof web.fetch === 'function') {
     const r = await web.fetch({ url: u }, signal)
     const body = (r && r.body) || {}
@@ -164,14 +120,9 @@ export async function executeComment(db, agentId, args = {}) {
     throw new Error('写评论需要登录态：设置 → 行动接口 → 浏览 → B 站 Cookie，至少填 SESSDATA 和 bili_jct')
   }
   budgetConsume(db, agentId, 'disturb', 1)
-  try {
-    const out = await postComment(target, text, { cookie: cfg['bili.cookie'] })
-    logAction(db, agentId, 'comment', { platform, target, len: text.length }, out, 'ok')
-    return { ok: true, platform, target, rpid: out.rpid, url: out.url, note: out.note, at: new Date().toISOString() }
-  } catch (e) {
-    try { budgetRefund(db, agentId, 'disturb', 1) } catch { /* ignore */ }
-    throw e
-  }
+  const out = await postComment(target, text, { cookie: cfg['bili.cookie'] })
+  logAction(db, agentId, 'comment', { platform, target, len: text.length }, out, 'ok')
+  return { ok: true, platform, target, rpid: out.rpid, url: out.url, note: out.note, at: new Date().toISOString() }
 }
 
 export async function executeBrowse(db, agentId, args = {}, deps = {}) {  requirePort(db, agentId, 'browse')
@@ -181,7 +132,7 @@ export async function executeBrowse(db, agentId, args = {}, deps = {}) {  requir
   let out
 
   if (mode === 'url') {
-    out = await browseUrl(args.url, { ...deps, cfg })
+    out = await browseUrl(args.url, deps)
   } else if (mode === 'search') {
     const query = String(args.query || '').trim()
     if (!query) throw new Error('网页检索需要 query')
@@ -352,11 +303,6 @@ export function createActionTools({ getDb, getAgentId, getWeb, getModel, log } =
           type: 'array', items: { type: 'string', enum: ['superseded'] },
           description: '加 "superseded" 才带已被新说法取代的旧说法（默认不带，它会冒充现状）',
         },
-        as_of: str('问「那时候」才填：日期（2026-03-15）或说法（去年三月 / 上周 / 三个月前）。填了就只答当时算数的记忆，并标出和现在的不同'),
-        axis: {
-          type: 'string', enum: ['said', 'recorded'],
-          description: '配合 as_of：said=按用户说话时间（默认）；recorded=按我记下来的时间',
-        },
       }, ['query']),
       output: {
         schema: {
@@ -369,56 +315,15 @@ export function createActionTools({ getDb, getAgentId, getWeb, getModel, log } =
             items: { type: 'array' },
           },
         },
-        render: (_a, v) => TEXT(v && v.asof ? renderAsOf(v) : renderRecall(v)),
+        render: (_a, v) => TEXT(renderRecall(v)),
       },
       timeoutMs: 20000,
-      presentCall: (args) => ({ card: 'generic', title: '回忆 · ' + (args.query || '') + (args.as_of ? ' @' + args.as_of : ''), kind: 'other', rawInput: args }),
+      presentCall: (args) => ({ card: 'generic', title: '回忆 · ' + (args.query || ''), kind: 'other', rawInput: args }),
       async execute(args) {
         const d = db()
         const a = aid()
         if (!d || !a) return { query: String((args && args.query) || ''), layers: DEFAULT_LAYERS, counts: {}, more: {}, items: [], truncated: false, ms: 0 }
-        const asOf = String((args && args.as_of) || '').trim()
-        if (asOf) return { asof: true, ...asOfSearch(d, a, String(args.query || ''), asOf, args.axis, args.k) }
         return recallTool(d, a, args || {})
-      },
-    },
-    {
-      name: 'memory_remember',
-      description:
-        '主动记住一条长期事实（偏好/身份/决定/关系）。走写入门控：同 key 可改写，极性相反会开冲突。'
-        + '只写稳定断言；流水账别用。配对 memory_search 做查/写。',
-      parameters: schema({
-        text: str('要记住的一句完整中文事实'),
-        key: str('可选短键，同一件事改写时复用'),
-        type: { type: 'string', enum: ['fact', 'appraisal', 'reflection'], description: '默认 fact' },
-        op: { type: 'string', enum: ['add', 'update', 'delete', 'noop'], description: '默认 add；改正用 update+key；作废用 delete' },
-        importance: num('0~1，默认 0.75'),
-      }, ['text']),
-      output: {
-        schema: {
-          type: 'object',
-          properties: {
-            ok: { type: 'boolean' },
-            action: { type: 'string' },
-            id: { type: 'string' },
-            badge: { type: 'string' },
-          },
-        },
-        render: (_a, v) => TEXT(
-          (v && v.ok ? '已记 · ' : '未写入 · ')
-          + (v && v.action ? v.action : '')
-          + (v && v.badge ? ' · ' + v.badge : '')
-          + (v && v.id ? ' · ' + v.id : '')
-          + (v && v.reason ? ' · ' + v.reason : ''),
-        ),
-      },
-      timeoutMs: 15000,
-      presentCall: (args) => ({ card: 'generic', title: '记住 · ' + String((args && args.text) || '').slice(0, 24), kind: 'other', rawInput: args }),
-      async execute(args) {
-        const d = db()
-        const a = aid()
-        if (!d || !a) return { ok: false, reason: 'no agent' }
-        return rememberFact(d, a, args || {})
       },
     },
     {
@@ -577,8 +482,5 @@ export function currentDeps() {
 }
 
 export async function testChannel(db, agentId, body) {
-  // P4.5：关端口不能真发；强制 dry-run，且要过 send_message 闸门
-  requirePort(db, agentId, 'send_message')
-  const req = { ...(body || {}), dryRun: true }
-  return channelTest(db, agentId, req)
+  return channelTest(db, agentId, body || {})
 }

@@ -2,7 +2,6 @@
  * 第一次夜巡把旧仪表里已经偏离的维度种成命题。文本只用含义句，不引用记忆。
  * 种过的层不再种。空仪表不种，下一夜再看。撤回是 CLAIM_WITHDRAW，账本只增。
  */
-import { DIMS as VDIMS } from '../values.js'
 import { DIMS as WDIMS, INIT as WINIT } from '../worldview.js'
 import { DIMS as LDIMS } from '../lifeview.js'
 import { isEnabled } from './config.js'
@@ -24,21 +23,6 @@ function mapOf(list) {
     if (Number.isFinite(w)) m[r.key] = w
   }
   return m
-}
-
-function pickValue(db, aid) {
-  const m = mapOf(rows(db, 'persona_values', aid))
-  const ws = Object.values(m)
-  if (ws.length < 2) return null
-  const spread = Math.max(...ws) - Math.min(...ws)
-  if (spread < 0.03) return null
-  let best = null
-  for (const [key, , hint] of VDIMS) {
-    const w = m[key]
-    if (!Number.isFinite(w)) continue
-    if (!best || w > best.w) best = { w, text: '我更看重' + hint }
-  }
-  return best ? { layer: 'V', kind: 'principle', text: best.text } : null
 }
 
 function pickWorld(db, aid) {
@@ -85,8 +69,8 @@ export function seedFromMeters(db, aid, at) {
   if (!isEnabled(db, aid)) return { seeded: [], skipped: 'off' }
   const seeded = []
   const skipped = []
-  const picks = [pickWorld(db, aid), pickLife(db, aid), pickValue(db, aid)].filter(Boolean)
-  for (const layer of ['W', 'L', 'V']) {
+  const picks = [pickWorld(db, aid), pickLife(db, aid)].filter(Boolean)
+  for (const layer of ['W', 'L']) {
     const key = 'seed:' + aid + ':' + layer
     if (hasJob(db, aid, key)) { skipped.push({ layer, reason: 'done' }); continue }
     const pick = picks.find((p) => p.layer === layer)

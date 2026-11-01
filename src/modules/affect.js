@@ -3,8 +3,8 @@ import { model, err, nid, agent, active, event, getParam, getFlag, setFlag } fro
 import { nudgeDeficit } from './drive.js'
 import { readAxes } from './traits.js'
 import { runBound } from '../algo/index.js'
-import { planSegments, valueAt, valueAtTime } from '../algo/baseline.js'
-import { stepSlow, fastOf, totalOf } from '../algo/emotion.js'
+import { planSegments, valueAt, valueAtTime, circadianAt, stepLoad } from '../algo/baseline.js'
+import { stepSlow, fastOf, totalOf, SLOW_ALPHA, SLOW_BETA } from '../algo/emotion.js'
 import { PAD_PRIOR } from '../algo/affect_dyn.js'
 import { significanceOf, gateOf, labelMargin, socialFloorOf, GATE } from '../algo/gate.js'
 
@@ -98,11 +98,6 @@ export function rebuildBaselineAhead(db, aid, { at = Date.now() } = {}) {
 }
 
 /** 对方情绪投影到愉悦轴 */
-export function projectUserEmotion(hint) {
-  if (!hint || typeof hint !== 'object') return 0
-  return projectEmotionAxis(readUserEmotion(hint))
-}
-
 /** 八类分布 → 愉悦轴（-1~+1），共情项用 */
 export function projectEmotionAxis(read) {
   const scores = read && read.dist
@@ -434,20 +429,39 @@ function lastUserEmotion(db, aid) {
 
 const FAST_TAU_MIN = 20 // 快情绪回落的时间常数（分钟，可被 affect.fast.tau 覆盖）
 const FAST_SHAPE = 1.5 // 伸展指数：前几分钟几乎不动，中段才慢慢松开（0.46 → 约 1 小时退到 0.03）
+
+function fastTauMin(db, aid) {
+  const raw = Number(getParam(db, aid, 'affect.fast.tau'))
+  return Number.isFinite(raw) && raw >= 1 ? Math.min(180, raw) : FAST_TAU_MIN
+}
+
+function fastShapeOf(db, aid) {
+  const raw = Number(getParam(db, aid, 'affect.fast.shape'))
+  return Number.isFinite(raw) && raw >= 0.5 ? Math.min(4, raw) : FAST_SHAPE
+}
+
 /**
  * 快情绪的回落：f = level + (f_prev − level)·exp(−(Δt/τ)^shape)
  * τ=20、shape=1.5 时：46 秒几乎不动、5 分钟还剩 0.43、20 分钟 0.27、1 小时 0.03。
  * 两个数都能在参数里调，不用改代码。
  */
 function fastDecayOf(db, aid, dtMin) {
-  const rawTau = Number(getParam(db, aid, 'affect.fast.tau'))
-  const tau = Number.isFinite(rawTau) && rawTau >= 1 ? Math.min(180, rawTau) : FAST_TAU_MIN
-  const rawShape = Number(getParam(db, aid, 'affect.fast.shape'))
-  const shape = Number.isFinite(rawShape) && rawShape >= 0.5 ? Math.min(4, rawShape) : FAST_SHAPE
+  const tau = fastTauMin(db, aid)
+  const shape = fastShapeOf(db, aid)
   return Math.exp(-Math.pow(Math.max(0, dtMin) / tau, shape))
 }
 
-/** 算一次：底色 → 慢情绪按小时步进 → 快情绪（含共情）→ 总情绪 */
+/** 复合 Simpson 求区间均值：把「这段时间快情绪到底是多少」积出来，而不是拿一个常数值糊过去 */
+function avgOver(fn, t0, t1, n = 8) {
+  const span = t1 - t0
+  if (!(span > 0)) return fn(t0)
+  const h = span / n
+  let sum = fn(t0) + fn(t1)
+  for (let i = 1; i < n; i++) sum += (i % 2 ? 4 : 2) * fn(t0 + i * h)
+  return sum / (3 * n)
+}
+
+/** 算一次：底色 → 慢情绪按真实时长积分（快情绪按余温）→ 快情绪（含共情）→ 总情绪 */
 export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 0, closeness = 0.5, at = Date.now(), fresh = true } = {}) {
   const cur = db.prepare('SELECT * FROM affect_v3 WHERE agent_id=?').get(aid)
   if (!cur) return null
@@ -456,14 +470,46 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   const p = (PAD_PRIOR[label] && PAD_PRIOR[label].p) || 0
   let s = Number(cur.slow) || 0
   const fPrev = Number(cur.fast) || 0
+  const fTau = fastTauMin(db, aid)
+  const fShape = fastShapeOf(db, aid)
+  const alpha = paramNum(db, aid, 'affect.slow.alpha', SLOW_ALPHA, 0, 1)
+  const beta = paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 1)
+  const circAmp = paramNum(db, aid, 'affect.baseline.circadian', 0.06, 0, 0.3)
+  const loadGain = paramNum(db, aid, 'affect.baseline.load.gain', 0.01, 0, 0.2)
+  const loadTau = paramNum(db, aid, 'affect.baseline.load.tau', 168, 1, 8760)
+  /* 累积负荷：底色的第三层。存的是「水位被拖走了多少」，跟着慢情绪走、自己代谢。 */
+  let load = Number(cur.base_off) || 0
+
+  /* 慢情绪按「上一次写到现在」的真实时长走，不再整小时取整：
+     差 50 分钟也走一步，差 9.9 小时也不截断。底色是按小时变的日程，分段积分才不丢中间那段。 */
   let fromMs = cur.slow_at ? Date.parse(cur.slow_at) : at
-  if (!Number.isFinite(fromMs)) fromMs = at
-  let hours = Math.floor((at - fromMs) / HOUR_MS)
-  if (!Number.isFinite(hours) || hours < 0) hours = 0
-  hours = Math.min(hours, 72)
-  for (let i = 1; i <= hours; i++) {
-    s = stepSlow({ s, b: valueAtTime(segs, fromMs + i * HOUR_MS), p, fHourly: fPrev })
+  if (!Number.isFinite(fromMs) || fromMs > at) fromMs = at
+  const fastFrom = cur.fast_at ? Date.parse(cur.fast_at) : fromMs
+  const fastT0 = Number.isFinite(fastFrom) && fastFrom <= at ? fastFrom : fromMs
+
+  /* 余温：没有新刺激时，快情绪不是散到绝对零度，是散回自己的水位（这一段的底色）——
+     一次事件之后它会慢慢落回去，而不是被底色一把拽住。 */
+  const warmthAt = (ms, bSeg) => {
+    const dtMin = Math.max(0, (ms - fastT0) / 60000)
+    return bSeg + (fPrev - bSeg) * Math.exp(-Math.pow(dtMin / fTau, fShape))
   }
+  const MAX_BACKFILL_MS = 720 * HOUR_MS // 上限只防坏时钟；30 天内照算
+  const endMs = Math.min(at, fromMs + MAX_BACKFILL_MS)
+  let cursor = fromMs
+  while (cursor < endMs) {
+    const next = Math.min(endMs, cursor + HOUR_MS)
+    const dtHours = (next - cursor) / HOUR_MS
+    const mid = (cursor + next) / 2
+    /* 底色 = 段式慢波 + 日节律 + 累积负荷；三层叠起来才是会呼吸的水位 */
+    const bPlan = valueAtTime(segs, mid) + circadianAt(mid, aid, circAmp)
+    const bEff = Math.max(-1, Math.min(1, bPlan + load))
+    const fSeg = avgOver((ms) => warmthAt(ms, bEff), cursor, next)
+    s = stepSlow({ s, b: bEff, p, fHourly: fSeg, dtHours, alpha, beta })
+    /* 负荷被「这一段慢情绪偏离水位多少」拖着走：偏得久 → 水位跟着挪 → 缓过来也慢 */
+    load = stepLoad({ load, s, bPlan, dtHours, gain: loadGain, tauH: loadTau })
+    cursor = next
+  }
+  const hours = Math.round(((endMs - fromMs) / HOUR_MS) * 100) / 100
   /* 快情绪不是「一句话一个值」：事件当下到峰值，之后按「隔了多久」自己往下滑。
      τ=20 分钟、伸展指数 1.5：46 秒几乎不动，5 分钟还剩 0.43，1 小时退到 0.03。 */
   const lastFastMs = cur.fast_at ? Date.parse(cur.fast_at) : (cur.slow_at ? Date.parse(cur.slow_at) : at)
@@ -475,12 +521,14 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
     ? level
     : Math.round((level + (fPrev - level) * fastDecayOf(db, aid, dtMin)) * 1000) / 1000
   const total = totalOf(s, f)
-  const bNow = valueAtTime(segs, at)
+  const bPlanNow = valueAtTime(segs, at) + circadianAt(at, aid, circAmp)
+  const bNow = Math.max(-1, Math.min(1, bPlanNow + load))
   const stamp = new Date(at).toISOString()
-  db.prepare('UPDATE affect_v3 SET baseline=?, slow=?, fast=?, total=?, slow_at=?, fast_at=? WHERE agent_id=?')
-    .run(bNow, s, f, total, stamp, stamp, aid)
+  db.prepare('UPDATE affect_v3 SET baseline=?, slow=?, fast=?, total=?, slow_at=?, fast_at=?, base_off=?, base_off_at=? WHERE agent_id=?')
+    .run(bNow, s, f, total, stamp, stamp, load, stamp, aid)
   return {
     baseline: bNow, slow: s, fast: f, total,
+    baseOff: load,
     fastSelf: Number(pleasure) || 0,
     fastEmpathy: f - (Number(pleasure) || 0),
     eUser, ePrev, hours,
@@ -631,12 +679,14 @@ export function getAffect(db, aid) {
         v3.total = Math.round(((Number(v3.slow) || 0) + 0.35 * v3.fast) * 1000) / 1000
       }
       r.v3 = v3
-      // 读侧单源：mood(0~1) 投影自慢情绪，避免与 v3.total / PAD mood 各说各话
-      if (Number.isFinite(Number(v3.slow))) {
-        r.mood = Math.max(0, Math.min(1, (Number(v3.slow) + 1) / 2))
-      }
     }
   } catch { /* 老库没有 v3 表 */ }
+  /* 心情只有一个出口：mood(0~1) 是 v3 总情绪(-1~1) 的展示换算，不再单独维护。
+     老库/首次启动没有 v3 时才退回存储值。底层心情（底色）看 v3.slow，别叫它「心情」。 */
+  if (r.v3 && Number.isFinite(Number(r.v3.total))) {
+    r.mood_raw = r.mood
+    r.mood = Math.round((0.5 + 0.5 * Math.max(-1, Math.min(1, Number(r.v3.total)))) * 1000) / 1000
+  }
   return r
 }
 
@@ -652,6 +702,7 @@ export function affectTrend(db, aid, days = 7) {
   const fromMs = toMs - span * 86400000
   let segs = []
   try { segs = ensureBaseline(db, aid, toMs) } catch { segs = [] }
+  const circAmp = paramNum(db, aid, 'affect.baseline.circadian', 0.06, 0, 0.3)
   const rows = db.prepare('SELECT * FROM affect_samples WHERE agent_id=? AND at>=? ORDER BY at').all(aid, new Date(fromMs).toISOString())
 
   const points = []
@@ -672,13 +723,17 @@ export function affectTrend(db, aid, days = 7) {
     /* 正好卡在 ±1 边上的不是读数，是钳位打满了：那一段没有信息，标成 null，别拿去画 */
     const noRead = fRaw === null || Math.abs(fRaw) >= 0.9995
     /* 拆得开就拆，拆不开就老实给 null —— 不编一个「共情 0.00」糊上去 */
+    const bo = Number.isFinite(Number(d.base_off)) ? Number(d.base_off) : 0
     points.push({
       at,
-      b: segs.length ? Math.round(valueAtTime(segs, at) * 1000) / 1000 : 0,
+      /* 底色 = 段式慢波 + 日节律 + 当时的累积负荷。老样本没存负荷，就只画前两层（少的那层不拿 0 硬补）。 */
+      b: segs.length ? Math.round((valueAtTime(segs, at) + circadianAt(at, aid, circAmp) + bo) * 1000) / 1000 : 0,
       s: sVal,
       f: noRead ? null : Math.round(fRaw * 1000) / 1000,
       fs: Number.isFinite(Number(d.fast_self)) ? Math.round(Number(d.fast_self) * 1000) / 1000 : null,
       fe: Number.isFinite(Number(d.fast_empathy)) ? Math.round(Number(d.fast_empathy) * 1000) / 1000 : null,
+      /* 累积负荷：老样本没有这一项，就给 null —— 不拿 0 冒充「当时没负荷」 */
+      bo: Number.isFinite(Number(d.base_off)) ? Math.round(Number(d.base_off) * 1000) / 1000 : null,
       lb: r.label || null,
       t: noRead ? null : totalOf(sVal, fRaw),
     })
@@ -879,13 +934,17 @@ export async function appraise(db, aid, text, opts = {}) {
   if (emit && gateMode === 'on') {
     try {
       const renewMin = Math.max(1, Math.min(120, Number(getParam(db, aid, 'affect.event.renew')) || 20))
-      const boost = Math.max(0, Math.min(0.5, Number(getParam(db, aid, 'affect.event.boost')) || 0.12))
+      const boost = Math.max(0, Math.min(0.5, Number(getParam(db, aid, 'affect.event.boost')) || 0.2))
       const refractMin = Math.max(0, Math.min(30, Number(getParam(db, aid, 'affect.event.refractory')) || 2))
       const open = db.prepare("SELECT id, label, intensity, started_at FROM affect_episodes WHERE agent_id=? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1").get(aid)
       if (open && open.label === dyn.label && Date.now() - Date.parse(open.started_at) < renewMin * 60000) {
         /* 同一段还没散：重新点亮，强度在原值和这一下之间取高，再加一点。
-           重新点亮是「第二下」——这一下就该实打实跳上去，不再走上升段，所以起点=新峰值。 */
-        const boosted = Math.min(1, Math.max(Number(open.intensity) || 0, Number(dyn.intensity) || 0) + boost)
+           重新点亮是「第二下」——这一下就该实打实跳上去，不再走上升段，所以起点=新峰值。
+           但加强必须**递减**：以前是每句固定 +0.12，一句话重复五遍就 0.3→0.9，
+           跟同一条链上的「习惯化」（sig 逐次下降）自相矛盾，也不符合「越接近顶越加不动」。
+           现在按剩余空间给增益：cur + boost·(1−cur)，无限次复现也收敛在 1 以内。 */
+        const cur = Math.max(Number(open.intensity) || 0, Number(dyn.intensity) || 0)
+        const boosted = Math.min(1, cur + boost * (1 - cur))
         dyn = { ...dyn, intensity: Math.round(boosted * 1000) / 1000 }
         const ts = now()
         db.prepare('UPDATE affect_episodes SET intensity=?, renewals=renewals+1, rise_from=?, rise_at=? WHERE id=?')
@@ -927,7 +986,7 @@ export async function appraise(db, aid, text, opts = {}) {
   }
   db.prepare('UPDATE affect_state SET primary_label=?, intensity=?, mood=?, pleasure=?, arousal=?, dominance=?, updated_at=? WHERE agent_id=?')
     .run(dyn.label, dyn.intensity, dyn.mood, dyn.pleasure, dyn.arousal, dyn.dominance, now(), aid)
-  // 情绪 v3：底色 → 慢情绪按小时步进 → 快情绪（含共情）→ 总情绪。失败不阻塞对话。
+  // 情绪 v3：底色 → 慢情绪按真实时长积分（快情绪按余温）→ 快情绪（含共情）→ 总情绪。失败不阻塞对话。
   // 事件 → 快情绪由这一下的反应驱动；非事件 → 快情绪只靠共情（自己的反应归零、自己退）。
   let v3 = null
   try {
@@ -941,13 +1000,13 @@ export async function appraise(db, aid, text, opts = {}) {
       fresh: emit,
     })
   } catch { v3 = null }
-  // 心情投影回写：affect_state.mood 跟慢情绪走，注入 / 面板旧字段不再各算各的
-  if (v3 && Number.isFinite(Number(v3.slow))) {
-    const mood01 = Math.max(0, Math.min(1, (Number(v3.slow) + 1) / 2))
+  /* 单一心情：把 mood 写成 v3 总情绪的展示别名，别让「两套心情」再分叉。
+     底色/水位在 v3.slow 与 affect_baseline 里，mood 只是它 + 快情绪的合成结果。 */
+  if (v3 && Number.isFinite(Number(v3.total))) {
     try {
-      db.prepare('UPDATE affect_state SET mood=? WHERE agent_id=?').run(mood01, aid)
-      dyn.mood = mood01
-    } catch { /* 老库 */ }
+      const alias = Math.max(0, Math.min(1, 0.5 + 0.5 * Number(v3.total)))
+      db.prepare('UPDATE affect_state SET mood=? WHERE agent_id=?').run(Math.round(alias * 1000) / 1000, aid)
+    } catch { /* 别名写失败不影响主流程 */ }
   }
   let eid2 = null
   if (emit && !renewed) {
@@ -991,21 +1050,17 @@ export async function appraise(db, aid, text, opts = {}) {
         slow: v3 ? v3.slow : null,
         fast: v3 ? v3.fast : null,
         baseline: v3 ? v3.baseline : null,
+        base_off: v3 ? v3.baseOff : null,
         /* 快情绪拆开存：自己那半 + 从你这儿共情来的那半。老样本没有这两项，前端就别硬编 */
         fast_self: v3 ? v3.fastSelf : null,
         fast_empathy: v3 ? v3.fastEmpathy : null,
       }))
   event(db, aid, 'affect.appraised', {
-    episode_id: eid, label: dyn.label,
-    // 分字段：shadow 下 emit 恒真、passed 仍可假——别再用 gate:0/1 把两件事拧成一件
-    passed: !!gate.passed,
-    emit: !!emit,
-    mode: gateMode,
-    emitted: emit, // 兼容旧读方
-    sig: gate.sig, theta: gate.theta,
+    episode_id: eid, label: dyn.label, emitted: emit,
+    sig: gate.sig, theta: gate.theta, gate: emit ? 1 : 0,
     algo: { appraise: appraisal.algo, dyn: dyn.algo },
     edges: edgeBias.fired || [],
-    v3: v3 ? { baseline: v3.baseline, slow: v3.slow, fast: v3.fast, total: v3.total } : null,
+    v3: v3 ? { baseline: v3.baseline, base_off: v3.baseOff, slow: v3.slow, fast: v3.fast, total: v3.total } : null,
   })
   return {
     id: eid, label: dyn.label, intensity: dyn.intensity, pleasure: dyn.pleasure,
@@ -1013,7 +1068,7 @@ export async function appraise(db, aid, text, opts = {}) {
     arousal: dyn.arousal, dominance: dyn.dominance, mood: dyn.mood,
     emitted: emit,
     renewed,
-    gate: { sig: gate.sig, theta: gate.theta, passed: gate.passed, emit: !!emit, mode: gateMode },
+    gate: { sig: gate.sig, theta: gate.theta, passed: gate.passed, mode: gateMode },
     appraisal, model: model.status(),
     algo: { appraise: appraisal.algo, dyn: dyn.algo },
     edges: { fired: edgeBias.fired || [], intensityMul: edgeBias.intensityMul || 1 },
@@ -1045,11 +1100,19 @@ export function decayAffect(db, aid, hours = 24) {
   const out = runBound('affect_dyn', aid, { db, aid }, {
     mode: 'decay', state: r, hours, coef: coef * slow,
   }, String(getParam(db, aid, 'affect.dynamics.formula') || 'v1'))
+  // 单一心情：mood 跟 v3 总情绪走，不跟旧衰减公式各算一套（否则点一次衰减就分叉）
+  let moodAlias = out.mood
+  try {
+    const v3 = db.prepare('SELECT total FROM affect_v3 WHERE agent_id=?').get(aid)
+    if (v3 && Number.isFinite(Number(v3.total))) {
+      moodAlias = Math.round((0.5 + 0.5 * Math.max(-1, Math.min(1, Number(v3.total)))) * 1000) / 1000
+    }
+  } catch { /* 老库没有 v3 */ }
   db.prepare('UPDATE affect_state SET intensity=?, mood=?, updated_at=? WHERE agent_id=?')
-    .run(out.intensity, out.mood, now(), aid)
+    .run(out.intensity, moodAlias, now(), aid)
   db.prepare('INSERT INTO affect_samples VALUES(?,?,?,?,?,?,?)')
-    .run(nid('afs_'), aid, now(), r.primary_label, out.intensity, JSON.stringify({}), JSON.stringify({ mood: out.mood }))
-  return { intensity: out.intensity, mood: out.mood, algo: out.algo }
+    .run(nid('afs_'), aid, now(), r.primary_label, out.intensity, JSON.stringify({}), JSON.stringify({ mood: moodAlias }))
+  return { intensity: out.intensity, mood: moodAlias, algo: out.algo }
 }
 
 /** 这一段在上升段的哪一边：rise（还在往上爬）/ decay（已经到顶，正在退）/ ended（散场了） */

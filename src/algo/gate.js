@@ -18,8 +18,6 @@
  * 过闸线取 0.10：宁可多记住几次真的生气/高兴，也别把日子过成一条直线。
  */
 
-export const GATE_VERSION = 'v2'
-
 export const GATE = {
   /** 过闸线。0.10 比影子期的 0.15 松一档：任务话仍过不去，语气一变就能进 */
   theta: 0.10,
@@ -115,8 +113,7 @@ export function socialFloorOf(text) {
   if (!directed && !agentState && !idiom) return null
   if (!directed && mine) return null
   const strong = agentState || idiom || /(不活|没反应|太平|不像|不够|太差|笨|蠢|懒|慢|厉害|棒|喜欢|讨厌|烦|气|失望|谢谢|夸|饿|冷|暖|委屈|难受|开心|高兴|错|糟糕|活|不错|真好)/.test(t)
-  // 不要裸「太」：「太好了 / 太喜欢」是褒义；负面靠「太差」等强词或其它否定词。
-  const neg = idiom || /(不|没|差|笨|蠢|懒|慢|讨厌|烦|气|失望|错|糟糕)/.test(t)
+  const neg = idiom || /(不|没|太|差|笨|蠢|懒|慢|讨厌|烦|气|失望|错|糟糕)/.test(t)
   if (!strong) return { rel: 0.35, cong: 0, change: 0.1, level: 'addressed' }
   return { rel: idiom ? 0.5 : 0.55, cong: neg ? -0.35 : 0.45, change: 0.35, level: idiom ? 'idiom' : 'evaluated' }
 }

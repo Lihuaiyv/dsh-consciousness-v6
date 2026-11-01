@@ -65,6 +65,3 @@ export function run(name, version, ctx, input) {
 }
 
 /** 测试用：清空登记（随后需重新 bootstrap） */
-export function _resetForTest() {
-  map.clear()
-}

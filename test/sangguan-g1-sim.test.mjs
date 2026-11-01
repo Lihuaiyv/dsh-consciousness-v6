@@ -11,12 +11,12 @@ import { performance } from 'node:perf_hooks'
 import { openDb } from '../src/db.js'
 import { getFlag } from '../src/kernel.js'
 import { llmBudgetSnapshot } from '../src/modules/llm_budget.js'
-import { readEvents, lastSeq } from '../src/modules/sangguan/ledger.js'
+import { readEvents } from '../src/modules/sangguan/ledger.js'
 import { loadState, rebuild, snapshot, listHeads } from '../src/modules/sangguan/projection.js'
 import { checkInvariants } from '../src/modules/sangguan/fold.js'
 import { setSangguanConfig } from '../src/modules/sangguan/config.js'
 import { budgetSnapshot } from '../src/modules/sangguan/budget.js'
-import { afterTurn, flushFast, bufferOf, pendingList } from '../src/modules/sangguan/fast.js'
+import { afterTurn, flushFast, bufferOf, pendingList, drainValues } from '../src/modules/sangguan/fast.js'
 import { fakeChat } from './sangguan-fake-llm.mjs'
 
 let pass = 0
@@ -173,6 +173,9 @@ for (const aid of [AG.normal, AG.tight]) for (let i = 0; i < 6 && (bufferOf(db, 
 }
 
 // ======================= 断言 =======================
+await drainValues()
+const valueOnly = (list) => list.every((e) => e.type === 'CLAIM_EXP' || e.type === 'EVIDENCE' || e.type === 'EDGE_ADD' || e.type === 'JOB_DONE' || e.type === 'DUP')
+  && list.filter((e) => e.type === 'CLAIM_EXP').every((e) => e.layer === 'V')
 check('全程无写入被拒（快环产出的每笔事件都合法）', errors.length === 0, errors.slice(0, 3))
 check('全程不变式成立（I4 / P21 / P9）', invBad.length === 0, invBad.slice(0, 3))
 check('每日预算池从不超额', budgetBad.length === 0, budgetBad.slice(0, 3))
@@ -185,7 +188,8 @@ check('记忆预算完全不受三观影响', Object.values(AG).every((aid) => {
   for (let d = 0; d < DAYS; d++) if (llmBudgetSnapshot(db, aid, new Date(Date.parse('2026-11-02') + d * 86400000).toISOString().slice(0, 10)).used) return false
   return true
 }))
-check('开关关闭的 agent：零模型调用、零账本、零缓冲', chats[AG.off].count() === 0 && lastSeq(db, AG.off) === 0 && getFlag(db, 'sangguan.fast.buf:' + AG.off) == null)
+const offEv = readEvents(db, AG.off)
+check('开关关闭的 agent：快环不跑，价值进料可以写', chats[AG.off].count() === 0 && getFlag(db, 'sangguan.fast.buf:' + AG.off) == null && valueOnly(offEv), { n: offEv.length, types: offEv.map((e) => e.type).slice(0, 8) })
 
 const evs = readEvents(db, AG.normal)
 const count = (type) => evs.filter((e) => e.type === type).length
@@ -210,7 +214,7 @@ check('模型自评被 W1 拒收', count('REJECT') > 0 && !layerHeads.some((h) =
 check('用户证据入账（act / verdict）', count('EVIDENCE') > 0)
 check('判定故障期间进入降级 / 积压，恢复后补判清空', count('PENDING_JUDGE') > 0 && pendingList(db, AG.normal).length === 0, { pend: count('PENDING_JUDGE'), left: pendingList(db, AG.normal).length })
 const offDayEvents = evs.filter((e) => e.at.startsWith('2026-11-22'))
-check('中途关闭开关的那天没有任何三观事件', offDayEvents.length === 0, offDayEvents.length)
+check('中途关闭开关的那天没有快环事件', valueOnly(offDayEvents), offDayEvents.map((e) => e.type).slice(0, 8))
 const tightEvs = readEvents(db, AG.tight)
 check('预算紧的 agent：发生过延后，但缓冲最终被消化', stats.deferred > 0 && bufferOf(db, AG.tight).turns.length === 0 && tightEvs.length > 0, { deferred: stats.deferred, left: bufferOf(db, AG.tight).turns.length })
 const avgHook = hookMs.reduce((a, b) => a + b, 0) / hookMs.length

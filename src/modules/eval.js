@@ -7,7 +7,7 @@ import { agent, chars, PARAMS, getParam, writeParam, METRICS, model, err, nid } 
 import { recall } from './memory.js'
 import { composeRulesReply } from '../model.js'
 import { run as runAlgo } from '../algo/index.js'
-import { getPersona, listRelations, listValues } from './persona.js'
+import { getPersona, listRelations } from './persona.js'
 import { getCondition } from './ops.js'
 import { computeEdgeBias, edgeGraph, MODULE_EDGES } from './edges.js'
 import { readAxes } from './traits.js'
@@ -62,7 +62,6 @@ function jaccard(a, b) {
   return inter / Math.max(1, A.size + B.size - inter)
 }
 
-
 // ---------------- 校准值（离线测量，门槛只认有样本和时效的记录） ----------------
 const CAL_TTL_MS = 90 * 86400000
 export function readCalibration(db, aid) {
@@ -76,14 +75,6 @@ export function readCalibration(db, aid) {
 function calFresh(c, need) {
   return !!c && Number(c.n) >= need && Number.isFinite(Date.parse(c.at)) && Date.now() - Date.parse(c.at) <= CAL_TTL_MS
 }
-export function writeCalibration(db, aid, patch) {
-  const cur = readCalibration(db, aid) || {}
-  const next = { ...cur, ...patch, updated_at: new Date().toISOString() }
-  db.prepare('INSERT INTO flags(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
-    .run('calibration:' + aid, JSON.stringify(next))
-  return next
-}
-
 export function measureAffectKappa(db, aid) {
   // 只认离线校准记录：200 条以上人工双标、90 天内
   const c = readCalibration(db, aid)?.affect

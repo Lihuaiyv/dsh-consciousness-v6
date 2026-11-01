@@ -19,7 +19,7 @@ export function taxonomyTemplate() {
     memory_marks: ['normal', 'pinned', 'sensitive'],
     persona_paths: [
       'axis.ei', 'axis.sn', 'axis.tf',
-      'axis.jp', 'axis.sensitivity',
+      'axis.jp', 'axis.sensitivity', 'values.weight',
     ],
     affect_labels: ['joy', 'peaceful', 'curious', 'calm', 'confused', 'lost', 'irritated', 'frustrated'],
     action_ports: ['send_message', 'browse', 'remind'],
@@ -194,19 +194,6 @@ export function hardDeleteArtifact(db, artId) {
   db.prepare('DELETE FROM rule_artifacts WHERE id=?').run(artId)
   return { id: artId, deleted: true }
 }
-
-export function retireArtifact(db, artId) {
-  const art = getArtifact(db, artId)
-  const refs = protectedRefs(db, artId).filter((r) => r.type !== 'previous')
-  // previous 可标 retired，但仍不可硬删直至冷静期且无引用
-  if (refs.some((r) => r.type === 'active' || r.type === 'v0' || r.type === 'pinned' || r.type === 'fork')) {
-    err(409, 'PROTECTED', '仍被保护指针或影子引用，不可退役')
-  }
-  db.prepare("UPDATE rule_artifacts SET status='retired', retired_at=? WHERE id=?")
-    .run(now(), artId)
-  return getArtifact(db, artId)
-}
-
 
 // 当前生效的情绪标签表：读绑定的 taxonomy 工件，读不到就用默认 8 类
 export const DEFAULT_AFFECT_LABELS = Object.freeze(['joy', 'peaceful', 'curious', 'calm', 'confused', 'lost', 'irritated', 'frustrated'])

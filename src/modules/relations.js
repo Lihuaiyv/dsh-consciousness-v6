@@ -12,7 +12,6 @@ import crypto from 'node:crypto'
 import { now } from '../db.js'
 import { err, nid, agent, active, tx } from '../kernel.js'
 import { applyEvent, habitOf, weightOf, stimulusKey, repairTrust, REL_DEFAULTS } from '../algo/reldyn.js'
-import { setCooldown, cooldownActive } from './drive.js'
 
 /** 三档策略表：代码是唯一来源，启动时 upsert（用户改值会在下次启动被覆盖）。 */
 export const TIERS = Object.freeze([
@@ -724,61 +723,6 @@ export function listReview(db, aid, opts = {}) {  const state = opts.state ? Str
 
 // ---------------- 写入：人 / 边 / 提及 ----------------
 
-/**
- * 旧 relations / 导入行 → 活账本。写权威在 rel_person；同名合并，第二主人降为熟人。
- * 指纹按数值去重，相同三轴重放不算新账。
- */
-export function syncLegacyToLedger(db, aid, row = {}) {
-  agent(db, aid)
-  seedTiers(db)
-  const name = String(row.name || '').trim()
-  if (!name) return null
-  let tier = TIER_KEYS.includes(row.kind) ? row.kind : 'acquaintance'
-  const closeness = clamp01(row.closeness == null ? 0.2 : row.closeness)
-  const trust = clamp01(row.trust == null ? 0.2 : row.trust)
-  const dependence = clamp01(row.dependence == null ? 0 : row.dependence)
-  const summary = row.notes == null ? null : String(row.notes).slice(0, 200)
-  const found = db.prepare("SELECT * FROM rel_person WHERE agent_id=? AND status<>'archived'").all(aid)
-    .find((p) => [p.name, ...JSON.parse(p.aliases || '[]')].some((n) => normalizeName(n) === normalizeName(name)))
-  const owner = ownerPerson(db, aid)
-  if (tier === 'owner' && owner && (!found || found.id !== owner.id)) tier = 'acquaintance'
-  if (found && found.tier === 'owner') tier = 'owner' // 主人卡不因旧表 kind 被降级
-  const fp = 'legacy-sync:' + normalizeName(name) + ':' + [tier, closeness, trust, dependence, summary || ''].join('|')
-  if (found) {
-    const patch = { closeness, trust, dependence }
-    if (summary != null && summary !== found.summary) patch.summary = summary
-    if (tier !== found.tier && found.tier !== 'owner') patch.tier = tier
-    commit(db, aid, {
-      kind: 'import', source: 'import', text: name, fingerprint: fp,
-      mutations: [{ op: 'person.update', person_id: found.id, patch }],
-    })
-    return found.id
-  }
-  const gone = archivedByName(db, aid, name)
-  if (gone) {
-    commit(db, aid, {
-      kind: 'import', source: 'import', text: name + '|revive', fingerprint: fp + ':revive',
-      mutations: [{
-        op: 'person.update', person_id: gone.id,
-        patch: { status: 'active', tier, closeness, trust, dependence, ...(summary != null ? { summary } : {}) },
-      }],
-    })
-    return gone.id
-  }
-  const pid = nid('rpr_')
-  commit(db, aid, {
-    kind: 'import', source: 'import', text: name, fingerprint: fp,
-    mutations: [{
-      op: 'person.create',
-      person: {
-        id: pid, name, tier, graph_visible: true, summary,
-        closeness, trust, dependence, source: 'import',
-      },
-    }],
-  })
-  return pid
-}
-
 /** 同名但已经归档的人：再加回来时复用同一张卡，而不是被同名事件指纹吞掉。 */
 function archivedByName(db, aid, name) {
   const q = normalizeName(name)
@@ -1000,9 +944,6 @@ function stripNameLead(raw) {
 const NOT_NAME_CHARS = new Set(Array.from('很挺也都说是 在不没有会要想让把帮给跟和这那他她我你们个就又才已刚今昨明上下前后里外家去来最更好多太真然呢啊吧呀哦嗯吗与对被其该每各另某表堂亲们些的'))
 /** 界面词不是人：「叫手动添加关系」不能建出一个叫「手动添加」的人。 */
 const NOT_PERSON_WORDS = /添加|删除|关系|菜单|设置|功能|页面|按钮|下拉|收起|展开|导入|导出|刷新|保存|取消/
-const ROLE_WORDS = new RegExp('(?:' + ROLE_LIST + ')')
-/** 带这些称呼建出来的人，按「熟人候选」落（分类不是节点，tier 只是策略）。 */
-const FRIEND_ROLES = new RegExp('^(?:' + ROLE_LIST + ')$')
 
 function looksLikeName(s) {
   const chars = Array.from(String(s || ''))
@@ -1285,58 +1226,6 @@ export function bootstrap(db, aid) {
 }
 
 // ---------------- 遗忘 / 重建 / 体检 ----------------
-
-const RITUAL_DAYS = 14
-
-/**
- * R09（涂尔干）：14 天没有共同活动 → 主人亲近 −0.02，每 14 天最多一次。
- * 活账本是 rel_person；旧 relations 表只做镜像，给还没切完的读方。
- */
-export function tickRitual(db, aid) {
-  agent(db, aid)
-  let owner = ownerPerson(db, aid)
-  if (!owner) {
-    try { bootstrap(db, aid) } catch { /* ignore */ }
-    owner = ownerPerson(db, aid)
-  }
-  // 老库还没迁完：退回旧表
-  if (!owner) {
-    const legacy = db.prepare('SELECT * FROM relations WHERE agent_id=? AND root=1').get(aid)
-      || db.prepare('SELECT * FROM relations WHERE agent_id=? ORDER BY closeness DESC LIMIT 1').get(aid)
-    if (!legacy) return null
-    const row = db.prepare('SELECT last_interaction_at FROM agents WHERE id=?').get(aid)
-    const last = row && row.last_interaction_at
-    if (!last) return null
-    const idle = (Date.now() - Date.parse(last)) / 86400000
-    if (!(idle >= RITUAL_DAYS)) return null
-    if (cooldownActive(db, aid, 'ritual', legacy.id)) return null
-    const before = Number(legacy.closeness)
-    const after = Math.max(0, +(before - 0.02).toFixed(3))
-    db.prepare('UPDATE relations SET closeness=?, updated_at=? WHERE id=?').run(after, now(), legacy.id)
-    setCooldown(db, aid, 'ritual', legacy.id, RITUAL_DAYS, '14 天没有共同活动')
-    return { relation: legacy.name, before, after, idle_days: +idle.toFixed(1), rule: 'R09', ledger: 'relations' }
-  }
-  const row = db.prepare('SELECT last_interaction_at FROM agents WHERE id=?').get(aid)
-  const last = row && row.last_interaction_at
-  if (!last) return null
-  const idle = (Date.now() - Date.parse(last)) / 86400000
-  if (!(idle >= RITUAL_DAYS)) return null
-  if (cooldownActive(db, aid, 'ritual', owner.id)) return null
-  const before = Number(owner.closeness)
-  const after = Math.max(0, +(before - 0.02).toFixed(3))
-  commit(db, aid, {
-    kind: 'ritual', source: 'system', text: 'R09',
-    fingerprint: 'ritual:' + owner.id + ':' + new Date().toISOString().slice(0, 10),
-    mutations: [{ op: 'person.update', person_id: owner.id, patch: { closeness: after } }],
-  })
-  // 镜像旧表：同名 / root 行跟着改，面板旧读方不打架
-  try {
-    db.prepare('UPDATE relations SET closeness=?, updated_at=? WHERE agent_id=? AND (root=1 OR name=?)')
-      .run(after, now(), aid, owner.name)
-  } catch { /* 旧表没有也不要紧 */ }
-  setCooldown(db, aid, 'ritual', owner.id, RITUAL_DAYS, '14 天没有共同活动')
-  return { relation: owner.name, before, after, idle_days: +idle.toFixed(1), rule: 'R09', ledger: 'rel_person' }
-}
 
 /** 夜间衰减：R 曲线 + 降级 + 归档。主人不走时间；只让人物卡退场，不删原文。 */
 export function tick(db, aid, opts = {}) {

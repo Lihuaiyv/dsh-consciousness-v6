@@ -136,23 +136,10 @@ const HIST_TABLES = [
  * 只数文本本身，和仓库卡片上的总量同口径。
  */
 export function history(db, aid, opt = {}) {
+  const days = Math.max(7, Math.min(400, Number(opt.days) || 365))
   const today = new Date()
-  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
-  // days=0 / 'birth'：从实例出生日画到今天（上限 10 年，防极端）
-  const wantBirth = opt.days === 0 || opt.days === 'birth' || opt.from === 'birth'
-  let days
-  if (wantBirth) {
-    let bornMs = todayUtc
-    try {
-      const row = db.prepare('SELECT created_at FROM agents WHERE id=?').get(aid)
-      const t = row && row.created_at ? Date.parse(row.created_at) : NaN
-      if (Number.isFinite(t)) bornMs = Date.UTC(new Date(t).getUTCFullYear(), new Date(t).getUTCMonth(), new Date(t).getUTCDate())
-    } catch { /* 没表就当今天 */ }
-    days = Math.max(7, Math.min(3650, Math.floor((todayUtc - bornMs) / 86400000) + 1))
-  } else {
-    days = Math.max(7, Math.min(400, Number(opt.days) || 365))
-  }
-  const startDay = new Date(todayUtc - (days - 1) * 86400000).toISOString().slice(0, 10)
+  const startDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) - (days - 1) * 86400000)
+    .toISOString().slice(0, 10)
   const startIso = startDay + 'T00:00:00.000Z'
   const one = (sql, ...args) => {
     try { return db.prepare(sql).get(aid, ...args) } catch { return null }

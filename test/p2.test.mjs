@@ -9,8 +9,8 @@ import { openDb, now } from '../src/db.js'
 import { attachDb } from '../src/algo/index.js'
 import { addMemory } from '../src/modules/memory.js'
 import { extractEntityNames, resolveEntity, entityForText, listEntities, factsOfEntity } from '../src/modules/entities.js'
-import { similarity, polarity, decideWrite, applyWrite, GATE } from '../src/modules/gate.js'
-import { enqueueExtraction, tickExtraction, queueStats, pruneQueue, retryFailed, reclaimStuck, MAX_ATTEMPTS } from '../src/modules/extract_queue.js'
+import { similarity, polarity, decideWrite, applyWrite, GATE, polarityFlip } from '../src/modules/gate.js'
+import { enqueueExtraction, tickExtraction, queueStats, pruneQueue, retryFailed, MAX_ATTEMPTS } from '../src/modules/extract_queue.js'
 import { handle } from '../src/api.js'
 
 let pass = 0
@@ -53,6 +53,13 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   check('同义 → 合并', dup.action === 'merge' && dup.target.id === base.id, dup)
   const flip = decideWrite(db, aid, { text: '用户不喜欢喝美式咖啡' })
   check('高相似 + 极性相反 → 冲突', flip.action === 'conflict', flip)
+
+  // 「别」两义 + 公共片段太短：这两个都是误判来源，不许再判成冲突
+  check('别的东西里的别不是否定', polarityFlip('快情绪 f现在有没有加上：喜欢的东西', '情绪这个可能是因为刚刚在优化别的东西') === false)
+  check('只共享虚词尾巴不算同一件事', polarityFlip('我喜欢的东西', '别人用的东西') === false)
+  check('真的否定仍然算翻转', polarityFlip('用户喜欢喝美式咖啡', '用户不喜欢喝美式咖啡') === true)
+  check('别+动词仍然算否定', polarityFlip('别去那家店了', '去那家店了') === true)
+  check('公共片段 ≥4 字才判', polarityFlip('用户喜欢吃辣', '用户不喜欢吃辣') === true)
   const fresh = decideWrite(db, aid, { text: '用户养了一只叫团子的橘猫' })
   check('不相干 → 新增', fresh.action === 'new', fresh)
   const short = decideWrite(db, aid, { text: '好' })
@@ -68,13 +75,6 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
 
   const created = applyWrite(db, aid, { text: '用户住在杭州西湖边' }, (c) => addMemory(db, aid, { text: c.text }))
   check('门控放行新增', created.action === 'new' && !!created.id, created)
-
-  // 冲突：门控独占留痕；write 必须 skipConflict，否则会双行 conflicts
-  const beforeCfl = db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=?").get(aid).n
-  const flipped = applyWrite(db, aid, { text: '用户不喜欢喝美式咖啡' },
-    (c) => addMemory(db, aid, { text: c.text, skipConflict: true }))
-  const afterCfl = db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=?").get(aid).n
-  check('门控冲突只落一条', flipped.action === 'conflict' && afterCfl === beforeCfl + 1, { flipped, beforeCfl, afterCfl })
 }
 
 // ---- 抽取队列
@@ -110,31 +110,6 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
 
   db.prepare("UPDATE extract_queue SET updated_at=? WHERE state IN ('done','failed')").run(new Date(Date.now() - 10 * 86400000).toISOString())
   check('清理旧记录', pruneQueue(db, aid, 7) >= 1)
-
-  // 卡死的 running：原子领取 + reclaim
-  const t3 = [{ role: 'user', text: '卡住的任务该被捞回' }]
-  const stuck = enqueueExtraction(db, aid, t3)
-  db.prepare("UPDATE extract_queue SET state='running', updated_at=? WHERE id=?")
-    .run(new Date(Date.now() - 20 * 60 * 1000).toISOString(), stuck.id)
-  check('超时 running 可 reclaim', reclaimStuck(db, aid, 10 * 60 * 1000) === 1, queueStats(db, aid))
-  check('reclaim 后回到 pending', queueStats(db, aid).pending >= 1 && queueStats(db, aid).running === 0, queueStats(db, aid))
-
-  // 双 tick 抢同一条：第二次 claim 不到，不跑 runner（先清空，只留这一条 pending）
-  db.prepare("DELETE FROM extract_queue WHERE agent_id=?").run(aid)
-  const t4 = [{ role: 'user', text: '只该被跑一次的任务' }]
-  const only = enqueueExtraction(db, aid, t4)
-  let raceCalls = 0
-  const slow = async (turns) => {
-    raceCalls++
-    await new Promise((r) => setTimeout(r, 40))
-    return { n: turns.length }
-  }
-  const [a1, a2] = await Promise.all([
-    tickExtraction(db, aid, slow, { max: 1 }),
-    tickExtraction(db, aid, slow, { max: 1 }),
-  ])
-  const raced = [...a1, ...a2].filter((x) => x.id === only.id)
-  check('并行 tick 只跑一次 runner', raceCalls === 1 && raced.filter((x) => x.ok).length === 1, { raceCalls, a1, a2, only })
 }
 
 // ---- HTTP

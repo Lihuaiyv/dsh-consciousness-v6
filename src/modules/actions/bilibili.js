@@ -32,12 +32,6 @@ const state = {
   booted: false,
 }
 
-export function setBiliCookie(cookie) {
-  state.extraCookie = String(cookie || '').trim()
-  // 用户换了 cookie，旧 wbi 仍可用，但 cookie 变了就重新取一次
-  state.booted = false
-}
-
 function cookieHeader() {
   const base = [...state.jar.entries()].map(([k, v]) => k + '=' + v).join('; ')
   return [base, state.extraCookie].filter(Boolean).join('; ')

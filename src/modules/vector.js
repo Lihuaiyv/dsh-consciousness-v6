@@ -14,7 +14,6 @@ import { now } from '../db.js'
 
 export const EMBED_TIMEOUT_MS = 800
 export const EMBED_WAIT_MS = 150
-export const EMBED_DIM = 1024
 
 const CACHE = new Map()
 const CACHE_TTL = 30 * 60 * 1000
@@ -89,12 +88,6 @@ export async function takeEmbedding(text, waitMs = EMBED_WAIT_MS) {
   return withTimeout(running, waitMs)
 }
 
-/** 检索侧注册清缓存钩子（可多个），避免 vector ↔ retrieve 循环 import。 */
-const _onWriteHooks = []
-export function onVectorWrite(fn) {
-  if (typeof fn === 'function') _onWriteHooks.push(fn)
-}
-
 /** 写一条向量（覆盖）。 */
 export function writeVector(db, aid, memoryId, vec, modelName = 'default') {
   const v = toF32(vec)
@@ -103,28 +96,8 @@ export function writeVector(db, aid, memoryId, vec, modelName = 'default') {
     db.prepare(`INSERT INTO memory_vec(memory_id,agent_id,dim,model,vec,at) VALUES(?,?,?,?,?,?)
       ON CONFLICT(memory_id) DO UPDATE SET dim=excluded.dim, model=excluded.model, vec=excluded.vec, at=excluded.at`)
       .run(memoryId, aid, v.length, String(modelName || 'default').slice(0, 60), Buffer.from(v.buffer, v.byteOffset, v.byteLength), now())
-    // 检索侧有 30s 缓存；写完立刻作废，否则同进程还看到旧池
-    for (const h of _onWriteHooks) {
-      try { h(aid, memoryId) } catch { /* ignore */ }
-    }
     return true
   } catch { return false }
-}
-
-/**
- * 写入后异步补向量：有 embedding 能力才跑；失败静默，不影响对话。
- * 不阻塞调用方（setTimeout 0）。
- */
-export function scheduleEmbed(db, aid, memoryId, text) {
-  if (!memoryId || !canEmbed()) return
-  const body = String(text || '').trim().slice(0, 1200)
-  if (!body) return
-  const t = setTimeout(() => {
-    embedText(body).then((vec) => {
-      if (vec) writeVector(db, aid, memoryId, vec)
-    }).catch(() => { /* 单条失败下次回填 */ })
-  }, 0)
-  if (t.unref) t.unref()
 }
 
 /** 批量回填：只补还没有向量的（或 force 全部重算）。返回计数。 */
@@ -160,7 +133,3 @@ export function vectorStats(db, aid) {
   } catch { return { vectors: 0, memories: 0, canEmbed: false } }
 }
 
-export function clearEmbeddingCache() {
-  CACHE.clear()
-  INFLIGHT.clear()
-}

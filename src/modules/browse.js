@@ -12,6 +12,7 @@
  */
 import { now } from '../db.js'
 import { err, nid, agent, getParam } from '../kernel.js'
+import { addEvidence } from './axis_evidence.js'
 
 export const MAX_PER_HOUR = 30
 export const PER_ITEM_CAP = 0.02
@@ -134,6 +135,20 @@ export function ingestBrowse(db, aid, body = {}) {
     id, aid, url || null, domain || null, title || null, text || null, query || null, channel,
     Math.max(0, Number(body.dwell_ms) || 0), JSON.stringify(tags), JSON.stringify(weights), at,
   )
+  // 浏览也接性格：真读进去了（深读/新领域）→ 往 N 推一条；停留 <3s 的只算一点点。
+  // 这里不 flush，等夜间统一结算，避免一次 feed 把轴顶飞。
+  try {
+    const deep = tags.includes('deep')
+    const shallow = Number(body.dwell_ms || 0) > 0 && Number(body.dwell_ms || 0) < 3000
+    if (deep || newDomain) {
+      addEvidence(db, aid, {
+        axis: 'sn', dir: 1,
+        strength: deep ? 0.5 : 0.3,
+        source: shallow ? 'browse_shallow' : 'browse',
+        refId: id,
+      })
+    }
+  } catch { /* 性格那条线失败不影响浏览本体 */ }
   return { ok: true, id, at, tags, weights, new_domain: newDomain, domain }
 }
 

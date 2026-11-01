@@ -17,13 +17,6 @@ import { vectorize, cosine } from './fingerprint.js'
 import { retrievability } from './tiers.js'
 import { run as registryRun, has as registryHas } from '../algo/registry.js'
 import { normalizeTerms } from './terms.js'
-import { onVectorWrite } from './vector.js'
-import { searchVectorAnn, attachVectorIndexInvalidation, vectorIndexMode } from './vector_index.js'
-import { getParam } from '../kernel.js'
-import { localDay } from '../db.js'
-import { isHabitText } from './memory.js'
-
-export const SCENES = { S1: '每轮', S2: '回看', S3: '深检索' }
 
 /** 证据门：每个场景的准入线（E 的尺度，0~1）。 */
 export const GATE = { S1: 0.35, S2: 0.30, S3: 0.20 }
@@ -299,41 +292,6 @@ export function searchByEntity(db, aid, query, opt = {}) {
 }
 
 /**
- * U7：从冷/归档层捞「习惯类」且与查询有字面重合的事实。
- * 只给 S1 窄门用——不是整库开冷，避免日常注入被冷层淹没。
- */
-export function searchHabitCold(db, aid, query) {
-  const q = String(query || '').trim()
-  if (q.length < 2 || !hasTempCol(db)) return []
-  const grams = [...new Set((q.match(/[\u4e00-\u9fff]{2}|[a-zA-Z0-9]{3,}/g) || []).slice(0, 6))]
-  if (!grams.length) return []
-  let rows = []
-  try {
-    rows = db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,temp_state,fact_key,terms
-      FROM memory_items
-      WHERE agent_id=? AND status='active' AND invalid_at IS NULL
-        AND temp_state IN ('cold','archived') AND type IN ('fact','appraisal')
-      ORDER BY heat DESC, created_at DESC LIMIT 80`).all(aid)
-  } catch { return [] }
-  const out = []
-  for (const r of rows) {
-    const text = String(r.text || '')
-    const key = String(r.fact_key || '')
-    const habit = key.startsWith('habit.') || isHabitText(text)
-    if (!habit) continue
-    if (!grams.some((g) => text.includes(g) || key.includes(g))) continue
-    out.push({
-      partition: 'T1', id: r.id, text, type: r.type, band: r.band, mark: r.mark,
-      created_at: r.created_at, heat: r.heat, last_decay_at: r.last_decay_at,
-      stability: r.stability, valence: r.valence, terms: r.terms, fact_key: r.fact_key,
-      fts: 0.55, via: 'habit_cold', temp_state: r.temp_state,
-    })
-    if (out.length >= 8) break
-  }
-  return out
-}
-
-/**
  * 扩词通道：模型给的检索词各自去库里捞一遍。
  *
  * 为什么不拼成 `q + ' ' + terms`：overlap 的分母是查询的实义 gram 数，
@@ -347,9 +305,6 @@ export function searchByTerms(db, aid, terms, opt = {}) {
   const list = normalizeTerms(terms, 8)
   if (!list.length) return []
   const coldFilter = (opt.includeCold || !hasTempCol(db)) ? '' : " AND (temp_state IS NULL OR temp_state IN ('hot','warm'))"
-  // 与 searchFacts 对齐：S1 不带已被取代的旧说法
-  const supOn = hasSupCol(db)
-  const supFilter = (opt.includeSuperseded || !supOn) ? '' : ' AND invalid_at IS NULL'
   const card = hasCardCol(db)
   const hits = new Map()
   for (const term of list) {
@@ -357,11 +312,11 @@ export function searchByTerms(db, aid, terms, opt = {}) {
       const like = '%' + term + '%'
       const rows = card
         ? db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,terms,fact_key
-          FROM memory_items WHERE agent_id=? AND status='active'${supFilter}
+          FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
             AND (text LIKE ? OR terms LIKE ?)${coldFilter}
           ORDER BY heat DESC, created_at DESC LIMIT 15`).all(aid, like, like)
         : db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence
-          FROM memory_items WHERE agent_id=? AND status='active'${supFilter}
+          FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
             AND text LIKE ?${coldFilter}
           ORDER BY heat DESC, created_at DESC LIMIT 15`).all(aid, like)
       for (const r of rows) {
@@ -407,21 +362,16 @@ function toF32(blob) {
   } catch { return null }
 }
 
-/**
- * 读某个实例的记忆向量（只读已存的，不在检索里调模型）。
- * includeCold=false 时与词法通道一样挡 cold/archived；缓存按 aid+冷层开关分桶。
- */
-export function loadVectors(db, aid, opt = {}) {
-  const includeCold = !!opt.includeCold
-  const key = `${aid}:${includeCold ? 'all' : 'warm'}`
+/** 读某个实例的全部记忆向量（只读已存的，不在检索里调模型）。 */
+export function loadVectors(db, aid) {
+  const key = aid
   const hit = VEC_CACHE.get(key)
   if (hit && Date.now() - hit.at < VEC_TTL) return hit.list
   const list = []
   try {
-    const coldFilter = (includeCold || !hasTempCol(db)) ? '' : " AND (m.temp_state IS NULL OR m.temp_state IN ('hot','warm'))"
     const rows = db.prepare(`SELECT v.memory_id, v.vec, m.text, m.type
       FROM memory_vec v JOIN memory_items m ON m.id=v.memory_id
-      WHERE v.agent_id=? AND m.status='active' AND m.invalid_at IS NULL${coldFilter}`).all(aid)
+      WHERE v.agent_id=? AND m.status='active' AND m.invalid_at IS NULL`).all(aid)
     for (const r of rows) {
       const v = toF32(r.vec)
       if (!v || !v.length) continue
@@ -437,27 +387,12 @@ export function loadVectors(db, aid, opt = {}) {
 }
 
 export function clearVectorCache() { VEC_CACHE.clear() }
-try {
-  onVectorWrite(clearVectorCache)
-  attachVectorIndexInvalidation(onVectorWrite)
-} catch { /* ignore */ }
 
 /**
- * 向量召回：查询向量由调用方算好传进来（预取）。
- * U1：默认走进程内 IVF（auto）；bruteforce 回退全量余弦；off 关闭。
+ * 向量召回：查询向量由调用方算好传进来（预取），这里只做同步余弦。
  * 余弦 0.5 ≈ 证据 0.36（刚过 S1 门），0.7 ≈ 0.66，0.9 ≈ 0.95。
  */
 export function searchByVector(db, aid, queryVec, opt = {}) {
-  const mode = opt.mode || vectorIndexMode(db, aid)
-  if (mode === 'off') return []
-  if (mode !== 'bruteforce') {
-    try {
-      const ann = searchVectorAnn(db, aid, queryVec, { ...opt, mode })
-      // S1 且覆盖率过低：不返回向量结果，避免空索引假阴性压过词法
-      if (opt.scene === 'S1' && ann.some((x) => x._vecLowCoverage)) return []
-      if (ann.length) return ann
-    } catch { /* fall through bruteforce */ }
-  }
   const q = toF32(queryVec)
   if (!q || !q.length) return []
   let qn = 0
@@ -465,7 +400,7 @@ export function searchByVector(db, aid, queryVec, opt = {}) {
   qn = Math.sqrt(qn) || 1
   const limit = Math.max(1, Math.min(50, Number(opt.limit) || 20))
   const out = []
-  for (const row of loadVectors(db, aid, { includeCold: !!opt.includeCold })) {
+  for (const row of loadVectors(db, aid)) {
     if (row.vec.length !== q.length) continue
     let dot = 0
     for (let i = 0; i < q.length; i++) dot += q[i] * row.vec[i]
@@ -486,13 +421,6 @@ export function searchByVector(db, aid, queryVec, opt = {}) {
  *
  * opt.hops 1–3，opt.decay 0.2–1；每跳只往前推「这一跳新发现」的节点，避免来回绕。
  */
-const LINK_KIND_W = Object.freeze({
-  same_entity: 1,
-  from_episode: 0.92,
-  likes: 0.88,
-  decided: 0.88,
-})
-
 export function expandByLinks(db, aid, items, opt = {}) {
   const ids = [...new Set((items || []).filter((x) => x.partition === 'T1' && x.id).map((x) => x.id))]
   if (!ids.length) return []
@@ -509,23 +437,19 @@ export function expandByLinks(db, aid, items, opt = {}) {
     const ph = frontier.map(() => '?').join(',')
     let rows = []
     try {
-      rows = db.prepare(`SELECT m.id,m.text,m.type,m.band,m.mark,m.created_at,m.heat,m.last_decay_at,m.stability,
-          l.kind AS link_kind, l.confidence AS link_conf
+      rows = db.prepare(`SELECT DISTINCT m.id,m.text,m.type,m.band,m.mark,m.created_at,m.heat,m.last_decay_at,m.stability
         FROM memory_links l JOIN memory_items m ON m.id = l.to_id
         WHERE l.from_id IN (${ph}) AND m.agent_id=? AND m.status='active' AND m.invalid_at IS NULL${coldFilter}
-        ORDER BY m.heat DESC LIMIT ?`).all(...frontier, aid, limit * 3)
+        ORDER BY m.heat DESC LIMIT ?`).all(...frontier, aid, limit * 2)
     } catch { break }
     const fresh = []
     for (const r of rows) {
       if (seen.has(r.id)) continue
       seen.add(r.id)
       fresh.push(r)
-      const kw = LINK_KIND_W[String(r.link_kind || '')] != null ? LINK_KIND_W[String(r.link_kind)] : 0.8
-      const conf = Math.max(0.2, Math.min(1, Number(r.link_conf) || 0.5))
       out.push({
         partition: 'T1', id: r.id, via: 'link', hop, text: String(r.text || ''),
-        link_kind: r.link_kind || null,
-        _linkE: Math.round(base * kw * conf * Math.pow(decay, hop - 1) * 1e4) / 1e4, ...r, fts: 0,
+        _linkE: Math.round(base * Math.pow(decay, hop - 1) * 1e4) / 1e4, ...r, fts: 0,
       })
       if (out.length >= limit) break
     }
@@ -551,7 +475,7 @@ export function searchEpisodes(db, aid, query) {
   }))
 }
 
-export function searchDiaries(db, aid, query, days = 30) {
+export function searchDiaries(db, aid, query, days = 60) {
   const q = String(query || '').trim()
   if (!q) return []
   const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
@@ -614,6 +538,61 @@ export function searchArchive(db, aid, query, opt = {}) {
   return out.concat(facts)
 }
 
+// ---------------------------------------------------------------- 配额浮现
+
+/**
+ * 重要度锚点：不管这句话在问什么，这几条都该被想起（身份 / 承诺 / 边界）。
+ * 它不过证据门——「今天天气不错」永远召不回「你答应周末修脚本」，
+ * 但「答应」这件事不该因此消失。
+ *
+ * 只认「钉住的」和「事实 / 冲突」：线上真实库里 reflection 有一大半是每日摘要，
+ * importance 被顶到 0.95 也是流水账；让它们占锚点位，等于每轮都把摘要复读一遍。
+ */
+export function importanceAnchors(db, aid, opt = {}) {
+  const limit = Math.max(1, Math.min(5, Number(opt.limit) || 2))
+  const floor = Math.max(0, Math.min(1, Number(opt.floor ?? 0.7)))
+  try {
+    return db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,importance
+      FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
+        AND importance>=? AND (mark='locked' OR type IN ('fact','conflict'))
+      ORDER BY (mark='locked') DESC, importance DESC, heat DESC, created_at DESC LIMIT ?`)
+      .all(aid, floor, limit)
+      .map((r) => ({ partition: 'T1', via: 'anchor', e: 0, ...r, text: String(r.text || '') }))
+  } catch { return [] }
+}
+
+/** 24 小时内的新近：今天刚发生的事，不靠相关性也该被想起来。摘要不算「今天发生的」。 */
+export function freshFacts(db, aid, opt = {}) {
+  const limit = Math.max(1, Math.min(5, Number(opt.limit) || 2))
+  const hours = Math.max(1, Math.min(24 * 30, Number(opt.hours) || 24))
+  const since = new Date(Date.now() - hours * 3600000).toISOString()
+  try {
+    return db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,importance
+      FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=?
+        AND type<>'reflection'
+      ORDER BY created_at DESC LIMIT ?`)
+      .all(aid, since, limit)
+      .map((r) => ({ partition: 'T1', via: 'fresh', e: 0, ...r, text: String(r.text || '') }))
+  } catch { return [] }
+}
+
+/** 跨分区去重用的「是不是同一句话」：只在配额补位时用，不引 pack 以免反向依赖。 */
+function sameText(a, b) {
+  const n = (x) => String(x || '').replace(/[\s\p{P}]/gu, '')
+  return n(a) === n(b)
+}
+
+/** 给已选的相关条目补上配额位；总数不超过 k。 */
+export function addQuotaItems(items, extra, k) {
+  const out = [...items]
+  for (const x of extra) {
+    if (out.length >= k) break
+    if (out.some((y) => y.id === x.id || sameText(y.text, x.text))) continue
+    out.push(x)
+  }
+  return out
+}
+
 // ---------------------------------------------------------------- 融合
 
 /**
@@ -621,7 +600,7 @@ export function searchArchive(db, aid, query, opt = {}) {
  * 只在「排先后」时乘上去，不动 e——门控（GATE）看的还是证据本身，
  * 否则 0.5 分的自省 ×0.55 = 0.275 会被直接挡在门外，等于删记忆。
  */
-export const TYPE_WEIGHT = { fact: 1, conflict: 1, episode: 0.9, appraisal: 0.8, reflection: 0.55 }
+export const TYPE_WEIGHT = { fact: 1, conflict: 1, episode: 0.9, appraisal: 0.8, reflection: 0.75 }
 
 /**
  * RRF：score = Σ w_p / (k + rank_p)。只混名次，不混原始分——
@@ -692,33 +671,6 @@ export function mmrSelect(items, k, lambda = 0.75) {
  * 打分：evidence 是字面/实体证据分；关系加成由调用方算好 relMap 传进来
  * （memory.recall.weights.relation → opt.relation），不在这里读库，保持纯函数。
  */
-/** M3：最近 N 天纪要 topics（轻量助推用，默认关闭）。 */
-export function recentEpisodeTopics(db, aid, days = 2) {
-  const n = Math.max(1, Math.min(14, Number(days) || 2))
-  const since = localDay(new Date(Date.now() - (n - 1) * 86400000))
-  let rows = []
-  try {
-    rows = db.prepare(
-      'SELECT topics FROM episodes WHERE agent_id=? AND day>=? ORDER BY day DESC LIMIT 60',
-    ).all(aid, since)
-  } catch { return [] }
-  const out = []
-  const seen = new Set()
-  for (const r of rows) {
-    let topics = []
-    try { topics = JSON.parse(r.topics || '[]') } catch { topics = [] }
-    if (!Array.isArray(topics)) continue
-    for (const t of topics) {
-      const s = String(t || '').trim()
-      if (s.length < 2 || seen.has(s)) continue
-      seen.add(s)
-      out.push(s)
-      if (out.length >= 24) return out
-    }
-  }
-  return out
-}
-
 function scoreAll(lists, query, opt = {}) {
   const relW = Math.max(0, Math.min(1, Number(opt.relation) || 0))
   const relMap = opt.relMap instanceof Map ? opt.relMap : null
@@ -727,24 +679,17 @@ function scoreAll(lists, query, opt = {}) {
      mood / moodW 由调用方注入（affect.moodValenceOf），这里不读库。 */
   const mood = Math.max(-1, Math.min(1, Number(opt.mood) || 0))
   const moodW = Math.max(0, Math.min(1, Number(opt.moodW) || 0))
-  const topicBoost = Math.max(0, Math.min(0.12, Number(opt.topicBoost) || 0))
-  const topics = topicBoost > 0 && Array.isArray(opt.topics) ? opt.topics : null
   const out = {}
   for (const [part, arr] of Object.entries(lists || {})) {
     out[part] = (arr || []).map((x) => {
       const bonus = relMap && relW ? relW * (relMap.get(x.id) || 0) : 0
       const valence = Math.max(-1, Math.min(1, Number(x.valence) || 0))
       const moodBonus = moodW && mood ? moodW * mood * valence : 0
-      let topicBonus = 0
-      if (part === 'T1' && topics && topics.length) {
-        const text = String(x.text || '')
-        if (topics.some((t) => t && text.includes(t))) topicBonus = topicBoost
-      }
       // 被取代的旧说法：只在回看时露脸，且分数打七折——新说法永远排在它前面。
       const staleCut = x.stale ? 0.7 : 1
       // tw 只用来排先后（fuseRRF 里乘），不进 e，免得把低权类型直接挡在门外。
       const tw = typeW ? (typeW[x.type] != null ? typeW[x.type] : 1) : 1
-      return { ...x, tw, e: Math.round((evidenceOf(x, query) * staleCut + bonus + moodBonus + topicBonus) * 1e4) / 1e4 }
+      return { ...x, tw, e: Math.round((evidenceOf(x, query) * staleCut + bonus + moodBonus) * 1e4) / 1e4 }
     })
   }
   return out
@@ -778,29 +723,12 @@ function collect(db, aid, query, scene, opt = {}) {
         if (score > 0) byId.set(t.id, { ...old, [field]: score, terms: old.terms || t.terms })
       }
     }
-    if (Array.isArray(opt.terms) && opt.terms.length) {
-      absorb(searchByTerms(db, aid, opt.terms, { includeCold, includeSuperseded }), '_termE')
-    }
-    if (opt.queryVec) {
-      absorb(searchByVector(db, aid, opt.queryVec, {
-        limit: 20, includeCold, scene, mode: opt.vectorIndex,
-      }), '_vecE')
-    }
-    // U7：S1 默认挡冷层；习惯类若查询字面命中，窄门放行（不整库开冷）
-    if (scene === 'S1' && !includeCold) {
-      try {
-        const habitCold = String(getParam(db, aid, 'memory.retrieve.habit_cold') || 'on') !== 'off'
-        if (habitCold) {
-          for (const h of searchHabitCold(db, aid, query)) {
-            if (!byId.has(h.id)) byId.set(h.id, h)
-          }
-        }
-      } catch { /* 关参 / 老库忽略 */ }
-    }
+    if (Array.isArray(opt.terms) && opt.terms.length) absorb(searchByTerms(db, aid, opt.terms, { includeCold }), '_termE')
+    if (opt.queryVec) absorb(searchByVector(db, aid, opt.queryVec, { limit: 20 }), '_vecE')
     out.T1 = [...byId.values()]
   }
   if (w.T2) out.T2 = searchEpisodes(db, aid, query)
-  if (w.T3) out.T3 = searchDiaries(db, aid, query, Number(opt.diaryDays) || 30)
+  if (w.T3) out.T3 = searchDiaries(db, aid, query)
   if (w.T4) {
     // 原文层分龄（P4）：默认只翻最近 N 天；查询里明说要翻旧账就放开。
     // 目的不是省空间，是别让三个月前的一句原话被当成现状讲出来。
@@ -883,33 +811,38 @@ export function retrieve(db, aid, query, opt = {}) {
   const k = Math.max(1, Math.min(50, Number(opt.k) || 6))
   const buffer = recentRounds(aid, 2)
   if (!q) {
-    return { scene, why: why.concat('空查询'), items: [], buffer, debug: { scene, gate: GATE[scene], counts: {}, kept: {} } }
+    // 空查询（「嗯」「好」）：没有相关度可算，但配额位照样该翻出来——
+    // 这就是「我没问你，你自己想起来」在空话轮里的版本。
+    const on = opt.float !== false && !opt.keepAll
+    const na = on ? Math.max(0, Math.min(3, Number(opt.anchor == null ? 1 : opt.anchor))) : 0
+    const nf = on ? Math.max(0, Math.min(3, Number(opt.fresh == null ? 1 : opt.fresh))) : 0
+    const extra = []
+    if (na) extra.push(...importanceAnchors(db, aid, { limit: na + 1, floor: opt.anchorFloor }))
+    if (nf) extra.push(...freshFacts(db, aid, { limit: nf + 1, hours: opt.freshHours }))
+    return {
+      scene, why: why.concat('空查询'), buffer,
+      items: addQuotaItems([], extra, k),
+      debug: { scene, gate: GATE[scene], counts: {}, kept: {} },
+    }
   }
 
   // 检索用的是「去掉触发词」的查询；场景判定与解释仍用原句
   const qs = stripSceneWords(q)
   // 翻旧账要看原句（触发词可能刚被 stripSceneWords 洗掉）
-  let optQ = opt.oldAccount != null ? opt : { ...opt, oldAccount: oldAccountQuery(q) }
-  // M3：纪要主题微助推（默认 0=关；关时分数路径与原来一致）
-  if (optQ.topicBoost == null && optQ.topics == null) {
-    let boost = Number(opt.episodeTopicBoost)
-    if (!Number.isFinite(boost)) {
-      try { boost = Number(getParam(db, aid, 'memory.retrieve.episode_topic_boost') || 0) } catch { boost = 0 }
-    }
-    if (boost > 0) {
-      optQ = { ...optQ, topicBoost: boost, topics: recentEpisodeTopics(db, aid, 2) }
-    }
-  }
+  const optQ = opt.oldAccount != null ? opt : { ...opt, oldAccount: oldAccountQuery(q) }
   let scored = scoreAll(collectAll(db, aid, qs, scene, optQ), qs, optQ)
   // S1 兜底：门控前最高分太低、或一条都过不了门 → 升级深检索（放宽门槛 + 全分区）
+  // 记住「是被自动升级的」：这种情况恰恰是「这句话什么都没命中」，
+  // 更要靠配额位把重要的东西翻出来，否则最该浮现的轮次反而什么都没有。
+  let upgraded = false
   if (scene === 'S1' && !opt.noUpgrade) {
     const top = maxEvidence(scored)
     const keptS1 = Object.values(scored).reduce((n, arr) => n + arr.filter((x) => x.e >= GATE.S1).length, 0)
     if (top < S1_UPGRADE || keptS1 === 0) {
       why.push(top < S1_UPGRADE ? `S1 最高分 ${top.toFixed(2)} < ${S1_UPGRADE} → 升级 S3` : 'S1 召回区为空 → 升级 S3')
       scene = 'S3'
-      // 升级后仍用 optQ：保留 oldAccount / terms / queryVec 等，别退回原 opt 丢上下文
-      scored = scoreAll(collectAll(db, aid, qs, scene, optQ), qs, optQ)
+      upgraded = true
+      scored = scoreAll(collectAll(db, aid, qs, scene, opt), qs, opt)
     }
   }
 
@@ -932,7 +865,7 @@ export function retrieve(db, aid, query, opt = {}) {
   if (scene === 'S2' && !opt.noUpgrade && Object.values(kept).every((arr) => arr.length === 0)) {
     why.push('S2 无命中 → 升级 S3')
     scene = 'S3'
-    ;({ kept, debug } = gate(scoreAll(collectAll(db, aid, qs, scene, optQ), qs, optQ)))
+    ;({ kept, debug } = gate(scoreAll(collectAll(db, aid, qs, scene, opt), qs, opt)))
   }
 
   const fused = fuseRRF(kept, SCENE_WEIGHTS[scene], RRF_K)
@@ -949,8 +882,16 @@ export function retrieve(db, aid, query, opt = {}) {
       } catch { return true }
     })
   }
+  // 配额：相关度照旧，但给「重要度锚点」「24h 新近」各留一个名额。
+  // 只给每轮注入用；工具查询 keepAll 要的是原样结果，不掺配额。
+  // 自动升级到 S3 的轮次也算「每轮注入」——那正是这句话什么都没命中的时候，
+  // 最需要把重要、新近的东西翻出来。
+  const floatOn = opt.float !== false && !opt.keepAll && (scene === 'S1' || upgraded)
+  const wantAnchor = floatOn ? Math.max(0, Math.min(3, Number(opt.anchor == null ? 1 : opt.anchor))) : 0
+  const wantFresh = floatOn ? Math.max(0, Math.min(3, Number(opt.fresh == null ? 1 : opt.fresh))) : 0
+  const relatedK = Math.max(1, k - wantAnchor - wantFresh)
   // 顺序：融合 → 忘掉该忘的 → 按「熟不熟」重排 → 挑不重复的 → 截 k。
-  items = mmrSelect(rerank(items), k)
+  items = mmrSelect(rerank(items), relatedK)
   // 相对门槛：只留跟最高分接近的。绝对门（GATE）只挡「完全无关」，
   // 挡不住「沾到一点边就全进来」——6 条凑满反而把真正相关的那条冲淡。
   // 实体点名（via=entity）例外：字面不重合也是真相关。
@@ -963,6 +904,13 @@ export function retrieve(db, aid, query, opt = {}) {
       || (it.via === 'link' && Number(it.hop || 1) <= 1))
   }
   // 上限回到 k：硬砍 4 条会把第 5、6 条本来能想起的记忆一起扔掉。
-  if (items.length > k) items = items.slice(0, k)
+  if (items.length > relatedK) items = items.slice(0, relatedK)
+  // 补配额位：锚点与今日新近。它们不过证据门，所以放在相对门之后才不会被筛掉。
+  if (floatOn && (wantAnchor || wantFresh)) {
+    const extra = []
+    if (wantAnchor) extra.push(...importanceAnchors(db, aid, { limit: wantAnchor + 1, floor: opt.anchorFloor }))
+    if (wantFresh) extra.push(...freshFacts(db, aid, { limit: wantFresh + 1, hours: opt.freshHours }))
+    items = addQuotaItems(items, extra, k)
+  }
   return { scene, why, items, buffer, debug }
 }

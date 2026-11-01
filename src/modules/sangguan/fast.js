@@ -391,6 +391,25 @@ export async function runFast(ctx, turns) {
 // ---------- 对话后挂点：缓冲 + 每 5 轮或会话空闲触发 ----------
 const bufKey = (aid) => 'sangguan.fast.buf:' + aid
 const TIMERS = new Map()
+
+/**
+ * 价值进料在后台跑：模块级待办集合，失败吞掉。
+ * drainValues() 只给测试/夜巡用——等它们落地再断言，不用 sleep 猜。
+ */
+const VALUE_PENDING = new Set()
+function trackValueIngest(db, aid, at, userText) {
+  const p = import('./values_intake.js')
+    .then((m) => m.ingestValues(db, aid, at, { user: userText }))
+    .catch(() => null)
+    .finally(() => { VALUE_PENDING.delete(p) })
+  VALUE_PENDING.add(p)
+  return p
+}
+export async function drainValues() {
+  while (VALUE_PENDING.size) {
+    await Promise.all([...VALUE_PENDING])
+  }
+}
 const RUNNING = new Set()
 
 export function bufferOf(db, aid) {
@@ -485,7 +504,9 @@ export async function flushFast(db, aid, opt = {}) {
   if (RUNNING.has(aid)) return { status: 'busy' }
   RUNNING.add(aid)
   try {
-    if (!bufferOf(db, aid).turns.length) return { status: 'skipped', reason: 'empty' }
+    const buffered = bufferOf(db, aid)
+    if (!buffered.turns.length) return { status: 'skipped', reason: 'empty' }
+    const userText = (buffered.turns.filter((t) => t.role === 'user').pop() || {}).text || ''
     const at = opt.at || new Date().toISOString()
     const ctx = { db, aid, at, day: opt.day || localDay(new Date(at)), chat: opt.chat, embed: opt.embed }
     let merged = null
@@ -503,6 +524,9 @@ export async function flushFast(db, aid, opt = {}) {
       else clearFlag(db, bufKey(aid))
       merged = mergeRep(merged, r)
     }
+    // 价值进料：反思 / 日记 / 关系 / 缺口 / 用户原话 → 价值命题。
+    // 不 await：快环不该被价值线拖慢；测试和夜巡用 drainValues() 等它落地。
+    trackValueIngest(db, aid, at, userText)
     return merged
   } finally { RUNNING.delete(aid) }
 }

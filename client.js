@@ -1153,24 +1153,31 @@ window.__ModuleLoader__.load({
     const TR_Y = [1, 0.5, 0, -0.5, -1]
     const trP2 = (n) => (Number(n) < 10 ? '0' + Number(n) : '' + Number(n))
 
-    /** 标题下面那行：此刻积极还是消极、快情绪由什么拼出来（情绪名看卡里那个大字，不重复） */
-    function TrendNow({ data, raw }) {
+    /** 标题下面那行：此刻积极还是消极、快情绪由什么拼出来（情绪名看卡里那个大字，不重复）。
+     *  「此刻」优先用接口现算的 v3：走势最后一点是采样时的值，快情绪会按分钟回落，
+     *  两者差一点就会让标题和卡里的「此刻」对不上。 */
+    function TrendNow({ data, raw, demo, cur }) {
       const pts = (data && data.points) || []
       let last = null
       for (let i = pts.length - 1; i >= 0; i--) if (Number.isFinite(Number(pts[i].f))) { last = pts[i]; break }
       if (!last) return h('span', { style: { opacity: 0.55 } }, '此刻还没有记录')
-      const fV = Number(last.f) || 0
-      const tV = Number.isFinite(Number(last.t)) ? Number(last.t) : (Number(last.s) || 0) + 0.35 * fV
+      const v3 = (cur && cur.v3) || null
+      const live = !!v3 && Number.isFinite(Number(v3.total)) && Number.isFinite(Number(v3.fast))
+      const fV = live ? Number(v3.fast) : Number(last.f) || 0
+      const tV = live ? Number(v3.total)
+        : (Number.isFinite(Number(last.t)) ? Number(last.t) : (Number(last.s) || 0) + 0.35 * fV)
       const pos = tV >= 0
       const sg = (x) => (Number(x) >= 0 ? '+' : '') + Number(x).toFixed(2)
       const fsV = last.fs === null || last.fs === undefined ? null : Number(last.fs)
       const feV = last.fe === null || last.fe === undefined ? null : Number(last.fe)
+      /* 拆项要能加得回去才写：旧采样里的「自己 + 共情」可能已经对不上回落后的快情绪 */
+      const decomp = fsV !== null && feV !== null && Math.abs(fsV + feV - fV) <= 0.02
       const rawName = raw && raw !== last.lb ? (AFFECT_KEY[raw] || raw) : ''
       return h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 9px' } },
+        demo ? h('b', { style: { fontWeight: 600, color: '#ffd479' } }, '模拟') : null,
         h('b', { style: { fontWeight: 600, color: pos ? '#7fd8ff' : '#ff9b9b' } }, (pos ? '积极' : '消极') + ' ' + sg(tV)),
         h('span', { style: { opacity: 0.72 } },
-          '快情绪 ' + sg(fV)
-          + (fsV === null ? '' : ' = 自己 ' + sg(fsV) + (feV === null ? '' : ' + 共情 ' + sg(feV)))),
+          '快情绪 ' + sg(fV) + (decomp ? ' = 自己 ' + sg(fsV) + ' + 共情 ' + sg(feV) : '')),
         rawName ? h('span', { style: { opacity: 0.55 } }, '· 这一句被判断成「' + rawName + '」') : null)
     }
 
@@ -1253,8 +1260,13 @@ window.__ModuleLoader__.load({
       /* 这段在屏幕上不到 8 像素宽（比如只有几天记录却看一年），就别画线了，画出来是根竖刺 */
       const drawLine = hasLine && visW >= 8
       const rows = hasLine ? bucket((p) => p.s) : []
+      /* 水位：底色三段叠出来的那条线（段式慢波 + 日节律 + 累积负荷）。
+         慢情绪是水面，水位是它要去的地方；两条摆在一起才看得出「谁在拖谁」。 */
+      const hasB = pts.some((p) => Number.isFinite(Number(p.b)))
+      const bRows = hasLine && hasB ? bucket((p) => p.b) : []
       const gxOf = (p) => X(p.at)
       const gyOf = (p) => Y(p.v)
+      const waterD = drawLine && bRows.length >= 2 ? curve(bRows, gxOf, gyOf) : ''
       const slowD = drawLine && rows.length >= 2 ? curve(rows, gxOf, gyOf) : ''
       const areaD = slowD
         ? slowD + 'L' + X(rows[rows.length - 1].at).toFixed(1) + ',' + H
@@ -1363,6 +1375,10 @@ window.__ModuleLoader__.load({
               x1: emptyX.toFixed(1), x2: emptyX.toFixed(1), y1: 0, y2: H,
               stroke: 'currentColor', strokeOpacity: 0.18, strokeWidth: 1, strokeDasharray: '3 4',
             }) : null,
+            waterD ? h('path', {
+              d: waterD, fill: 'none', stroke: 'currentColor', strokeOpacity: 0.16,
+              strokeWidth: 1.3, strokeDasharray: '4 4', strokeLinecap: 'round',
+            }) : null,
             h('path', { d: areaD, fill: 'url(#dshcTrendFill)' }),
             h('path', {
               d: slowD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.13, strokeWidth: 9,
@@ -1446,6 +1462,9 @@ window.__ModuleLoader__.load({
             h('div', { style: { fontSize: 12.5, fontWeight: 600, color: accent } }, (pos ? '积极 ' : '消极 ') + sg(tV)),
             last.lb ? h('div', null, '情绪 ' + (AFFECT_KEY[last.lb] || last.lb)) : null,
             h('div', null, '慢情绪 ' + sg(last.s)),
+            h('div', { style: { opacity: 0.72 } },
+              '水位 ' + sg(Number(last.b) || 0)
+              + (last.bo === null || last.bo === undefined ? '' : '（负荷 ' + sg(Number(last.bo)) + '）')),
             h('div', null, '快情绪 ' + sg(fV)),
             fsV === null ? null : h('div', { style: { opacity: 0.72 } }, '· 自己 ' + sg(fsV)),
             feV === null ? null : h('div', { style: { opacity: 0.72 } }, '· 共情 ' + sg(feV))) : null)),
@@ -3291,12 +3310,69 @@ window.__ModuleLoader__.load({
           })))
     }
 
+    /**
+     * 它拿不准的事：两条记忆看起来互相矛盾。
+     * 只给三种判决——留先记的 / 留后记的 / 它理解错了（两条都留）。
+     * 不做成表单：这里要的是「判一句」，不是「填一张词卡」。
+     */
+    function ConflictPanel({ list, loading, error, busyId, onResolve }) {
+      const all = Array.isArray(list) ? list : []
+      const open = all.filter((c) => c.state === 'open')
+      const done = all.filter((c) => c.state !== 'open').slice(0, 3)
+      const KEEP_WORD = { a: '留先记的', b: '留后记的', both: '两条都留' }
+      if (loading && !all.length) return h('div', { className: 'dshc-sub' }, '读取冲突…')
+      if (error && !all.length) return h('div', { className: 'dshc-err' }, error)
+      if (!open.length) {
+        return h('div', null,
+          h('div', { className: 'dshc-sub' }, '没有拿不准的事。'),
+          done.length
+            ? h('div', { className: 'dshc-sub', style: { marginTop: 6 } },
+              '最近处理过：' + done.map((d) => KEEP_WORD[d.resolution] || '已处理').join(' / '))
+            : null)
+      }
+      return h('div', { className: 'dshc-list' },
+        open.map((c) => {
+          let ev = {}
+          try { ev = JSON.parse(c.evidence || '{}') } catch { ev = {} }
+          const sim = Number(ev.similarity)
+          const meta = [
+            ago(c.opened_at),
+            Number.isFinite(sim) ? '字面相似 ' + (sim * 100).toFixed(0) + '%' : null,
+            c.kind === 'polarity' ? '说法相反' : (c.kind || null),
+            c.severity === 'high' ? '它自己有被卡住' : null,
+          ].filter(Boolean).join(' · ')
+          const side = (which, m, tip) => h('div', {
+            key: which, className: 'dshc-item',
+          },
+            h(Pill, { tone: which === 'a' ? 'warn' : undefined, title: tip },
+              which === 'a' ? '先记的' : '后记的'),
+            h('div', { className: 't' }, (m && m.text) || '（这条记忆已经找不到了）'),
+            m && m.invalid_at ? h('span', { className: 'dshc-sub' }, '已被判失效') : null,
+            h(Btn, {
+              sm: true, ghost: true, disabled: busyId === c.id,
+              onClick: () => onResolve(c.id, which),
+            }, '就是这条'))
+          return h(Card, { key: c.id, style: { padding: 12, marginBottom: 10 } },
+            h('div', { className: 'dshc-sub', style: { marginBottom: 8 } }, meta),
+            side('a', c.a, '更早记下的那句'),
+            side('b', c.b, '刚记下的那句'),
+            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 } },
+              h(Btn, {
+                disabled: busyId === c.id,
+                onClick: () => onResolve(c.id, 'both'),
+                title: '判它理解错了：两句其实不矛盾，都留着，并在冲突里记一句原因',
+              }, busyId === c.id ? '处理中…' : '它理解错了，两条都留'),
+              h('span', { className: 'dshc-sub' }, '判完这里就不再是「需处理」了')))
+        }))
+    }
+
     function MemoryPage({ aid, view, act, setTab, focus, jump }) {
       const [tick, setTick] = useState(0)
       const [err, setErr] = useState('')
       const [jumpMsg, setJumpMsg] = useState('')
       const [jumpBusy, setJumpBusy] = useState(false)
       const [cf, reloadCf] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/conflicts'), [aid, tick])
+      const [cfBusy, setCfBusy] = useState('')
       const [vault] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/vault'), [aid])
       // 旧进程里的 vault 还不会返回 v，此时不要触发导出，免得把新格式覆盖回去
       const vaultFresh = Number((vault.data || {}).v) >= 2
@@ -3307,11 +3383,16 @@ window.__ModuleLoader__.load({
           try { document.getElementById('dshc-conflicts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* ignore */ }
         }
       }, [focus && focus.at])
+      /** keep=a 留先记的 / b 留后记的 / both=「它理解错了」，两条都留并记一句原因 */
       async function resolveConflict(cid, keep) {
+        setCfBusy(cid); setErr('')
         try {
-          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/conflicts/' + enc(cid), { keep }, true))
-          await reloadCf(); setErr('')
-        } catch (e) { setErr(e.message || String(e)) }
+          const body = keep === 'both'
+            ? { keep, reason: '手动判定：它理解错了（顶多只是说得像，不是同一个命题）' }
+            : { keep }
+          await act(() => call('POST', '/v1/agents/' + enc(aid) + '/conflicts/' + enc(cid), body, true))
+          await reloadCf()
+        } catch (e) { setErr(e.message || String(e)) } finally { setCfBusy('') }
       }
       const metricSlice = useMetricSlice(aid, 0, 9)
 
@@ -3388,6 +3469,16 @@ window.__ModuleLoader__.load({
           h(TopMemory, { aid, tick, row: memRow, act, onWrote: () => setTick((t) => t + 1) }),
           err ? h('div', { className: 'dshc-err', style: { marginTop: 6 } }, err) : null),
 
+        h('div', { id: 'dshc-conflicts' },
+          h(Sec, {
+            title: '它拿不准的事',
+            desc: '两条记忆看起来互相矛盾。挑一条「就是这条」，或者说它「理解错了」——判完状态就不挂在「需处理」了。',
+          },
+            h(ConflictPanel, {
+              list: cf.data, loading: cf.loading, error: cf.error,
+              busyId: cfBusy, onResolve: resolveConflict,
+            }))),
+
         h(Sec, { techOnly: true, title: '验收指标（9 条 · 地基附录 E）', desc: '有动作的给「去处理」；否则标仅观察。' },
           h(Card, null, h(MetricList, {
             from: 0, to: 9, view, setTab,
@@ -3414,6 +3505,8 @@ window.__ModuleLoader__.load({
       const [world, , bumpWorld] = useList(aid, '/worldview')
       const [life, , bumpLife] = useList(aid, '/lifeview')
       const [prefs, , bumpPrefs] = useList(aid, '/preferences')
+      const [rope] = useList(aid, '/persona/rope')
+      const [judge, , bumpJudge] = useList(aid, '/persona/judge')
       const [taboos, , bumpTaboos] = useList(aid, '/taboos')
       const [drift] = useList(aid, '/persona/drift')
       const [sv, reloadSv] = useList(aid, '/persona/selfview')
@@ -3609,6 +3702,47 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'dshc-sub', style: { minWidth: 40 } }, hi),
                 h('span', { className: 'm dshc-mono' }, Number(t.value).toFixed(2)))
             }),
+            // 两池拉力：左右各一根，谁长谁在赢；净力到 0.30 才可能挪一步
+            (rope && rope.axes && rope.axes.length)
+              ? h('div', { style: { marginTop: 12, borderTop: '1px dashed var(--line)', paddingTop: 10 } },
+                h('div', { className: 'dshc-note', style: { marginBottom: 6 } },
+                  '两池拉力（7 天半衰期）· 净力 ≥0.30、且赢的一边 ≥3 条，才挪一步（≤0.05）'),
+                rope.axes.filter((x) => ['ei', 'sn', 'tf', 'jp'].includes(x.axis)).map((x) => {
+                  const pos = Math.max(0, Number(x.pos) || 0)
+                  const neg = Math.max(0, Number(x.neg) || 0)
+                  const total = Math.max(0.001, pos + neg)
+                  const POL = { ei: ['I', 'E'], sn: ['S', 'N'], tf: ['F', 'T'], jp: ['P', 'J'] }[x.axis] || ['-', '+']
+                  const f = Number(x.force) || 0
+                  const col = f > 0 ? 'var(--ok)' : f < 0 ? 'var(--warn)' : 'var(--muted)'
+                  return h('div', { key: x.axis, style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 } },
+                    h('span', { className: 'dshc-sub', style: { width: 12, textAlign: 'right' } }, POL[0]),
+                    h('div', { style: { flex: 1, height: 6, borderRadius: 3, background: 'var(--line)', display: 'flex', overflow: 'hidden' } },
+                      h('div', { style: { width: (neg / total * 100) + '%', background: 'color-mix(in srgb, var(--warn) 65%, transparent)' } }),
+                      h('div', { style: { width: (pos / total * 100) + '%', background: 'color-mix(in srgb, var(--ok) 65%, transparent)' } })),
+                    h('span', { className: 'dshc-sub', style: { width: 12 } }, POL[1]),
+                    h('span', { className: 'm dshc-mono', style: { width: 52, textAlign: 'right', color: col } },
+                      (f > 0 ? '+' : '') + f.toFixed(2)),
+                    h('span', { className: 'dshc-sub dshc-mono', style: { width: 60, textAlign: 'right' } },
+                      String(x.pos_n || 0) + '/' + String(x.neg_n || 0)))
+                }),
+                rope.scan_at ? h('div', { className: 'dshc-note dshc-mono', style: { marginTop: 6 } },
+                  '上次扫：' + String(rope.scan_at).slice(0, 16).replace('T', ' ')) : null,
+                h('div', { className: 'dshc-note', style: { marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+                  h('span', null,
+                    '第二判（模型判 + 原文核对）：待判 ' + (judge && judge.pending != null ? judge.pending : '—')
+                    + ' · 今日 ' + (judge && judge.today != null ? judge.today : '—') + '/' + (judge && judge.cap ? judge.cap : '—')),
+                  h(Btn, {
+                    sm: true, ghost: true,
+                    onClick: async () => {
+                      try {
+                        await call('POST', '/v1/agents/' + enc(aid) + '/persona/judge', { limit: 12 }, true)
+                        bumpJudge()
+                      } catch (e) { setErr(String((e && e.message) || e)) }
+                    },
+                  }, '跑一批')),
+                h('div', { className: 'dshc-note dshc-mono', style: { marginTop: 4 } },
+                  (sv && sv.now && sv.now.anchor) ? sv.now.anchor : ''))
+              : null,
             view === 'tech' ? h('div', { className: 'dshc-note' }, '当前挡位 ' + modeLabel) : null)),
 
         // ② 它的自述：第一人称，放在鱼格框下面
@@ -3735,23 +3869,23 @@ window.__ModuleLoader__.load({
                 + (budget ? ' · 五个字段合计上限 ' + budget.chars + ' 字（≈' + budget.tokens + ' token / 轮）。' : '')) : null),
             err ? h('div', { className: 'dshc-err' }, err) : null)),
 
-        // ⑤ 价值观：自己长出来的（不是人填的）
+        // ⑤ 价值观：由三观账本的命题折算出来（不是人填的，也不是词表扫出来的）
         h(Sec, {
-          title: view === 'user' ? '它的价值观' : '价值观（自己长出来的）',
+          title: view === 'user' ? '它的价值观' : '价值观（命题折算）',
           desc: view === 'user'
-            ? '不是填进去的；从它记得的事、不能碰的线、和你的关系里慢慢长出来。'
-            : '十维初值各 0.10；三组张力互相压上限；≥5 条证据进惯习（步幅减半）。',
+            ? '不是填进去的；它自己认下的事、和你的关系、一次次的经历，折算成这十个维。'
+            : '十维由三观命题折算（foldDims）：没有命题时各 0.10；三组张力互相压上限；手写只进命题，不直接改权重。',
         },
           h(Card, null,
             !(vals.data || []).length
-              ? h('div', { className: 'dshc-sub' }, '还没有长出价值观；聊几句、记几条，它会自己长。')
+              ? h('div', { className: 'dshc-sub' }, '还没有价值观命题；聊几句、记几条，它会自己认下一些事。')
               : h('div', null,
                 h(ValuesRadar, { rows: vals.data || [] }),
                 h(TensionBlock, { rows: vals.data || [] }),
                 h('details', { className: 'dshc-fold', style: { marginTop: 12 } },
-                  h('summary', null, '全部十维（' + (vals.data || []).length + ' 项 · 点开看证据）'),
+                  h('summary', null, '全部十维（' + (vals.data || []).length + ' 项 · 点开看来源）'),
                   h('div', { className: 'dshc-list' }, valueNodes))),
-            h('div', { className: 'dshc-note' }, '改它只能靠新的经历：手写区只影响说话方式，不改它看重什么。'))),
+            h('div', { className: 'dshc-note' }, '改它只能靠新的经历或直接说出「我更看重…」；手写区只影响说话方式。'))),
 
         // ⑤b 世界观（Primals / WAS / Social Axioms）
         h(Sec, {
@@ -5117,6 +5251,7 @@ window.__ModuleLoader__.load({
           bump()
         } catch (e) { setMsg(e.message || String(e)) }
       }
+      const onWithdraw = withdraw
       async function judge(body, okText) {
         try {
           const r = await act(() => call('POST', base + '/verdict', body, true))
@@ -5294,12 +5429,160 @@ window.__ModuleLoader__.load({
         side)
     }
 
+    /* ================= 模拟预览：铺一个月「假想」的情绪曲线 =================
+     * 只给「看形状」用：一次算完、不写库、不碰它真实的样本，切走就丢。
+     * 公式照现行口径搬过来（src/algo/baseline.js + src/algo/emotion.js）；摆幅用她真实的
+     * σ（persona/axes 里那个），其余常量写死在这里，免得预览和后端各说各话：
+     *   底色 = 段式慢波（种子取 agent_id）+ 日节律 ±0.06
+     *   慢情绪 ds/dt：α=0.09 追快情绪、β=0.07 回底色、ω=0.005 拉标签先验
+     *   快情绪 = 自己那半（0.35 惯性）+ 共情（κe=0.25，closeness=0.98）
+     *   总情绪 = 慢 + 0.35×快
+     * 窗口跟着「现在」走，切一天/一周都连得上；这里没叠累积负荷（那层得真经历才有）。
+     */
+    const SIMC = {
+      periodMinD: 3.5, periodMaxD: 9, periodJitter: 0.25,
+      ampBase: 0.10, ampSpan: 0.20, ampGain: 1.5, segMinH: 48, edge: 0.68,
+      /* 摆幅用她真实的 σ（persona/axes 里那个），拿不到才退回 0.5 */
+      sigma: 0.5,
+      circAmp: 0.06, alpha: 0.09, beta: 0.07, wLabel: 0.005,
+      kappa: 0.35, empathy: 0.25, sway: 0.5, closeBase: 0.3, closeSpan: 0.7,
+    }
+    const SIMP = { joy: 0.7, peaceful: 0.5, curious: 0.3, calm: 0.4, confused: -0.2, lost: -0.3, irritated: -0.4, frustrated: -0.5 }
+    const simClamp = (x, lo, hi) => Math.max(lo, Math.min(hi, Number(x) || 0))
+    const simR3 = (x) => Math.round(simClamp(x, -1, 1) * 1000) / 1000
+    const simHash = (str) => {
+      let h = 2166136261 >>> 0
+      const s = String(str)
+      for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0 }
+      return h >>> 0
+    }
+    const simRnd = (seed) => {
+      let a = seed >>> 0
+      return () => {
+        a = (a + 0x6d2b79f5) >>> 0
+        let t = a
+        t = Math.imul(t ^ (t >>> 15), t | 1)
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+      }
+    }
+    /** 段式底色：同一个 agent_id 每次铺出来都一样 */
+    const simSegments = (seed, startMs, untilMs, sigma) => {
+      const periodD = SIMC.periodMinD + simRnd(simHash('period:' + seed))() * (SIMC.periodMaxD - SIMC.periodMinD)
+      const sig = Number.isFinite(Number(sigma)) ? Math.max(0, Math.min(1, Number(sigma))) : SIMC.sigma
+      const amp = SIMC.ampBase + SIMC.ampSpan * sig
+      const out = []
+      let xEnd = 0
+      let t = startMs
+      for (let no = 0; t < untilMs && no < 600; no++) {
+        const rnd = simRnd(simHash(seed + '#' + no))
+        const up = rnd() < simClamp(0.5 - 1.5 * simClamp(xEnd, -1, 1), 0.05, 0.95)
+        const a = amp * SIMC.ampGain * (0.75 + 0.5 * rnd())
+        const to = simClamp((up ? 1 : -1) * a - 0.15 * xEnd, -SIMC.edge, SIMC.edge)
+        const hours = Math.max(SIMC.segMinH, periodD * 24 * (1 + SIMC.periodJitter * (rnd() * 2 - 1)))
+        out.push({ from: simClamp(xEnd, -SIMC.edge, SIMC.edge), to, startMs: t, endMs: t + hours * 3600000 })
+        xEnd = to
+        t += hours * 3600000
+      }
+      return out
+    }
+    const simValAt = (segs, t) => {
+      if (!segs.length) return 0
+      if (t <= segs[0].startMs) return segs[0].from
+      for (let i = 0; i < segs.length; i++) {
+        const sg = segs[i]
+        if (t < sg.endMs) {
+          const span = sg.endMs - sg.startMs
+          const u = span > 0 ? simClamp((t - sg.startMs) / span, 0, 1) : 0
+          return sg.from + (sg.to - sg.from) * (1 - Math.cos(Math.PI * u)) / 2
+        }
+      }
+      return segs[segs.length - 1].to
+    }
+    const simSlow = (s, b, p, fAvg, dtH) => {
+      const lam = SIMC.alpha + SIMC.beta + SIMC.wLabel
+      const target = (SIMC.alpha * fAvg + SIMC.beta * b + SIMC.wLabel * p) / lam
+      return simR3(target + (s - target) * Math.exp(-lam * dtH))
+    }
+    const simFast = (fSelf, eUser, ePrev) => {
+      const w = SIMC.empathy * Math.abs(eUser) * (SIMC.closeBase + SIMC.closeSpan * 0.98)
+      return simClamp(fSelf + w * eUser + SIMC.sway * w * (eUser - ePrev), -1, 1)
+    }
+    const simTotal = (s, f) => simR3(s + SIMC.kappa * f)
+
+    /** 一个月：前面多烧 12 天让慢情绪走稳，每小时两个样本，只留最近 30 天 */
+    function simMonthTrend(aid, days, sigma) {
+      const H = 3600000
+      const DAY = 86400000
+      const toMs = Date.now()
+      const fromMs = toMs - 30 * DAY
+      const burnFrom = fromMs - 12 * DAY
+      const seed = String(aid || 'demo')
+      const segs = simSegments(seed, burnFrom, toMs, sigma)
+      const phaseH = (simHash('circ:' + seed) % 1440) / 60
+      const circ = (t) => SIMC.circAmp * Math.sin((2 * Math.PI * ((((t / H) % 24) + 24) % 24 - phaseH)) / 24)
+      const rnd = simRnd(simHash(seed + ':trend-demo'))
+      const LABELS = [['calm', 24], ['joy', 15], ['curious', 15], ['peaceful', 11], ['confused', 12], ['frustrated', 9], ['irritated', 7], ['lost', 7]]
+      const wSum = LABELS.reduce((a, x) => a + x[1], 0)
+      const draw = () => {
+        let x = rnd() * wSum
+        for (let i = 0; i < LABELS.length; i++) { x -= LABELS[i][1]; if (x <= 0) return LABELS[i][0] }
+        return 'calm'
+      }
+      const points = []
+      let s = simR3(simValAt(segs, burnFrom))
+      let fPrev = 0
+      let selfP = 0
+      let eNow = 0
+      let label = 'calm'
+      let uLabel = 'calm'
+      let hold = 0
+      for (let t = burnFrom; t < toMs; t += H) {
+        const hh = new Date(t).getHours()
+        /* 白天聊得多、夜里少；每小时都留样本，图上是连的 */
+        const chatty = hh < 7 ? 0.2 : hh < 12 ? 0.72 : hh < 19 ? 0.86 : 0.95
+        if (hold-- <= 0) { label = draw(); hold = 1 + Math.floor(rnd() * 3) }
+        if (rnd() < 0.55) uLabel = draw()
+        const b = simR3(simValAt(segs, t) + circ(t))
+        const p = SIMP[label] === undefined ? 0 : SIMP[label]
+        const pu = SIMP[uLabel] === undefined ? 0 : SIMP[uLabel]
+        for (let i = 0; i < 2; i++) {
+          const at = t + Math.floor(((i + 0.5) / 2) * H)
+          selfP = 0.35 * selfP + 0.65 * p
+          const touch = 0.45 + chatty * 0.85
+          const target = rnd() < 0.88 ? pu * (0.35 + rnd() * 0.75) * touch : 0
+          eNow = eNow * 0.55 + target * 0.45
+          const f = simFast(selfP, eNow, fPrev)
+          if (at >= fromMs) {
+            points.push({ at, b, s: simR3(s), f: simR3(f), fs: simR3(selfP), fe: simR3(f - selfP), t: simTotal(s, f), lb: label })
+          }
+          fPrev = f
+        }
+        s = simSlow(s, b, p, fPrev, 1)
+      }
+      const back = Math.max(1, Math.min(366, Number(days) || 30))
+      const winFrom = toMs - back * DAY
+      return {
+        days: back,
+        from: new Date(winFrom).toISOString(),
+        to: new Date(toMs).toISOString(),
+        demo: true,
+        points: points.filter((q) => q.at >= winFrom),
+      }
+    }
+
     function AffectPage({ aid, view, act, setTab }) {
       const [tick, setTick] = useState(0)
       const [trange, setTrange] = useState(7)
       const [a, reloadA] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect'), [aid, tick])
       const [eps] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/episodes'), [aid, tick])
-      const [trend] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange), [aid, tick, trange])
+      const [sim, setSim] = useState(false)
+      const [pax] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/persona/axes'), [aid])
+      const simSigma = Number((pax.data && pax.data.effects && pax.data.effects.sigma))
+      /* 模拟只换这一条走势：别的接口都还读真的，卡片上那几行数字不受影响 */
+      const [trend] = useAsync(() => (sim
+        ? Promise.resolve(simMonthTrend(aid, trange, simSigma))
+        : call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange)), [aid, tick, trange, sim])
       const [radar] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/radar'), [aid, tick])
       const [cond, reloadC] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/condition'), [aid, tick])
       const [poison] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/poisons'), [aid, tick])
@@ -5310,6 +5593,9 @@ window.__ModuleLoader__.load({
       const [err, setErr] = useState('')
       const [epLimit, setEpLimit] = useState(1)
       const metricSlice = useMetricSlice(aid, 17, 25)
+      /* 快情绪按分钟回落、慢情绪按小时走：页面开着就隔一会儿重取一次，
+         不然停在开页那一刻的快照上，看着就像「算法没更新」。 */
+      useLive(() => { reloadA(); reloadT() }, 10000)
       const cur = a.data || {}
       const label = AFFECT_KEY[cur.primary_label] || cur.primary_label || '—'
       /* 最新那条消息被判断成什么（还没被惯性压过的原始判断） */
@@ -5352,8 +5638,9 @@ window.__ModuleLoader__.load({
         const mood = Number(cur.mood)
         return Number.isFinite(mood) ? (mood - 0.5) * 2 : 0
       })()
-      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉） */
-      const look = emoLook(tNow, cur.intensity)
+      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉）。
+         模拟只动下面那张走势图：这张卡的光一直对着真状态，不然会看岔。 */
+      const look = emoLook(sim ? (Number.isFinite(Number(cur.mood)) ? Number(cur.mood) * 2 - 1 : 0) : tNow, cur.intensity)
 
       return h('div', null,
         h(LoadErr, { error: a.error || eps.error, retry: () => { reloadA(); setTick((t) => t + 1) } }),
@@ -5361,9 +5648,11 @@ window.__ModuleLoader__.load({
         h(Sec, {
           title: view === 'user' ? '情绪' : '主情绪（label / intensity / PAD）',
           desc: h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 12px' } },
-            h(TrendNow, { data: trend.data || null, raw: latestRaw }),
+            h(TrendNow, { data: trend.data || null, raw: sim ? '' : latestRaw, demo: sim, cur: sim ? null : cur }),
             h('span', { style: { opacity: 0.5 } },
-              view === 'user' ? '· 上半是此刻，下半是它这一程怎么走过来的。' : '· 大字=label，两条=强度/心情；惯性规则在下方公式里。')),
+              view === 'user'
+                ? '· 上半是此刻，下半是它这一程怎么走过来的；虚线是它的水位。'
+                : '· 大字=label；虚线=水位（底色+日节律+负荷），白线=慢情绪，蓝尾=这一下。')),
         },
           h(Card, {
             className: 'dshc-emo',
@@ -5395,20 +5684,44 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'dshc-mono' }, Number(cur.intensity || 0).toFixed(2)),
                   h('span', { className: 'dshc-sub', style: { opacity: 0.38 } }, '0 到 1')),
                 h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 } },
-                  h('span', { className: 'dshc-sub', style: { minWidth: 30 }, title: '整体舒服不舒服，0 到 1；0.5 是不好不坏' }, '心情'),
+                  h('span', { className: 'dshc-sub', style: { minWidth: 30 }, title: '整体舒服不舒服，0 到 1；0.5 是不好不坏。和「此刻」是同一个数，只是换了刻度' }, '心情'),
                   h(Bar, { value: cur.mood, color: look.bar }),
                   h('span', { className: 'dshc-mono' }, Number(cur.mood || 0).toFixed(2)),
-                  h('span', { className: 'dshc-sub', style: { opacity: 0.38 } }, '0.5 是不好不坏')))),
+                  h('span', { className: 'dshc-sub', style: { opacity: 0.38 } }, '0.5 是不好不坏')),
+                (function () {
+                  const v3 = (cur && cur.v3) || null
+                  if (!v3) return null
+                  const sg = (x) => (Number(x) >= 0 ? '+' : '') + Number(x).toFixed(2)
+                  const items = [
+                    ['水位', v3.baseline, '底色 + 日节律 + 累积负荷：慢情绪要去的地方'],
+                    ['负荷', v3.base_off, '累积负荷：被持续情绪拖走的那部分，几天代谢回来'],
+                    ['慢情绪', v3.slow, '慢情绪（v3.slow）：最近几小时到几天的整体；它不是上面那个 0~1 的「心情」'],
+                    ['快情绪', v3.fast, '快情绪（v3.fast）：这一下的反应 + 共情，按分钟回落'],
+                    ['此刻', v3.total, '总情绪：慢情绪 + 0.35×快情绪'],
+                  ]
+                  const shown = items.filter((it) => it[1] !== null && it[1] !== undefined && Number.isFinite(Number(it[1])))
+                  if (!shown.length) return null
+                  return h('div', { style: { display: 'flex', gap: 13, flexWrap: 'wrap', alignItems: 'baseline', marginTop: 6, fontSize: 11.5, opacity: 0.7 } },
+                    shown.map((it) => h('span', { key: it[0], title: it[2] },
+                      it[0] + ' ' + sg(Number(it[1])))))
+                })())),
             /* PAD 是旧模型的说法，界面上不再摆：愉悦还喂着快情绪，活力只影响记忆权重，掌控没人读 */
             h('div', { style: { height: 1, background: 'var(--line)', opacity: 0.6, margin: '14px 0 10px' } }),
             h('div', { className: 'dshc-form', style: { marginBottom: 8 } },
               [[1, '一天'], [7, '一周'], [30, '一月'], [365, '一年']].map(([d, t]) =>
-                h(Btn, { key: d, primary: trange === d, onClick: () => setTrange(d) }, t))),
+                h(Btn, { key: d, primary: trange === d, onClick: () => setTrange(d) }, t)),
+              h(Btn, {
+                tint: sim,
+                title: '铺一段假想曲线，只看形状：一次算完、不写库，也不动它真实的情绪',
+                onClick: () => { const on = !sim; setSim(on); if (on && trange < 30) setTrange(30) },
+              }, sim ? '模拟 · 开着' : '模拟一月')),
+            sim ? h('div', { className: 'dshc-sub', style: { margin: '0 0 8px 2px', opacity: 0.62 } },
+              '模拟：拿现行公式从「现在」往回铺 30 天（段式底色 + 日节律 + 慢/快情绪），不进库。挑「一年」时，没铺的那九个多月还是斜纹。') : null,
             trend.error
               ? h('div', { className: 'dshc-note', style: { padding: '12px 0' } },
                 /接口不存在|NOT_FOUND/.test(trend.error) ? '宿主重启一次就能画' : trend.error)
               : h(TrendChart, { data: trend.data || null, look })))),
-        view === 'tech' ? h(Tech, null, 'intensity_t = clamp(0.3·intensity_{t-1} + 0.7·Δ, 0, 1)\nΔ = 0.3 + 0.3·|goal_congruence| + 0.1·novelty\nPAD_t = 0.45·PAD_{t-1} + 0.55·prior(label)\nmood_t = 0.8·mood_{t-1} + 0.2·(0.5 + 0.5·prior.p)\n惯性：label 连续 2 轮一致才切换\n闸门：只有事件才换主情绪；两次事件之间强度自己回落，标签留着\n用户情绪：user_label 单独进 episode，不写 primary_label') : null,
+        view === 'tech' ? h(Tech, null, 'intensity_t = clamp(0.3·intensity_{t-1} + 0.7·Δ, 0, 1)\nΔ = 0.3 + 0.3·|goal_congruence| + 0.1·novelty\nPAD_t = 0.45·PAD_{t-1} + 0.55·prior(label)\n\n底色不是一条线，是三层叠出来的（affect.baseline.*）：\nb = 段式慢波（几天一个来回，±0.2~0.3）\n  + 日节律 circ(t)（24h 一个来回，相位随个体，幅度 0.06）\n  + 累积负荷 L（allostatic load：一直偏着就把水位拖走，几天代谢回来，±0.35 封顶）\n\n慢情绪（真 EMA，2026-11-01 起）：\nds/dt = α·(fast − s) + β·(b − s) + ω·(prior − s)\ns* = (α·fast + β·b + ω·prior) / (α+β+ω)，λ = α+β+ω\ns_{t+Δt} = s* + (s_{t−1} − s*)·exp(−λ·Δt)\nα=0.09/h · β=0.07/h · ω=0.005/h → λ=0.165（τ≈6h，一夜退到三成）\n稳态：快情绪五成半 / 底色四成\n参数：affect.slow.alpha / affect.slow.beta / baseline.circadian / baseline.load.*\n慢情绪按余温积分 ∫fast dt，不再拿一个常数值糊过去；差 50 分钟也走一步，9.9 小时不截断\n\n快情绪：fast_t = level + (fast_{t-1} − level)·exp(−(Δt/τ)^shape)，τ=20min、shape=1.5\n惯性：label 连续 2 轮一致才切换\n闸门：只有事件才换主情绪；两次事件之间强度自己回落，标签留着\n用户情绪：user_label 单独进 episode，不写 primary_label') : null,
         /* 「它现在觉得你」：它读你这句话得出的情绪（user_scores），不是它自己的情绪 */
         (function () {
           const g = (guess.data && guess.data.latest) || null
@@ -6910,7 +7223,6 @@ window.__ModuleLoader__.load({
       'memory.retrieve.formula': ['检索公式', '关键词和语义怎么混合；一般不动。'],
       'persona.learn_rate': ['学习速率', '被夸、被刺痛、重复的事，一次最多让鱼格挪多少；和单次步幅上限取小（默认 0.05）。'],
       'persona.axes.mode': ['MBTI 效应', '关 = 完全不算；只算不用 = 只更新数字，不影响说话；开 = 影响情绪强度和语气。默认开。'],
-      'persona.values.nightly': ['夜间重长价值观', '每天巩固时强制重算 Schwartz 十维；关 = 跳过这一步。默认开。'],
       'persona.worldview.nightly': ['夜间重长世界观', '每天巩固时重算八维世界观（Primals/WAS/公理）；关 = 跳过。默认开。'],
       'persona.lifeview.nightly': ['夜间重长人生观', '每天巩固时重算七维人生观并凝练 telos；关 = 跳过。默认开。'],
       'affect.decay': ['情绪衰减', '说完一轮之后，情绪往平静回落多少；0 = 不回落。'],
@@ -6933,7 +7245,7 @@ window.__ModuleLoader__.load({
       },
       {
         key: 'persona', tab: '鱼格', title: '鱼格设置',
-        keys: ['persona.learn_rate', 'persona.axes.mode', 'persona.values.nightly', 'persona.worldview.nightly', 'persona.lifeview.nightly'],
+        keys: ['persona.learn_rate', 'persona.axes.mode', 'persona.worldview.nightly', 'persona.lifeview.nightly'],
       },
       {
         key: 'affect', tab: '情绪', title: '情绪设置',

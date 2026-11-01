@@ -77,8 +77,7 @@ export const PARAMS = {
   // 心情一致：心情好更容易想起好事，低落更容易想起坏事（mood-congruent recall）
   'memory.recall.weights.mood': ['C4', 0.15],
   'memory.recall.formula': ['C3', 'v2'],
-  // 默认 v3：分层记忆 / RRF / 实体 / 向量通道。显式写成 v2 才走老 recall。
-  'memory.retrieve.formula': ['C3', 'v3'],
+  'memory.retrieve.formula': ['C3', 'v2'],
   // 召回增强：off = 纯词法；low = 只在低置信时叫模型（默认）；always = 每轮都叫。
   'memory.retrieve.expand': ['C4', 'low'],
   // pre-step 最多等预取多久（毫秒）；等不到就先用词法结果，不阻塞这一轮。
@@ -98,49 +97,20 @@ export const PARAMS = {
   'memory.recall.archive.days': ['C4', 30],
   'memory.inject.pool': ['C4', 50],
   'memory.inject.budget': ['C4', 800],
+  // 「浮上来」三条通道（配额制）：相关度照旧，额外给重要度锚点 / 24h 新近 / 开环固定名额。
+  // 没有这几条，重要但跟这句话无关的东西永远过不了相关度门。
+  'memory.float.enable': ['C4', 'on'],
+  'memory.float.anchor': ['C4', 1],
+  'memory.float.fresh': ['C4', 1],
+  'memory.float.fresh_hours': ['C4', 24],
+  'memory.float.loop': ['C4', 1],
+  // 同一条开环几小时内只提一次（防每轮复读）。
+  'memory.float.loop.throttle': ['C4', 6],
+  // 累计重要性到多少分，把这一窗的流水账压成一条反思。
+  'memory.reflect.acc': ['C4', 5.0],
+  // 预取向量的等待上限（毫秒）：bge-m3 冷启动经常超过 150ms。
+  'memory.retrieve.vector.wait': ['C4', 400],
   'memory.auto': ['C4', true],
-  // 日记打包：纪要 importance 低于此值默认不进材料（忙天给高分腾坑）；0 = 不设下限
-  'memory.episode.min_diary_importance': ['C4', 0.25],
-  // L1 金标精修：on/off；日限额；importance 阈值；有效轮次阈值
-  'memory.episode.refine': ['C4', 'on'],
-  'memory.episode.refine.daily_cap': ['C4', 8],
-  'memory.episode.refine.theta': ['C4', 0.55],
-  'memory.episode.refine.min_turns': ['C4', 8],
-  // L2 忙天簇修：纪要条数超过此值才跑（一次模型）；0 = 关
-  'memory.episode.cluster_at': ['C4', 12],
-  // M0–M2 纪要→事实：夜巡蒸馏；off = 仅按轮抽取
-  'memory.episode.distill': ['C4', 'on'],
-  'memory.episode.distill.theta': ['C4', 0.55],
-  'memory.episode.distill.daily_cap': ['C4', 6],
-  'memory.episode.distill.prefer_cluster': ['C4', 'on'],
-  // 无模型时是否用规则从 beats/open_loops 捞硬断言（默认 off）
-  'memory.episode.distill.rules': ['C4', 'off'],
-  // U0：日模型调用硬顶（refine+cluster+diary+distill+extract）；0 = 不限
-  'memory.llm.daily_cap': ['C4', 16],
-  // U1：向量索引 auto|bruteforce|off
-  'memory.retrieve.vector.index': ['C4', 'auto'],
-  // U2：同 key / 高相似同极性时 UPDATE 改写
-  'memory.write.reconcile': ['C4', 'on'],
-  // U6：改口（极性翻转）conflict=开黄灯（默认）| update=静默覆盖
-  'memory.write.flip_policy': ['C4', 'conflict'],
-  // U7：S1 对冷层「习惯类」事实做窄穿透（查询字面命中才放行）；off=完全不穿透
-  'memory.retrieve.habit_cold': ['C4', 'on'],
-  // G1：「某天当时」查询（时效索引 + 冷库出证）；auto=对话里自动触发（默认关）；axis=said 说话时间 | recorded 入库时间
-  'memory.asof': ['C4', 'on'],
-  'memory.asof.auto': ['C4', 'off'],
-  'memory.asof.axis': ['C4', 'said'],
-  // U3：夜巡实体解析 / 事实合并
-  'memory.entity.resolve': ['C4', 'on'],
-  'memory.entity.resolve.daily_cap': ['C4', 2],
-  'memory.consolidate.facts': ['C4', 'on'],
-  // M3：最近纪要 topics 给命中的 T1 微助推（0 = 关）
-  'memory.retrieve.episode_topic_boost': ['C4', 0],
-  // 日记选料：有簇修时优先吃簇+精修；L0 只按比例补洞（off = 回到纯 importance 排序）
-  'memory.diary.prefer_cluster': ['C4', 'on'],
-  // 有簇时，L0 规则纪要最多占用材料预算的比例（0～1）
-  'memory.diary.l0_fill_ratio': ['C4', 0.45],
-  // 概览「嘀咕」：专用一次模型调用，只给人看、不进 memory_items；关则跳过调用
-  'ui.mutter.enabled': ['C4', true],
   'persona.step_cap': ['C0', 0.15],
   'persona.learn_rate': ['C4', 0.05],
   // 五轴证据累加：窗口内同向证据 ≥ min 条、平均强度 ≥ strength，才推一次轴
@@ -163,9 +133,21 @@ export const PARAMS = {
   // 快情绪回落：τ（分钟）+ 伸展指数。τ=20、shape=1.5 → 46 秒几乎不动，5 分钟剩 0.43，1 小时 0.03
   'affect.fast.tau': ['C4', 20],
   'affect.fast.shape': ['C4', 1.5],
+  // 慢情绪（真 EMA）：α = 追快情绪的速率，β = 回底色的速率。α+β 管「多久退掉」，α:β 管「谁更算数」。
+  // α=0.09、β=0.07 → λ=0.165，τ≈6h（一夜退到三成），稳态里快情绪五成半、底色四成。
+  // β 太小球会在刚才那一下上黏死；太大就只剩底色，没有余温。
+  'affect.slow.alpha': ['C4', 0.09],
+  'affect.slow.beta': ['C4', 0.07],
+  // 底色自己的波浪（叠在段式慢波上）：日节律 + 累积负荷。
+  // 日节律：一天一个来回，相位随 agent 定；0 = 关。
+  'affect.baseline.circadian': ['C4', 0.06],
+  // 累积负荷（allostatic load）：一直偏着，水位本身被拖走；没刺激就代谢回来。
+  // gain 大 / tau 长 = 几天缓不过来；都小 = 没心没肺。
+  'affect.baseline.load.gain': ['C4', 0.01],
+  'affect.baseline.load.tau': ['C4', 168],
   // 事件生命周期：同一段情绪几分钟内再来一句话 → 复现（重新点亮并加强）；刚散场又来 → 不应期打折
   'affect.event.renew': ['C4', 20],
-  'affect.event.boost': ['C4', 0.12],
+  'affect.event.boost': ['C4', 0.2],
   'affect.event.refractory': ['C4', 2],
   // 上升段：事件不是瞬间到顶，先走 attackStart 那一小步（占这一跳的比例），再用 attack 分钟爬满峰值
   'affect.event.attack': ['C4', 3],
@@ -189,11 +171,6 @@ export const PARAMS = {
   'drive.sensor.v3': ['C3', 'shadow'],
   // P3 浏览入口：on = act_browse 抓完自动落 browse_items；off = 关上这条输入线
   'drive.browse.ingest': ['C3', 'on'],
-  // 夜间巩固：顺手重长价值观（force）；off = 跳过这一步
-  'persona.values.nightly': ['C4', 'on'],
-  // 夜间巩固：世界观 / 人生观（默认随价值观一起重长）
-  'persona.worldview.nightly': ['C4', 'on'],
-  'persona.lifeview.nightly': ['C4', 'on'],
   'guard.budget.c3': ['C0', 2],
 }
 
@@ -218,15 +195,6 @@ export function getParam(db, aid, key) {
 }
 
 /** 只读实例覆盖值；没有覆盖返回 undefined（要区分「显式改过」时用它，别用 getParam）。 */
-export function getParamOverride(db, aid, key) {
-  const spec = PARAMS[key]
-  if (!spec) return undefined
-  try {
-    const row = db.prepare('SELECT value FROM agent_params WHERE agent_id=? AND key=?').get(aid, key)
-    return row ? parseStored(row.value, spec[1]) : undefined
-  } catch { return undefined }
-}
-
 /** 实例全部参数快照（含默认） */
 export function getAllParams(db, aid) {
   const out = {}

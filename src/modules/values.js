@@ -15,24 +15,30 @@
 import { now } from '../db.js'
 import { agent, tx } from '../kernel.js'
 import { listRelations, listPreferences, listTaboos } from './persona.js'
-import { VALUE_DIMS as DIMS, VALUE_PAIRS as PAIRS, VALUE_INIT as INIT, VALUE_FLOOR as FLOOR } from './persona_dims.js'
 
-export { DIMS, PAIRS, INIT, FLOOR }
+/** Schwartz 十维；顺序固定，界面与导出都按这个来 */
+export const DIMS = [
+  ['benevolence', '仁善', '照顾身边的人'],
+  ['universalism', '普世', '公平、对所有人'],
+  ['selfDirection', '自主', '自己决定，不想被安排'],
+  ['security', '安全', '稳定、不失去'],
+  ['tradition', '传统', '老规矩、一直这样'],
+  ['conformity', '从众', '守规矩、别出格'],
+  ['achievement', '成就', '做成事、变强'],
+  ['hedonism', '享乐', '舒服、好玩'],
+  ['stimulation', '刺激', '新鲜、冒险'],
+  ['power', '权力', '说了算、有地位'],
+]
 
-/** Schwartz 十维；顺序固定，界面与导出都按这个来。名字在 persona_dims.js。 */
+export const INIT = 0.1
+export const FLOOR = 0.02
 
-/** Schwartz 十维键；导入 / API 只认这些（或中文标签）。 */
-export const VALUE_KEYS = DIMS.map(([k]) => k)
-
-/** key 或中文标签 → 标准键；认不出返回 null（含废弃的 values.weight）。 */
-export function resolveValueKey(raw) {
-  const t = String(raw || '').trim()
-  if (!t || t === 'weight') return null
-  const bare = t.startsWith('values.') ? t.slice(7) : t
-  if (VALUE_KEYS.includes(bare)) return bare
-  const byLabel = DIMS.find(([, label]) => label === bare || label === t)
-  return byLabel ? byLabel[0] : null
-}
+/** 三组张力（§4.3），σ = −1 */
+export const PAIRS = [
+  ['benevolence', 'power'],
+  ['tradition', 'selfDirection'],
+  ['security', 'stimulation'],
+]
 
 /** 6 小时内的重复读取不再重算；新经历多得多的实例可以手动「重新长一遍」 */
 export const TTL_MS = 6 * 3600 * 1000
