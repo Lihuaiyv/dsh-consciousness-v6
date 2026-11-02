@@ -372,6 +372,8 @@ const KEY = Symbol.for('dsh-consciousness.heartbeat')
 // ---------------- 鎶婂畠鎺ヨ繘 DSH 鐨勫璇?----------------
 // 琚€屽惎鍔ㄣ€嶇殑閭ｄ釜鎰忚瘑浣撲細缁戝畾鍒颁笅涓€涓柊寤虹殑瀵硅瘽锛氶偅娈靛璇濋噷妯″瀷鎷垮埌鐨?// 绯荤粺鎻愮ず浼氬甫涓婂畠鐨勪汉鏍笺€佹儏缁€佸叧绯诲拰璁板繂锛涘洖澶嶇粨鏉熷悗鍐嶆妸杩欎竴杞啓鍥炶蹇嗐€?
 const lastUser = new Map()
+/** 上一句用户话的时间：给参与度信号算间隔，只记不读。 */
+const lastUserAt = new Map()
 // 杩欎竴杞殑韬唤璇侊細鐢ㄦ埛閭ｅ彞璇濆拰鍔╂墜閭ｅ彞璇濆叡鐢ㄥ悓涓€涓?turn_id銆?// 璁板繂闈犲畠鍥炲埌鍘熻瘽銆備互鍓嶄粠鏉ヤ笉鐢熸垚锛屾墍浠?raw_turns.turn_id 鍏ㄧ┖銆?// memory_items.source_turn_id 涓€鏉￠兘 join 涓嶄笂鈥斺€斻€屼綘杩樿寰楁垜褰撴椂璇寸殑銆嶅氨鍙墿姝ｆ枃锛屾病鏈夊嚭澶勩€?
 const lastTurnId = new Map()
 
@@ -972,6 +974,24 @@ try { sangguanAfterTurn(db, aid, { user: u, assistant: aText, sid, at }) } catch
   try { evaluateDrive(db, aid) } catch { /* 鏆傚仠鎴栨暟鎹己澶?*/ }
 }
 
+/**
+ * 用户这句话的「参与度」信号：字数、距上一句多久。
+ * 只记不读——先攒数据，别急着让她据此改情绪：回得短不等于没兴趣，读错了比不读更像戏。
+ */
+export function recordEngagement(db, aid, text, gapMin, at = Date.now()) {
+  try {
+    const t = String(text || '')
+    if (!t) return null
+    const payload = {
+      len: Array.from(t).length,
+      gap_min: gapMin == null ? null : Math.round(gapMin * 10) / 10,
+      pushed: t.startsWith('（它主动来找你'),
+    }
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), aid, 'user.engagement', JSON.stringify(payload), new Date(at).toISOString())
+    return payload
+  } catch { return null }
+}
+
 function captureTurn(db, aid, session, event) {
   if (!event || !session || !session.id) return
   const sid = String(session.id)
@@ -985,6 +1005,11 @@ const turn = readEvent(event)
     const t = cleanUserText(turn.text)
     if (t) {
       lastUser.set(sid, t)
+      const nowMs = Date.now()
+      const prevAt = lastUserAt.get(sid)
+      // 参与度只记不读：先攒数据，别急着让她据此改情绪
+      recordEngagement(db, aid, t, prevAt ? (nowMs - prevAt) / 60000 : null, nowMs)
+      lastUserAt.set(sid, nowMs)
       const tid = makeTurnId()
       lastTurnId.set(sid, tid)
       if (t.startsWith('（它主动来找你')) pushedTurns.add(sid)
