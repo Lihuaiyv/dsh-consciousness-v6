@@ -10,6 +10,7 @@ import {
 import { normalizeTerms } from './terms.js'
 import { attrConflict } from './contradict.js'
 import { askAboutConflict } from './conflict_ask.js'
+import { maskPositive } from './negation.js'
 export { normalizeTerms }
 
 const SECRET = /(sk-[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,})/g
@@ -34,7 +35,19 @@ function sim(a, b) {
   for (const c of A) if (B.has(c)) inter++
   return inter / Math.max(1, new Set([...A, ...B]).size)
 }
-function hasNeg(text) { return [...text].some((c) => NEG.has(c)) }
+function hasNeg(text) { return [...maskPositive(text)].some((c) => NEG.has(c)) }
+
+/**
+ * 这一对记忆之间有没有冲突记录（不论开没开完）。
+ * 开案前查一次：判过的别再弹，否则每抽到一个新说法就重新开一张同样的卡。
+ */
+export function conflictPairExists(db, aid, aId, bId) {
+  if (!aId || !bId) return false
+  try {
+    return !!db.prepare(`SELECT 1 FROM conflicts WHERE agent_id=? AND
+      ((a_id=? AND b_id=?) OR (a_id=? AND b_id=?)) LIMIT 1`).get(aid, aId, bId, bId, aId)
+  } catch { return false }
+}
 
 /** 去掉模板句、时间戳、角色前缀，只留下真正的内容再比 */
 function coreText(text) {
@@ -218,7 +231,9 @@ export function addMemory(db, aid, body) {
       actor: String(body.source || 'model').slice(0, 24),
     })
     event(db, aid, 'memory.written', { memory_id: mid })
-    if (kind === 'conflict') {
+    // 同一对记忆已经开过案（哪怕你已经判过「两条都留」），不重开第二张卡
+    const pairKnown = kind === 'conflict' && conflictPairExists(db, aid, old.id, mid)
+    if (kind === 'conflict' && !pairKnown) {
       const cid = nid('cfl_')
       // P3：把判定依据一起存下来，半年后还能回答「当时凭什么判成冲突」
       const evidence = JSON.stringify({

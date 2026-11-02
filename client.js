@@ -6911,6 +6911,34 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dshc-sub dshc-mono', style: { whiteSpace: 'normal' } }, changePreview(c)))
     }
 
+    function authorFieldName(f) {
+      const k = String(f || '').replace(/^persona\./, '')
+      if (k === 'style.tone') return '语气'
+      if (k === 'style.catchphrase') return '口头禅'
+      if (k.startsWith('interest.')) return '兴趣 · ' + k.slice(9)
+      return fieldHuman(k)
+    }
+    function authorVal(v) {
+      try { const x = JSON.parse(v); return x == null ? '—' : String(x) } catch { return shortVal(v) }
+    }
+    function AuthorRow({ c, aid, run, act }) {
+      const rolled = c.rolled_back_at && isIsoTime(c.rolled_back_at)
+      return h('div', { className: 'dshc-tl-item' },
+        h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' } },
+          h('span', { className: 't' }, authorFieldName(c.field)),
+          h('span', { className: 'dshc-spacer' }),
+          rolled
+            ? h(Pill, { tone: 'bad' }, '已回滚')
+            : h(Btn, {
+              sm: true,
+              onClick: () => run(() => act(() => call('POST', '/v1/agents/' + enc(aid) + '/author/rollback', { change_id: c.id }, true))),
+            }, '回滚')),
+        h('div', { className: 'dshc-sub dshc-mono', style: { whiteSpace: 'normal' } },
+          authorVal(c.before) + ' → ' + authorVal(c.after)
+          + (c.observing_until && !rolled ? ' · 观察到 ' + String(c.observing_until).slice(5, 10) : '')),
+        h('div', { className: 'dshc-sub', style: { opacity: .72 } }, agoText(c.applied_at)))
+    }
+
     function SelfPage({ aid, view, act, setTab }) {
       const [tick, setTick] = useState(0)
       const [err, setErr] = useState('')
@@ -6918,6 +6946,7 @@ window.__ModuleLoader__.load({
       const [props] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/proposals'), [aid, tick])
       const [drafts, reloadDrafts] = useAsync(() => call('POST', '/v1/agents/' + enc(aid) + '/drafts', {}, true), [aid, tick])
       const [chs] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/changes'), [aid, tick])
+      const [auth] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/author'), [aid, tick])
       const [tg] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/targets'), [aid, tick])
       const metricSlice = useMetricSlice(aid, 33, 42)
       const list = Array.isArray(props.data) ? props.data : []
@@ -6925,6 +6954,7 @@ window.__ModuleLoader__.load({
       const pending = visible.filter((p) => ['shadowed', 'screened', 'pending_human'].includes(p.state))
       const finished = visible.filter((p) => !['shadowed', 'screened', 'pending_human'].includes(p.state))
       const changes = Array.isArray(chs.data) ? chs.data : []
+      const authored = auth.data && Array.isArray(auth.data.rows) ? auth.data.rows : []
       const auto = changes.filter((c) => c.source === 'auto' || c.source === 'calibration')
       const manual = changes.filter((c) => c.source !== 'auto' && c.source !== 'calibration')
       const draftsList = Array.isArray(drafts.data) ? drafts.data : []
@@ -7074,6 +7104,17 @@ window.__ModuleLoader__.load({
         right: h(Pill, null, '共 ' + changes.length + ' 条'),
       }, h(Card, null, changesBody))
 
+      const authorSection = h(Sec, {
+        title: '她自己改的',
+        desc: view === 'user'
+          ? '她只改语气、口头禅、兴趣；每天最多一条，7 天观察，随时可回滚。'
+          : 'P 通道：白名单 persona.style.tone / style.catchphrase / interest.*；source=self-authorship；不进 C1–C3 影子。',
+        right: h(Pill, null, '近 30 天 ' + authored.length + ' 条'),
+      }, h(Card, null,
+        auth.error ? h(LoadErr, { error: '读取失败：' + auth.error, retry: () => setTick((t) => t + 1) })
+          : authored.length === 0 ? h(Empty, null, '最近 30 天她没有改过自己的样子。')
+            : h('div', { className: 'dshc-tl' }, authored.map((c) => h(AuthorRow, { key: c.id, c, aid, run, act })))))
+
       const gatesSection = h(Sec, { techOnly: true, title: '七道闸（G1–G7）', desc: '顺序固定；第一个 block 之后其余记 skipped。' },
         h(Card, null, GATES.map(([g, name, code]) => h(Row, { key: g, label: g + ' ' + name }, h(Pill, null, code)))))
 
@@ -7109,6 +7150,7 @@ window.__ModuleLoader__.load({
       return h('div', null,
         proposalSection,
         autoSection,
+        authorSection,
         ideasSection,
         changesSection,
         gatesSection,
@@ -8398,6 +8440,55 @@ window.__ModuleLoader__.load({
         }, who.name))
     }
 
+    /* ============================================================== guard */
+
+    /**
+     * 这一页以前崩一次就整个从设置导航里消失：DSH 的 slot 渲染器对出错的 entry
+     * 会直接停用（abdicate），页签就"没了"。在这里兜住，换成一张能看懂的卡片，
+     * 页签一直留在导航里，出错也能重试。
+     */
+    function rememberCrash(err, extra) {
+      try {
+        const text = String((err && (err.stack || err.message)) || err)
+        console.error('[dsh-consciousness] 页面渲染出错：', err)
+        window.localStorage.setItem('dshc.crash', JSON.stringify({
+          at: new Date().toISOString(), text: text.slice(0, 4000), extra: String(extra || '').slice(0, 4000),
+        }))
+      } catch { /* 记录失败不影响重试 */ }
+    }
+
+    function CrashCard({ error, reset }) {
+      const text = String((error && (error.stack || error.message)) || error)
+      return h('div', { className: 'dshc' },
+        h(Style),
+        h('div', { className: 'dshc-hero' },
+          h('div', { className: 'dshc-hero-row' },
+            h('div', { className: 'dshc-id' }, h(Orb, { size: 42 }),
+              h('div', null,
+                h('h1', null, '意识'),
+                h('div', { className: 'dshc-sub' }, '这一页刚才出错了。它还在，重试一下；还不行就把下面的错误发我。'))))),
+        h('div', { style: { marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 } },
+          h('div', {
+            className: 'dshc-err',
+            style: { whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--mono, monospace)', fontSize: 12 },
+          }, text.slice(0, 1500)),
+          h('div', { style: { display: 'flex', gap: 8 } },
+            h(Btn, { primary: true, onClick: reset }, '重试'),
+            h(Btn, { ghost: true, onClick: () => { try { navigator.clipboard.writeText(text) } catch { /* 剪贴板不可用 */ } } }, '复制错误'))))
+    }
+
+    /* 没有 React.Component 的环境（测试里的假 React）只做透传，真浏览器里才拦 */
+    const BoundaryBase = (React.Component) || class { constructor(props) { this.props = props } }
+    class SectionBoundary extends BoundaryBase {
+      constructor(props) { super(props); this.state = { err: null } }
+      static getDerivedStateFromError(err) { return { err: err || new Error('未知错误') } }
+      componentDidCatch(err, info) { rememberCrash(err, info && info.componentStack) }
+      render() {
+        if (this.state.err) return h(CrashCard, { error: this.state.err, reset: () => this.setState({ err: null }) })
+        return this.props.children
+      }
+    }
+
     /* =========================================================== register */
 
     /**
@@ -8432,18 +8523,21 @@ window.__ModuleLoader__.load({
       inject: ['slots'],
       apply(ctx) {
         ctx.effect(() => watchHotReload(), 'dsh-consciousness: 热更新')
+        // 页面外面再包一层：渲染出错也只坏一张卡，页签不会从设置导航里消失
+        const Section = (props) => h(SectionBoundary, null, h(Page, props))
+        const Presence = (props) => h(SectionBoundary, null, h(ChatPresence, props))
         ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'consciousness',
           order: 26,
           label: '意识',
-        }, Page)), 'dsh-consciousness: settings section')
+        }, Section)), 'dsh-consciousness: settings section')
         ctx.effect(() => ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
           name: 'conversation.session.header.actions',
           id: 'consciousness-presence',
           order: 20,
           label: '意识体',
-        }, ChatPresence)), 'dsh-consciousness: chat presence')
+        }, Presence)), 'dsh-consciousness: chat presence')
       },
     }
   },

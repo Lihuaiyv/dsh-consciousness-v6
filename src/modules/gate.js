@@ -13,11 +13,10 @@
 
 import { askAboutConflict } from './conflict_ask.js'
 import { attrConflict } from './contradict.js'
-import { buildSearchText } from './memory.js'
+import { buildSearchText, conflictPairExists } from './memory.js'
+import { hasNegation, isPositiveCompoundAt } from './negation.js'
 import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
 import { tx } from '../kernel.js'
-
-const NEG = new Set([...'不没别无取消换改'])
 
 export const GATE = Object.freeze({
   MERGE: 0.92,
@@ -29,7 +28,7 @@ export const GATE = Object.freeze({
 const NOISE = /^(Time sampled|Approval prompts|##|\{|<)/
 
 export function polarity(text) {
-  return [...String(text || '')].some((c) => NEG.has(c)) ? -1 : 1
+  return hasNegation(text, '不没别无取消换改') ? -1 : 1
 }
 
 function charSet(text) {
@@ -61,6 +60,8 @@ const TAIL_NOISE = new Set(['的东西', '的时候', '的地方', '的事情', 
 function isNegationAt(text, i) {
   const c = text[i]
   if (!c || !NEG_ONE.has(c)) return false
+  // 「无误 / 无疑」这类正向否定式整块不算否定：确认无误 ≠ 否认
+  if (isPositiveCompoundAt(text, i)) return false
   if (c === '别') {
     const next = text[i + 1] || ''
     if (!next || NOT_NEG_AFTER_BIE.has(next)) return false
@@ -232,6 +233,12 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
   // addMemory 自己也可能判出同一条冲突：它已经开过案、排过问句了，就别重复开第二份
   if (r && r.conflict && r.conflict_id) {
     return { action: 'conflict', id: r.id, conflict_id: r.conflict_id, score: d.score, dedup: 'addMemory' }
+  }
+
+  // 这一对记忆之间已经开过案（开着的，或者你之前拍过板的）：别再开第二张卡。
+  // 否则每抽到一个新说法就重新弹一张同样的冲突，判完还会再来。
+  if (r && r.id && conflictPairExists(db, aid, d.target.id, r.id)) {
+    return { action: 'new', id: r.id, score: d.score, dedup: 'existing-conflict' }
   }
 
   // 门控判了冲突，就必须落一条可追溯的冲突记录：
