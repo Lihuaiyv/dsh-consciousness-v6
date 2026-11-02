@@ -146,7 +146,7 @@ export function addLoop(db, aid, opt = {}) {
   const text = String(opt.text || '').trim()
   if (!text) return { id: null, created: false, row: null }
   const at = opt.at || Date.now()
-  const open = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state='open'").all(aid)
+  const open = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state IN ('open','half_said')").all(aid)
   for (const r of open) {
     if (norm(r.text) === norm(text) || overlapChars(r.text, text) >= 0.6) {
       if (opt.memory_id && !r.memory_id) {
@@ -173,7 +173,10 @@ export function pendingLoops(db, aid, opt = {}) {
   const at = opt.at || Date.now()
   const throttle = Number(opt.throttleHours == null ? 6 : opt.throttleHours) * HOUR
   const limit = Math.max(1, Math.min(5, Number(opt.limit) || 1))
-  const rows = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state='open'").all(aid)
+  // half_said = 说过一次、还没收尾的。默认仍然取（跟改造前一样能再提醒），
+  // 只有显式要「还没开口的事」时才用 onlyOpen 排掉它。
+  const states = opt.onlyOpen ? "('open')" : "('open','half_said')"
+  const rows = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state IN " + states).all(aid)
   const out = []
   for (const r of rows) {
     if (Number(r.fire_count || 0) >= 5) continue
@@ -189,7 +192,9 @@ export function pendingLoops(db, aid, opt = {}) {
   // 排序：先「已到期」的后到期的，再按被提过的次数由少到多（不然两条老待办会永远占住名额，
   // 新挂的一直冒不上来），最后才比时间先后。
   const overdue = (x) => (Number.isFinite(Date.parse(x.due_at || '')) && Date.parse(x.due_at) <= at ? 0 : 1)
-  out.sort((a, b) => overdue(a) - overdue(b)
+  // 说了一半的先说：那是「我话没说完」，比一件还没开口的事更该被接上。
+  const half = (x) => (String(x.state) === 'half_said' ? 0 : 1)
+  out.sort((a, b) => half(a) - half(b) || overdue(a) - overdue(b)
     || Number(a.fire_count || 0) - Number(b.fire_count || 0)
     || a.rank - b.rank
     || String(a.created_at).localeCompare(String(b.created_at)))
@@ -200,7 +205,8 @@ export function pendingLoops(db, aid, opt = {}) {
 export function markLoopsFired(db, ids, at = Date.now()) {
   const list = [...new Set((ids || []).filter(Boolean))]
   if (!list.length) return 0
-  const up = db.prepare('UPDATE open_loops SET fired_at=?, fire_count=fire_count+1, updated_at=? WHERE id=?')
+  // 说过一次就转 half_said：它不再是「还没说出口的事」，而是「我话没说完」。
+  const up = db.prepare("UPDATE open_loops SET fired_at=?, fire_count=fire_count+1, state=CASE WHEN state='open' THEN 'half_said' ELSE state END, updated_at=? WHERE id=?")
   for (const id of list) up.run(stamp(at), stamp(at), id)
   return list.length
 }
@@ -209,7 +215,7 @@ export function markLoopsFired(db, ids, at = Date.now()) {
 export function closeLoops(db, aid, ids, by = 'manual', at = Date.now()) {
   const list = [...new Set((ids || []).filter(Boolean))]
   let n = 0
-  const up = db.prepare("UPDATE open_loops SET state='closed', closed_at=?, closed_by=?, updated_at=? WHERE id=? AND agent_id=? AND state='open'")
+  const up = db.prepare("UPDATE open_loops SET state='closed', closed_at=?, closed_by=?, updated_at=? WHERE id=? AND agent_id=? AND state IN ('open','half_said')")
   for (const id of list) {
     const r = up.run(stamp(at), by, stamp(at), id, aid)
     if (r && r.changes) n++
@@ -225,7 +231,7 @@ export function settleLoopsFromUser(db, aid, turns = [], opt = {}) {
   const at = opt.at || Date.now()
   const done = (turns || []).filter((x) => x && x.role === 'user' && CLOSE_RE.test(String(x.text || '')))
   if (!done.length) return 0
-  const rows = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state='open' ORDER BY fired_at DESC").all(aid)
+  const rows = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state IN ('open','half_said') ORDER BY fired_at DESC").all(aid)
   const ids = []
   for (const r of rows) {
     const fired = Date.parse(r.fired_at || '')
@@ -241,28 +247,45 @@ export function settleLoopsFromUser(db, aid, turns = [], opt = {}) {
 
 /** 提满 5 次还没解决：自动收掉，别念叨。 */
 export function expireLoops(db, aid, at = Date.now()) {
-  const rows = db.prepare("SELECT id FROM open_loops WHERE agent_id=? AND state='open' AND fire_count>=5").all(aid)
+  const rows = db.prepare("SELECT id FROM open_loops WHERE agent_id=? AND state IN ('open','half_said') AND fire_count>=5").all(aid)
   return closeLoops(db, aid, rows.map((r) => r.id), 'expired', at)
+}
+
+/**
+ * 开环注入的引导语：欠账（答应过 / 提醒）抬成「最在意的其实是这件事」，
+ * 其余仍是「心里还挂着的事」。纯函数，方便单测；focusOn=off 时与改前一致。
+ */
+export function loopPrefixOf(kinds, { focusOn = true } = {}) {
+  const owed = focusOn && Array.isArray(kinds) && (kinds[0] === 'promise' || kinds[0] === 'reminder')
+  return owed
+    ? '（你现在最在意的其实是这件事，可以自然提起，不用解释来源）：\n'
+    : '（你自己心里还挂着的事，可以自然提起，不用解释来源）：\n'
 }
 
 /** 注入用的一行。 */
 export function loopLineFor(db, aid, opt = {}) {
   const at = opt.at || Date.now()
-  const rows = pendingLoops(db, aid, { at, limit: opt.limit || 1, throttleHours: opt.throttleHours })
-  if (!rows.length) return { text: '', ids: [] }
-  const text = rows.map((r) => {
+  const limit = Math.max(1, Math.min(5, Number(opt.limit) || 1))
+  // 多取几条：欠账（答应过 / 提醒）要能排到第一条。只在注入侧排，
+  // 不改 pendingLoops 的排序——那边还挂着主动开口，改了会连带改开口顺序。
+  const rows = pendingLoops(db, aid, { at, limit: Math.max(limit, 5), throttleHours: opt.throttleHours })
+  if (!rows.length) return { text: '', ids: [], kinds: [] }
+  const owedFirst = (r) => (r.kind === 'promise' || r.kind === 'reminder' ? 0 : 1)
+  rows.sort((a, b) => owedFirst(a) - owedFirst(b))
+  const picked = rows.slice(0, limit)
+  const text = picked.map((r) => {
     const due = Date.parse(r.due_at || '')
     const note = Number.isFinite(due)
       ? (due <= at ? '已经到期了' : '约在 ' + new Date(due).toLocaleDateString('zh-CN'))
       : '还没做完'
     return '- 还挂着：' + String(r.text).replace(/\s+/g, ' ').slice(0, 45) + '（' + note + '）'
   }).join('\n')
-  return { text, ids: rows.map((r) => r.id) }
+  return { text, ids: picked.map((r) => r.id), kinds: picked.map((r) => String(r.kind || 'task')) }
 }
 
 export function loopStats(db, aid) {
   const r = db.prepare(`SELECT
-    SUM(CASE WHEN state='open' THEN 1 ELSE 0 END) open,
+    SUM(CASE WHEN state IN ('open','half_said') THEN 1 ELSE 0 END) open,
     SUM(CASE WHEN state='closed' THEN 1 ELSE 0 END) closed,
     MAX(fire_count) max_fire FROM open_loops WHERE agent_id=?`).get(aid) || {}
   return { open: Number(r.open || 0), closed: Number(r.closed || 0), max_fire: Number(r.max_fire || 0) }

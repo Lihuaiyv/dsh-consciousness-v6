@@ -115,6 +115,25 @@ const T0 = Date.parse('2026-03-01T09:00:00+08:00')
   check('P1 收掉：收起后不再冒', !after.some((x) => x.id === l.id))
 }
 
+// ---------------- P6 开环：说过一次变「说了一半」 ----------------
+{
+  const aid4 = 'agt_float_half'
+  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
+    .run(aid4, '半句', 'daily', 'active', now())
+  const at = T0 + 20 * D
+  const l = addLoop(db, aid4, { text: '答应过主人把那版配色改一下', kind: 'promise', due_at: new Date(at - H).toISOString(), at })
+  markLoopsFired(db, [l.id], at)
+  const row = db.prepare('SELECT state, fire_count FROM open_loops WHERE id=?').get(l.id)
+  check('P6 半句：说过一次转 half_said', row.state === 'half_said' && row.fire_count === 1, row)
+  const inject = pendingLoops(db, aid4, { at: at + 7 * H, limit: 5, throttleHours: 0 })
+  check('P6 半句：注入路径仍然挂着（没说完的事要接着提）', inject.some((x) => x.id === l.id), inject.map((x) => x.id))
+  const speak = pendingLoops(db, aid4, { at: at + 7 * H, limit: 5, throttleHours: 0, includeHalfSaid: true })
+  check('P6 半句：主动开口还能接着说', speak.some((x) => x.id === l.id), speak.map((x) => x.id))
+  const done = settleLoopsFromUser(db, aid4, [{ role: 'user', text: '好了' }], { at: at + 1 * H })
+  const after = db.prepare('SELECT state FROM open_loops WHERE id=?').get(l.id)
+  check('P6 半句：用户说好了能关掉', done >= 1 && after.state === 'closed', { done, after })
+}
+
 // ---------------- P1 开环：注入一行 ----------------
 {
   const aid2 = 'agt_float_line'

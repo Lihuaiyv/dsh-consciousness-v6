@@ -3,7 +3,7 @@
  * 运行：node test/proactive-triggers.test.mjs
  */
 import { makeWorld } from './eval-persona/setup.mjs'
-import { decideSpeak, proactiveTriggerOf, setProactivePrefs, queueProactive } from '../src/features.js'
+import { decideSpeak, proactiveTriggerOf, setProactivePrefs, queueProactive, proactiveCost } from '../src/features.js'
 import { now } from '../src/db.js'
 
 let pass = 0
@@ -122,6 +122,25 @@ function basePrefs(w, extra = {}) {
     basePrefs(w)
     addLoop(w, { due: 3 * DAY })
     check('没到期的不算事由', proactiveTriggerOf(w.db, w.aid) === null, proactiveTriggerOf(w.db, w.aid))
+  } finally { w.close() }
+}
+
+// ⑨ 冲突确认是「系统让她问」的：不占当天额度，也不进打扰成本
+{
+  const w = makeWorld()
+  try {
+    basePrefs(w)
+    // 造一个「确实有缺口」的状态，否则根本走不到额度那一段
+    w.db.prepare(`INSERT INTO drive_state(agent_id,r,e,c,a,s,setpoint,band,last_eval_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`).run(w.aid, 0.1, 0.1, 0.1, 0.1, 0.1,
+      JSON.stringify({ R: 0.9, E: 0.9, C: 0.9, A: 0.9, S: 0.9 }), 'D2', now())
+    w.db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run('prc_cfl', w.aid, '你先前说「别删」，后来又说「删掉」——到底哪个算？', 'conflict:cfl_test', 'R', 'delivered', at(-3600000), at(-3600000))
+    const cost = proactiveCost(w.db, w.aid)
+    check('冲突确认不进打扰成本', cost.sent7 === 0 && cost.sent === 0, cost)
+    const d = decideSpeak(w.db, w.aid)
+    const freq = (d.gates || []).find((g) => g.id === 'frequency')
+    check('冲突确认不占当天额度', d.will === true && !!freq && /今天还没说/.test(freq.detail), { reason: d.reason, freq })
   } finally { w.close() }
 }
 

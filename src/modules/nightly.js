@@ -293,7 +293,7 @@ export async function runNightly(db, aid, opt = {}) {
         push('self_note', { ok: true, skipped: 'empty' })
       } else {
         const text = String(await engine.complete({
-          system: '你在替一个意识体写「今天她是什么状态」。用第一人称，三到五句，写状态和感受，不用总结今天做了什么，不要列点，不要对小汐之外的人说话。只输出正文。',
+          system: '你在替一个意识体写「今天她是什么状态」。用第一人称，三到五句，写状态和感受，不用总结今天做了什么，不要列点，不要对小汐之外的人说话。只写事实和自己的感受，不猜对方的心思、不给对方贴标签（比如「他很敏感」「他其实不在意我」）。只输出正文。',
           text: source,
         }) || '').trim().slice(0, 400)
         if (!text) {

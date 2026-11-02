@@ -10,7 +10,7 @@ import path from 'node:path'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
 import { attachHostLlm } from './src/model.js'
-import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences, attachContextBlock } from './src/features.js'
+import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences, attachContextBlock, closingIntentOf } from './src/features.js'
 import { nid, purgeExpired, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraft, TARGET_IDS, latestUserEmotion, decayAffect, getDrive, spontaneousTick } from './src/core.js'
 import { seedRuleBindings } from './src/modules/artifacts.js'
 import { DIMS } from './src/modules/values.js'
@@ -27,7 +27,7 @@ import { detectMode, resolveMode, styleInjection } from './src/modules/style_mod
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
-import { expressionState, cardLine } from './src/modules/expression_state.js'
+import { expressionState, cardLine, subtextOf } from './src/modules/expression_state.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
 import { appendTurn, buildEpisode, recentDiaryLines, migrateArchive, backfillFactArchive, sessionBridge } from './src/modules/archive.js'
@@ -37,7 +37,7 @@ import { prefetchExpand, takeExpansion } from './src/modules/expand.js'
 import { prefetchEmbedding, takeEmbedding } from './src/modules/vector.js'
 import { backfillEntities } from './src/modules/entities.js'
 import { packInjection, oneLine } from './src/modules/pack.js'
-import { loopLineFor, markLoopsFired, expireLoops } from './src/modules/loops.js'
+import { loopLineFor, loopPrefixOf, markLoopsFired, expireLoops } from './src/modules/loops.js'
 import { recordSurfaced, markSurfacedUsed } from './src/modules/surfacing.js'
 import { surfaceQueueTick, takeSurface } from './src/modules/pulse.js'
 import { applySelfRead } from './src/modules/self_read.js'
@@ -60,6 +60,7 @@ import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
 import { resolveAgentId, touchSession, peekPending, bindingsOf, runningAgentIds, maxRunning, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
+import { attachQQBridge, attachQQIngest, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock } from './src/modules/qq_bridge.js'
 
 // 情绪注入的人话化交给 modules/expression_state.js（第一人称感受 + 软愿望）；这里不再保留「强度 / 心情 / 底色」的数字分档函数。
 // 蹇呴』涓?package.json / cordis.patch.yml 鐨勫寘鍚嶄竴鑷达紝鍚﹀垯 loader 鎸傝浇寮傚父銆?
@@ -73,6 +74,10 @@ const LOCK_PATH = path.join(path.dirname(DB_PATH), 'app.lock')
 
 // 瀹夸富涓婁笅鏂囧拰鏈€杩戣鍒扮殑浼氳瘽锛氫富鍔ㄥ彂娑堟伅瑕佺敤 sessionController.prompt 鎺ㄨ繘鍘汇€?
 let hostCtx = null
+/** QQ 桥接适配句柄（attachQQBridge 的返回值）；null = 没挂上。 */
+let qqBridgeHandle = null
+/** QQ 对话回流句柄（attachQQIngest 的返回值）；null = 没挂上。 */
+let qqIngestHandle = null
 const lastSessions = new Map()
 const pushedTurns = new Set()
 
@@ -442,21 +447,26 @@ export function surfaceLoopLine(db, aid) {
   const c = loopCache.get(aid)
   if (c && Date.now() - c.at < 60000) return c.text
   let text = ''
+  let kinds = []
   try {
     const lim = Math.max(1, Math.min(3, Number(getParam(db, aid, 'memory.float.loop')) || 1))
     const th = Math.max(1, Math.min(72, Number(getParam(db, aid, 'memory.float.loop.throttle')) || 6))
     const L = loopLineFor(db, aid, { limit: lim, throttleHours: th })
     if (L.ids.length) {
       markLoopsFired(db, L.ids)
-      text = '（你自己心里还挂着的事，可以自然提起，不用解释来源）：\n' + L.text
+      kinds = Array.isArray(L.kinds) ? L.kinds : []
+      const focusOn = String(getParam(db, aid, 'memory.inject.focus') || 'on') !== 'off'
+      text = loopPrefixOf(kinds, { focusOn }) + L.text
       expireLoops(db, aid)
     }
   } catch { text = '' }
-  loopCache.set(aid, { at: Date.now(), text })
+  loopCache.set(aid, { at: Date.now(), text, kinds })
   return text
 }
 
 export function consciousnessBlock(db, aid, opts) {
+  // 同一个拼装器，两个读者：主人看到全部；不熟的人只看到「她是谁、现在什么样、怎么说话」。
+  const stranger = !!(opts && opts.audience === 'stranger')
   const a = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
   if (!a || a.status === 'soft_deleted') return ''
   let persona = []
@@ -503,7 +513,7 @@ let mbtiLine = ''
   if (!rel.length) {
     rel = db.prepare('SELECT name, kind, closeness, trust, dependence FROM relations WHERE agent_id=? ORDER BY root DESC, closeness DESC LIMIT 5').all(aid)
   }
-  const mem = db.prepare("SELECT text FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY heat DESC, weight DESC, created_at DESC LIMIT 10").all(aid)
+  const mem = stranger ? [] : db.prepare("SELECT text FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY heat DESC, weight DESC, created_at DESC LIMIT 10").all(aid)
   const dyn = recentRecall.get(aid)
   // 澶栭儴閫氶亾锛圦Q锛夎繖涓€杞嚜宸卞彫鍥炶繃浜嗭紝灏辩敤瀹冪殑缁撴灉锛屽埆璁╃綉椤甸偅杈圭暀涓嬬殑鏃у彫鍥為《涓婃潵
   const recallOverride = opts && Array.isArray(opts.recall) ? opts.recall : null
@@ -512,12 +522,12 @@ let mbtiLine = ''
     : (dyn && Date.now() - dyn.at < 60000 ? dyn.text : '')
   // T3 鏃ヨ灞傦細鍙甫鏈€杩戜袱澶╋紝鍘嬫垚涓よ锛涘畠鏄彊浜嬶紝涓嶅崰鈥滅浉鍏宠蹇嗏€濈殑鍚嶉銆?
 let diaryLines = []
-  try { diaryLines = recentDiaryLines(db, aid, 2, 160) } catch { diaryLines = [] }
+  try { diaryLines = stranger ? [] : recentDiaryLines(db, aid, 2, 160) } catch { diaryLines = [] }
   // 寮€鐜細蹇冮噷鐨勩€岃繕鎸傜潃銆嶃€傚畠涓嶅弬涓庣浉鍏冲害锛屽埌浜嗘椂鍊欐垨鑰呬箙娌℃彁灏辫嚜宸卞啋鍑烘潵涓€鏉°€?
-const loopText = surfaceLoopLine(db, aid)
+let loopText = stranger ? '' : surfaceLoopLine(db, aid)
   // 浼氳瘽缁帴锛氶殧澶╁啀鏉ョ殑鏃跺€欙紝鍏堣涓€鍙ャ€屼笂娆″埌鍝効銆嶃€傚悓涓€澶╃殑浜嬩笂涓嬫枃閲屾湰鏉ュ氨鏈夛紝涓嶉噸澶嶃€?
 let bridgeText = ''
-  try { bridgeText = sessionBridge(db, aid) } catch { bridgeText = '' }
+  if (!stranger) { try { bridgeText = sessionBridge(db, aid) } catch { bridgeText = '' } }
 
   // 鑷繁娴笂鏉ワ細蹇冭烦鎺掔殑鍊欓€夛紝鏈€澶氬彇涓€鏉°€傚畠涓嶄竴瀹氳窡杩欎竴杞殑璇濇湁鍏斥€斺€?
 // 人本来就会说着说着想起别的事。先取，再拼记忆块，免得同一条占两个名额。
@@ -537,6 +547,7 @@ let spontaneousLine = ''
       spontaneousCache.set(aid, { at: Date.now(), text: spontaneousText })
     }
   } catch { spontaneousLine = '' }
+  if (stranger) { spontaneousLine = ''; spontaneousText = '' }
 
   // 璁板繂鍧楋細浼樺厛鐢ㄨ繖涓€杞湡鍙洖鐨勭粨鏋滐紱娌℃湁灏辩敤鐑害鍏滃簳锛屼絾鍙暀 4 鏉★紝姣忔潯鍘嬫垚涓€鍙ャ€?
 // 鍏滃簳鏃跺墧鎺夊垰娴笂鏉ョ殑閭ｆ潯锛岄伩鍏嶅悓涓€浠朵簨璇翠袱閬嶃€?
@@ -549,7 +560,7 @@ const memText = recallOverride
 
   let proactiveLine = ''
   try {
-    const pp = db.prepare("SELECT id,text FROM proactive WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT 1").get(aid)
+    const pp = stranger ? null : db.prepare("SELECT id,text FROM proactive WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT 1").get(aid)
     if (pp) {
       proactiveLine = pp.text
       db.prepare("UPDATE proactive SET state='delivered', delivered_at=? WHERE id=?").run(now(), pp.id)
@@ -578,11 +589,23 @@ let conflictLine = ''
     }
   } catch { /* 鑰佸簱娌℃湁鍐茬獊琛?*/ }
 
+  // 不熟的人那一侧：人格、情绪、语气、说话方式照给；日记、私有关系、主动搭话、心里挂着的坎一概不给。
+  // 两边还是同一个拼装器，只是各拿各该看的那半。
+  if (stranger) {
+    diaryLines = []
+    loopText = ''
+    bridgeText = ''
+    proactiveLine = ''
+    spontaneousLine = ''
+    spontaneousText = ''
+    conflictLine = ''
+  }
+
   let userEmotion = null
   try {
     // 用「校准过的读法」而不是模型原始标签：面板上写的是它现在觉得你什么，
     // 鍢撮噷璇寸殑涔熷緱鏄悓涓€涓紝鍚﹀垯瀹冧竴杈硅鎴戣浣犳槸骞抽潤銆佷竴杈硅浣犵幇鍦ㄦ尗璐ャ€?
-userEmotion = latestUserEmotion(db, aid)
+userEmotion = stranger ? null : latestUserEmotion(db, aid)
   } catch { userEmotion = null }
 
   // 蹇冩儏鍙 v3 鎬绘儏缁紙-1~1锛夛紱mood(0~1) 鍙槸瀹冪殑鎹㈢畻寮忥紝涓ゅ鏁板瓧鍒版涓烘銆?
@@ -620,7 +643,36 @@ const injectWeight = (() => {
       weight: injectWeight,
     })
     : null
-  const relLine = rel.length
+  // 收尾倾向：深夜 + 今天聊够了 + 对方没在提问。只读 chat_turns，不写状态。
+  let closingLine = ''
+  try {
+    if (!stranger && String(getParam(db, aid, 'life.closing') || 'on') !== 'off') {
+      const c = closingIntentOf(db, aid, { level: expr && expr.level })
+      if (c && c.line) closingLine = '（你有点想收尾了：' + c.line + '可以自然地说一句，不用拖着。）'
+    }
+  } catch { closingLine = '' }
+
+  // 潜台词：心里想说但没说出口的一层。只从现有状态拼，不调模型；24h 内只出一次。
+  let subtextLine = ''
+  try {
+    if (!stranger && String(getParam(db, aid, 'memory.inject.subtext') || 'on') !== 'off') {
+      const last = db.prepare("SELECT created_at FROM events WHERE agent_id=? AND type='subtext.shown' ORDER BY created_at DESC LIMIT 1").get(aid)
+      const cooled = !!last && Date.now() - Date.parse(last.created_at) < 86400000
+      if (!cooled) {
+        const hot = !!affect && ['irritated', 'frustrated'].includes(String(affect.primary_label)) && Number(affect.intensity) > 0.6
+        const lowTrust = !!rel.length && Number(rel[0].trust) < 0.35
+        const said = subtextOf({ conflictLine, hot, userLabel: userEmotion && userEmotion.label, lowTrust })
+        if (said) {
+          subtextLine = '（心里其实想说但没说出口：' + said + '这句不用讲出来，它只是让你说话时有点偏。）'
+          db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), aid, 'subtext.shown', JSON.stringify({ text: said }), now())
+        }
+      }
+    }
+  } catch { subtextLine = '' }
+  // 收尾时不再叠潜台词：一个念头已经够了，两个一起会像在演苦情戏
+  if (closingLine) subtextLine = ''
+
+  let relLine = rel.length
     ? '关系：' + rel.map((r, i) => {
       const n2 = (x) => Number(x || 0).toFixed(2)
       const head = r.name + '（亲近 ' + n2(r.closeness) + ' / 信任 ' + n2(r.trust) + ' / 依赖 ' + n2(r.dependence)
@@ -642,6 +694,8 @@ let exBlock = ''
       exBlock = examplesBlock(parseExamples(row ? row.value : null), { level: expr && expr.level })
     }
   } catch { exBlock = '' }
+  // 示例是教语气的，但里头的「主人：」对陌生人会变成诱导他喊主人——换个称呼。
+  if (stranger && exBlock) exBlock = exBlock.replace(/主人/g, '对方')
 
   // 璇磋瘽妯″紡锛圥3锛夛細闂茶亰鎵嶅姞鏂囦綋绾︽潫锛屽共娲绘椂涓嶅姞銆?
 // 鍒ら敊鐨勬柟鍚戞槸銆屽畞鍙綋闂茶亰銆嶁€斺€旈棽鑱婇噷澶氳涓€鍙ュ彧鏄笉绀艰矊锛屽共娲婚噷灏戠粨鏋勬槸娌℃硶鐢ㄣ€?
@@ -667,15 +721,21 @@ let styleLines = []
   try { reapText = reappraiseLine(db, aid) } catch { reapText = '' }
   // 夜里写下的「今天的她」：读一份收拾好的，不在这一轮现拼。按天存，最多读三条
   let selfNoteLines = []
-  try { selfNoteLines = notesForPrompt(db, aid) } catch { selfNoteLines = [] }
+  try { selfNoteLines = stranger ? [] : notesForPrompt(db, aid) } catch { selfNoteLines = [] }
+
+  if (stranger) {
+    relLine = '关系：你还不认识对方。别叫「主人」或任何称呼，也别装作熟；等对方自我介绍之后再叫名字。'
+  }
 
   const lines = [
     // ① 身份（§8 注入顺序第 1 段）
     '## 意识体：' + a.name,
     '你现在就是「' + a.name + '」。用第一人称说话；情绪、关系、记忆都是你自己的状态，不是别人的设定。',
+    '下面是你此刻的状态和记得的事：状态是你自己的，对方情绪只作参考；按它们自然地说，别逐条复述，也别解释来源，不要编造。说过的话要认。',
     '不要声称自己有人类身体，也不要主动讨论「我是 AI」；被问到时如实说你是这个意识体。',
     str(persona, 'style.tone') ? '语气：' + str(persona, 'style.tone') + '。' : '',
-    str(persona, 'style.address') ? '你称呼对方为「' + str(persona, 'style.address') + '」。' : '',
+    stranger ? '你还不认识对方，先不叫任何称呼，等对方自我介绍。'
+      : (str(persona, 'style.address') ? '你称呼对方为「' + str(persona, 'style.address') + '」。' : ''),
     str(persona, 'style.catchphrase') ? '口头禅：' + str(persona, 'style.catchphrase') + '。' : '',
     exBlock,
     axesLine && axesLine !== '中间' ? '鱼格倾向：' + axesLine + '。' : '',
@@ -698,20 +758,19 @@ let styleLines = []
     ...styleLines,
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
       + (userEmotion.raw_label ? '（我按你以前的纠正改的：我一开始读成' + userEmotion.raw_label + '）' : '')
-      + '。只作共情参考，不要照搬成你自己的情绪。' : '',
+      + '。' : '',
     drive ? '需求缺口档位：' + drive.band + '。' : '',
     // ④ 记忆（≤5 条，带来源与时间）
-    proactiveLine ? '（你之前想主动说一句：' + proactiveLine + ' —— 如果时机合适，自然提起，不要解释这是提醒。）' : '',
+    proactiveLine ? '（你之前想主动说一句：' + proactiveLine + '。）' : '',
     diaryLines.length ? '最近我自己写下的（日记，不是用户说的）：\n' + diaryLines.join('\n') : '',
-    bridgeText ? '（' + bridgeText + ' —— 如果自然，接着这个往下说，不用解释来源。）' : '',
+    bridgeText ? '（' + bridgeText + '。）' : '',
     loopText || '',
     conflictLine || '',
-    spontaneousLine ? '（你心里忽然浮上来的一件事，不一定是这一轮在说的；自然提起，不想提也别硬提）：\n- ' + spontaneousLine : '',
+    subtextLine || '',
+    closingLine || '',
+    spontaneousLine ? '（你心里忽然浮上来的一件事）：\n- ' + spontaneousLine : '',
     (memText)
-      ? '关于这句话，你能想起的事（只引用相关的，不要编造，也不要全倒出来；'
-        + '带「一直记着的」「今天刚发生」的是你自己先想起来的，可以自然提起，不必解释来源；'
-        + '带「有点糊」「只记得大概」的，说的时候用「好像 / 大概是」，别说得跟刚发生一样）：\n'
-        + memText
+      ? '关于这句话，你能想起的事：\n' + memText
       : '你还没有关于对方的记忆。',
     '引用记忆时说「上次 / 你之前说过」；不确定就说「我可能记错」。',
     // ⑤ 约束（最后一段）
@@ -768,12 +827,15 @@ function commitTurn(db, aid, sid) {
   lastTurnId.delete(sid)
   const pushed = pushedTurns.delete(sid)
   const at = now()
+  const qc = qqContextOf(sid)
+  const stranger = !!(qc && !qc.isOwner && !qc.ownerUnset)
+  const conv = qc && qc.conversationId ? qc.conversationId : null
   try {
-    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at) VALUES(?,?,?,?,?,?,?)').run(nid('cht_'), aid, 'user', u, '[]', null, at)
-    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at) VALUES(?,?,?,?,?,?,?)').run(nid('cht_'), aid, 'agent', aText, '[]', null, now())
+    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)').run(nid('cht_'), aid, 'user', u, '[]', null, at, conv)
+    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)').run(nid('cht_'), aid, 'agent', aText, '[]', null, now(), conv)
     db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(at, aid)
     // T4 鍘熸枃灞傦細assistant 杩欏彞涔熻惤鍐峰簱锛坲ser 閭ｅ彞鍦?captureTurn 鏃跺凡缁忚惤浜嗭級
-    try { appendTurn(db, aid, { sessionId: sid, role: 'assistant', text: aText, turnId: tid, at: now() }) } catch { /* 鍘熸枃澶辫触涓嶅奖鍝嶅璇?*/ }
+    if (!stranger) try { appendTurn(db, aid, { sessionId: sid, role: 'assistant', text: aText, turnId: tid, at: now() }) } catch { /* 鍘熸枃澶辫触涓嶅奖鍝嶅璇?*/ }
     pushTurn(aid, { role: 'assistant', text: aText, at: now(), sessionId: sid })
     // 鐢ㄦ埛鐪熺殑鍥炰簡锛氭妸涔嬪墠鎶曢€掕繃鐨勪富鍔ㄦ秷鎭粨璐︼紙鍥炵瓟/蹇界暐鐨勭粺璁￠潬杩欎釜锛?
 // 涓诲姩鎺ㄦ秷鎭嚜宸卞紩鍙戠殑閭ｄ竴杞笉绠椼€岀敤鎴峰洖浜嗐€嶏紝鍒妸鍥炲鐜囧埛楂樸€?
@@ -784,7 +846,7 @@ if (!pushed) {
   } catch (e) { __probe('insert-err:' + (e && e.message)) }
   // 鍏崇郴璐︽湰锛氱敤鎴疯繖鍙ュ師璇濆氨鏄竴绗旇处锛堣璇濅汉 touch / 鎻愬強 / 鏂版墜寤轰汉 / 鍒犺繃鐨勫鐢ㄥ師鍗★級銆?
 // 杩欓噷浠ュ墠鏄┖鐨勨€斺€旀墍浠ャ€屽皬鍛ㄦ槸鎴戝悓浜嬨€嶈涓€鐧鹃亶锛屽叧绯诲浘涓婁篃涓嶉暱浜恒€?
-try {
+if (!stranger) try {
     R.ingest(db, aid, { text: u, sessionId: sid, source: 'chat' })
     enqueueRelationRead(db, aid, { text: u })
     // 鍏ラ槦鍚庨┈涓婅窇涓€娆★紝涓嶇瓑 30 绉掔殑杞锛氱敤鎴疯瀹岃繖鍙ヨ瘽锛屼笅涓€鍙ヤ箣鍓嶈处鏈氨璇ユ槸瀵圭殑銆?
@@ -792,7 +854,7 @@ try {
 const t = setTimeout(() => { runRelationReadTick() }, 1500)
     if (t.unref) t.unref()
   } catch (e) { __probe('rel-ingest-err:' + (e && e.message)) }
-  try { narrativeAfterTurn(db, aid, sid) } catch { /* 鍐峰眰琛嶇敓澶辫触涓嶅奖鍝嶅璇?*/ }
+  if (!stranger) try { narrativeAfterTurn(db, aid, sid) } catch { /* 鍐峰眰琛嶇敓澶辫触涓嶅奖鍝嶅璇?*/ }
   if (!pushed) {
     // 璇勪环 鈫?鍏崇郴锛氬悓涓€浠?appraisal 鍙畻涓€娆★紱鍏崇郴浜嬩欢鍚冨畠鐨勭粨鏋滐紝涓嶅啀鍙﹁捣涓€濂楀叧閿瘝
     const learning = getParam(db, aid, 'memory.auto') !== false
@@ -841,6 +903,9 @@ function captureTurn(db, aid, session, event) {
   lastSessions.set(aid, { sid: session.id, at: Date.now() })
   // 浜嬩欢鍚嶅拰 data 褰㈢姸褰掑涓婚€傞厤灞傜锛坔ost/dsh.js锛夛紝杩欓噷鍙銆屾槸璋佽鐨勩€嶃€?
 const turn = readEvent(event)
+  // QQ 会话的身份：陌生人只留这段会话的流水账，不落原文、不进长期记忆。
+  const qc = qqContextOf(sid)
+  const stranger = !!(qc && !qc.isOwner && !qc.ownerUnset)
   if (turn.kind === 'user') {
     const t = cleanUserText(turn.text)
     if (t) {
@@ -849,7 +914,7 @@ const turn = readEvent(event)
       lastTurnId.set(sid, tid)
       if (t.startsWith('（它主动来找你')) pushedTurns.add(sid)
       // T4 鍘熸枃灞傦細鐢ㄦ埛杩欏彞璇濆厛钀藉喎搴擄紝鍝€曡繖涓€杞渶鍚庢病鏈夊洖澶嶄篃涓嶄涪銆?
-try { appendTurn(db, aid, { sessionId: sid, role: 'user', text: t, turnId: tid, at: now() }) } catch { /* 鍘熸枃澶辫触涓嶅奖鍝嶅璇?*/ }
+if (!stranger) try { appendTurn(db, aid, { sessionId: sid, role: 'user', text: t, turnId: tid, at: now() }) } catch { /* 鍘熸枃澶辫触涓嶅奖鍝嶅璇?*/ }
       // 缂撳啿锛氳繖涓€杞繕娌?commit锛屽厛鎸傜潃锛屼繚璇併€屽垰璇寸殑銆嶈兘琚敞鍏?
 pushTurn(aid, { role: 'user', text: t, at: now(), sessionId: sid })
     }
@@ -880,6 +945,56 @@ try { markSurfacedUsed(db, aid, reply) } catch { /* 瑙傛祴澶辫触涓嶅奖�
   if (timer.unref) timer.unref()
   commitTimers.set(sid, timer)
   __probe('reply-buffered len=' + reply.length)
+}
+
+/**
+ * 找桥接插件的会话映射表（qq-sessions.json）。
+ * 桥接插件把它写在 config.cwd（默认就是 DSH 进程的工作目录）里，
+ * 内容是 `{"u:123":"qq-xxxx-...", "g:456":"..."}`，靠它才认得出群号和陌生人。
+ * 找不到就返回空串，qq_bridge 会退化成只认主人。
+ */
+function findQQSessionsFile() {
+  const candidates = []
+  try { candidates.push(path.join(process.cwd(), 'qq-sessions.json')) } catch { /* ignore */ }
+  try { candidates.push(path.join(path.dirname(DB_PATH), 'qq-sessions.json')) } catch { /* ignore */ }
+  for (const f of candidates) {
+    try { if (fs.existsSync(f)) return f } catch { /* ignore */ }
+  }
+  return ''
+}
+
+/** 一个 DSH sessionId 在 QQ 那边的身份（不是 QQ 会话返回 null）。 */
+function qqContextOf(sessionId) {
+  try {
+    const sid = String(sessionId || '')
+    if (!isQQSessionId(sid)) return null
+    const d = ensureDb()
+    const aid = activeAgentId(d)
+    if (!aid) return null
+    if (String(getParam(d, aid, 'qq.bridge.enable') || 'off') !== 'on') return null
+    const owners = parseOwnerQq(getParam(d, aid, 'qq.bridge.owner_qq') || '')
+    const file = getParam(d, aid, 'qq.bridge.sessions_file') || findQQSessionsFile()
+    return resolveQQContext(sid, { owners, sessionMap: loadSessionMap(file) })
+  } catch { return null }
+}
+
+/**
+ * 当前正在组装提示词的是不是 QQ 会话。
+ * 全局 section 拿不到 agent 信息（AssembleContext 只有 scope/signal），
+ * 所以借 agents.currentInitiator() —— 组装发生在那个会话自己的 driver 链里。
+ */
+const qqPromptSeen = new Set()
+let qqScopeProbeDone = false
+function currentQQContext() {
+  try {
+    const agents = optionalService('agents')
+    if (!agents || typeof agents.currentInitiator !== 'function') return null
+    const who = agents.currentInitiator()
+    if (!who || !who.id) return null
+    const sid = String(who.id)
+    const qc = qqContextOf(sid)
+    return qc ? { ...qc, sessionId: sid } : null
+  } catch { return null }
 }
 
 function activeAgentId(db) {
@@ -1176,10 +1291,41 @@ function hostSpec() {
     systemPrompt: {
       name: 'dsh-consciousness',
       order: 12,
-      text: () => {
+      text: (asmCtx) => {
         try {
-          const id = activeAgentId(db())
-          return id ? consciousnessBlock(db(), id) : ''
+          const d = db()
+          if (!qqScopeProbeDone) {
+            qqScopeProbeDone = true
+            try {
+              const sc = asmCtx && asmCtx.scope
+              event(d, activeAgentId(d) || '', 'qq.bridge.scope_probe', {
+                ctxKeys: asmCtx ? Object.keys(asmCtx) : [],
+                scopeType: typeof sc,
+                scopeKeys: sc && typeof sc === 'object' ? Object.keys(sc).slice(0, 25) : [],
+                scopeId: sc && typeof sc === 'object' && 'id' in sc ? String(sc.id) : '',
+                scopeName: sc && typeof sc === 'object' && 'name' in sc ? String(sc.name) : '',
+              })
+            } catch { /* 探针失败不影响提示词 */ }
+          }
+          // QQ 会话：人格包照给，后面多一段「在这条线上怎么开口」。
+          // 不去 agent scope 另挂 section——真机验过 this 不是会话 ctx，挂不上；
+          // 用 currentInitiator 认当前会话，一处就够，也不会给网页会话多加东西。
+          const qq = currentQQContext()
+          const id = activeAgentId(d)
+          const base = id ? consciousnessBlock(d, id) : ''
+          if (qq && qq.isQQ) {
+            // 探针：每个会话只记一次，确认真机上渠道段确实进了提示词（不然就是静默失效）
+            try {
+              if (!qqPromptSeen.has(qq.sessionId)) {
+                qqPromptSeen.add(qq.sessionId)
+                if (qqPromptSeen.size > 200) qqPromptSeen.clear()
+                event(d, activeAgentId(d) || '', 'qq.bridge.prompt_qq', { sessionId: qq.sessionId, chatKey: qq.chatKey, isOwner: qq.isOwner })
+              }
+            } catch { /* 探针失败不影响提示词 */ }
+            const extra = qqChannelBlock(qq)
+            return extra ? (base ? base + '\n\n' + extra : extra) : base
+          }
+          return base
         } catch { return '' }
       },
     },
@@ -1509,6 +1655,36 @@ try {
   }
 
   __probe('apply-enter lock=' + lockHeld)
+  // QQ 桥接适配（dsh-qq-onebot-bridge）：认出 QQ 来的 agent，后面按会话挂人格包、记对话。
+  // 总开关 qq.bridge.enable 默认 off；关着时监听在，但一条不记、不改任何行为。
+  try {
+    qqBridgeHandle = attachQQBridge({
+      getCtx: () => hostCtx,
+      getDb: () => ensureDb(),
+      getAid: () => activeAgentId(ensureDb()),
+      param: (k) => {
+        const d = ensureDb()
+        const aid = activeAgentId(d)
+        const v = aid ? getParam(d, aid, k) : undefined
+        // 会话映射表没配就自己找一下：桥接插件把它写在它的工作目录里。
+        // 找不到也不要紧——qq_bridge 会退化成只认主人，群聊/陌生人就当认不出。
+        if (k === 'qq.bridge.sessions_file' && !v) return findQQSessionsFile()
+        return v
+      },
+      log: (m) => { console.error(m); __probe('qqbridge ' + m) },
+    })
+    __probe('qqbridge ' + (qqBridgeHandle.attached ? 'attached' : 'not-attached: ' + qqBridgeHandle.reason))
+  } catch (e) {
+    console.error('[dsh-consciousness-v6] qq bridge attach failed:', e)
+  }
+
+  // QQ 对话回流：**不再单独挂一条写入路**。
+  // 真机验过：session/event 旁听本来就会把 QQ 会话的对话写进 chat_turns / raw_turns / 关系账本，
+  // 只是不知道是什么渠道（conversation_id 落 null）。所以现在改成「让既有旁路认得出 QQ」——
+  // 见 captureTurn / commitTurn 里的 qqContextOf()，一份就够，不会一句话记两遍。
+  // attachQQIngest 留在模块里没接：它假设"旁路不记 QQ"，那个前提是错的。
+
+  
   // 瀹夸富鎺ョ紳锛氬洓涓悇鑷帰娴嬨€佸悇鑷畨瑁呫€佸悇鑷檷绾с€傜己鍝釜鍙涪鍝釜锛宲ing 閲屾姤鍑烘潵銆?
 // 鐣岄潰鏄?Client 鍗婏紙client.js锛夛紝鐢?dsh.client 妯″潡鍔犺浇骞舵敞鍐岃繘 settings.section銆?
   host = createHost({

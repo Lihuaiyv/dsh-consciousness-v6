@@ -77,12 +77,27 @@ function fetchCandidates(db, aid, query, pool = 50) {
   return rows
 }
 
+/**
+ * 重要性（P3）：敏感 / 身份类的事，比泛泛一句更该被想起来。
+ * 纯规则、不调模型——模型打分要额外一次调用，先用规则版把这一维补上。
+ * 只影响 v3；v2 的 impW = 0，行为逐字不变。
+ */
+const IDENTITY = /(姓名|名字|称呼|生日|禁忌|禁止|住在|住址|电话|年龄|工作|喜欢|讨厌|答应|说好|承诺)/
+function importanceOf(r) {
+  let s = 0
+  if (String(r.mark) === 'sensitive') s += 0.3
+  if (IDENTITY.test(String(r.text || ''))) s += 0.2
+  if (String(r.type) === 'appraisal') s -= 0.1
+  return Math.max(0, Math.min(1, s))
+}
+
 function scoreAndPick(rows, opt, decayRun, ctx) {
   const k = Math.max(1, Math.min(20, Number(opt.k || 8)))
   const budget = Number(opt.budget || 512)
   const relW = Number(opt.rel ?? 0.6)
   const retrW = Number(opt.retr ?? 0.25)
   const weightW = Number(opt.weight ?? 0.15)
+  const impW = Number(opt.imp ?? 0)
   // 关系加成：记忆挂在熟人/主人名下时多算一点（0 = 不看关系）
   const relationW = Math.max(0, Math.min(1, Number(opt.relation) || 0))
   const relationMap = opt.relMap instanceof Map ? opt.relMap : null
@@ -105,7 +120,8 @@ function scoreAndPick(rows, opt, decayRun, ctx) {
     const relation = relationMap && relationW ? relationW * (relationMap.get(r.id) || 0) : 0
     const valence = Math.max(-1, Math.min(1, Number(r.valence) || 0))
     const moodBonus = moodW && mood ? moodW * mood * valence : 0
-    const base = relW * rel + retrW * R + weightW * Number(r.weight || 0.5) + relation + moodBonus
+    const imp = impW ? importanceOf(r) : 0
+    const base = relW * rel + retrW * R + weightW * Number(r.weight || 0.5) + impW * imp + relation + moodBonus
     // 档位只加一个小偏置（短期 +0.03 / 中期 +0.015 / 长期 0）。
     // 不能乘在总分上：那会让「档位高但只是勉强相关」的条目压过真正相关的那条。
     const tierBonus = band === 'short' ? 0.03 : band === 'mid' ? 0.015 : 0
@@ -144,6 +160,7 @@ function makeRecall(version, defaults) {
         rel: input.rel != null ? Number(input.rel) : defaults.rel,
         retr: input.retr != null ? Number(input.retr) : defaults.retr,
         weight: input.weight != null ? Number(input.weight) : defaults.weight,
+        imp: input.imp != null ? Number(input.imp) : defaults.imp,
         floor: input.floor != null ? Number(input.floor) : 0,
         k: input.k != null ? input.k : 8,
         budget: input.budget != null ? input.budget : 512,
@@ -169,3 +186,9 @@ export const recallV2 = makeRecall('v2', { rel: 0.6, retr: 0.25, weight: 0.15 })
 
 /** 对照版：抬高相关性、压低可提取性与条权，用于证明切换不改调用方 */
 export const recallV2b = makeRecall('v2b', { rel: 0.7, retr: 0.2, weight: 0.1 })
+
+/**
+ * P3：加「重要性」这一维。权重从 weight 里匀出来（0.15 → 0），总和仍是 1。
+ * 需要通过实例绑定切到 v3 才生效；默认仍是 v2。
+ */
+export const recallV3 = makeRecall('v3', { rel: 0.6, retr: 0.15, weight: 0, imp: 0.25 })

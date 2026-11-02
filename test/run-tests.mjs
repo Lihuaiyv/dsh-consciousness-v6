@@ -921,7 +921,8 @@ try {
   check('已登记 deficit@v1c', algoHas('deficit', 'v1c'), algoList('deficit'))
   check('已登记 deficit@v1d', algoHas('deficit', 'v1d'), algoList('deficit'))
   check('已登记 deficit@v2', algoHas('deficit', 'v2'), algoList('deficit'))
-  check('未登记 recall@v3', !algoHas('recall', 'v3'), null)
+  check('已登记 recall@v3', algoHas('recall', 'v3'), algoList('recall'))
+  check('未登记 recall@v4', !algoHas('recall', 'v4'), null)
   // 查询构造：memory_fts 是 trigram，只认 ≥3 字；长句不能塞 2-gram 泛词
   check('召回查询：长句只拆 3-gram', buildLikeTerms('好了，现在还要干什么吗?').length === 0
     && /"现在还"/.test(String(buildFtsQuery('好了，现在还要干什么吗?'))), buildFtsQuery('好了，现在还要干什么吗?'))

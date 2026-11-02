@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { now } from './db.js'
+import { now, localDay } from './db.js'
 import { agent, active, addMemory, err, nid, getParam, getAllParams, writeParams, getPersona, setPersona, recall, appraise, getAffect, getDrive, tx, shadowTick, listDrafts, promoteDraft, event, model as kernelModel } from './core.js'
 import { has as algoHas, setBinding, getBinding, listBindings, list as listAlgos, attachDb } from './algo/index.js'
 import { computeEdgeBias } from './modules/edges.js'
@@ -26,6 +26,7 @@ export { affectLabels }
 import {
   computeEvalMetrics, runHardGates, runIdentityBlind, suggestCalibration, applyCalibration, getEdgeGraph,
 } from './modules/eval.js'
+import { sendMessage } from './modules/actions/channels.js'
 
 /** 算法槽位 → C3 参数字段 / 默认版本 */
 const ALGO_SLOTS = {
@@ -112,6 +113,7 @@ import { applyWrite } from './modules/gate.js'
 import { enrichOne, enrichPending, canEnrich } from './modules/enrich.js'
 import { judgeReflection, canJudge } from './modules/judge.js'
 import { detectLoop, addLoop, settleLoopsFromUser, expireLoops, pendingLoops, markLoopsFired } from './modules/loops.js'
+import { pledgeMissLine } from './modules/sangguan/pledge.js'
 import { bumpReflect, reflectFrom, canConsolidate } from './modules/consolidate.js'
 import { getCondition, setCondition } from './modules/ops.js'
 import {
@@ -1218,6 +1220,37 @@ async function qqBatchExtract(db, aid, conv, text, turnSeed) {
 }
 
 /**
+ * 网页这边说完一句，顺手把这句话推到 QQ。
+ *
+ * 默认关（`qq.relay.enable=on` 才发），因为外发是收不回来的动作。
+ * 挡住两种重复：
+ *   1. 这段会话本来就是 QQ 来的（conversation_id 以 qq: 开头），再推回去就是一句变两句；
+ *   2. 开关没开。
+ * 推失败只记一条事件，不抛、不改这一轮的回复——外发通道挂了不该让聊天也挂。
+ */
+async function relayReplyToQQ(db, aid, reply, conv) {
+  if (String(getParam(db, aid, 'qq.relay.enable') || 'off') !== 'on') return null
+  // 桥接插件（dsh-qq-onebot-bridge）接管 QQ 之后，推送权归它：
+  // 它的回复是 agent loop 真跑出来的，这里再推一次就是同一句话在两个通道各说一遍。
+  // 这条互斥比「用户记不记得关开关」可靠——两个开关同时打开也不会双发。
+  if (String(getParam(db, aid, 'qq.bridge.enable') || 'off') === 'on') {
+    try { event(db, aid, 'qq.relay.skipped', { reason: 'qq.bridge 已接管 QQ' }) } catch { /* 记账失败不影响 */ }
+    return null
+  }
+  if (!reply || /^qq:/i.test(String(conv || ''))) return null
+  const maxChars = Math.max(1, Math.min(2000, Number(getParam(db, aid, 'qq.relay.max_chars')) || 800))
+  const text = String(reply).slice(0, maxChars)
+  try {
+    const out = await sendMessage(db, aid, { channel: 'qq', text })
+    try { event(db, aid, 'qq.relay.sent', { target: out.target, chars: text.length }) } catch { /* 记账失败不影响发送 */ }
+    return out
+  } catch (e) {
+    try { event(db, aid, 'qq.relay.failed', { error: String((e && e.message) || e).slice(0, 200) }) } catch { /* 同上 */ }
+    return null
+  }
+}
+
+/**
  * 一轮对话：召回 → 评价（更新情绪）→ 生成回复 → 落库。
  * 回复优先走模型适配器；没有模型时用规则拼接，并把它标出来。
  */
@@ -1255,7 +1288,12 @@ export async function chatReply(db, aid, body) {
   try { drive = getDrive(db, aid) } catch { drive = null }
   const style = personaStyle(db, aid)
   const banned = String(style.banned || '').split(/[,，\s]+/).filter(Boolean)
-  const contextBlock = canLearn ? clampContextBlock(buildContextBlock(db, aid, { recall: pack.items }), promptBudget(db)) : ''
+  // 两条路用同一个拼装器：主人拿全份，不熟的人只拿「她是谁、现在什么样、怎么说话」那一半。
+  // 关系段按说话人各算各的，陌生人不会拿到主人那一行。
+  const contextBlock = clampContextBlock(buildContextBlock(db, aid, {
+    recall: canLearn ? pack.items : [],
+    audience: canLearn ? 'owner' : 'stranger',
+  }), promptBudget(db))
 
   let reply = ''
   let source = 'rules'
@@ -1311,6 +1349,9 @@ export async function chatReply(db, aid, body) {
     applySatisfaction(db, aid, deltas, { skipDecay: true })
   } catch { /* 驱力未就绪时跳过 */ }
   try { db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), aid, 'chat.turn', JSON.stringify({ source, label: mood }), now()) } catch { /* 忽略 */ }
+
+  // 网页说完再传 QQ：扔出去不 await，一次外发最多 15 秒，不能拖着这一轮的回复。
+  try { relayReplyToQQ(db, aid, reply, conv).catch(() => {}) } catch { /* 开关没开/参数读不到时静默 */ }
 
   return {
     reply, source,
@@ -1450,6 +1491,13 @@ const DIM_TITLE = {
 /** 这几维开口得有真材料，不能凭空说「我看到个东西」 */
 const DIM_NEEDS_EVIDENCE = { E: true, C: true, S: true }
 
+/**
+ * 「她自己想说的那句」才能占额度、算重复、算打扰成本。
+ * 冲突确认（reason=conflict:*）是系统让她问的，混进去会把当天的 1 句额度吃光，
+ * 还把近 7 天的打扰频率顶到上限，结果她永远开不了口。
+ */
+const SELF_SENT_SQL = " AND (reason IS NULL OR reason NOT LIKE 'conflict:%')"
+
 /** 打分用的常量，全部集中在这里，方便对账 */
 const PROACTIVE = {
   // 旧口径：固定 0.30。0.18 重标之后这个数已经够不到了，改成按档位取（见 BAND_MIN_DEFICIT）
@@ -1563,9 +1611,9 @@ export function proactiveCost(db, aid) {
   let answered = 0
   let ignored = 0
   try {
-    sent7 = Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at>=?').get(aid, day7).n || 0)
-    sent = Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at>=?').get(aid, day30).n || 0)
-    const r = db.prepare('SELECT COALESCE(SUM(answered),0) a, COALESCE(SUM(ignored),0) i FROM proactive WHERE agent_id=? AND created_at>=?').get(aid, day30)
+    sent7 = Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at>=?' + SELF_SENT_SQL).get(aid, day7).n || 0)
+    sent = Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at>=?' + SELF_SENT_SQL).get(aid, day30).n || 0)
+    const r = db.prepare('SELECT COALESCE(SUM(answered),0) a, COALESCE(SUM(ignored),0) i FROM proactive WHERE agent_id=? AND created_at>=?' + SELF_SENT_SQL).get(aid, day30)
     answered = Number(r?.a || 0)
     ignored = Number(r?.i || 0)
   } catch { /* 旧库没有这些列 */ }
@@ -1758,6 +1806,40 @@ function initiativeOf(db, aid) {
   } catch { return 0.3 }
 }
 
+const CLOSING_GOODBYE = /(晚安|再见|拜拜|先这样|睡了|先去睡)/
+// 问句不只看结尾：「你怎么看」「为什么这样」中间带疑问词也算
+const CLOSING_QUESTION = /([？?]|(吗|呢)\s*[。！!…]*\s*$|怎么|为什么)/
+const CLOSING_ALREADY = /(睡了|先这样|明天再说|不聊了|先收一收|先歇会儿)/
+
+/**
+ * 收尾倾向：本地深夜 + 今天聊够了 + 对方没在提问/告别 + 30 分钟内没说过收尾。
+ * 只读 chat_turns，不写任何状态；返回 { line } 或 null。
+ * 这是「给她一个念头」，不是命令；她可以不说。
+ */
+export function closingIntentOf(db, aid, { at = Date.now(), level = '' } = {}) {
+  const d = new Date(at)
+  const mins = d.getHours() * 60 + d.getMinutes()
+  if (!(mins >= 23 * 60 + 30 || mins < 6 * 60)) return null
+  const day = localDay(d)
+  let rows = []
+  try {
+    rows = db.prepare('SELECT role, text, created_at FROM chat_turns WHERE agent_id=? ORDER BY created_at DESC LIMIT 30').all(aid)
+  } catch { return null }
+  const today = rows.filter((r) => r.created_at && localDay(new Date(r.created_at)) === day)
+  if (today.length < 8) return null
+  const lastUser = today.find((r) => r.role === 'user')
+  if (!lastUser) return null
+  const text = String(lastUser.text || '').trim()
+  if (CLOSING_QUESTION.test(text)) return null
+  if (CLOSING_GOODBYE.test(text)) return null
+  const mine = today.filter((r) => r.role === 'agent' || r.role === 'assistant').slice(0, 2)
+  for (const r of mine) {
+    const t = Date.parse(r.created_at || '')
+    if (Number.isFinite(t) && at - t < 30 * 60000 && CLOSING_ALREADY.test(String(r.text || ''))) return null
+  }
+  return { line: level === 'quiet' ? '今天不太想说话了，先这样。' : '有点晚了，我想先收一收。' }
+}
+
 /**
  * 主动开口的「事由」：有没有一件该说的事。
  *
@@ -1766,7 +1848,33 @@ function initiativeOf(db, aid) {
  * 夜间静默、气头上、预算这些硬条件仍然在 decideSpeak 里拦。
  */
 export function proactiveTriggerOf(db, aid, at = Date.now()) {
-  // 她自己生活里看到的事，比待办更像「想跟你说一句」。分享优先于开环核对。
+  // 最重的一类欠账先看：sangguan 里「答应过、到点没做到」的承诺。
+  // 它比普通开环更该被主动提起——普通开环是「该记挂的事」，这个是「我说了要做却没做」。
+  try {
+    const pm = pledgeMissLine(db, aid, new Date(at).toISOString())
+    if (pm) {
+      const text = String(pm.line || '')
+        .replace(/^（/, '').replace(/）$/, '')
+        .replace(/^你答应过的「/, '').replace(/」到点没做到。这件事还欠着。$/, '')
+      if (text) return { kind: 'loop', owed: true, dim: 'R', id: 'pmiss:' + pm.seq, text: text.slice(0, 60), due_at: null }
+    }
+  } catch { /* 三观没开、或没有账本，就当没有这条 */ }
+  // 欠账优先：答应过的、提醒的事排在「我生活里看到的好玩的」前面。
+  // 人不会拿一件开心事盖住一句「我答应你的事还没做」。
+  try {
+    const loops = pendingLoops(db, aid, { at, limit: 3, includeHalfSaid: true })
+    const owed = loops.find((l) => l.kind === 'promise' || l.kind === 'reminder') || null
+    if (owed) {
+      return {
+        kind: 'loop',
+        owed: true,
+        dim: 'R',
+        id: owed.id,
+        text: String(owed.text || owed.title || '').slice(0, 60),
+        due_at: owed.due_at || owed.stale_after || null,
+      }
+    }
+  } catch { /* 开环表异常不影响开口 */ }
   try {
     const share = latestShare(db, aid, at)
     if (share) return { kind: 'share', dim: 'R', id: share.id, text: share.title, summary: share.summary, due_at: null }
@@ -1829,7 +1937,7 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now(), trigger 
   // ---- 数字全部现算，只读 ----
   const today = now().slice(0, 10)
   let saidToday = 0
-  try { saidToday = Number(db.prepare("SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at LIKE ?").get(aid, today + '%').n || 0) } catch { saidToday = 0 }
+  try { saidToday = Number(db.prepare("SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at LIKE ?" + SELF_SENT_SQL).get(aid, today + '%').n || 0) } catch { saidToday = 0 }
   const lastAt = a.last_interaction_at ? Date.parse(a.last_interaction_at) : 0
   const hoursSince = lastAt ? +((at - lastAt) / 3600000).toFixed(2) : 999
   const cx = proactiveCost(db, aid)
@@ -1838,7 +1946,8 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now(), trigger 
   const quietOn = inQuietHours(prefs)
   // 有「该说的事」时，允许不看额度说一次——但一天只给这一次，而且不越过夜间静默和火气
   const owed = trigger ? { ...trigger } : null
-  const owedOnce = !!owed && saidToday < 1
+  // 欠账（答应过 / 提醒）不该被「今天已经主动说过一句」挤掉——那句多半是别的分享。
+  const owedOnce = !!owed && (owed.owed === true || saidToday < 1)
   out.trigger = owed
   const axes = readAxes(db, aid)
   // 8 idle：外向的人等得短一点
@@ -1871,7 +1980,7 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now(), trigger 
     const gate = proactiveGate(db, aid, it.dim)
     if (!gate.ok) { c.blocked = 'cooldown'; c.why = '冷却到 ' + String(gate.until || '').slice(0, 16).replace('T', ' '); continue }
     let dup = null
-    try { dup = db.prepare("SELECT 1 FROM proactive WHERE agent_id=? AND dim=? AND created_at LIKE ?").get(aid, it.dim, today + '%') } catch { dup = null }
+    try { dup = db.prepare("SELECT 1 FROM proactive WHERE agent_id=? AND dim=? AND created_at LIKE ?" + SELF_SENT_SQL).get(aid, it.dim, today + '%') } catch { dup = null }
     if (dup) { c.blocked = 'already_today'; c.why = '这个方向今天说过了'; continue }
     if (DIM_NEEDS_EVIDENCE[it.dim] && ev.items === 0) {
       c.blocked = 'no_evidence'; c.why = '这一维要真事，手头 0 条'; continue
@@ -2403,7 +2512,7 @@ export function clampInjection(lines, budget = 800) {
   // 丢的顺序 = 丢得起的顺序。改过一次（A2）：情绪原来排第 2，一挤就先没了。
   // 现在情绪根本不进丢弃名单——它只有两行，却是人格的锚：
   // 丢一条记忆伤准确度，丢情绪伤的是「她是谁」。真到极限，宁可削短别的行。
-  const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
+  const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('现在的情绪是') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
   const order = [
     ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
     ['examples', (l) => l.startsWith('## 我说话的样子')],
@@ -2414,6 +2523,9 @@ export function clampInjection(lines, budget = 800) {
     // 开环 / 续接 / 自发浮现排在记忆之后丢：它们是「自己先想起来的」，比一条泛记忆更该被说出来
     ['loop', (l) => l.startsWith('（你自己心里还挂着的事')],
     ['bridge', (l) => l.startsWith('（上次（')],
+    // 收尾念头和潜台词都比「自己想起的事」更可丢：丢了只是正常聊
+    ['closing', (l) => l.startsWith('（你有点想收尾了')],
+    ['subtext', (l) => l.startsWith('（心里其实')],
     ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
   ]
   for (const [name, test] of order) {

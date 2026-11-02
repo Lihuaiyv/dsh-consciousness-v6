@@ -98,7 +98,8 @@ const chatTurns = blocks.slice(0, 3)
 const workTurn = blocks[3]
 check('闲聊轮有表达卡', chatTurns.every((b) => b.block.includes('我想怎么说')), chatTurns.map((b) => b.block.includes('我想怎么说')))
 check('闲聊轮有文体清单', chatTurns.every((b) => b.block.includes('不要列点')), chatTurns.map((b) => b.block.includes('不要列点')))
-check('干活轮不加文体约束', !workTurn.block.includes('我想怎么说') && !workTurn.block.includes('不要列点'), workTurn.block.slice(0, 200))
+check('干活轮不加文体清单', !workTurn.block.includes('不要列点'), workTurn.block.slice(0, 200))
+check('干活轮仍有表达卡（情绪层不因干活被抹掉）', workTurn.block.includes('我想怎么说'), workTurn.block.slice(0, 200))
 check('干活轮照样记得住', workTurn.block.includes('关于这句话'))
 
 db.close()

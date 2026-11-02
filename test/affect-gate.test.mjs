@@ -124,6 +124,11 @@ function setGateMode(mode) {
     ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
     .run(aid, 'affect.gate.mode', JSON.stringify(mode), now())
 }
+function setParam(key, value) {
+  db.prepare(`INSERT INTO agent_params(agent_id,key,value,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
+    .run(aid, key, JSON.stringify(value), now())
+}
 const epCount = () => db.prepare('SELECT COUNT(*) n FROM affect_episodes WHERE agent_id=?').get(aid).n
 const evLatest = () => db.prepare('SELECT * FROM affect_events WHERE agent_id=? ORDER BY rowid DESC LIMIT 1').get(aid)
 
@@ -286,6 +291,10 @@ const resetState = (v, label) => db.prepare('UPDATE affect_state SET intensity=?
 const stopAll = () => db.prepare("UPDATE affect_episodes SET ended_at=?, resolution='faded' WHERE agent_id=? AND ended_at IS NULL").run(now(), aid)
 const epOf = (id) => db.prepare('SELECT * FROM affect_episodes WHERE id=?').get(id)
 
+/* 这一节测的是「过闸之后不再被惯性折半」这套机制，跟「负面该有多重」那条政策是两件事；
+   先把负面打折关掉，别让两条口径搅在一起——打折自己单独在 1b 里测。 */
+setParam('affect.neg.scale', 1)
+
 // 1) 闸门事件不再被「0.7 旧 + 0.3 新」折半：起点 0.20，峰值应明显抬起来
 resetState(0.20)
 stopAll()
@@ -293,6 +302,9 @@ const x1 = await appraise(db, aid, '你完全不理解我的意思', { labels: L
 const epX = epOf(x1.id)
 check('事件：抬升不再被惯性折半', x1.emitted === true && Number(epX.intensity) > 0.20 + 0.18, { peak: epX.intensity, from: epX.rise_from })
 check('事件：上升段起点就是原来的强度', Math.abs(Number(epX.rise_from) - 0.20) < 0.02, epX.rise_from)
+
+// 1b) / 1c) 负面打折的两条，放到文件最后跑：它们要清空 episode 和事件才能各自独立复现，
+// 夹在中间会把后面那几条（不应期、复现递减）依赖的链子打断。
 
 // 2) 事件只抬不降：当前 0.75，来一句峰值更低的（方向弱、但够过闸）→ 强度留在原处，不塌
 resetState(0.75, 'curious')
@@ -323,6 +335,42 @@ check('不应期：只把抬起来的那截打七折', Number(epZ.intensity) < N
   const shrinking = deltas.every((d, i) => i === 0 || d <= deltas[i - 1] + 1e-9)
   check('复现加强递减：增量不会一直 +0.12', shrinking, { seq, deltas })
   check('复现加强有上限：收在 1 以内', bounded, seq)
+}
+
+// 5) 负面打折：同一句话，neg.scale 0.65 时负面那一侧的峰值只有原样的六五折；
+//    夸奖一点不削。要清空 episode / 事件才能各自独立复现，所以放在最后。
+{
+  const wipe = () => {
+    db.prepare('DELETE FROM affect_episodes WHERE agent_id=?').run(aid)
+    db.prepare('DELETE FROM affect_events WHERE agent_id=?').run(aid)
+  }
+  /* 峰值 = 打折后的 dyn 强度（起点 0.20 是「原来就在那」的底，本来就不打折），所以比峰值本身 */
+  const runOne = async (scale, label, text) => {
+    setParam('affect.neg.scale', scale)
+    resetState(0.20)
+    wipe()
+    const r = await appraise(db, aid, text, {
+      labels: LABELS, closeness: 0.9,
+      hint: hintOf(label, { rel: 0.9, cong: label === 'joy' ? 0.8 : -0.8, nov: 0.7, cert: 0.4 }),
+    })
+    const ep = epOf(r.id)
+    if (!ep) throw new Error('没开 episode：' + label + ' scale=' + scale)
+    return { peak: Number(ep.intensity), emitted: r.emitted }
+  }
+
+  const bad1 = await runOne(1, 'frustrated', '你完全不理解我的意思')
+  const bad2 = await runOne(0.65, 'frustrated', '你完全不理解我的意思')
+  check('负面打折：难听话的峰值只按 0.65 落',
+    bad1.emitted && bad2.emitted && Math.abs(bad2.peak - bad1.peak * 0.65) < 0.02,
+    { 原样: bad1.peak, 打折: bad2.peak })
+
+  const joy1 = await runOne(1, 'joy', '你这次做得真好')
+  const joy2 = await runOne(0.65, 'joy', '你这次做得真好')
+  check('负面打折：高兴那一下一点没削',
+    Math.abs(joy2.peak - joy1.peak) < 0.005,
+    { 打折: joy2.peak, 原样: joy1.peak })
+
+  setParam('affect.neg.scale', 1)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

@@ -6,7 +6,7 @@ import { register, run as registryRun, has, get, list } from './registry.js'
 import { resolveVersion, setBinding, getBinding, listBindings, clearBindings, attachDb, hydrateAll } from './active.js'
 import { decayV1, decayV1b } from './decay.js'
 import { deficitV1, deficitV1b, deficitV1c, deficitV1d, deficitV2, deficitV3 } from './deficit.js'
-import { recallV2, recallV2b } from './recall.js'
+import { recallV2, recallV2b, recallV3 } from './recall.js'
 import { appraiseV1, appraiseV1b } from './appraise.js'
 import { affectDynV1, affectDynV1b } from './affect_dyn.js'
 import { relationDynV1, relationDynV1b } from './reldyn.js'
@@ -25,6 +25,7 @@ export function bootstrapAlgos() {
   register(deficitV3)
   register(recallV2)
   register(recallV2b)
+  register(recallV3)
   register(appraiseV1)
   register(appraiseV1b)
   register(affectDynV1)

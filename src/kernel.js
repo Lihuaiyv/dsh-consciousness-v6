@@ -103,6 +103,15 @@ export const PARAMS = {
   // 行为示例：把「语气：可爱粘人」这种标签补成几条具体反应（on/off）。
   // off 时与改造前逐字一致，方便对照与回滚。
   'memory.inject.examples': ['C4', 'on'],
+  // 焦点：欠账类开环（答应过/提醒的事）在注入里改成「你现在最在意的其实是这件事」，
+  // 让「该提的事」有主次，而不是所有开环一个口气。off 时与改前逐字一致。
+  'memory.inject.focus': ['C4', 'on'],
+  // 潜台词：心里想说但没说出口的一层（冲突 / 压火 / 低信任），24h 内最多一次。
+  // off 时不注入；它只让语气偏一点，不要求说出来。
+  'memory.inject.subtext': ['C4', 'on'],
+  // 收尾：本地深夜 + 今天聊够了 + 对方没在提问时，给一句「想收尾」的念头。
+  // off 时不注入；它只是材料，不替她决定说还是不说。
+  'life.closing': ['C4', 'on'],
   // 记忆的时间与清晰度标签：（3 天前）/（3 个月前，有点糊）。off 时与改造前逐字一致。
   'memory.inject.age': ['C4', 'on'],
   // 内容级模糊：30 天以上的旧事，括号 / 数字 / 引号原话会被删掉（只删不改）。
@@ -138,6 +147,24 @@ export const PARAMS = {
   // 预取向量的等待上限（毫秒）：bge-m3 冷启动经常超过 150ms。
   'memory.retrieve.vector.wait': ['C4', 400],
   'memory.auto': ['C4', true],
+  // 网页这边说完一句，顺手把这句话推到 QQ（走 OneBot 发，外发收不回来，默认关）。
+  // 只推「网页起的」回合：这段会话本身就是 QQ 来的（conversation_id 以 qq: 开头）不推，免得一句变两句。
+  'qq.relay.enable': ['C4', 'off'],
+  // 推过去的单条上限（字）；整段太长就截断，别把一条消息撑成小说。
+  'qq.relay.max_chars': ['C4', 800],
+  // QQ 桥接（dsh-qq-onebot-bridge）适配总开关。off = 完全不介入，行为和没装一样。
+  // 开着才会认 QQ 会话、给它们挂人格包、把 QQ 对话写进记忆。
+  'qq.bridge.enable': ['C4', 'off'],
+  // 主人 QQ 号，逗号分隔（只填私聊号）。用来区分「主人」和「陌生人」：
+  // 桥接插件的 sessionId 是 sha256(chatKey) 前 24 位，只能拿号码正向算去比对，反推不回来。
+  'qq.bridge.owner_qq': ['C4', ''],
+  // QQ 对话要不要回流进记忆（chat_turns / raw_turns / 关系账本）。
+  // off 时只注入人格、不记东西；陌生人只会落在 chat_turns，不进长期记忆。
+  'qq.bridge.ingest': ['C4', 'on'],
+  // 桥接插件的会话映射表（key → sessionId，它自己会写 `qq-sessions.json`）。
+  // 填了才认得出群号和陌生人：sessionId 里的 hash 是单向的，光凭主人号只能认主人自己。
+  // 空 = 去桥接插件配置的工作目录找 qq-sessions.json，找不到就退化成只认主人。
+  'qq.bridge.sessions_file': ['C4', ''],
   // 概览「嘀咕」：聊完后专用一次模型调用，只给人看、不进 memory_items；关则跳过调用
   'ui.mutter.enabled': ['C4', true],
   'persona.step_cap': ['C0', 0.15],
@@ -167,10 +194,11 @@ export const PARAMS = {
   // β 太小球会在刚才那一下上黏死；太大就只剩底色，没有余温。
   'affect.slow.alpha': ['C4', 0.09],
   'affect.slow.beta': ['C4', 0.11],
-  // 恢复速度分正负：低落退得慢一点（neg=1.4 → 用时 ×1.4），被抬高退得快一点（pos=0.8 → 用时 ×0.8）。
-  // 两个都给 1 就是「好坏一样快」的旧行为。
-  'affect.recover.neg': ['C4', 1.4],
-  'affect.recover.pos': ['C4', 0.8],
+  // 恢复速度分正负：坏情绪退得快（neg=0.5 → 用时 ×0.5），好情绪留得久（pos=1.5 → 用时 ×1.5）。
+  // 两个都给 1 就是「好坏一样快」。2026-11-02 之前是反的（neg 1.4 / pos 0.8）：那阵子一次被凶能压半天。
+  // 读参数的下限放到 0.2，嫌不够短直接往下调，不用动代码。
+  'affect.recover.neg': ['C4', 0.5],
+  'affect.recover.pos': ['C4', 1.5],
   // 恢复还要看是「哪一种」坏：说不清的闷（lost/confused）拖得久，被凶一下（irritated）反而散得快，
   // 高兴（joy/curious）散得最快，平静（calm/peaceful）居中。值是「用时倍数」，都在 1 就是只分正负。
   'affect.recover.deep': ['C4', 1.3],
@@ -205,6 +233,9 @@ export const PARAMS = {
   // 快慢耦合：同一句刺激，水位低的时候反应更大、水位高的时候更扛得住。
   // 0 = 关掉（谁说的话都一样重，旧行为）；0.5 = 水位差 1 倍时反应差 ±50%。
   'affect.couple.gain': ['C4', 0.5],
+  // 负面打折：难听的话只按这个比例落到强度与愉悦轴上（1 = 原样）。
+  // 只折「这一下有多重」，不折闸门——是先被惹到、再决定生多大气，不是干脆没脾气。
+  'affect.neg.scale': ['C4', 0.65],
   // 自发扰动：很久没人说话的时候，偶尔自己心里动一下（没来由的烦 / 松一口气）。
   // rate = 每 24 小时几次；idle = 至少要空多久才掷；mag = 那一下的强度。rate=0 关掉。
   'affect.spont.rate': ['C4', 0.6],

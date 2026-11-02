@@ -231,9 +231,7 @@ export function addMemory(db, aid, body) {
       actor: String(body.source || 'model').slice(0, 24),
     })
     event(db, aid, 'memory.written', { memory_id: mid })
-    // 同一对记忆已经开过案（哪怕你已经判过「两条都留」），不重开第二张卡
-    const pairKnown = kind === 'conflict' && conflictPairExists(db, aid, old.id, mid)
-    if (kind === 'conflict' && !pairKnown) {
+    if (kind === 'conflict') {
       const cid = nid('cfl_')
       // P3：把判定依据一起存下来，半年后还能回答「当时凭什么判成冲突」
       const evidence = JSON.stringify({

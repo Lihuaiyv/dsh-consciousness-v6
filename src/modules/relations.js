@@ -469,6 +469,38 @@ export function evidenceOf(db, aid, pid, limit = 5) {
     .all(aid, pid, Math.max(1, Math.min(50, Number(limit) || 5)))
 }
 
+const UNREADABLE_EVENT = /\||→|link mention|archive|promote|^tier\s/i
+const OPERATION_EVENT = /^(manual|tier|correction|merge|edge|mention)$/i
+
+/** 关系事件里「能当话说」的一句：优先 rel_evidence（对话/记忆里抽出来的真话），
+ * 再取 rel_person.last_event_id 指向的 rel_event；机器串（tier…→… / link mention 等）不用。 */
+export function recentEventText(db, aid, personId) {
+  const pid = String(personId || '')
+  if (!pid) return ''
+  try {
+    const ev = db.prepare(`SELECT text, created_at FROM rel_evidence
+      WHERE agent_id=? AND person_id=? AND text IS NOT NULL AND text<>''
+      ORDER BY created_at DESC LIMIT 1`).get(aid, pid)
+    if (ev && readEvent(ev.text)) return { text: String(ev.text).trim(), at: ev.created_at || '' }
+  } catch { /* 老库没有 rel_evidence */ }
+  try {
+    const p = db.prepare('SELECT last_event_id FROM rel_person WHERE agent_id=? AND id=?').get(aid, pid)
+    if (p && p.last_event_id) {
+      const re = db.prepare('SELECT text, at, kind FROM rel_event WHERE agent_id=? AND id=?').get(aid, p.last_event_id)
+      if (re && !OPERATION_EVENT.test(String(re.kind || '')) && readEvent(re.text)) {
+        return { text: String(re.text).trim(), at: re.at || '' }
+      }
+    }
+  } catch { /* ignore */ }
+  return ''
+}
+
+function readEvent(s) {
+  const t = String(s || '').trim()
+  if (t.length < 2) return false
+  return !UNREADABLE_EVENT.test(t)
+}
+
 export function publicPerson(db, aid, pid) {
   const p = needPerson(db, aid, pid)
   const aliases = JSON.parse(p.aliases || '[]')

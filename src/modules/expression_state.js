@@ -25,16 +25,16 @@ const num = (v, d) => {
 const clamp01 = (x) => Math.max(0, Math.min(1, x))
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x))
 
-/** 情绪词 → 感受短语（不带「我」开头，交给整句的推测口吻）。 */
+/** 情绪词 → 行为倾向（不报情绪名，让情绪从「怎么说」里漏出来）。 */
 const PHRASE = {
-  joy: ['有点高兴', '挺高兴', '很高兴'],
-  peaceful: ['挺安稳', '很安稳', '特别松'],
-  curious: ['有点好奇', '挺好奇', '特别好奇'],
-  calm: ['挺平静', '很平静', '静得很'],
-  confused: ['有点没跟上', '有点糊涂', '脑子有点绕'],
-  lost: ['有点发虚', '有点空', '有点找不着底'],
-  irritated: ['有点烦', '挺烦', '挺烦的，不太想接话'],
-  frustrated: ['有点挫败', '挺挫败', '挺挫败的，提不起劲'],
+  joy: ['心里有点松', '心里是松的，话容易自己往外走', '心里很松，话会自己往外走'],
+  peaceful: ['没什么要赶的', '没什么要赶的，慢一点也行', '很松，什么都不想赶'],
+  curious: ['有点想追问', '有点想追问，会多问一句', '很想追问，会连着问'],
+  calm: ['没什么起伏', '没什么起伏，答到点上就够', '很静，答到点上就够'],
+  confused: ['有点没跟上', '脑子有点绕，会先停一下', '脑子很绕，得先停一下'],
+  lost: ['有点发虚', '有点发虚，会想绕开正题', '很空，会想绕开正题'],
+  irritated: ['有点烦', '火还在，话到嘴边会先顿一下', '火还在，不太想接话'],
+  frustrated: ['有点提不起劲', '提不起劲，句子会自己断掉', '提不起劲，话会越说越短'],
 }
 
 /** 强度分档：0 弱 / 1 中 / 2 强。 */
@@ -71,6 +71,17 @@ export function feltLine({ label, intensity, slow, mood, weight = 0.35 } = {}) {
   const mw = moodWord(mood)
   const head = Number(weight) >= 0.5 ? '现在的情绪是：' : '感觉现在大概的情绪是：'
   return head + bits.join('，') + (mw ? '；整体心情' + mw : '') + '。'
+}
+
+/**
+ * 潜台词：心里想说但没说出口的一句。只从现有状态拼，不调模型。
+ * 返回空串 = 这一轮不出这行。优先级：扫兴 > 没敢说 > 想问怕吵。
+ */
+export function subtextOf({ conflictLine = '', hot = false, userLabel = '', lowTrust = false } = {}) {
+  if (hot && userLabel === 'joy') return '不想扫兴，所以把火先压着。'
+  if (conflictLine && lowTrust) return '有句实话没敢说。'
+  if (conflictLine) return '想问，但怕一问就变成吵架。'
+  return ''
 }
 
 /** 我想怎么说：软愿望，按表达档给，不是命令。 */

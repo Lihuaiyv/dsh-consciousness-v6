@@ -60,6 +60,16 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   check('真的否定仍然算翻转', polarityFlip('用户喜欢喝美式咖啡', '用户不喜欢喝美式咖啡') === true)
   check('别+动词仍然算否定', polarityFlip('别去那家店了', '去那家店了') === true)
   check('公共片段 ≥4 字才判', polarityFlip('用户喜欢吃辣', '用户不喜欢吃辣') === true)
+
+  // 「确认无误」里的 无 是「没问题」，不是否定；同一句话换个说法不许判成「说法相反」
+  check('确认无误 不是否定', polarityFlip('每完成一步先做模拟测试，确认无误后再进入下一步', '每完成一步先做模拟测试，确认完善后再进入下一步') === false)
+  check('两句都带无误时不判翻转', polarityFlip('确认无误后再进入下一步', '确认无误后再进入下一步') === false)
+  const doneA = addMemory(db, aid, { text: '用户要求开发时按步骤推进，每完成一步先做模拟测试并修复 bug，确认完善后再进入下一步。', type: 'fact' })
+  const doneB = addMemory(db, aid, { text: '用户要求实现功能时按步骤推进：每完成一步就先做模拟测试、找出并修复 bug，确认无误后再进入下一步。', type: 'fact' })
+  check('先记「完善」不弹冲突', !doneA.conflict, doneA)
+  check('后记「无误」也不弹冲突', !doneB.conflict, doneB)
+  check('门控对同一句话的两种说法不判冲突', decideWrite(db, aid, { text: '用户要求实现功能时按步骤推进，每完成一步先做模拟测试、找出并修复 bug，确认无误后再进入下一步。' }).action !== 'conflict')
+  check('同一对没有多出冲突行', db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=? AND state='open' AND (a_id IN (?,?) OR b_id IN (?,?))").get(aid, doneA.id, doneB.id, doneA.id, doneB.id).n === 0)
   const fresh = decideWrite(db, aid, { text: '用户养了一只叫团子的橘猫' })
   check('不相干 → 新增', fresh.action === 'new', fresh)
   const short = decideWrite(db, aid, { text: '好' })

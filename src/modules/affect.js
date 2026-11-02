@@ -540,9 +540,9 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   const sleepGap = classifyGap(fromMs, endMs)
   const sleepMul = paramNum(db, aid, 'affect.sleep.lambda', 1.5, 0.5, 4)
   const nightMul = sleepGap && sleepGap.kind === 'sleep' ? sleepMul : 1
-  /* 恢复速度分正负：低落退得慢、被抬高退得快（neg/pos 是「用时倍数」） */
-  const recNeg = paramNum(db, aid, 'affect.recover.neg', 1.4, 0.5, 4)
-  const recPos = paramNum(db, aid, 'affect.recover.pos', 0.8, 0.5, 4)
+  /* 恢复速度分正负：坏情绪退得快、好情绪留得久（neg/pos 是「用时倍数」） */
+  const recNeg = paramNum(db, aid, 'affect.recover.neg', 0.5, 0.2, 4)
+  const recPos = paramNum(db, aid, 'affect.recover.pos', 1.5, 0.5, 4)
   /* 还要看是哪一种：说不清的闷拖得久、被凶一下散得快、高兴散得最快。
      用「这段情绪是谁起的」（rec_label），不是用这一句话的标签——中间插一句 calm 不该把速度洗掉 */
   const recLabel = labelRecMul(cur.rec_label || label, readRecLabelParams(db, aid))
@@ -944,8 +944,8 @@ export function affectTrend(db, aid, days = 7) {
   const sleep = []
   const rest = []
   const sleepMul = paramNum(db, aid, 'affect.sleep.lambda', 1.5, 0.5, 4)
-  const recNeg = paramNum(db, aid, 'affect.recover.neg', 1.4, 0.5, 4)
-  const recPos = paramNum(db, aid, 'affect.recover.pos', 0.8, 0.5, 4)
+  const recNeg = paramNum(db, aid, 'affect.recover.neg', 0.5, 0.2, 4)
+  const recPos = paramNum(db, aid, 'affect.recover.pos', 1.5, 0.5, 4)
   const recLabelParams = readRecLabelParams(db, aid)
   /* 醒着的回落速率：按这台实例真正在用的 α/β 算，别拿代码里的默认值硬套 */
   const lamAwake = paramNum(db, aid, 'affect.slow.alpha', SLOW_ALPHA, 0, 1)
@@ -1115,6 +1115,11 @@ export async function appraise(db, aid, text, opts = {}) {
     appraisal = { ...appraisal, label: edgeBias.labelTilt }
   }
 
+  /* 负面打折：同一句难听话，别把她砸得那么重（affect.neg.scale，1 = 原样）。
+     放在这里而不是评价口径里，是因为闸门的 sig 要按原分寸判「有没有被惹到」，
+     折的只是「生多大气」这一层——先被戳到，再决定气到什么程度。 */
+  const negScale = paramNum(db, aid, 'affect.neg.scale', 0.65, 0.2, 1)
+
   const curState = decayAt(db, aid, r)
   const rNow = { ...r, intensity: curState.intensity, mood: curState.mood }
   let dyn = runBound('affect_dyn', aid, { db, aid }, { mode: 'apply', state: rNow, appraisal },
@@ -1221,6 +1226,17 @@ export async function appraise(db, aid, text, opts = {}) {
       intensity: curState.intensity, mood: curState.mood,
       pleasure: Number(r.pleasure) || 0, arousal: Number(r.arousal) || 0, dominance: Number(r.dominance) || 0,
       algo: { name: 'affect_dyn', version: (dyn.algo && dyn.algo.version) || 'v1', mode: 'hold' },
+    }
+  }
+  /* 负面打折：落点放在这里——强度和不愉悦那一侧按比例收，正面的一个数都不动。
+     闸门早就按原分寸判过「有没有被惹到」，所以折的是「这一下有多重」；
+     没成事件（hold）的那条路不折，否则每说一句都会把残留的强度再削一次，直接削没了。 */
+  if (emit && negScale < 1 && SPONT_NEG.includes(String(dyn.label))) {
+    const damp = (x) => Math.round(Number(x) * negScale * 1000) / 1000
+    dyn = {
+      ...dyn,
+      intensity: Math.max(0, Math.min(1, damp(dyn.intensity))),
+      pleasure: Number(dyn.pleasure) < 0 ? Math.max(-1, damp(dyn.pleasure)) : dyn.pleasure,
     }
   }
   /* 复现 / 不应期：同一段情绪再来一句，不新开一条，而是把正在退的那次重新点亮、稍微加强；
