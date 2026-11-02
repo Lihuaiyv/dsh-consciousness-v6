@@ -26,7 +26,10 @@ export const THETA = Object.freeze({
   N_nb: [5, null], K_open: [20, null], tau_age: [7, null],
   T_dormant: [60, null], T_clash: [7, null], T_approve: [7, null],
   T_hollow: [30, null], pi_ext: [0.9, null], T_bal: [30, null],
+  T_stale: [21, null],
   F0: [20, null], O0: [5, null], Qi_lo: [0.3, null],
+  // 生长序：1 = 价值观还没有一条活的时，世界观不许先长（默认为 0，先只在模拟里开）
+  growth_order: [0, [0, 1]],
 })
 
 export const isTunable = (key) => !!(THETA[key] && THETA[key][1])

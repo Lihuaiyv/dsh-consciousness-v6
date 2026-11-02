@@ -9,7 +9,7 @@ import { loadState } from './projection.js'
 import { theta } from './fold.js'
 import { isTerminal } from './catalog.js'
 import { noteSystem } from './fast.js'
-import { stanceText } from './gates.js'
+import { stanceText, stanceGate } from './gates.js'
 
 const relKey = (aid) => 'sangguan.intake.rel:' + aid
 const memKey = (aid) => 'sangguan.intake.mem:' + aid
@@ -47,6 +47,8 @@ export function intakeCandidates(db, aid) {
       mark(r.id)
       const text = stanceText(r.text, 80)
       if (!text) continue
+      // 志向是记忆层判的，判错的时候会把「先做自启再上服务器」也叫志向；这里再问一句是不是立场
+      if (stanceGate(text)) continue
       out.push({ layer: 'L', kind: 'chapter', text, ref: r.id })
     }
   } catch { /* 老库没有记忆表 */ }
@@ -58,8 +60,12 @@ export function intakeCandidates(db, aid) {
       const b = memoryText(db, r.b_id)
       if (!a || !b) continue
       mark('c:' + r.id)
-      out.push({ layer: 'W', kind: 'obs', text: a.slice(0, 300), ref: r.id + ':a' })
-      out.push({ layer: 'W', kind: 'obs', text: b.slice(0, 300), ref: r.id + ':b' })
+      // 冲突的两侧原来直接 slice 进 W 层，连立场都不问——「电脑关机插件没开」就是这么进来的。
+      // 现在逐条过闸：不像立场的记 REJECT 由上层处理，这里先不收。
+      for (const [txt, tag] of [[a, ':a'], [b, ':b']]) {
+        if (stanceGate(txt)) continue
+        out.push({ layer: 'W', kind: 'obs', text: txt.slice(0, 300), ref: r.id + tag })
+      }
     }
   } catch { /* 没有冲突表 */ }
   try {

@@ -11,6 +11,8 @@ import { nid, agent, model } from '../kernel.js'
 import { getPersona, listRelations } from './persona.js'
 import { getAffect } from './affect.js'
 import { getDrive } from './drive.js'
+import { loadState } from './sangguan/projection.js'
+import { SIGMA_OPEN } from './sangguan/catalog.js'
 
 export const KINDS = [
   ['self', '它眼中的自己'],
@@ -35,7 +37,8 @@ function shuffleSeed() {
   return Math.floor(Math.random() * 1e6)
 }
 
-function gather(db, aid) {
+/** 思绪素材（测试与 fallback 共用）：只读，不写库。 */
+export function gather(db, aid) {
   const a = agent(db, aid)
   let personaRows = []
   try { personaRows = getPersona(db, aid) || [] } catch { /* 无 */ }
@@ -47,6 +50,18 @@ function gather(db, aid) {
   try { drive = getDrive(db, aid) } catch { /* 无 */ }
   let relations = []
   try { relations = (listRelations(db, aid) || []).slice(0, 4) } catch { relations = [] }
+  // 未决矛盾（κ）：还没分出高下的两句话，是「想法」最该反复咀嚼的原料
+  let unresolved = []
+  try {
+    const s = loadState(db, aid)
+    const tx = new Map(db.prepare('SELECT id,text FROM persona_claims WHERE agent_id=?').all(aid).map((r) => [r.id, r.text || '']))
+    unresolved = Object.values(s.kappas)
+      .filter((k) => SIGMA_OPEN.includes(k.sigma))
+      .sort((a, b) => (b.last_seq || 0) - (a.last_seq || 0))
+      .slice(0, 3)
+      .map((k) => ({ a: tx.get(k.pos_id) || '', b: tx.get(k.neg_id) || '' }))
+      .filter((u) => u.a && u.b)
+  } catch { unresolved = [] }
   const picked = pickMemories(db, aid, MEM_LIMIT)
   return {
     name: a.name,
@@ -56,6 +71,7 @@ function gather(db, aid) {
     affect: affect ? { label: affect.primary_label, intensity: affect.intensity, mood: affect.mood } : null,
     drive: drive ? { band: drive.band, D: drive.D } : null,
     relations: relations.map((r) => ({ name: r.name, kind: r.kind, closeness: r.closeness })),
+    unresolved,
     mems: picked.items.map((m) => ({ text: m.text, type: m.type })),
     total: picked.total,
   }
@@ -131,6 +147,9 @@ export function prompt(ctx) {
     ctx.drive ? '驱力档位：' + ctx.drive.band + '（D=' + Number(ctx.drive.D || 0).toFixed(2) + '）' : '',
     '对对方的称呼：' + ctx.you,
     ctx.relations.length ? '关系：' + ctx.relations.map((r) => r.name + '(' + r.kind + ',' + Number(r.closeness || 0).toFixed(2) + ')').join('、') : '',
+    ctx.unresolved && ctx.unresolved.length
+      ? '还没想完的：' + ctx.unresolved.map((u) => '「' + String(u.a).slice(0, 30) + '」还是「' + String(u.b).slice(0, 30) + '」').join('；')
+      : '',
     ctx.total ? '从你记得的 ' + ctx.total + ' 件事里，挑给你这些素材（分层 + 权重 + 近期 + 类型均衡）：' : '你几乎还不记得任何事',
     ...ctx.mems.map((m) => '- [' + m.type + '] ' + String(m.text).slice(0, 90)),
   ].filter(Boolean)

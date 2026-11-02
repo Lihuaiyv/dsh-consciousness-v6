@@ -15,6 +15,7 @@
 import crypto from 'node:crypto'
 import { now } from '../db.js'
 import { nid } from '../kernel.js'
+import { foldValueWeights } from './sangguan/vweights.js'
 
 const DAY_MS = 86400000
 
@@ -89,6 +90,37 @@ export function appendTurn(db, aid, input = {}) {
   )
   try { db.prepare('INSERT INTO raw_fts(id,text) VALUES(?,?)').run(id, text) } catch { /* 索引失败不挡原文 */ }
   return { id, seq, duplicate: false }
+}
+
+/**
+ * 给历史原话补 turn_id（一次性、可重复跑）。
+ *
+ * 以前的 turn_id 全是空的，所以「这条记忆是哪一轮说的」永远查不到。
+ * 现在按 (session, seq) 把「user 后面紧跟的 assistant」配成同一轮；配不上的各自独立。
+ * 只写 turn_id 这一列，不动正文、时间、seq。
+ * @returns {number} 补了多少行
+ */
+export function backfillTurnIds(db, aid) {
+  let rows = []
+  try {
+    rows = db.prepare(`SELECT id, session_id, seq, role, turn_id FROM raw_turns
+      WHERE agent_id=? ORDER BY session_id, seq`).all(aid)
+  } catch { return 0 }
+  const upd = db.prepare('UPDATE raw_turns SET turn_id=? WHERE id=?')
+  let n = 0
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    if (r.turn_id) continue
+    const tid = 'turn_bf_' + String(r.id).slice(-12)
+    try { upd.run(tid, r.id); n++ } catch { continue }
+    const nx = rows[i + 1]
+    // 只有「同会话、seq 紧邻、user→assistant」才认成同一轮；别的一律各自独立
+    if (nx && !nx.turn_id && nx.session_id === r.session_id && Number(nx.seq) === Number(r.seq) + 1
+      && r.role === 'user' && nx.role === 'assistant') {
+      try { upd.run(tid, nx.id); n++; i++ } catch { /* 单条失败跳过 */ }
+    }
+  }
+  return n
 }
 
 /** 把旧的 chat_turns 补进原文层（一次性）。旧表没有会话 id，统一归到 legacy。 */
@@ -312,13 +344,14 @@ export function buildEpisode(db, aid, opt = {}) {
   const users = rows.filter((r) => r.role === 'user').map((r) => r.text)
   const agents = rows.filter((r) => r.role !== 'user')
   const lastAgent = agents.length ? agents[agents.length - 1].text : ''
+  // meaningful 要先算出来：下面挑标题时会拿它兜底（早先写反了顺序，空标题时会直接抛错）
+  const meaningful = users.filter((t) => !/^(Time sampled|Approval prompts|##|<|\{)/.test(String(t).trim()))
   // 标题挑一句像人说的话：跳过运行时模板、系统注入和超长粘贴。
   const titleSrc = users.find((t) => {
     const s = String(t).trim()
     return s.length >= 4 && s.length <= 40 && !/^(Time sampled|Approval prompts|##|\{|<)/.test(s)
   }) || meaningful[0] || ''
   const title = trim(titleSrc, 24) || topicsOf(meaningful).slice(0, 2).join('·') || trim(lastAgent, 24) || '（无正文）'
-  const meaningful = users.filter((t) => !/^(Time sampled|Approval prompts|##|<|\{)/.test(String(t).trim()))
   const open = meaningful
     .filter((t) => /[?？]|(吗|呢|怎么办|要不要)$/.test(String(t).trim()))
     .slice(-3)
@@ -424,8 +457,9 @@ export function diaryContext(db, aid) {
     }
   } catch { /* 老库没有 persona */ }
   try {
-    out.values = db.prepare('SELECT key,weight FROM persona_values WHERE agent_id=? ORDER BY weight DESC LIMIT 3').all(aid)
-      .map((v) => ({ key: v.key, weight: Number(v.weight) }))
+    const folded = foldValueWeights(db, aid)
+    const w = (folded && folded.weights) || {}
+    out.values = Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([key, weight]) => ({ key, weight: Number(weight) }))
   } catch { out.values = [] }
   try {
     const a = db.prepare('SELECT primary_label,intensity,mood FROM affect_state WHERE agent_id=?').get(aid)

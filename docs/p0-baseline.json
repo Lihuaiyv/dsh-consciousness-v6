@@ -1,0 +1,65 @@
+[
+  {
+    "who": "owner",
+    "text": "今天好累",
+    "reply": "记下了：今天好累。我挺平静的。要我记住这条吗？",
+    "source": "model",
+    "learned": true
+  },
+  {
+    "who": "owner",
+    "text": "我把报告搞砸了",
+    "reply": "记下了：我把报告搞砸了。我挺平静的。要我记住这条吗？",
+    "source": "model",
+    "learned": true
+  },
+  {
+    "who": "owner",
+    "text": "你还记得我上次说想喝什么吗？",
+    "reply": "这个我还不知道，我先记下来。",
+    "source": "rules",
+    "learned": true
+  },
+  {
+    "who": "owner",
+    "text": "在吗",
+    "reply": "主人，我在。我有点好奇。",
+    "source": "rules",
+    "learned": true
+  },
+  {
+    "who": "owner",
+    "text": "今天吃什么",
+    "reply": "记下了：今天吃什么。我有点好奇。要我记住这条吗？",
+    "source": "rules",
+    "learned": true
+  },
+  {
+    "who": "owner",
+    "text": "晚安",
+    "reply": "记下了：晚安。我有点好奇。要我记住这条吗？",
+    "source": "rules",
+    "learned": true
+  },
+  {
+    "who": "stranger",
+    "text": "你好",
+    "reply": "你好呀，我在。我现在心情不错。",
+    "source": "rules",
+    "learned": false
+  },
+  {
+    "who": "stranger",
+    "text": "你是谁",
+    "reply": "嗯，我听到了。我现在心情不错。",
+    "source": "rules",
+    "learned": false
+  },
+  {
+    "who": "stranger",
+    "text": "你能记住我吗",
+    "reply": "我可能没听明白，你再说说？我现在心情不错。",
+    "source": "rules",
+    "learned": false
+  }
+]

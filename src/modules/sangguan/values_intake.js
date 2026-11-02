@@ -25,7 +25,8 @@ export function claimUserValue(db, aid, body, at) {
   const when = at || new Date().toISOString()
   const key = String(body && body.key || '').trim()
   const hint = Object.fromEntries(VALUE_DIMS.map(([k, , h]) => [k, h]))
-  const text = hint[key] ? ('我更看重' + hint[key]) : key
+  // 已知维用含义句；不认识的键也保留原话，补一个「我更看重」的前缀，才像命题不像标签。
+  const text = hint[key] ? ('我更看重' + hint[key]) : (/^我/.test(key) ? key : '我更看重' + key)
   if (text.length < 4) return { key, claimed: false, reason: 'short' }
   if (instructionLike(text)) return { key, claimed: false, reason: 'instruction' }
   const w = Number(body && body.weight)
@@ -59,7 +60,7 @@ const CLASH = 0.35
 export function pressValues(db, aid, at) {
   const when = at || new Date().toISOString()
   const s = loadState(db, aid)
-  const claims = Object.values(s.claims).filter((c) => c.layer === 'V' && !isTerminal(c.status))
+  const claims = Object.values(s.claims).filter((c) => c.layer === 'V' && !isTerminal(c.status) && c.kind !== 'commit')
   if (!claims.length) return { opened: 0 }
   const byId = new Map(db.prepare('SELECT id, text FROM persona_claims WHERE agent_id=?').all(aid).map((r) => [r.id, r.text || '']))
   const rows = []

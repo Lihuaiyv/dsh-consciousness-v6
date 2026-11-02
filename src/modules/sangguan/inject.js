@@ -16,6 +16,8 @@ import { viewWeights } from './liveness.js'
 import { precedentIndex, precedentFor } from './precedent.js'
 import { instructionLike } from './gates.js'
 import { resetSelfview } from '../selfview.js'
+import { pendingViolationLine } from './violate.js'
+import { pledgeMissLine } from './pledge.js'
 
 const DAY = 86400000
 export const INJECT_BUDGET = 160
@@ -42,7 +44,7 @@ const LEAD = { W: '你对世界的基本看法：', L: '你的人生观：', V: 
 const BRANCH_WORD = { RESOLVE: '选定了一边', SUB: '想出了一个兼顾两边的说法', COEX: '两样都留着', SUSPEND: '先放了放' }
 const logKey = (aid) => 'sangguan.inject:' + aid
 const saidKey = (aid) => 'sangguan.said:' + aid
-const CHANGE_TYPES = ['SUB_CONFIRM', 'ELEV_COMMIT', 'CLAIM_WITHDRAW']
+const CHANGE_TYPES = ['REV', 'SUB_CONFIRM', 'ELEV_COMMIT', 'CLAIM_WITHDRAW', 'CLAIM_RETIRE']
 const CACHE = new WeakMap()
 
 export function dropInjectCache(db, aid) {
@@ -87,7 +89,7 @@ function markSaid(db, aid, seq) {
 
 function layerLine(db, aid, layer, w) {
   // 早于 W1 防注入入账的旧命题，到这里再挡一道
-  const heads = listHeads(db, aid, layer).filter((h) => h.status === 'active' && !instructionLike(h.text) && !isHollowSeed(h))
+  const heads = listHeads(db, aid, layer).filter((h) => h.status === 'active' && h.kind !== 'commit' && !instructionLike(h.text) && !isHollowSeed(h))
   if (!heads.length) return { line: '', ids: [] }
   const core = (h) => (isCoreKind(layer, h.kind) ? 1 : 0)
   const pick = heads
@@ -221,9 +223,13 @@ export function injectView(db, aid, opt = {}) {
   const w = viewWeights(db, aid, now)
   const layers = Object.fromEntries(LAYERS.map((l) => [l, layerLine(db, aid, l, w)]))
   const ks = kappaLines(s, tx, evs)
+  const vline = pendingViolationLine(db, aid, now)
+  const pmiss = pledgeMissLine(db, aid, now)
   const items = [
     ...LAYERS.map((l) => ({ slot: 'layer', layer: l, line: layers[l].line, rank: 0 })),
     pending ? { slot: 'changed', line: pending.line, rank: 0, seq: pending.seq } : null,
+    vline ? { slot: 'violate', line: vline.line, rank: 0, seq: vline.seq } : null,
+    pmiss ? { slot: 'pmiss', line: pmiss.line, rank: 0, seq: pmiss.seq } : null,
     { slot: 'ask', ...askLine(db, aid, s, evs, now), rank: 3 },
     { slot: 'kappa', ...ks[0], rank: 1 },
     { slot: 'summary', ...summaryLine(evs), rank: 0 },
@@ -239,7 +245,14 @@ export function injectView(db, aid, opt = {}) {
     keep.add(x)
   }
   const changed = [...keep].find((x) => x.slot === 'changed')
-  if (changed) markSaid(db, aid, changed.seq)
+  // 只有真的说进提示词才算「说过」；shadow 期只是草稿，不能预支。
+  // opt.mark === false 用于「只看会注入什么」的读口（预览、闸门），不许产生副作用。
+  const marking = mode === 'live' && opt.mark !== false
+  if (changed && marking) markSaid(db, aid, changed.seq)
+  const vk = [...keep].find((x) => x.slot === 'violate')
+  if (vk && marking) setFlag(db, 'sangguan.violate.said:' + aid, String(vk.seq))
+  const pk = [...keep].find((x) => x.slot === 'pmiss')
+  if (pk && marking) setFlag(db, 'sangguan.pmiss.said:' + aid, String(pk.seq))
   for (const l of LAYERS) if (![...keep].some((x) => x.layer === l)) layers[l] = { line: '', ids: [] }
   // 展示顺序：摘要 → 矛盾 → 先例 → 待问
   const extra = items.filter((x) => keep.has(x) && x.slot !== 'layer').sort((a, b) => a.rank - b.rank)

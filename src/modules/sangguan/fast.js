@@ -300,6 +300,20 @@ function decisive(s, c, verdicts, layer) {
 
 async function placeCandidate(c, x, verdicts, rep, refs, opt = {}) {
   const s = loadState(c.db, c.aid)
+  // 生长序（P4，默认关）：价值观一条活的都没有时，世界观不该先长出来。
+  // 图纸的生长序是 V 取舍 → PRESSURE → L → W；W 是被下层受挫逼出来的，不是开场就有的。
+  if (x && x.layer === 'W' && Number(theta(s, 'growth_order')) >= 1) {
+    const hasV = Object.values(s.claims).some((cc) => cc.layer === 'V' && !isTerminal(cc.status))
+    if (!hasV) {
+      const out = { cls: 'REJECT', report: { w: 'G0', judge: 'off', sim_mode: null, neighbors: [], reason: 'growth_order' } }
+      try {
+        return { cls: 'REJECT', w: 'G0', judge: 'off', reason: 'growth_order', ...writeClass(c, s, x, out, verdicts, refs, rep) }
+      } catch (e) {
+        rep.errors.push({ type: 'REJECT', code: e.code || 'ERROR', msg: String(e.message || e) })
+        return { cls: 'ERROR', w: 'G0', judge: 'off' }
+      }
+    }
+  }
   let N = []
   let rel = null
   let judge = 'ok'

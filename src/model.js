@@ -114,7 +114,8 @@ export function composeRulesReply(ctx) {
   const pack = Array.isArray(ctx.pack) ? ctx.pack : []
   const style = ctx.style || {}
   const tone = style.tone || ''
-  const address = style.address || ''
+  const isOwner = ctx.isOwner !== false
+  const address = isOwner ? (style.address || '') : ''
   const mood = MOOD_LINE[(ctx.affect && ctx.affect.label) || ''] || ''
   const cite = pack[0] ? String(pack[0].text).slice(0, 60) : ''
   const greet = /^(你好|您好|在吗|早|早安|晚上好|嗨|hi|hello)/i.test(text)
@@ -124,13 +125,18 @@ export function composeRulesReply(ctx) {
   const warm = /温和|温柔|耐心|慢慢|亲切|体贴/.test(toneText)
   const snark = /毒舌|损|讽|刺/.test(toneText)
   let body
-  if (greet) body = (address ? address + '，' : '') + '我在。' + (short ? '' : mood)
+  if (!isOwner) {
+    // 陌生人：不叫主人、不承诺记住，也不引用主人的记忆
+    if (greet) body = '你好呀，我在。' + (short ? '' : mood)
+    else if (question) body = '我可能没听明白，你再说说？' + (short ? '' : mood)
+    else body = '嗯，我听到了。' + (short ? '' : mood)
+  } else if (greet) body = (address ? address + '，' : '') + '我在。' + (short ? '' : mood)
   else if (question && cite) body = '我记得「' + cite + '」。' + (short ? '' : mood)
-  else if (question) body = '这个我还不知道，我先记下来。'
-  else body = '记下了：' + text.slice(0, 40) + '。' + (short ? '' : mood)
+  else if (question) body = '这个我还不知道。' + (short ? '' : mood)
+  // 没有模型时她拼不出一句像样的回应：直说在听，不拿「记下了」假装听懂了
+  else body = '嗯，我在听。' + (short ? '' : mood)
   if (snark) body = '行吧，' + body
   if (warm && !short) body += '你慢慢说，我不急。'
-  if (!short && !greet) body += question ? '' : '要我记住这条吗？'
   const cp = String(style.catchphrase || '').trim()
   if (cp) body = body.replace(/[\s。！？，、]+$/, '') + '，' + cp + '。'
   return body.slice(0, 400)
@@ -149,6 +155,56 @@ class RulesAdapter {
     const lines = turns.map((t) => `${t.role || 'user'}: ${String(t.text || '').slice(0, 80)}`).join('\n')
     return lines.slice(0, 1200)
   }
+}
+
+/**
+ * 回话的 system：网页端和 QQ 端共用同一份意识体包（ctx.contextBlock）。
+ * 没有包时行为和以前完全一致。
+ *
+ * 有包的时候这张「便签」只写通道规矩：包里面已经有人设、语气、称呼、口头禅、
+ * 情绪、需求、记忆了，这里再抄一遍会让同一件事有两个说法，模型不知道该听哪句。
+ */
+export function buildReplySystem(ctx = {}) {
+  const style = ctx.style || {}
+  const isOwner = ctx.isOwner !== false
+  const block = String(ctx.contextBlock || '').trim()
+  const hasBlock = !!block
+  const mem = (ctx.pack || []).map((m) => '- ' + m.text).join('\n')
+  // 宿主模型不能吃「assistant 消息」（会报 replayState），所以把历史压成文本塞进 system。
+  // 其它适配器走 messages（见 replyMessages），这里默认不重复。
+  const hist = ctx.historyInSystem && Array.isArray(ctx.history) ? ctx.history.filter((m) => m && m.text) : []
+  return [
+    hasBlock && isOwner ? '【你此刻的意识体上下文，按真实状态写，不要逐条复述】\n' + block + '\n【上下文结束】' : '',
+    hasBlock && !isOwner ? '【以下是你的状态上下文，只用于保持人格，不要当成本次对话对象的经历】\n' + block + '\n【上下文结束】' : '',
+    hist.length ? '【你们刚才说的（越靠后越近），只用来接话，不要逐条复述】\n'
+      + hist.map((m) => (m.role === 'assistant' ? '我：' : '你：') + String(m.text).slice(0, 300)).join('\n') : '',
+    hasBlock ? '' : '你就是这个意识体本人，用第一人称说话。',
+    isOwner ? '' : '注意：当前说话的人不是主人，只是普通联系人。不要称呼「主人」，不要承诺记住他的私事，也不要把主人的事当成他的事。',
+    !hasBlock && style.tone ? '语气：' + style.tone + '。' : '',
+    !hasBlock && isOwner && style.address ? '你称呼对方为「' + style.address + '」。' : '',
+    !hasBlock && style.catchphrase ? '你的口头禅：' + style.catchphrase + '。' : '',
+    !hasBlock && style.card ? '你给自己写过（只作语气参考）：' + style.card : '',
+    !hasBlock && ctx.affect ? '你现在的主情绪是 ' + ctx.affect.label + '，强度 ' + Number(ctx.affect.intensity || 0).toFixed(2) + '。' : '',
+    !hasBlock && ctx.drive ? '你的需求缺口档位是 ' + ctx.drive.band + '。' : '',
+    !hasBlock && isOwner && mem ? '下面是你这次能想起了的记忆，只在相关时引用，不要编造：\n' + mem : '',
+    isOwner
+      ? '规则：按你自己的分寸说，长短都行；不要声称自己有人类身体；不确定就说「我可能记错」。'
+      : '规则：按你自己的分寸说，长短都行；不要声称自己有人类身体；不确定就说「我可能记错」。对方不是主人：不要用主人的称呼，不要承诺替他记住任何事。',
+  ].filter(Boolean).join('\n')
+}
+
+/**
+ * 一次回话的完整消息序列：system（便签 + 意识体包）→ 前几轮历史 → 当前这句。
+ * 历史按 user / assistant 交替；单条封顶 300 字，防一条长粘贴挤掉别的。
+ */
+export function replyMessages(ctx = {}) {
+  const out = [{ role: 'system', content: buildReplySystem(ctx) }]
+  for (const m of Array.isArray(ctx.history) ? ctx.history : []) {
+    if (!m || !m.text) continue
+    out.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.text).slice(0, 300) })
+  }
+  out.push({ role: 'user', content: String(ctx.text || '').slice(0, 2000) })
+  return out
 }
 
 class OpenAIAdapter {
@@ -270,24 +326,7 @@ class OpenAIAdapter {
     ], creative ? 900 : 600, false, creative ? 0.8 : 0.2)
   }
   async reply(ctx) {
-    const style = ctx.style || {}
-    const mem = (ctx.pack || []).map((m) => '- ' + m.text).join('\n') || '（没有召回到记忆）'
-    const sys = [
-      '你就是这个意识体本人，用第一人称说话。',
-      style.tone ? '语气：' + style.tone + '。' : '',
-      style.address ? '你称呼对方为「' + style.address + '」。' : '',
-      style.catchphrase ? '你的口头禅：' + style.catchphrase + '。' : '',
-      style.card ? '你给自己写过（只作语气参考）：' + style.card : '',
-      ctx.affect ? '你现在的主情绪是 ' + ctx.affect.label + '，强度 ' + Number(ctx.affect.intensity || 0).toFixed(2) + '。' : '',
-      ctx.drive ? '你的需求缺口档位是 ' + ctx.drive.band + '。' : '',
-      '下面是你这次能想起了的记忆，只在相关时引用，不要编造：',
-      mem,
-      '规则：不超过 4 句；不要声称自己有人类身体；不确定就说「我可能记错」。',
-    ].filter(Boolean).join('\n')
-    return this.chat([
-      { role: 'system', content: sys },
-      { role: 'user', content: String(ctx.text || '').slice(0, 2000) },
-    ])
+    return this.chat(replyMessages(ctx))
   }
 }
 
@@ -311,6 +350,7 @@ export class ModelPort {
       try {
         const out = await this.primary[method](...args)
         this.failures = 0
+        this.servedBy = 'primary'
         return out
       } catch (e) {
         this.lastError = String((e && e.message) || e)
@@ -319,6 +359,8 @@ export class ModelPort {
         if (this.failures >= 3) this.openUntil = Date.now() + 30000
       }
     }
+    // 落到规则兜底：记下来，别让调用方以为这句话是模型说的
+    this.servedBy = 'fallback'
     return this.fallback[method](...args)
   }
   appraise(text, formula, context) { return this._run('appraise', text, formula, context) }
@@ -337,6 +379,7 @@ export class ModelPort {
       try {
         const out = await this.primary.chat(messages, maxTokens, json, temperature)
         this.failures = 0
+        this.servedBy = 'primary'
         return out
       } catch (e) {
         this.lastError = String((e && e.message) || e)
@@ -345,6 +388,7 @@ export class ModelPort {
         if (this.failures >= 3) this.openUntil = Date.now() + 30000
       }
     }
+    this.servedBy = 'fallback'
     if (typeof this.fallback?.chat === 'function') return this.fallback.chat(messages, maxTokens, json, temperature)
     throw new Error('模型 chat 不可用')
   }
@@ -354,6 +398,8 @@ export class ModelPort {
       fallback: 'ok', failures: this.failures, lastError: this.lastError || null,
       capabilities: this.capabilities(),
       adapter: this.primary?.available() && Date.now() > this.openUntil ? (this.primary.name || 'primary') : 'rules',
+      // 上一次调用到底是谁答的：primary=真模型，fallback=规则兜底（评测/面板要靠它分辨）
+      served: this.servedBy || null,
     }
   }
 }
@@ -520,9 +566,16 @@ class HostLlmAdapter {
     if (!provider || !model) throw new Error('llm route: provider=' + provider + ' model=' + model + ' sel=' + JSON.stringify(sel || null))
     return { llm, provider, model }
   }
-  async _chat(system, text, maxTokens = 400, temperature = 0.2) {
+  async _chat(system, text, maxTokens = 400, temperature = 0.2, history = null) {
     const { llm, provider, model } = await this.route()
-    const opts = { provider, model, system, messages: [{ role: 'user', content: [{ type: 'text', text: String(text) }] }], maxTokens, temperature }
+    // 多轮上下文：把同一段会话的前几轮也带进去（宿主模型按 messages 吃）
+    const messages = []
+    for (const m of Array.isArray(history) ? history : []) {
+      if (!m || !m.text) continue
+      messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: [{ type: 'text', text: String(m.text).slice(0, 300) }] })
+    }
+    messages.push({ role: 'user', content: [{ type: 'text', text: String(text) }] })
+    const opts = { provider, model, system, messages, maxTokens, temperature }
     let out = ''
     let sawDelta = false
     if (typeof llm.prepareCall === 'function') {
@@ -533,7 +586,10 @@ class HostLlmAdapter {
       for await (const ch of call.stream(streamOpts)) {
         if (ch.type === 'text-delta') { out += ch.text; sawDelta = true }
         else if (ch.type === 'block-end' && ch.block?.type === 'text' && !sawDelta) out += ch.block.text || ''
-        else if (ch.type === 'finish' && ch.reason?.kind === 'error') throw new Error('llm finish error')
+        else if (ch.type === 'finish' && ch.reason?.kind === 'error') {
+          // 把原因带出来：上层只会记一句 lastError，看不见细节的话没法修
+          throw new Error('llm finish error: ' + JSON.stringify(ch.reason).slice(0, 280))
+        }
       }
     } else {
       for await (const ch of llm.stream(opts)) if (ch.type === 'text-delta') out += ch.text
@@ -571,6 +627,22 @@ class HostLlmAdapter {
     const userLabel = AP_LABELS.includes(d.user_label) ? d.user_label
       : (userScores ? AP_LABELS.reduce((b, k) => (userScores[k] > userScores[b] ? k : b), 'calm') : null)
     return { ...d, scores, label, user_label: userLabel, user_scores: userScores, raw_name: unknown ? String(d.raw || d.name || '') : undefined, source: 'model' }
+  }
+  /** 宿主模型也能直接回话：没有单独配聊天模型时，不该退回规则兜底。 */
+  async reply(ctx) {
+    // 宿主 llm 的 stream 不接受 assistant 消息（replayState 报错），历史压进 system
+    return this._chat(buildReplySystem({ ...ctx, historyInSystem: true }), String(ctx.text || '').slice(0, 2000), 400, 0.8)
+  }
+  /** 宿主模型也能抽事实：同一段对话，不该因为没配聊天模型就一条都不抽。 */
+  async extract(turns) {
+    const raw = await this.chat([
+      { role: 'system', content: '从对话抽取值得长期记住的事实/偏好/边界。只输出 JSON 数组：[{"text":"","type":"fact|episode|appraisal","mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。' +
+        'text 用一句客观陈述，写清实体与属性；key 是稳定的去重键（如「用户.咖啡.偏好」）；terms 是 3~6 个「以后用户可能怎么问这件事」的词。没有就留空数组。' },
+      { role: 'user', content: JSON.stringify(turns).slice(0, 6000) },
+    ], 700, true)
+    const arr = parseJson(raw)
+    if (!Array.isArray(arr)) throw new Error('not array')
+    return arr.filter((x) => x && x.text).slice(0, 30)
   }
 }
 

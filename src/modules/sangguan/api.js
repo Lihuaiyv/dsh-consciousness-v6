@@ -22,6 +22,9 @@ import { pendingList } from './fast.js'
 import { withdrawSeed } from './seed.js'
 import { theta } from './fold.js'
 import { brierOf } from './practice.js'
+import { scorecard, liveGate, recordBlind } from './score.js'
+import { reviseClaim } from './revision.js'
+import { confirmNu } from './pledge.js'
 
 const nowIso = () => new Date().toISOString()
 const day = (now) => now.slice(0, 10)
@@ -36,7 +39,7 @@ function texts(db, aid) {
 /** 配置对外视图：端点 key 不出库，只给 has_key。 */
 function publicConfig(cfg) {
   const ep = (e) => (e ? { url: e.url, model: e.model || null, has_key: !!e.key } : null)
-  return { enabled: cfg.enabled, inject: cfg.inject, budget: cfg.budget, replace: cfg.replace, model: { light: ep(cfg.model.light), heavy: ep(cfg.model.heavy) } }
+  return { enabled: cfg.enabled, inject: cfg.inject, violate: cfg.violate, budget: cfg.budget, replace: cfg.replace, model: { light: ep(cfg.model.light), heavy: ep(cfg.model.heavy) } }
 }
 
 function claimView(c, tx, w) {
@@ -372,6 +375,9 @@ export async function route(db, aid, method, sub, query, body = {}, role = 'user
   const [a, b, c] = parts
   const now = nowIso()
   if (method === 'GET' && (!a || a === 'status')) return status(db, aid, now)
+  // 仪表盘关着也能看：它只是账本的读数，不是引擎行为
+  if (method === 'GET' && a === 'scorecard') return scorecard(db, aid, { now, days: Number(query.get('days') || 30) })
+  if (method === 'GET' && a === 'gate') return liveGate(db, aid, { now })
   if (a === 'config') {
     if (method === 'GET') return { config: publicConfig(sangguanConfig(db, aid)) }
     if (method === 'PUT') return putConfig(db, aid, body, role)
@@ -400,7 +406,7 @@ export async function route(db, aid, method, sub, query, body = {}, role = 'user
       case 'epochs': return epochs(db, aid)
       case 'summaries': return { summaries: listSummaries(db, aid) }
       case 'liveness': case 'vitals': return liveness(db, aid, now)
-      case 'inject': if (b === 'preview') return { view: injectView(db, aid, { now, cache: false }), log: injectLog(db, aid), ready: liveReady(db, aid) }; break
+      case 'inject': if (b === 'preview') return { view: injectView(db, aid, { now, cache: false, mark: false }), log: injectLog(db, aid), ready: liveReady(db, aid) }; break
       case 'elev': return { proposals: pendingElev(db, aid, now) }
       case 'candidates': return { candidates: pendingList(db, aid) }
       default: break
@@ -408,9 +414,32 @@ export async function route(db, aid, method, sub, query, body = {}, role = 'user
     err(404, 'NOT_FOUND', '没有这个三观接口')
   }
   if (method === 'POST') {
+    if (a === 'blind') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以记录盲拆结果')
+      const rate = Number(body.rate)
+      if (!Number.isFinite(rate) || rate < 0 || rate > 1) err(400, 'INVALID_ARGUMENT', 'rate 要在 0–1')
+      return recordBlind(db, aid, { rate, n: Number(body.n) || 0, at: now })
+    }
+    if (a === 'confirm') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以确认兑现')
+      try {
+        return confirmNu(db, aid, body, now)
+      } catch (e) {
+        err(400, 'INVALID_ARGUMENT', String((e && e.message) || e))
+      }
+    }
     if (a === 'verdict') return postVerdict(db, aid, body, now)
     if (a === 'seed') return postSeed(db, aid, body, role, now)
     if (a === 'claims' && b && c === 'withdraw') return postWithdraw(db, aid, b, role, now)
+    if (a === 'claims' && b && c === 'revise') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改主意')
+      try {
+        return reviseClaim(db, aid, { ...body, id: b }, now)
+      } catch (e) {
+        if (e instanceof SangguanError) err(400, 'INVALID_ARGUMENT', e.message, e.details)
+        throw e
+      }
+    }
     if (a === 'elev' && b && (c === 'approve' || c === 'reject')) {
       if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以批准或拒绝换核心')
       const r = c === 'approve' ? approveElev(db, aid, b, now) : rejectElev(db, aid, b, now, body.reason || '')

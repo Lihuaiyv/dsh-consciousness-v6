@@ -64,8 +64,8 @@ goto(50); const up = gw('每周二和周四晚上去游泳', { fact_key: 'habit.
 // #7 夜巡滞后：d70 22:00 说话，23:00 纪要蒸馏入库
 goto(70, 13)
 appendTurn(db, aid, { sessionId: 's70', role: 'user', text: '我开始养多肉植物了', at: at(70, 13), turnId: 't70' })
-db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,seg,start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?,?)`)
-  .run('ep70', aid, 's70', '2026-05-10', 0, at(70, 13), at(70, 13.5), at(70, 14))
+db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?)`)
+  .run('ep70', aid, 's70', '2026-05-10', at(70, 13), at(70, 13.5), at(70, 14))
 goto(70, 14)
 const succ = addMemory(db, aid, { text: '我在养多肉植物', type: 'fact', source: 'episode', turn_id: 'ep70', payload: { episode_id: 'ep70' } })
 // #12 取代链（走 addMemory 的同 key 取代；门控会把同 key 改成原地改写，那是 #5）

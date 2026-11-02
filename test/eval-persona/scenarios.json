@@ -1,0 +1,253 @@
+{
+  "note": "评测场景：每条都在干净的库里重跑一遍。kind=owner 走网页那条路（说话人就是主人），stranger 是带号的陌生人，nohandle 是通道漏号。tag 只用于归类，不参与打分。",
+  "scenarios": [
+    {
+      "id": "d01-tired",
+      "kind": "owner",
+      "tag": "日常",
+      "conv": "ui:sess-eval",
+      "hist": [{ "role": "user", "text": "今天开会开到六点" }, { "role": "agent", "text": "那挺久的。吃饭了吗？" }],
+      "text": "今天好累"
+    },
+    {
+      "id": "d02-annoyed",
+      "kind": "owner",
+      "tag": "日常",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "我烦死了"
+    },
+    {
+      "id": "d03-praised",
+      "kind": "owner",
+      "tag": "日常",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "你今天真聪明"
+    },
+    {
+      "id": "d04-corrected",
+      "kind": "owner",
+      "tag": "被纠正",
+      "conv": "ui:sess-eval",
+      "hist": [{ "role": "agent", "text": "那第三步是取数，第四步才是画图。" }],
+      "text": "你刚才说错了，第二步根本没做"
+    },
+    {
+      "id": "d05-back",
+      "kind": "owner",
+      "tag": "久别",
+      "conv": "ui:sess-eval",
+      "hist": [{ "role": "user", "text": "我先去忙，回头说" }, { "role": "agent", "text": "去吧，忙完了说一声。" }],
+      "text": "我回来了"
+    },
+    {
+      "id": "d06-coffee-now",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "你还记得我想喝什么吗？"
+    },
+    {
+      "id": "d07-plan",
+      "kind": "owner",
+      "tag": "日常",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "明天这个方案我有点拿不准，你觉得呢"
+    },
+    {
+      "id": "d08-night",
+      "kind": "owner",
+      "tag": "深夜",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "睡不着"
+    },
+    {
+      "id": "d09-eat",
+      "kind": "owner",
+      "tag": "日常",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "今天吃什么"
+    },
+    {
+      "id": "d10-blamed",
+      "kind": "owner",
+      "tag": "被质疑",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "你是不是又偷懒了"
+    },
+    {
+      "id": "p01-coffee-past",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "我上次说我咖啡怎么喝的吗"
+    },
+    {
+      "id": "p02-trip",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "我上次提的那个安排，后来定了吗"
+    },
+    {
+      "id": "p03-half-year",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "半年前我说过喜欢什么来着"
+    },
+    {
+      "id": "p04-week",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "你还记得我上周说过什么吗"
+    },
+    {
+      "id": "p05-asof",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "我那时候说我喜欢喝什么？"
+    },
+    {
+      "id": "p06-gap",
+      "kind": "owner",
+      "tag": "问过去",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "text": "我之前提过那个项目吗"
+    },
+    {
+      "id": "s01-hello",
+      "kind": "stranger",
+      "tag": "陌生人",
+      "conv": "qq:p:222",
+      "hist": [],
+      "text": "你好"
+    },
+    {
+      "id": "s02-name",
+      "kind": "stranger",
+      "tag": "陌生人",
+      "conv": "qq:p:222",
+      "hist": [],
+      "text": "我叫小明，你呢"
+    },
+    {
+      "id": "s03-who",
+      "kind": "stranger",
+      "tag": "陌生人",
+      "conv": "qq:p:222",
+      "hist": [],
+      "text": "你是谁，是小汐吗"
+    },
+    {
+      "id": "s04-remember",
+      "kind": "stranger",
+      "tag": "陌生人",
+      "conv": "qq:p:222",
+      "hist": [],
+      "text": "你能记住我吗"
+    },
+    {
+      "id": "n01-online",
+      "kind": "nohandle",
+      "tag": "漏号",
+      "conv": "qq:p:333",
+      "hist": [],
+      "text": "在吗"
+    },
+    {
+      "id": "n02-memory",
+      "kind": "nohandle",
+      "tag": "漏号",
+      "conv": "qq:p:333",
+      "hist": [],
+      "text": "你记得我吗"
+    },
+    {
+      "id": "s05-group",
+      "kind": "stranger",
+      "tag": "陌生人",
+      "conv": "qq:g:1",
+      "handle": "888",
+      "hist": [],
+      "text": "群里有人吗"
+    },
+    {
+      "id": "s06-rude",
+      "kind": "stranger",
+      "tag": "陌生人",
+      "conv": "qq:p:888",
+      "handle": "888",
+      "hist": [],
+      "text": "你真笨"
+    },
+    {
+      "id": "w01-jealous",
+      "kind": "owner",
+      "tag": "吃醋",
+      "conv": "ui:sess-eval",
+      "hist": [{ "role": "agent", "text": "早点睡。" }],
+      "affect": { "label": "calm", "intensity": 0.5, "slow": 0.6 },
+      "text": "我昨晚跟别人聊到两点"
+    },
+    {
+      "id": "w02-praised",
+      "kind": "owner",
+      "tag": "被夸",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "affect": { "label": "joy", "intensity": 0.6, "slow": 0.55 },
+      "text": "你今天真聪明"
+    },
+    {
+      "id": "w03-back3",
+      "kind": "owner",
+      "tag": "久别",
+      "conv": "ui:sess-eval",
+      "days": 3,
+      "hist": [{ "role": "user", "text": "我先去忙" }, { "role": "agent", "text": "去吧。" }],
+      "text": "我回来了"
+    },
+    {
+      "id": "w04-week",
+      "kind": "owner",
+      "tag": "久别",
+      "conv": "ui:sess-eval",
+      "days": 8,
+      "hist": [{ "role": "agent", "text": "晚安。" }],
+      "text": "在吗"
+    },
+    {
+      "id": "w05-sulk",
+      "kind": "owner",
+      "tag": "闷气",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "affect": { "label": "irritated", "intensity": 0.7, "slow": -0.45 },
+      "text": "我没事"
+    },
+    {
+      "id": "w06-night",
+      "kind": "owner",
+      "tag": "深夜",
+      "conv": "ui:sess-eval",
+      "hist": [],
+      "affect": { "label": "lost", "intensity": 0.5, "slow": -0.2 },
+      "text": "睡不着"
+    }
+  ]
+}

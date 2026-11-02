@@ -15,6 +15,12 @@ import { eventValence, moodAdjust, toneOf, REL_DEFAULTS as REL_DYN } from './alg
 import { bumpRelation, ownerPerson, personByChannel } from './modules/relations.js'
 import { resolveStructureEdges, affectLabels, seedRuleBindings } from './modules/artifacts.js'
 import { TARGETS, targetById } from './modules/selfmod_targets.js'
+import { setPending, runningAgentIds, maxRunning, wakeRuntime } from './modules/binding.js'
+import { latestShare } from './modules/life.js'
+import { promptBudget, isOwner, isLocalChannel, historyTurns, recallItems } from './modules/conversations.js'
+import { appendTurn, buildEpisode } from './modules/archive.js'
+import * as R from './modules/relations.js'
+import { enqueueRelationRead } from './modules/relations_extract.js'
 export { DRIVERS, DRIVER_IDS, driverFindings, applyDriverToDrive } from './modules/selfmod_drivers.js'
 export { affectLabels }
 import {
@@ -98,12 +104,14 @@ import {
 } from './modules/persona.js'
 import { sampleAffect, affectHistory, affectTrend } from './modules/affect.js'
 import { softRecall, listActiveMemories, memoryStats } from './modules/memory.js'
+import { invalidateMemory } from './modules/timeline.js'
+import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
 import { entityForText } from './modules/entities.js'
 import { applyWrite } from './modules/gate.js'
 import { enrichOne, enrichPending, canEnrich } from './modules/enrich.js'
 import { judgeReflection, canJudge } from './modules/judge.js'
-import { detectLoop, addLoop, settleLoopsFromUser, expireLoops } from './modules/loops.js'
+import { detectLoop, addLoop, settleLoopsFromUser, expireLoops, pendingLoops, markLoopsFired } from './modules/loops.js'
 import { bumpReflect, reflectFrom, canConsolidate } from './modules/consolidate.js'
 import { getCondition, setCondition } from './modules/ops.js'
 import {
@@ -113,6 +121,26 @@ import {
 } from './modules/drive.js'
 
 const model = createModel()
+
+/* ---------------- 外部通道的意识体包 ----------------
+ * 网页端由 index.js 的 systemPrompt.section 注入 consciousnessBlock；
+ * QQ 这类外部通道不走宿主提示词，所以由 index.js 把同一个 builder 挂过来，
+ * 让两边用的是同一份人设/关系/日记/上次聊到，而不是两套。
+ */
+let contextBlockGetter = null
+export function attachContextBlock(fn) { contextBlockGetter = typeof fn === 'function' ? fn : null }
+
+export function buildContextBlock(db, aid, opts) {
+  try { return contextBlockGetter ? String(contextBlockGetter(db, aid, opts) || '') : '' } catch { return '' }
+}
+
+/** 按字预算截断（优先保留前面的身份/关系/情绪，砍尾部的日记/浮现）。 */
+export function clampContextBlock(s, max) {
+  const t = String(s || '')
+  if (!t || !max || t.length <= max) return t
+  return t.slice(0, Math.max(0, max - 16)) + '\n…（上下文按预算截断）'
+}
+
 /** 测试钩子：可替换自由导入的模型调用 */
 export const freeformModelHook = { complete: null }
 /** 测试钩子：可替换「自己长偏好」的模型调用 */
@@ -361,6 +389,15 @@ export async function ingest(db, aid, body) {
     try { return Math.max(0, Math.min(1, Number(getAffect(db, aid).intensity) || 0)) } catch { return 0 }
   })()
   const seed = (text, type) => seedScores(text, type, turnSalience)
+  // 这一批的出处。turn_id 由 captureTurn 生成、入队时带上，一路传到 addMemory；
+  // memory_items.source_turn_id 存它，「这条记忆是哪一轮说的」才 join 得回 raw_turns。
+  const batchTurnId = (() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const t = turns[i] && turns[i].turnId
+      if (t) return String(t)
+    }
+    return null
+  })()
   // 纠正：先让被否认的旧条时效（双时间失效），再落一条「否认」事实
   let invalidated = 0
   for (const t of turns) {
@@ -369,8 +406,8 @@ export async function ingest(db, aid, body) {
     const pasts = findPastFacts(t.text || '')
     for (const pf of pasts) {
       try {
-        const r = addMemory(db, aid, { text: pf.text, type: 'fact', mark: 'normal', ...seed(pf.text, 'fact') })
-        if (r && r.id) db.prepare('UPDATE memory_items SET valid_at=NULL, invalid_at=? WHERE id=?').run(now(), r.id)
+        const r = addMemory(db, aid, { text: pf.text, type: 'fact', mark: 'normal', turn_id: batchTurnId, ...seed(pf.text, 'fact') })
+        if (r && r.id) invalidateMemory(db, aid, r.id, { clearValidAt: true, reason: 'past_fact', actor: 'extract' })
       } catch { /* 忽略 */ }
     }
     // ② 同一句里「现在没了 / 现在不养了」：借过去事实的对象补一条现状否认
@@ -381,10 +418,10 @@ export async function ingest(db, aid, body) {
       for (const r0 of rows0) {
         if (!String(r0.text).includes(pf.verb)) continue
         if (/没有|不/.test(String(r0.text))) continue // 已经是否定句
-        db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), r0.id)
+        invalidateMemory(db, aid, r0.id, { reason: 'negation', actor: 'extract' })
         invalidated++
       }
-      try { addMemory(db, aid, { text: '用户现在没有' + pf.verb + pf.object, type: 'fact', mark: 'normal', ...seed('用户现在没有' + pf.verb + pf.object, 'fact') }) } catch { /* 忽略 */ }
+      try { addMemory(db, aid, { text: '用户现在没有' + pf.verb + pf.object, type: 'fact', mark: 'normal', turn_id: batchTurnId, ...seed('用户现在没有' + pf.verb + pf.object, 'fact') }) } catch { /* 忽略 */ }
       continue
     }
     if ((t.role || 'user') !== 'user') continue
@@ -393,10 +430,10 @@ export async function ingest(db, aid, body) {
       for (const r of rows) {
         if (!String(r.text).includes(n.verb)) continue
         if (/没有|不/.test(String(r.text))) continue // 已经是否定句，不用再失效
-        db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), r.id)
+        invalidateMemory(db, aid, r.id, { reason: 'negation', actor: 'extract' })
         invalidated++
       }
-      try { addMemory(db, aid, { text: n.negText, type: 'fact', mark: 'normal', ...seed(n.negText, 'fact') }) } catch { /* 忽略 */ }
+      try { addMemory(db, aid, { text: n.negText, type: 'fact', mark: 'normal', turn_id: batchTurnId, ...seed(n.negText, 'fact') }) } catch { /* 忽略 */ }
     }
   }
 
@@ -414,7 +451,7 @@ export async function ingest(db, aid, body) {
         key: m.key || '', terms: m.terms || [],
       }, (cand) => addMemory(db, aid, {
         text: cand.text, type: m.type || 'fact', mark: m.mark || 'normal',
-        entity_id: cand.entity_id || null, source: 'extract', ...seed(cand.text, m.type || 'fact'),
+        entity_id: cand.entity_id || null, source: 'extract', turn_id: batchTurnId, ...seed(cand.text, m.type || 'fact'),
         fact_key: cand.key || '', terms: cand.terms || [],
       }))
       actions[out.action] = (actions[out.action] || 0) + 1
@@ -424,12 +461,18 @@ export async function ingest(db, aid, body) {
   }
   // 开环：答应过的 / 还没做完的，单独挂一张表。它不走召回打分，
   // 由时间（到期 / 两天没提）决定什么时候自己浮上来。
+  // 只从**用户原话**里长：记忆条目常是第三人称转述（「用户正在检查…」「阶段 2 通过了…」），
+  // 拿它判开环会把技术讨论挂成待办，然后每轮提醒一次。
   let loops = { opened: 0, closed: 0 }
   try {
-    for (const p of newPairs) {
-      const d = detectLoop(p.text)
+    const memByText = new Map(newPairs.map((p) => [String(p.text || ''), p.id]))
+    for (const t of turns) {
+      if ((t.role || 'user') !== 'user') continue
+      const ut = String(t.text || '').trim()
+      if (!ut) continue
+      const d = detectLoop(ut)
       if (!d) continue
-      const r = addLoop(db, aid, { text: p.text, memory_id: p.id, ...d })
+      const r = addLoop(db, aid, { text: ut.slice(0, 200), memory_id: memByText.get(ut) || null, source_turn_id: t.turnId || null, ...d })
       if (r.created) loops.opened++
     }
     // 用户说「好了 / 搞定了」：把刚提过的那条关掉（只认两小时内浮现过的）
@@ -456,7 +499,11 @@ export async function ingest(db, aid, body) {
   const summary = looksLikeRuntimeNoise(rawSummary) ? '' : rawSummary
   const transcriptShaped = /^\s*(user|assistant)\s*[:：]/i.test(summary) || (summary.match(/\n\s*(user|assistant)\s*[:：]/gi) || []).length >= 1
   let reflectGate = null
-  if (summary && !transcriptShaped && summary.length <= 200) {
+  // 摘要要不要进 T1（事实区）。默认 on 保持现状；关掉后摘要只留在 T2 纪要里。
+  // 为什么要有这个开关：每轮一条「用户事实 / 用户偏好」的第三人称旁白，
+  // 久了会把记忆库占满（线上 72% 是它），于是「我记住的」全是「用户关心什么」。
+  const summaryToT1 = String(getParam(db, aid, 'memory.write.summary_to_t1') || 'on') !== 'off'
+  if (summaryToT1 && summary && !transcriptShaped && summary.length <= 200) {
     // 写入侧闸门（P4）：重要度不再只看关键词，先让模型判一句。
     // 关键词分 ≥0.9 的（明显是边界/禁忌/承诺）不浪费一次调用；其余问模型。
     const seeded = seed(summary, 'reflection')
@@ -477,7 +524,7 @@ export async function ingest(db, aid, body) {
         addMemory(db, aid, {
           text: summary, type: 'reflection', mark: 'normal',
           importance: imp, salience: seeded.salience,
-          cold, source: 'summary',
+          cold, source: 'summary', turn_id: batchTurnId,
         })
       } catch { /* 忽略 */ }
     } else {
@@ -738,10 +785,17 @@ const TABLES = ['agents', 'memory_items', 'memory_links', 'conflicts', 'persona'
 
 function cols(db, t) { return db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name) }
 
+/** 老库可能缺表（如已清退的 persona_values）：导出只看真实存在的表。 */
+function presentTables(db) {
+  try { return new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name)) } catch { return new Set() }
+}
+
 export function exportFull(db, aid) {
   agent(db, aid)
-  const files = { 'manifest.json': JSON.stringify({ agent_id: aid, schema: 11, at: now(), tables: TABLES }, null, 2) }
-  for (const t of TABLES) {
+  const have = presentTables(db)
+  const tables = TABLES.filter((t) => have.has(t))
+  const files = { 'manifest.json': JSON.stringify({ agent_id: aid, schema: 11, at: now(), tables }, null, 2) }
+  for (const t of tables) {
     let rows
     if (t === 'agents') rows = db.prepare('SELECT * FROM agents WHERE id=?').all(aid)
     else if (t === 'rule_artifacts') {
@@ -825,7 +879,7 @@ export function importFull(db, aid, body) {
 
 // ---------------- 记忆导出 / 导入（只动记忆仓库的六个分区） ----------------
 // 人格 / 情绪 / 驱力 / 提案这些不在里面：那是「整体意识」，走设置里的全量备份。
-const MEM_TABLES = ['memory_items', 'episodes', 'diaries', 'raw_turns', 'fact_archive']
+const MEM_TABLES = ['memory_items', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline']
 
 /** 导出记忆：一个只含记忆表的 zip；格式跟全量包一致，导入口两种都吃。 */
 export function exportMemory(db, aid) {
@@ -862,6 +916,8 @@ export function importMemory(db, aid, body) {
   if (!present.length) err(400, 'INVALID_ARGUMENT', '包里没有记忆数据（不是本插件的导出）')
   let total = 0
   const byTable = {}
+  // 跨意识体导入时主键会换新：记下旧→新，时效索引里的 memory_id / cause_id / text_ref 才能跟着换
+  const idMap = new Map()
   tx(db, () => {
     for (const t of present) {
       let rows
@@ -882,11 +938,41 @@ export function importMemory(db, aid, body) {
           } catch { /* 跳过不兼容的行 */ }
           continue
         }
+        if (t === 'memory_timeline') {
+          // 时效索引没有业务主键（seq 自增）。按 (agent, memory, op, at) 去重，
+          // 重复导入不记账、也不把别人的 seq 搬过来。
+          const mapRef = (v) => (v == null ? v : (idMap.get(String(v)) || v))
+          const mapMem = (v) => {
+            const s = String(v == null ? '' : v)
+            const i = s.indexOf(':hist:')
+            if (i < 0) return mapRef(s)
+            const base = idMap.get(s.slice(0, i))
+            return base ? base + s.slice(i) : s
+          }
+          const c2 = cs.filter((c) => c !== 'seq')
+          const r2 = {
+            ...row, agent_id: aid,
+            memory_id: mapMem(row.memory_id),
+            cause_id: mapRef(row.cause_id),
+            text_ref: mapRef(row.text_ref),
+          }
+          try {
+            const ex = db.prepare('SELECT 1 FROM memory_timeline WHERE agent_id=? AND memory_id=? AND op=? AND at=?')
+              .get(aid, r2.memory_id, r2.op, r2.at)
+            if (ex) continue
+            db.prepare(`INSERT INTO memory_timeline(${c2.join(',')}) VALUES(${c2.map(() => '?').join(',')})`)
+              .run(...c2.map((c) => r2[c] ?? null))
+            total++
+            byTable.memory_timeline = (byTable.memory_timeline || 0) + 1
+          } catch { /* 跳过不兼容的行 */ }
+          continue
+        }
         if (cs.includes('agent_id')) row.agent_id = aid
         // 跨意识体导入时主键要换新，免得把别人的行搬走 / 覆盖
         if (row.id) {
+          const oldId = String(row.id)
           const ex = db.prepare(`SELECT agent_id FROM ${t} WHERE id=?`).get(row.id)
-          if (ex && ex.agent_id && ex.agent_id !== aid) row.id = nid('imp_')
+          if (ex && ex.agent_id && ex.agent_id !== aid) { row.id = nid('imp_'); idMap.set(oldId, row.id) }
         }
         try {
           db.prepare(`INSERT OR REPLACE INTO ${t}(${cs.join(',')}) VALUES(${ph})`).run(...cs.map((c) => row[c] ?? null))
@@ -926,20 +1012,31 @@ export function rateLimit(token, limit = 120, windowMs = 60000) {
   return b.n <= limit
 }
 
-// ---------------- 单实例运行 ----------------
+// ---------------- 多实例运行 ----------------
 /**
- * 同一时间只有一个意识体在运行：激活这个，其余 active 一律休眠（paused）。
- * 暂停不是删除：记忆、人格、情绪、驱力全部保留，恢复时接着用。
+ * 让这个意识体「活着」，并把它排给**下一段新对话**。
+ *
+ * schema 12 之前：激活一个 = 其余全部 paused（全局只有一个）。
+ * 现在：不再踢别人下去；谁占哪段对话由 bindings 决定（见 modules/binding.js）。
+ * 暂停仍然是用户随时可用的开关，且只影响「能不能被解析到」，不影响绑定本身。
  */
 export function activateAgent(db, aid, role) {
   if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以切换运行中的意识体')
   const row = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
   if (!row || row.status === 'soft_deleted') err(404, 'NOT_FOUND', 'agent 不存在')
-  const paused = db.prepare("UPDATE agents SET status='paused' WHERE status='active' AND id<>?").run(aid).changes
-  db.prepare("UPDATE agents SET status='active' WHERE id=?").run(aid)
-  db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(now(), aid)
+  db.prepare("UPDATE agents SET status='active', last_interaction_at=? WHERE id=?").run(now(), aid)
+  // 用户点了唤醒：抹掉 offline/dormant 残留，再按绑定重算。否则 runtime_state 还停在暂停时，
+  // 名单仍判成小卡，界面不会展开成大卡。（agent_runtime 的写入归 binding 模块）
+  let runtime_state = 'idle'
+  try { runtime_state = wakeRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
+  try { setPending(db, aid) } catch { /* 待绑定写失败不影响激活 */ }
   try { seedRuleBindings(db, aid) } catch { /* 工件种子失败不影响激活 */ }
-  return { id: aid, status: 'active', paused: Number(paused) }
+  let running = 0
+  try { running = runningAgentIds(db).length } catch { running = 0 }
+  return {
+    id: aid, status: 'active', pending: true, runtime_state,
+    running, max_running: (() => { try { return maxRunning(db) } catch { return 3 } })(),
+  }
 }
 
 export function setFlag(db, key, value) {
@@ -1061,6 +1158,66 @@ export function listChat(db, aid, limit = 60) {
 }
 
 /**
+ * 这段会话最近几轮（双方都算，最旧的在前，给模型当多轮上下文）。
+ * 只给「能带上下文的人」：主人按 qq.history_turns（默认 8 轮），
+ * 陌生人固定 2 轮，防串话。总量超 2400 字就从最旧的开始丢。
+ */
+export function recentHistory(db, aid, conversationId, rounds) {
+  if (!conversationId || !rounds) return []
+  let rows = []
+  try {
+    rows = db.prepare(`SELECT role, text FROM chat_turns
+      WHERE agent_id=? AND conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+      .all(aid, String(conversationId), rounds * 2)
+  } catch { return [] }
+  const picked = []
+  let chars = 0
+  for (const r of rows) {
+    const t = String(r.text || '').trim().slice(0, 300)
+    if (!t) continue
+    if (chars + t.length > 2400 && picked.length) break
+    chars += t.length
+    picked.push({ role: r.role === 'user' ? 'user' : 'assistant', text: t })
+  }
+  return picked.reverse()
+}
+
+// ---------------- QQ 段的叙事加工（和网页那边一个套路） ----------------
+// 网页是 chat_turns → 原文层 → 每 6 轮压纪要 → 每天写日记；QQ 以前只有零散记忆点。
+// 这里补上同一条链路：原文进 raw_turns，关系账本认人，每 6 轮压一条纪要，
+// 事实改成 3 轮抽一次（一句一抽碎片太多，还容易把半句话当事实）。
+const qqNarrativeTick = new Map()
+const qqExtractBuf = new Map()
+
+function qqNarrativeAfterTurn(db, aid, conv) {
+  const key = aid + ':' + conv
+  const n = (qqNarrativeTick.get(key) || 0) + 1
+  qqNarrativeTick.set(key, n)
+  try {
+    if (n % 6 !== 0) return null
+    return buildEpisode(db, aid, { session: conv })
+  } catch { return null }
+}
+
+async function qqBatchExtract(db, aid, conv, text, turnSeed) {
+  const key = aid + ':' + conv
+  const buf = qqExtractBuf.get(key) || []
+  buf.push(String(text || ''))
+  qqExtractBuf.set(key, buf)
+  if (buf.length < 3) return null
+  qqExtractBuf.set(key, [])
+  const facts = await model.extract([{ role: 'user', text: buf.join('\n') }])
+  let n = 0
+  for (const m of facts) {
+    try {
+      addMemory(db, aid, { text: m.text, type: m.type || 'fact', mark: m.mark || 'normal', ...turnSeed(m.text, m.type || 'fact') })
+      n++
+    } catch { /* 单条跳过 */ }
+  }
+  return n
+}
+
+/**
  * 一轮对话：召回 → 评价（更新情绪）→ 生成回复 → 落库。
  * 回复优先走模型适配器；没有模型时用规则拼接，并把它标出来。
  */
@@ -1070,24 +1227,46 @@ export async function chatReply(db, aid, body) {
   if (!text) err(400, 'INVALID_ARGUMENT', 'text 不能为空')
   if (text.length > 2000) err(400, 'INVALID_ARGUMENT', '单条不超过 2000 字')
 
-  let pack = recall(db, aid, text, 6, 512)
+  // 这段会话的说话人是不是主人：不是主人就只给「人格 + 情绪」，
+  // 不给日记/关系/私有记忆，也不许用主人的称呼、不许承诺记住。
+  const sp = body.speaker && typeof body.speaker === 'object' ? body.speaker : null
+  const speakerHandle = sp && sp.handle != null ? String(sp.handle) : ''
+  // 谁在说话：带号就按号认；外部通道漏了号（桥超时/字段变了），不能退回「当主人」——那是串人的老口子。
+  // 网页那条路根本没有 speaker，说话的就是主人本人。
+  const canLearn = !sp
+    ? true
+    : (speakerHandle.trim() ? isOwner(db, speakerHandle) : isLocalChannel(sp.channel))
+  const conv = body.conversation_id ? String(body.conversation_id) : ''
+
+  let pack = recall(db, aid, text, recallItems(db), 512)
   pack.items = pack.items.filter((x) => !/[?？]$/.test(String(x.text).trim()))
   if (!pack.items.length) pack = softRecall(db, aid, text, 5)
+  // G1：问句带过去时间（「半年前」「去年三月」）时，把「那时」的版本补到最前面。
+  // memory.asof.auto=off 时 asofInjectItems 直接返回空，跟改造前一致。
+  try {
+    const ao = asofInjectItems(db, aid, text)
+    if (ao && Array.isArray(ao.items) && ao.items.length) pack.items = ao.items.concat(pack.items)
+  } catch { /* 当时查询失败不影响正常检索 */ }
+  // 多轮上下文：这一段会话自己说过的话，主人带满，陌生人只带两句
+  const history = recentHistory(db, aid, conv, canLearn ? historyTurns(db) : 2)
   let affect = null
   try { affect = await appraiseWithEdges(db, aid, text) } catch { affect = getAffect(db, aid) }
   let drive = null
   try { drive = getDrive(db, aid) } catch { drive = null }
   const style = personaStyle(db, aid)
   const banned = String(style.banned || '').split(/[,，\s]+/).filter(Boolean)
+  const contextBlock = canLearn ? clampContextBlock(buildContextBlock(db, aid, { recall: pack.items }), promptBudget(db)) : ''
 
   let reply = ''
   let source = 'rules'
   try {
-    reply = String(await model.reply({ text, pack: pack.items, affect, drive, style }))
-    source = model.status().primary === 'ok' ? 'model' : 'rules'
+    reply = String(await model.reply({ text, pack: canLearn ? pack.items : [], affect, drive, style, contextBlock, history, isOwner: canLearn }))
+    // 标签说实话：规则兜底拼出来的句子不叫「model」，否则评测和面板都分不清谁回的
+    const st = model.status()
+    source = st.served === 'fallback' || st.adapter === 'rules' ? 'rules' : 'model'
   } catch { reply = '' }
   if (!reply) {
-    reply = composeRulesReply({ text, pack: pack.items, affect, style })
+    reply = composeRulesReply({ text, pack: canLearn ? pack.items : [], affect, style, isOwner: canLearn })
     source = 'rules'
   }
   for (const w of banned) if (w && reply.includes(w)) reply = reply.split(w).join('……')
@@ -1095,21 +1274,33 @@ export async function chatReply(db, aid, body) {
   const mood = affect ? (affect.label || affect.primary_label || null) : null
   const turnSeed = (t, type) => seedScores(t, type, affect ? affect.intensity : 0, affect ? affect.pleasure : undefined)
   const at = now()
-  db.prepare('INSERT INTO chat_turns VALUES(?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, 'user', text, JSON.stringify(pack.items), mood, at)
-  db.prepare('INSERT INTO chat_turns VALUES(?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, 'agent', reply, '[]', mood, now())
+  db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
+    .run(nid('cht_'), aid, 'user', text, JSON.stringify(canLearn ? pack.items : []), mood, at, body.conversation_id || null)
+  db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
+    .run(nid('cht_'), aid, 'agent', reply, '[]', mood, now(), body.conversation_id || null)
+  // 记忆闸：只有主人号说的话才进长期记忆/关系账本。
+  // 陌生人照常聊、照常落 chat_turns（这段会话自己的账），但不许把他的话
+  // 抽成「关于主人」的事实——那是串人的根源。
   // 慢更新：关系事件结算 + 性格证据。以前这里没接线，关系账本和五轴
   // 在真实聊天里根本没被喂过东西——这是「聊几百轮还是 0.5」的根因之一。
   let learning = null
-  try { learning = learnFromTurn(db, aid, text, affect) } catch { learning = null }
-  try { addMemory(db, aid, { text, type: 'episode', mark: 'normal', ...turnSeed(text, 'episode') }) } catch { /* 合并失败不影响回复 */ }
-  try {
-    const facts = await model.extract([{ role: 'user', text }])
-    for (const m of facts) {
-      try { addMemory(db, aid, { text: m.text, type: m.type || 'fact', mark: m.mark || 'normal', ...turnSeed(m.text, m.type || 'fact') }) } catch { /* 单条跳过 */ }
-    }
-  } catch { /* 抽取失败不影响回复 */ }
+  let narrative = null
+  if (canLearn) {
+    try { learning = learnFromTurn(db, aid, text, affect) } catch { learning = null }
+    try { addMemory(db, aid, { text, type: 'episode', mark: 'normal', ...turnSeed(text, 'episode') }) } catch { /* 合并失败不影响回复 */ }
+    // 原文层：网页那边也是这句先落 raw_turns，日记/纪要才取得到料
+    const sess = conv || ('qq:' + (speakerHandle || 'local'))
+    try { appendTurn(db, aid, { sessionId: sess, role: 'user', text, at }) } catch { /* 原文失败不影响回复 */ }
+    try { appendTurn(db, aid, { sessionId: sess, role: 'assistant', text: reply, at: now() }) } catch { /* 原文失败不影响回复 */ }
+    // 关系账本：聊到谁就认谁（以前 QQ 完全没走这一步，关系图不会长人）
+    try { R.ingest(db, aid, { text, sessionId: sess, source: 'qq' }) } catch { /* 关系记账失败不影响回复 */ }
+    try { enqueueRelationRead(db, aid, { text }) } catch { /* 入队失败下次再说 */ }
+    // 纪要：每 6 轮把这段压成一条；事实改成 3 轮抽一次
+    try { narrative = qqNarrativeAfterTurn(db, aid, sess) } catch { narrative = null }
+    try { await qqBatchExtract(db, aid, sess, text, turnSeed) } catch { /* 抽取失败不影响回复 */ }
+  } else {
+    try { event(db, aid, 'chat.stranger', { handle: speakerHandle.slice(0, 32) }) } catch { /* 记账失败不影响回复 */ }
+  }
   db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(at, aid)
   // 轻量互动事件；系统性代理结算在 evaluateDrive（INV5：非自修改）
   try {
@@ -1134,6 +1325,15 @@ export async function chatReply(db, aid, body) {
       : null,
     at,
     model: model.status(),
+    // 外部通道排查用：这次到底带了多少上下文、开头是什么（不含长期记忆正文）
+    context_chars: contextBlock.length,
+    context_head: contextBlock.slice(0, 240),
+    speaker: speakerHandle || null,
+    learned: canLearn,
+    // 多轮上下文排查用：这次带了几条历史（0 = 第一句或关掉了）
+    history_used: history.length,
+    // 叙事加工排查用：这一轮有没有压出纪要
+    narrative_episode: narrative ? narrative.id : null,
   }
 }
 
@@ -1478,6 +1678,10 @@ export async function composeProactiveLine(db, aid, ag, { approved = false, evid
   try { band = String(db.prepare('SELECT band FROM drive_state WHERE agent_id=?').get(aid)?.band || '') } catch { /* ignore */ }
 
   const rules = (why) => {
+    // 她自己生活里看到的事，本身已经是一句人话，别退回「有点想跟你说话」。
+    if (ag.kind === 'share' && ag.summary) {
+      return { text: ag.summary, source: 'rules', gate: gateRow('content', true, '用她自己的生活原句'), memories: mems }
+    }
     if (DIM_NEEDS_EVIDENCE[ag.dim] && !ev) {
       return { text: null, source: 'rules', gate: gateRow('content', false, '这一维要真事，手头没有'), memories: mems }
     }
@@ -1504,6 +1708,7 @@ export async function composeProactiveLine(db, aid, ag, { approved = false, evid
     affect ? '此刻情绪：' + affect : '',
     band ? '驱力档位：' + band : '',
     '它想做的这件事：' + (ag.title || '') + '（维度：' + (DIM_NAME[ag.dim] || ag.dim || '未知') + '）',
+    ag.kind === 'share' && ag.summary ? '它自己生活里看到的：' + ag.summary : '',
     mems.length ? '它能引用的真实记忆（' + mems.length + ' 条）：' : '它还没有可引用的记忆',
     ...mems.map((m) => '- ' + String(m.text).slice(0, 90)),
   ].filter(Boolean).join('\n')
@@ -1553,7 +1758,36 @@ function initiativeOf(db, aid) {
   } catch { return 0.3 }
 }
 
-export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
+/**
+ * 主动开口的「事由」：有没有一件该说的事。
+ *
+ * 原来的开口理由全是数字——缺口多少、隔了几小时、劲头压没压过成本。
+ * 真正像人的触发是「上次说的那件事到时候了」。这里只负责找事由，不管闸门；
+ * 夜间静默、气头上、预算这些硬条件仍然在 decideSpeak 里拦。
+ */
+export function proactiveTriggerOf(db, aid, at = Date.now()) {
+  // 她自己生活里看到的事，比待办更像「想跟你说一句」。分享优先于开环核对。
+  try {
+    const share = latestShare(db, aid, at)
+    if (share) return { kind: 'share', dim: 'R', id: share.id, text: share.title, summary: share.summary, due_at: null }
+  } catch { /* 生活流没挂也不影响开口 */ }
+  try {
+    const loops = pendingLoops(db, aid, { at, limit: 1 })
+    if (loops.length) {
+      const l = loops[0]
+      return {
+        kind: 'loop',
+        dim: 'R',
+        id: l.id,
+        text: String(l.text || l.title || '').slice(0, 60),
+        due_at: l.due_at || l.stale_after || null,
+      }
+    }
+  } catch { /* 开环表异常不影响开口 */ }
+  return null
+}
+
+export function decideSpeak(db, aid, { manual = false, at = Date.now(), trigger = null } = {}) {
   const gates = []
   const G = (id, ok, detail) => { const g = gateRow(id, ok, detail); gates.push(g); return g }
   const out = {
@@ -1602,6 +1836,10 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
   const ev = proactiveEvidence(db, aid)
   const timing = proactiveTiming(hoursSince)
   const quietOn = inQuietHours(prefs)
+  // 有「该说的事」时，允许不看额度说一次——但一天只给这一次，而且不越过夜间静默和火气
+  const owed = trigger ? { ...trigger } : null
+  const owedOnce = !!owed && saidToday < 1
+  out.trigger = owed
   const axes = readAxes(db, aid)
   // 8 idle：外向的人等得短一点
   const idleNeed = Math.min(PROACTIVE.IDLE_HARD_MAX, Math.max(0, Number(prefs.idle_hours) || 0)
@@ -1617,10 +1855,14 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
   out.candidates = intents.map((x) => ({ dim: x.dim, deficit: x.deficit, min: x.min, kind: x.kind, title: x.title }))
   const needTh = intents.length ? intents[0].min : minDeficit(db, aid, (dm && dm.band) || 'D0')
   out.min_deficit = +needTh.toFixed(3)
-  G('deficit', intents.length > 0, intents.length
+  // 有「该说的事」时，允许不看额度说一次——但一天只给这一次，而且不越过夜间静默和火气
+  const deficitOk = intents.length > 0 || owedOnce
+  G('deficit', deficitOk, intents.length
     ? intents.map((x) => (DIM_NAME[x.dim] || x.dim) + ' ' + x.deficit.toFixed(2)).join(' / ')
-    : '五个方向都在门槛 ' + needTh.toFixed(2) + ' 以下（当前 ' + ((dm && dm.band) || 'D0') + '）')
-  if (!intents.length) return { ...out, reason: 'no_intent', explain: '它现在哪儿都不缺，不勉强找话说。' }
+    : owedOnce
+      ? ('有事由：' + owed.text)
+      : '五个方向都在门槛 ' + needTh.toFixed(2) + ' 以下（当前 ' + ((dm && dm.band) || 'D0') + '）')
+  if (!deficitOk) return { ...out, reason: 'no_intent', explain: '它现在哪儿都不缺，不勉强找话说。' }
 
   // 硬拦：冷却中的、今天说过的、没材料的，逐个跳过，换下一个缺口
   let pick = null
@@ -1637,10 +1879,11 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
     pick = it
     break
   }
-  const top = pick || intents[0]
-  const evOk = !(DIM_NEEDS_EVIDENCE[top.dim] && ev.items === 0)
+  // 有事由但没有缺口时，也要有一个「方向」好往下算：这件事本身就是方向
+  const top = pick || intents[0] || { dim: (owed && owed.dim) || 'R', deficit: 0, kind: 'loop', title: (owed && owed.text) || '' }
+  const evOk = owedOnce || !(DIM_NEEDS_EVIDENCE[top.dim] && ev.items === 0)
   G('evidence', evOk, evOk
-    ? ('手头 ' + ev.items + ' 条真事，近 ' + ev.days + ' 天新增 ' + ev.recent + ' 条')
+    ? (owedOnce ? '有事由，不用再凑材料' : ('手头 ' + ev.items + ' 条真事，近 ' + ev.days + ' 天新增 ' + ev.recent + ' 条'))
     : ('「' + (DIM_NAME[top.dim] || top.dim) + '」这一维要真事，手头一条都没有'))
 
   const biasMul = driveAmp(axes, top.dim)
@@ -1686,6 +1929,15 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
   out.intent = pick
     ? { dim: pick.dim, kind: pick.kind, title: pick.title, deficit: pick.deficit, reason: '缺口 ' + pick.deficit.toFixed(2) }
     : null
+  // 有该说的事：方向就是这件事，不当成「缺口」
+  if (owedOnce) {
+    const ok = (owed && owed.kind) || 'loop'
+    out.intent = {
+      dim: owed.dim || 'R', kind: ok, title: owed.text,
+      summary: owed.summary || '', deficit: top ? top.deficit : 0,
+      reason: ok === 'share' ? '我自己生活里看到的事：' + (owed.text || '') : '开环到期：' + owed.text,
+    }
+  }
 
   // ---- 五道门 + 判据，全部给结论（不短路，方便解释） ----
   const firstBlocked = out.candidates.find((c) => c.blocked)
@@ -1695,15 +1947,18 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
   const perDay = Number(prefs.per_day)
   const cap = Math.max(1, Math.ceil(perDay * (1 + 0.40 * ((Number(axes.jp) || 0.5) - 0.5))))
   out.attempt_cap = cap
-  const freqOk = saidToday < perDay && tries < cap && !!pick
-  G('frequency', freqOk, saidToday >= perDay
-    ? '今天已经说了 ' + saidToday + ' 句（上限 ' + perDay + '）'
-    : tries >= cap ? '今天已经试着开口 ' + tries + ' 次（上限 ' + cap + '），不再反复问模型'
-      : !pick ? '没有能说的方向：' + ((firstBlocked && firstBlocked.why) || '都不合适')
-        : '今天还没说；还能试 ' + (cap - tries) + ' 次')
+  const freqOk = owedOnce || (saidToday < perDay && tries < cap && !!pick)
+  G('frequency', freqOk, owedOnce
+    ? ('有件没说完的事（' + owed.text + '），今天还没说，可以越过额度说一次')
+    : saidToday >= perDay
+      ? '今天已经说了 ' + saidToday + ' 句（上限 ' + perDay + '）'
+      : tries >= cap ? '今天已经试着开口 ' + tries + ' 次（上限 ' + cap + '），不再反复问模型'
+        : !pick ? '没有能说的方向：' + ((firstBlocked && firstBlocked.why) || '都不合适')
+          : '今天还没说；还能试 ' + (cap - tries) + ' 次')
 
-  const idleOk = hoursSince >= idleNeed
-  G('idle', idleOk, '距上次对话 ' + (hoursSince >= 999 ? '还没有过' : hoursSince.toFixed(1) + ' 小时') + '，要求至少 ' + idleNeed.toFixed(1) + ' 小时')
+  const idleOk = owedOnce || hoursSince >= idleNeed
+  G('idle', idleOk, '距上次对话 ' + (hoursSince >= 999 ? '还没有过' : hoursSince.toFixed(1) + ' 小时') + '，要求至少 ' + idleNeed.toFixed(1) + ' 小时'
+    + (owedOnce ? '（有该说的事，不卡这一条）' : ''))
 
   G('quiet', !quietOn, quietOn
     ? ('现在是 ' + (prefs.quiet_from || '23:30') + '–' + (prefs.quiet_to || '07:30') + '，不打扰')
@@ -1715,22 +1970,22 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
   const limit = Number(budget.disturb_limit || 3)
   G('disturb', used < limit, '这个月打扰了 ' + used + ' / ' + limit + ' 次')
 
-  const valueOk = manual || benefit > cost
+  const valueOk = manual || owedOnce || benefit > cost
   G('value', valueOk, '劲头 ' + benefit.toFixed(2) + (benefit > cost ? ' > ' : ' ≤ ') + '打扰成本 ' + cost.toFixed(2)
-    + '（E/I ×' + eiMul.toFixed(2) + '，轴 ×' + (1 + biasMul).toFixed(2) + (manual ? '；你让它说的，跳过比较' : '') + '）')
+    + '（E/I ×' + eiMul.toFixed(2) + '，轴 ×' + (1 + biasMul).toFixed(2) + (manual ? '；你让它说的，跳过比较' : owedOnce ? '；有该说的事，跳过比较' : '') + '）')
 
   // 内容门要等句子生成出来，先挂一个「待判」
   G('content', null, '等生成出来再判（一句话、不追问、不用提醒腔）')
 
   // 理由的先后：和旧版一致，先看硬条件，再看要不要开口
   let reason = 'ok'
-  if (saidToday >= perDay) reason = 'per_day'
-  else if (!manual && tries >= cap) reason = 'attempt_cap'
+  if (saidToday >= perDay && !owedOnce) reason = 'per_day'
+  else if (!manual && !owedOnce && tries >= cap) reason = 'attempt_cap'
   else if (!manual && quietOn) reason = 'quiet'
-  else if (!manual && hoursSince < idleNeed) reason = 'idle'
+  else if (!manual && !owedOnce && hoursSince < idleNeed) reason = 'idle'
   else if (!manual && used >= limit) reason = 'budget'
-  else if (!pick) reason = (firstBlocked && firstBlocked.blocked) || 'no_intent'
-  else if (!manual && benefit <= cost) reason = 'low_benefit'
+  else if (!owedOnce && !pick) reason = (firstBlocked && firstBlocked.blocked) || 'no_intent'
+  else if (!manual && !owedOnce && benefit <= cost) reason = 'low_benefit'
 
   out.reason = reason
   out.will = reason === 'ok'
@@ -1739,6 +1994,7 @@ export function decideSpeak(db, aid, { manual = false, at = Date.now() } = {}) {
     out.explain = '想说「' + im + '」：缺口 ' + top.deficit.toFixed(2) + ' + ' + ev.items + ' 条真事（近 ' + ev.days + ' 天 +' + ev.recent + '）'
       + ' + 隔了 ' + (hoursSince >= 999 ? '很久' : hoursSince.toFixed(0) + ' 小时') + ' = 劲头 ' + benefit.toFixed(2)
       + '，压过打扰成本 ' + cost.toFixed(2) + '（今天 ' + saidToday + ' 句，预算 ' + used + '/' + limit + '）。'
+      + (owedOnce ? '事由：' + owed.text + '（开环到期，今天第一次说）' : '')
   } else {
     out.explain = explainSilent(reason, { top, firstBlocked, hoursSince, idleNeed, benefit, cost, used, limit, prefs })
   }
@@ -1779,9 +2035,12 @@ function withContentGate(d, gate) {
   return { ...d, gates, gate: gates }
 }
 
-export async function queueProactive(db, aid, { manual = false } = {}) {
+export async function queueProactive(db, aid, opt = {}) {
+  const { manual = false } = opt
   try { markProactiveIgnored(db, aid) } catch { /* ignore */ }
-  const d = decideSpeak(db, aid, { manual })
+  // 事由优先：有到期开环就拿它当方向；调用方也可以显式传 trigger（测试 / 手动）
+  const trigger = opt.trigger !== undefined ? opt.trigger : proactiveTriggerOf(db, aid)
+  const d = decideSpeak(db, aid, { manual, trigger })
   if (!d.will) {
     const did = recordProactiveDecision(db, aid, d)
     return manual ? { queued: false, reason: d.reason, decision_id: did, why: d } : null
@@ -1809,14 +2068,21 @@ export async function queueProactive(db, aid, { manual = false } = {}) {
   const s = d.score || {}
   const why = (d.intent.reason || '') + ' · ' + composed.source
     + (d.manual ? ' · 你让它说' : ' · ' + Number(s.benefit || 0).toFixed(2) + '>' + Number(s.cost || 0).toFixed(2))
+  // 分享要按生活 id 记住「排过队没有」，否则下一轮心跳还会想分享同一件事。
+  const reason = (d.trigger && d.trigger.kind === 'share' && d.trigger.id) ? ('share:' + d.trigger.id + ' · ' + why) : why
   db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
-    .run(id, aid, composed.text, why, d.intent.dim || '', 'pending', now(), null)
+    .run(id, aid, composed.text, reason, d.intent.dim || '', 'pending', now(), null)
+  // 说出来之后，这件事就不再「挂着」了；不提的话会每轮重复
+  if (d.trigger && d.trigger.kind === 'loop' && d.trigger.id) {
+    try { markLoopsFired(db, [d.trigger.id]) } catch { /* 记账失败不影响说话 */ }
+  }
   bumpStat(db, aid, d.intent.dim || 'R', 'sent')
   if (!manual) budgetConsume(db, aid, 'disturb', 1)
   try {
     event(db, aid, 'proactive.queued', {
       dim: d.intent.dim, source: composed.source, manual: !!manual,
       benefit: s.benefit, cost: s.cost, hours_since: d.hours_since,
+      trigger: d.trigger ? d.trigger.kind : null,
     })
   } catch { /* 记账失败不影响说话 */ }
   const did = recordProactiveDecision(db, aid, decided, { text: composed.text, source: composed.source, memories })
@@ -2134,13 +2400,18 @@ export function clampInjection(lines, budget = 800) {
   const parts = lines.slice()
   const dropped = []
   const total = () => est(parts.join('\n'))
+  // 丢的顺序 = 丢得起的顺序。改过一次（A2）：情绪原来排第 2，一挤就先没了。
+  // 现在情绪根本不进丢弃名单——它只有两行，却是人格的锚：
+  // 丢一条记忆伤准确度，丢情绪伤的是「她是谁」。真到极限，宁可削短别的行。
+  const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
   const order = [
     ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
-    ['affect', (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('此刻我') || l.startsWith('我想怎么说')],
+    ['examples', (l) => l.startsWith('## 我说话的样子')],
+    ['guard', (l) => l.startsWith('不要列点')],
     ['drive', (l) => l.startsWith('需求缺口档位')],
     ['diary', (l) => l.startsWith('最近我自己写下的')],
     ['memory', (l) => l.startsWith('关于这句话，你能想起的事')],
-    // 开环 / 续接 / 自发浮现排在最后丢：它们是「自己先想起来的」，比一条泛记忆更该被说出来
+    // 开环 / 续接 / 自发浮现排在记忆之后丢：它们是「自己先想起来的」，比一条泛记忆更该被说出来
     ['loop', (l) => l.startsWith('（你自己心里还挂着的事')],
     ['bridge', (l) => l.startsWith('（上次（')],
     ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
@@ -2164,6 +2435,32 @@ export function clampInjection(lines, budget = 800) {
   }
   if (total() > cap) trimBlock((l) => l.startsWith('最近我自己写下的'), 'diary', 1)
   trimBlock((l) => l.startsWith('关于这句话，你能想起的事'), 'memory', 3)
+  // 还超：不删情绪那一行，改削别的长行（关系数字、约束这类）。
+  // 以前这里直接硬截，谁站得靠后就先烂；削长行等于把预算从「最占地方又不最要紧」的地方拿回来。
+  // 第一轮只削非情绪行；真到极限才动情绪行，而且留 20 字底线——宁可说得短，不能没得说。
+  if (total() > cap) {
+    const shrink = (allowAffect) => {
+      const list = parts
+        .map((l, i) => ({ l, i }))
+        .filter((x) => !x.l.startsWith('## ')
+          && x.l.length > (allowAffect ? 20 : 16)
+          && (allowAffect || !AFFECT_TEST(x.l)))
+        .sort((a, b) => b.l.length - a.l.length)
+      for (const { i } of list) {
+        if (total() <= cap) break
+        const cur = parts[i]
+        const needChars = Math.max(4, (total() - cap) * 2 + 2)
+        const floor = allowAffect ? 20 : 12
+        const keep = Math.max(floor, cur.length - needChars)
+        if (keep >= cur.length) continue
+        parts[i] = cur.slice(0, keep).replace(/\s+$/, '') + '…'
+        const tag = allowAffect ? 'shrink-affect' : 'shrink'
+        if (!dropped.includes(tag)) dropped.push(tag)
+      }
+    }
+    shrink(false)
+    shrink(true)
+  }
   let text = parts.join('\n')
   if (est(text) > cap) {
     text = text.slice(0, Math.max(0, cap * 2 - 1)).replace(/\s+$/, '') + '…'

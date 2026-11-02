@@ -6,6 +6,8 @@ import { getAffect } from './affect.js'
 import { inbox, listProposals } from './selfmod.js'
 import { memoryStats } from './memory.js'
 import { rebuildMemoryFts, rebuildRawFts, rebuildFactFts } from './archive.js'
+import { purgeAgent, purgeOrphans } from './sangguan/purge.js'
+import { readEvents } from './sangguan/ledger.js'
 
 /**
  * 存储体检 + 自愈。
@@ -64,7 +66,7 @@ export function purgeExpired(db) {
     'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'condition_state', 'drive_state',
     'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'events',
     'metric_snapshots', 'metric_samples', 'chat_turns', 'bindings', 'agent_bindings', 'algo_bindings', 'agent_params', 'persona_views', 'thoughts',
-    'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
+    'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
     'axis_rope', 'axis_evidence', 'persona_judge']
   for (const a of db.prepare("SELECT id FROM agents WHERE status='soft_deleted' AND deleted_at<?").all(cutoff)) {
     const arts = db.prepare('SELECT active_id,previous_id,pinned_id,v0_id FROM agent_bindings WHERE agent_id=?').all(a.id)
@@ -83,14 +85,20 @@ export function purgeExpired(db) {
     try { db.prepare('DELETE FROM memory_fts WHERE id NOT IN (SELECT id FROM memory_items)').run() } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM raw_fts WHERE id NOT IN (SELECT id FROM raw_turns)').run() } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM fact_fts WHERE id NOT IN (SELECT id FROM fact_archive)').run() } catch { /* 忽略 */ }
+    // 整实例清除：账本只增的唯一例外。失败不挡 agent 清除，孤儿留给 purgeOrphans
+    try { purgeAgent(db, a.id) } catch { /* 三观清除失败不挡主流程 */ }
     db.prepare('DELETE FROM agents WHERE id=?').run(a.id)
     agents++
   }
   for (const m of db.prepare("SELECT id FROM memory_items WHERE status='soft_deleted' AND deleted_at<?").all(cutoff)) {
     try { db.prepare('DELETE FROM memory_fts WHERE id=?').run(m.id) } catch { /* 忽略 */ }
-    // 明确硬删 = 连 T4 的事实存根一起清：说好要忘的，不能只在主表忘
-    try { db.prepare('DELETE FROM fact_fts WHERE id IN (SELECT id FROM fact_archive WHERE memory_id=?)').run(m.id) } catch { /* 老库没有存根 */ }
-    try { db.prepare('DELETE FROM fact_archive WHERE memory_id=?').run(m.id) } catch { /* 老库没有存根 */ }
+    // 明确硬删 = 连 T4 的事实存根一起清：说好要忘的，不能只在主表忘。
+    // 改写留下的 `<id>:hist:<n>` 旧句也得删。前缀用 substr 比较——LIKE 里的 _ 是通配符，会误伤相似 id。
+    const pre = m.id + ':'
+    try { db.prepare('DELETE FROM fact_fts WHERE id IN (SELECT id FROM fact_archive WHERE memory_id=? OR substr(memory_id,1,?)=?)').run(m.id, pre.length, pre) } catch { /* 老库没有存根 */ }
+    try { db.prepare('DELETE FROM fact_archive WHERE memory_id=? OR substr(memory_id,1,?)=?').run(m.id, pre.length, pre) } catch { /* 老库没有存根 */ }
+    // 时效索引也只增不删的例外之一：单条硬删
+    try { db.prepare('DELETE FROM memory_timeline WHERE memory_id=?').run(m.id) } catch { /* 老库没有时效索引 */ }
     // 记忆硬删了，挂在它上面的开环也一起清，否则会指着一条不存在的记忆。
     try { db.prepare('DELETE FROM open_loops WHERE memory_id=?').run(m.id) } catch { /* 老库没有开环 */ }
     db.prepare('DELETE FROM memory_items WHERE id=?').run(m.id)
@@ -99,7 +107,14 @@ export function purgeExpired(db) {
   // 幂等键 7 天后回收，避免表无限增长
   let idem = 0
   try { idem = Number(db.prepare("DELETE FROM idempotency WHERE created_at < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()).changes || 0) } catch { /* 老库可能没有这张表 */ }
-  return { agents, memories, idem }
+  // 陈年 pending：7 天没投递的主动消息作废。别让旧账占着注入位和「今天说过」的统计。
+  let staleProactive = 0
+  try {
+    staleProactive = Number(db.prepare("UPDATE proactive SET state='expired' WHERE state='pending' AND created_at < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()).changes || 0)
+  } catch { /* 老库没有 proactive 表 */ }
+  // agents 里已经没有、三观数据还在的（上次清除失败的），补清
+  try { purgeOrphans(db) } catch { /* 补清失败下次再来 */ }
+  return { agents, memories, idem, staleProactive }
 }
 
 // ---------------- export / import ----------------
@@ -111,10 +126,15 @@ export function exportZip(db, aid) {
   agent(db, aid)
   const rows = db.prepare('SELECT * FROM memory_items WHERE agent_id=?').all(aid)
   const nd = rows.map((r) => JSON.stringify(r)).join('\n')
-  return zipStore({
+  const files = {
     'manifest.json': JSON.stringify({ agent_id: aid, schema_version: 1, exported_at: now(), tables: TABLES }, null, 2),
     'memory.ndjson': nd,
-  })
+  }
+  // 三观账本只做存档（事件按 seq，fold 可重放）；导入不回放，没有账本就不出这个文件
+  let sg = []
+  try { sg = readEvents(db, aid) } catch { /* 老库没有三观表 */ }
+  if (sg.length) files['sangguan.ndjson'] = sg.map((e) => JSON.stringify(e)).join('\n')
+  return zipStore(files)
 }
 
 export function importZip(db, aid, buffer) {

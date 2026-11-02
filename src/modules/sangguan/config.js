@@ -12,10 +12,13 @@ export const BUDGET_DEFAULTS = Object.freeze({
 })
 
 export const INJECT_MODES = Object.freeze(['shadow', 'live'])
+// 违背检测三档：off = 不查；shadow = 只记会判成什么，不落账；live = 真记违背
+export const VIOLATE_MODES = Object.freeze(['off', 'shadow', 'live'])
 
 export const SANGGUAN_DEFAULTS = Object.freeze({
   enabled: false,
   inject: 'shadow',
+  violate: 'shadow',
   model: Object.freeze({ light: null, heavy: null }),
   budget: BUDGET_DEFAULTS,
 })
@@ -64,6 +67,7 @@ export function sangguanConfig(db, aid) {
   return {
     enabled: raw.enabled === true,
     inject: INJECT_MODES.includes(raw.inject) ? raw.inject : SANGGUAN_DEFAULTS.inject,
+    violate: VIOLATE_MODES.includes(raw.violate) ? raw.violate : SANGGUAN_DEFAULTS.violate,
     model: cleanModel(raw.model),
     budget: cleanBudget(raw.budget),
     replace: cleanReplace(raw.replace),
@@ -79,6 +83,7 @@ export function setSangguanConfig(db, aid, patch = {}) {
   const next = { ...cur }
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true
   if (INJECT_MODES.includes(patch.inject)) next.inject = patch.inject
+  if (VIOLATE_MODES.includes(patch.violate)) next.violate = patch.violate
   if (patch.budget !== undefined) next.budget = cleanBudget(patch.budget, cur.budget)
   if (patch.model !== undefined) next.model = cleanModel(patch.model, cur.model)
   if (patch.replace !== undefined) next.replace = cleanReplace(patch.replace)

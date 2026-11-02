@@ -22,7 +22,7 @@ export {
 export {
   seedAffect, getAffect, appraise, decayAffect, listEpisodes,
   sampleAffect, affectHistory, userGuess, recordUserFeedback, latestUserEmotion,
-  rebuildBaselineAhead, affectGateEvents,
+  rebuildBaselineAhead, affectGateEvents, spontaneousTick,
 } from './modules/affect.js'
 
 export {

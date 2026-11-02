@@ -8,10 +8,9 @@ import { agent, ApiError, err, tx, getParam } from './core.js'
 import { now } from './db.js'
 import * as th from './modules/thoughts.js'
 import * as sv from './modules/selfview.js'
-import * as vv from './modules/values.js'
 import * as wv from './modules/worldview.js'
 import * as lv from './modules/lifeview.js'
-import { readViews } from './modules/sangguan/bridge.js'
+import { readViews, explainValues } from './modules/sangguan/bridge.js'
 import * as ps from './modules/poisons.js'
 import * as ar from './modules/archive.js'
 import * as rt from './modules/retrieve.js'
@@ -26,6 +25,7 @@ import * as jg from './modules/judge.js'
 import * as tp from './modules/temps.js'
 import * as vt from './modules/vault.js'
 import * as sd from './modules/study.js'
+import * as asof from './modules/asof.js'
 import * as R from './modules/relations.js'
 import * as axe from './modules/axis_evidence.js'
 import * as rope from './modules/rope.js'
@@ -37,6 +37,11 @@ import { refreshHeat, tierStats } from './modules/tiers.js'
 import * as act from './modules/actions/index.js'
 import * as br from './modules/browse.js'
 import * as sg from './modules/sangguan/api.js'
+import * as bd from './modules/binding.js'
+import * as cv from './modules/conversations.js'
+import * as au from './modules/self_author.js'
+import { lifeTick, lifeLine } from './modules/life.js'
+import { model as kernelModel } from './kernel.js'
 import { unzipStore } from './zip.js'
 
 function roleOf(token) {
@@ -137,10 +142,138 @@ async function routes(db, method, path, body, role, bound) {
     const n = db.prepare('SELECT COUNT(*) n FROM agents').get()
     return { ok: true, schema_version: Number(v?.version || 0), mode: 'ok', agents: Number(n?.n || 0), model: c.modelStatus(), pending_agent: f.getFlag(db, 'pending_agent') }
   }
+  // ---- 外部通道（QQ）：按会话绑定，不经过网页的 session/bindings ----
+  if (method === 'POST' && path === '/v1/chat') {
+    const conv = String(body.conversation_id || '').trim()
+    if (!conv) err(400, 'INVALID_ARGUMENT', 'conversation_id 不能为空')
+    const sp = body.speaker && typeof body.speaker === 'object' ? body.speaker : {}
+    const channel = String(sp.channel || 'qq')
+    const handle = String(sp.handle || '').trim()
+    const got = cv.resolveOrBind(db, conv, { hint: String(body.default_agent || ''), channel, handle })
+    if (!got.agent) err(404, 'NO_AGENT', '这段会话没有可用的意识体：' + (got.reason || 'unbound'))
+    const out = await f.chatReply(db, got.agent.id, {
+      text: body.text,
+      conversation_id: conv,
+      speaker: { channel, handle, name: String(sp.name || '') },
+    })
+    return { ...out, agent_id: got.agent.id, conversation_id: conv, bound_new: !!got.bound_new }
+  }
+  if (method === 'GET' && path.split('?')[0] === '/v1/conversations') {
+    const only = q(path, 'agent_id') || null
+    return { conversations: cv.listConversations(db, only, 50) }
+  }
+  if (method === 'POST' && path === '/v1/conversations/bind') {
+    if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改会话归属')
+    const convId = String(body.conversation_id || '').trim()
+    const agentId = String(body.agent_id || '').trim()
+    if (!convId || !agentId) err(400, 'INVALID_ARGUMENT', 'conversation_id 和 agent_id 都要给')
+    let target = null
+    try { target = db.prepare('SELECT id, name, status FROM agents WHERE id=?').get(agentId) } catch { target = null }
+    if (!target || target.status === 'soft_deleted') err(404, 'NOT_FOUND', '没有这个意识体：' + agentId)
+    const row = cv.bindConversation(db, convId, agentId, {
+      channel: String(body.channel || 'qq'),
+      handle: String(body.handle || ''),
+      source: 'user',
+    })
+    return { ...row, agent_name: target.name }
+  }
+  if (method === 'DELETE' && /^\/v1\/conversations\/[^/]+$/.test(path)) {
+    if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改会话归属')
+    const id = decodeURIComponent(path.replace('/v1/conversations/', ''))
+    return { conversation_id: id, released: cv.releaseConversation(db, id, 'user') }
+  }
+  if (method === 'GET' && path.split('?')[0] === '/v1/qq/health') {
+    const h = await cv.probeBridge()
+    let last = null
+    try {
+      last = db.prepare("SELECT conversation_id, handle, last_seen_at FROM conversations WHERE state='active' ORDER BY last_seen_at DESC LIMIT 1").get() || null
+    } catch { last = null }
+    return { ...h, last_conversation: last, owner: cv.ownerHandle(db), default_agent: cv.defaultAgentId(db) }
+  }
+  if (method === 'GET' && path === '/v1/qq/settings') {
+    return { owner: cv.ownerHandle(db), default_agent: cv.defaultAgentId(db), prompt_budget: cv.promptBudget(db), history_turns: cv.historyTurns(db), recall_items: cv.recallItems(db), conversations: cv.listConversations(db, null, 20) }
+  }
+  if (method === 'PUT' && path === '/v1/qq/settings') {
+    if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改 QQ 通道设置')
+    if (body.owner != null) cv.setOwnerHandle(db, body.owner)
+    if (body.default_agent != null) cv.setDefaultAgentId(db, body.default_agent)
+    if (body.prompt_budget != null) cv.setPromptBudget(db, body.prompt_budget)
+    if (body.history_turns != null) cv.setHistoryTurns(db, body.history_turns)
+    if (body.recall_items != null) cv.setRecallItems(db, body.recall_items)
+    return { owner: cv.ownerHandle(db), default_agent: cv.defaultAgentId(db), prompt_budget: cv.promptBudget(db), history_turns: cv.historyTurns(db), recall_items: cv.recallItems(db) }
+  }
   if (method === 'GET' && path.split('?')[0] === '/v1/agents') {
     const all = q(path, 'include_deleted') === '1'
     const sql = all ? 'SELECT * FROM agents' : "SELECT * FROM agents WHERE status!='soft_deleted'"
-    return db.prepare(sql).all().filter((a) => !bound || a.id === bound)
+    const rows = db.prepare(sql).all().filter((a) => !bound || a.id === bound)
+    // 多实例：每行带上「在场状态 / 挂着几段对话 / 要不要绑下一段新会话」
+    const pending = bd.peekPending(db)
+    const counts = new Map()
+    try {
+      for (const r of db.prepare("SELECT agent_id, COUNT(*) n FROM bindings WHERE state='bound' GROUP BY agent_id").all()) {
+        counts.set(r.agent_id, Number(r.n))
+      }
+    } catch { /* 老库没有 bindings 列时保持 0 */ }
+    return rows.map((a) => {
+      let runtime_state = a.runtime_state || 'idle'
+      try { runtime_state = bd.runtimeStateOf(db, a.id) } catch { /* 老库 */ }
+      // 已 active 时列上的 offline 是暂停残留，不当真
+      if (a.status === 'active' && runtime_state === 'offline') runtime_state = 'idle'
+      return {
+        ...a,
+        runtime_state,
+        bound_sessions: counts.get(a.id) || 0,
+        pending_bind: pending === a.id,
+      }
+    })
+  }
+  if (method === 'POST' && path === '/v1/runtime/max-running') {
+    if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改并发上限')
+    const n = Number(body.max_running)
+    if (!Number.isFinite(n) || n < 0 || n > 20) err(400, 'INVALID_ARGUMENT', 'max_running 只能是 0~20（0 = 不限）')
+    const out = bd.setMaxRunning(db, n)
+    try { bd.refreshAll(db) } catch { /* 状态下次刷新会补 */ }
+    return { max_running: out }
+  }
+  // 这段对话现在归谁：头牌（对话标题旁的身份牌）按会话查，不再全局找一个 active
+  {
+    const sm = path.split('?')[0].match(/^\/v1\/sessions\/([^/]+)\/agent$/)
+    if (sm) {
+      const sid = decodeURIComponent(sm[1])
+      const brow = bd.bindingOf(db, sid)
+      if (!brow) return { session_id: sid, agent: null, state: 'unbound' }
+      const a = db.prepare('SELECT id,name,avatar,status FROM agents WHERE id=?').get(brow.agent_id)
+      return {
+        session_id: sid,
+        state: a && a.status === 'paused' ? 'paused' : 'bound',
+        agent: a ? { id: a.id, name: a.name, avatar: a.avatar || null } : null,
+        since: brow.bound_at || brow.created_at,
+      }
+    }
+  }
+  if (method === 'GET' && path.split('?')[0] === '/v1/runtime') {
+    // 运行总览：谁在跑、各有几段对话、心跳健康、并发余量。界面与排障共用这一份。
+    const cap = bd.maxRunning(db)
+    const running = bd.runningAgentIds(db)
+    const agents = db.prepare("SELECT id,name,status,runtime_state,last_seen_at,last_heartbeat_at FROM agents WHERE status!='soft_deleted'").all()
+    const hb = new Map()
+    try {
+      for (const r of db.prepare('SELECT * FROM heartbeats').all()) hb.set(r.agent_id, r)
+    } catch { /* 心跳表未建时返回空 */ }
+    return {
+      max_running: cap, running: running.length, slots_left: cap > 0 ? Math.max(0, cap - running.length) : null,
+      default_agent: bd.defaultAgent(db), pending_bind: bd.peekPending(db),
+      agents: agents.map((a) => {
+        const h = hb.get(a.id)
+        return {
+          id: a.id, name: a.name, status: a.status,
+          runtime_state: bd.runtimeStateOf(db, a.id),
+          bound_sessions: bd.bindingsOf(db, a.id).length,
+          last_seen_at: a.last_seen_at, last_heartbeat_at: a.last_heartbeat_at,
+          heartbeat: h ? { next_at: h.next_at, last_at: h.last_at, last_ms: h.last_ms, failures: h.failures, mode: h.mode } : null,
+        }
+      }),
+    }
   }
   if (method === 'POST' && path === '/v1/agents') {
     const name = String(body.name || '新意识体').trim() || '新意识体'
@@ -152,7 +285,10 @@ async function routes(db, method, path, body, role, bound) {
     db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)").run(aid, name, 'daily', 'active', now())
     c.seedState(db, aid)
     f.seedRelations(db, aid)
-    return { id: aid, status: 'active' }
+    // 多实例：新建只是「活着 + 排给下一段新对话」，不抢走别人正在用的会话
+    bd.setPending(db, aid)
+    try { bd.refreshRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
+    return { id: aid, status: 'active', pending: true }
   }
   if (method === 'POST' && path === '/v1/agents/import/freeform') return f.importFreeform(db, body)
   if (method === 'POST' && path === '/v1/agents/import') {
@@ -254,6 +390,24 @@ async function routes(db, method, path, body, role, bound) {
       return c.restoreAgent(db, aid)
     }
     if (method === 'POST' && sub === 'activate') return f.activateAgent(db, aid, role)
+    // 手动改绑：把某段对话交给这个意识体（超并发上限时排队，不踢别人）
+    if (method === 'POST' && sub === 'bind') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改绑会话')
+      const sid = String(body.session_id || body.session || '').trim()
+      if (!sid) err(400, 'INVALID_ARGUMENT', 'session_id 必填')
+      const out = bd.bindSession(db, aid, sid, { source: 'manual' })
+      if (!out.ok && out.queued) err(409, 'RUNNING_LIMIT', '同时在跑的实例已达上限（' + out.running + '）；先休眠一个再绑')
+      if (!out.ok) err(404, 'NOT_FOUND', out.reason === 'no_agent' ? 'agent 不存在' : '绑定失败：' + out.reason)
+      return out
+    }
+    // 解绑：带 session_id 只松那一段；不带就把这个实例的所有对话都松开
+    if (method === 'POST' && sub === 'unbind') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以解绑会话')
+      const sid = String(body.session_id || body.session || '').trim()
+      if (sid) return { session_id: sid, released: bd.unbindSession(db, sid, 'user') }
+      return { agent_id: aid, released: bd.unbindAgent(db, aid, 'user') }
+    }
+    if (method === 'GET' && sub === 'sessions') return { agent_id: aid, items: bd.bindingsOf(db, aid) }
     if (method === 'POST' && sub === 'browse' && sub2 === 'ingest') return br.ingestBrowse(db, aid, body)
     if (method === 'GET' && sub === 'browse' && sub2 === 'items') return br.listBrowse(db, aid, Number(q(path, 'limit') || 20))
     if (method === 'GET' && sub === 'chat') return f.listChat(db, aid, Number(q(path, 'limit') || 60))
@@ -285,6 +439,24 @@ async function routes(db, method, path, body, role, bound) {
       return { ok: true, bytes: v.length }
     }
     if (method === 'GET' && sub === 'memory' && sub2 === 'timeline') return sd.timeline(db, aid, { days: Number(q(path, 'days') || 14) })
+    // G1：单条记忆的版本时间线（Mem0 式 history）
+    {
+      const hm = relUrl.match(/^\/v1\/agents\/([^/]+)\/memory\/([^/]+)\/history$/)
+      if (hm && method === 'GET') {
+        scoped(bound, hm[1])
+        agent(db, hm[1])
+        const h = asof.memoryHistory(db, hm[1], decodeURIComponent(hm[2]), { axis: q(path, 'axis') || undefined })
+        return h || err(404, 'NOT_FOUND', '记忆不存在或已删除')
+      }
+    }
+    // G1：「某天当时」查询 ?q=&at= 或 &from=&to=（或 q 里自带「去年三月」），axis 可选 said / recorded
+    if (method === 'GET' && sub === 'memory' && sub2 === 'as-of') {
+      const v = asof.retrieveAsOf(db, aid, String(q(path, 'q') || ''), {
+        at: q(path, 'at') || undefined, from: q(path, 'from') || undefined, to: q(path, 'to') || undefined,
+        axis: q(path, 'axis') || undefined, k: Number(q(path, 'k') || 6),
+      })
+      return { ...v, text: asof.renderAsOf(v) }
+    }
     if (method === 'GET' && sub === 'memory' && sub2 === 'top') return sd.topMemory(db, aid, { limit: Number(q(path, 'limit') || 99) })
     // 抽样体检：拿现存自省过一遍「价值裁判」，看写入闸门会拦下多少（只读，不写库）
     if (method === 'GET' && sub === 'memory' && sub2 === 'judge') {
@@ -583,9 +755,9 @@ async function routes(db, method, path, body, role, bound) {
     }
     if (method === 'GET' && sub === 'relations') return f.listRelations(db, aid)
     if (method === 'POST' && sub === 'relations') return f.upsertRelation(db, aid, body)
-    if (method === 'GET' && sub === 'values' && sub2 === 'explain') return { ...vv.explainValues(db, aid), source: 'meter' }
-    if (method === 'POST' && sub === 'values' && sub2 === 'grow') return vv.growValues(db, aid, { force: true })
-    if (method === 'GET' && sub === 'values') return readViews(db, aid, { grow: true, only: 'V' }).V.items
+    if (method === 'GET' && sub === 'values' && sub2 === 'explain') return { ...explainValues(db, aid), source: 'engine' }
+    if (method === 'POST' && sub === 'values' && sub2 === 'grow') return { ok: true, retired: true, reason: '旧十维表已下线；价值观从三观命题折算' }
+    if (method === 'GET' && sub === 'values') return readViews(db, aid, { only: 'V' }).V.items
     if (method === 'GET' && sub === 'worldview' && sub2 === 'explain') return { ...wv.explainWorldview(db, aid), source: 'meter' }
     if (method === 'POST' && sub === 'worldview' && sub2 === 'grow') return wv.growWorldview(db, aid, { force: true })
     if (method === 'GET' && sub === 'worldview') return readViews(db, aid, { grow: true, only: 'W' }).W.items
@@ -632,12 +804,15 @@ async function routes(db, method, path, body, role, bound) {
       return Object.fromEntries(c.METRICS.map(([k, label]) => [k, { value: vals[k] ?? null, label }]))
     }
     if (method === 'POST' && sub === 'pause') {
+      // 只改用户意图；绑定保留（唤醒后接着用原来那几段对话）
       db.prepare("UPDATE agents SET status='paused' WHERE id=?").run(aid)
-      return { id: aid, status: 'paused' }
+      try { bd.refreshRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
+      return { id: aid, status: 'paused', runtime_state: 'offline', bound_sessions: bd.bindingsOf(db, aid).length }
     }
     if (method === 'POST' && sub === 'resume') {
       db.prepare("UPDATE agents SET status='active' WHERE id=?").run(aid)
-      return { id: aid, status: 'active' }
+      try { bd.refreshRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
+      return { id: aid, status: 'active', runtime_state: bd.runtimeStateOf(db, aid), bound_sessions: bd.bindingsOf(db, aid).length }
     }
     // /export 与 /export/full 同为全量；旧「仅记忆」schema_version 1 仍可导入
     if (method === 'GET' && sub === 'export') return f.exportFull(db, aid)
@@ -754,6 +929,27 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'POST' && m[2] === 'reject') return c.reject(db, m[1], body, role)
     if (method === 'POST' && m[2] === 'shadow') return c.shadowTick(db, m[1])
     if (method === 'POST' && m[2] === 'promote') { ownerOf(db, 'proposals', m[1], bound); return c.promoteDraft(db, ownerOf(db, 'proposals', m[1], bound), m[1], body) }
+  }
+
+  m = path.match(/^\/v1\/agents\/([^/]+)\/life(?:\/(tick))?$/)
+  if (m) {
+    const aid = m[1]
+    scoped(bound, aid)
+    if (method === 'GET') return { line: lifeLine(db, aid), enabled: true }
+    // 手动让她去过一次日子：只走「想一想」，不联网，不碰发消息端口。
+    if (method === 'POST' && m[2] === 'tick') return lifeTick(db, aid, { model: kernelModel, force: !!body.force })
+  }
+
+  m = path.match(/^\/v1\/agents\/([^/]+)\/author(?:\/(rollback))?$/)
+  if (m) {
+    const aid = m[1]
+    scoped(bound, aid)
+    if (method === 'GET') return au.authorStats(db, aid)
+    if (method === 'POST' && !m[2]) return au.authorChange(db, aid, body)
+    if (method === 'POST' && m[2] === 'rollback') {
+      if (!body.change_id) err(400, 'INVALID_ARGUMENT', 'change_id 必填')
+      return au.rollbackAuthor(db, aid, body.change_id)
+    }
   }
 
   m = path.match(/^\/v1\/changes\/([^/]+)\/rollback$/)

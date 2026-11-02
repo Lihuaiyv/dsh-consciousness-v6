@@ -547,17 +547,29 @@ export function searchArchive(db, aid, query, opt = {}) {
  *
  * 只认「钉住的」和「事实 / 冲突」：线上真实库里 reflection 有一大半是每日摘要，
  * importance 被顶到 0.95 也是流水账；让它们占锚点位，等于每轮都把摘要复读一遍。
+ *
+ * B3 轮转：以前取的是「importance 最高的那两条」，集合恒定，于是每轮都在复读同两句。
+ * 现在第一个名额仍然给最重的那条（身份 / 承诺该稳），其余名额在候选池里挑
+ * **最久没被想起**的——last_hit_at 由 touch() 在召回时拨新，所以轮转不需要新表、
+ * 也不需要新状态，自己就会转起来。
  */
 export function importanceAnchors(db, aid, opt = {}) {
   const limit = Math.max(1, Math.min(5, Number(opt.limit) || 2))
   const floor = Math.max(0, Math.min(1, Number(opt.floor ?? 0.7)))
+  // 候选池：名额的 3 倍（至少 4 条），够轮、又不至于把冷门货翻上来
+  const pool = Math.max(limit, Math.min(12, limit * 3, limit + 6))
   try {
-    return db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,importance
+    const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_hit_at,heat,last_decay_at,stability,valence,importance
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
         AND importance>=? AND (mark='locked' OR type IN ('fact','conflict'))
       ORDER BY (mark='locked') DESC, importance DESC, heat DESC, created_at DESC LIMIT ?`)
-      .all(aid, floor, limit)
+      .all(aid, floor, pool)
       .map((r) => ({ partition: 'T1', via: 'anchor', e: 0, ...r, text: String(r.text || '') }))
+    if (rows.length <= limit) return rows
+    const stamp = (r) => Date.parse(r.last_hit_at || r.created_at || '') || 0
+    const [head, ...rest] = rows
+    rest.sort((a, b) => (stamp(a) - stamp(b)) || String(a.id).localeCompare(String(b.id)))
+    return [head, ...rest].slice(0, limit)
   } catch { return [] }
 }
 

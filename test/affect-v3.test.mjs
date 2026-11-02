@@ -3,7 +3,7 @@
  * 运行：node test/affect-v3.test.mjs
  */
 import { birthPeriod, planSegments, valueAtTime, valueAt, ampFor, pUp, nextSegment, mulberry32, hashSeed,
-  circadianAt, stepLoad, LOAD_CAP,
+  circadianAt, pulseAt, driftAt, cycleAt, rhythmAt, stepLoad, LOAD_CAP,
   PERIOD_MIN_D, PERIOD_MAX_D, PERIOD_JITTER, SEG_MIN_H, EDGE } from '../src/algo/baseline.js'
 import { desensitize, decayedCount, stimulusKey, FLOOR, COUNT_CAP } from '../src/algo/desensitize.js'
 import { expressionFrom } from '../src/algo/expression.js'
@@ -162,9 +162,9 @@ const sSteady = (() => {
   for (let i = 0; i < 400; i++) s = stepSlow({ s, b: 0.3, p: 0.4, fHourly: -0.6 })
   return s
 })()
-// α=0.09、β=0.07、ω=0.005 → s* = (0.09×(-0.6) + 0.07×0.3 + 0.005×0.4) / 0.165 ≈ -0.187
-// 底色是正的、快情绪是负的：结果落在负那侧，说明「刚才的事」比「水位」更算数
-check('慢情绪追的是快情绪，不是底色', sSteady < -0.1, { s: sSteady })
+// α=0.09、β=0.11、ω=0.005 → s* = (0.09×(-0.6) + 0.11×0.3 + 0.005×0.4) / 0.205 ≈ -0.09
+// 水位是正的、快情绪是负的：结果仍然落在负那侧（刚才的事还算数），但不再被它独占
+check('慢情绪追的是快情绪，不是底色', sSteady < -0.05, { s: sSteady })
 
 {
   // 步长无关：一次走 6 小时 == 六次各走 1 小时（精确离散化该有的性质）
@@ -175,10 +175,10 @@ check('慢情绪追的是快情绪，不是底色', sSteady < -0.1, { s: sSteady
 }
 
 {
-  // 没有新刺激：8 小时后余温该退到三成左右（λ=0.165 → exp(-1.32)≈0.27）
+  // 没有新刺激：8 小时后余温退到两成左右（λ=0.205 → exp(-1.64)≈0.19）
   let s = 0.8
   for (let i = 0; i < 8; i++) s = stepSlow({ s, b: 0, p: 0, fHourly: 0, dtHours: 1 })
-  check('静默一夜退到三成左右', s < 0.30 && s > 0.15, { s })
+  check('静默一夜退到两成左右', s < 0.25 && s > 0.10, { s })
 }
 
 {
@@ -229,6 +229,65 @@ check('慢情绪追的是快情绪，不是底色', sSteady < -0.1, { s: sSteady
   for (let h = 0; h < 24 * 7; h++) back = stepLoad({ load: back, s: 0, bPlan: 0, dtHours: 1, gain, tauH })
   check('松手一周基本代谢回去', Math.abs(back) < 0.08, { back })
   check('负荷有上限', Math.abs(stepLoad({ load: 5, s: 1, bPlan: -1, dtHours: 1 })) <= LOAD_CAP + 1e-9)
+}
+
+// ================= 五-b2、水位的激素纹：脉冲 / 漂移 / 长周期 =================
+
+{
+  const rough = 0.05
+  const cyc = 0.06
+  const seed = 'agt_grain'
+  let lo = Infinity
+  let hi = -Infinity
+  let maxStep = 0
+  let prev = null
+  let turns = 0
+  let lastDir = 0
+  for (let m = 0; m < 24 * 60; m++) {
+    const t = T0 + m * 60000
+    const v = rhythmAt(t, seed, { rough, cycle: cyc })
+    lo = Math.min(lo, v)
+    hi = Math.max(hi, v)
+    if (prev !== null) {
+      maxStep = Math.max(maxStep, Math.abs(v - prev))
+      const d = Math.sign(v - prev)
+      if (d && lastDir && d !== lastDir) turns++
+      if (d) lastDir = d
+    }
+    prev = v
+  }
+  /* 幅度不能失控：漂移 + 脉冲 + 长周期封在 rough*2 + cycle 里 */
+  check('激素纹有界', hi <= rough * 2 + cyc + 1e-9 && lo >= -(rough * 2 + cyc) - 1e-9, { lo: +lo.toFixed(3), hi: +hi.toFixed(3) })
+  /* 一眼能看出「不平滑」：一天里要来回拐很多次，不是一条正弦 */
+  check('激素纹不平滑（一天拐十几次）', turns >= 12, { turns })
+  check('激素纹没有分钟级跳变', maxStep < 0.01, { maxStep: +maxStep.toFixed(4) })
+
+  check('激素纹可复现', rhythmAt(T0 + 12345, seed, { rough, cycle: cyc }) === rhythmAt(T0 + 12345, seed, { rough, cycle: cyc }))
+  check('激素纹跟着个体走',
+    Math.abs(rhythmAt(T0 + 7 * H, 'agt_a', { rough, cycle: cyc }) - rhythmAt(T0 + 7 * H, 'agt_b', { rough, cycle: cyc })) > 1e-6)
+  check('激素纹给 0 就逐字退回旧样子',
+    rhythmAt(T0, seed, { rough: 0, cycle: 0 }) === 0
+    && driftAt(T0, seed, 0) === 0 && pulseAt(T0, seed, 0) === 0 && cycleAt(T0, seed, 0) === 0)
+  check('坏输入不产生 NaN',
+    finite(rhythmAt(NaN, seed, { rough, cycle: cyc })) && finite(rhythmAt(T0, seed, { rough: NaN, cycle: NaN })))
+
+  /* 脉冲是「一阵一阵」，不是一直在高位 */
+  let active = 0
+  const peakAmp = 0.03
+  for (let m = 0; m < 24 * 60; m++) if (Math.abs(pulseAt(T0 + m * 60000, seed, peakAmp)) > peakAmp * 0.5) active++
+  const frac = active / (24 * 60)
+  check('脉冲是稀疏的一阵一阵', frac > 0.1 && frac < 0.6, { frac: +frac.toFixed(2) })
+
+  /* 长周期：一个多月里摸到两头，而且不是一天一循环 */
+  let cLo = Infinity
+  let cHi = -Infinity
+  for (let h = 0; h < 90 * 24; h++) {
+    const v = cycleAt(T0 + h * H, seed, cyc)
+    cLo = Math.min(cLo, v)
+    cHi = Math.max(cHi, v)
+  }
+  check('长周期一个多月摸到两头', cHi > cyc * 0.9 && cLo < -cyc * 0.9, { lo: +cLo.toFixed(3), hi: +cHi.toFixed(3) })
+  check('长周期不是日循环', Math.abs(cycleAt(T0 + 10 * H, seed, cyc) - cycleAt(T0 + 34 * H, seed, cyc)) > 1e-6)
 }
 
 check('共情：对方难过会把自己拉低', fastOf({ fSelf: 0, eUser: -0.6, closeness: 0.99 }) < -0.05, { f: fastOf({ fSelf: 0, eUser: -0.6, closeness: 0.99 }) })
@@ -316,9 +375,14 @@ check('300 组随机输入全部合法', bad === 0, { bad })
   const avg = (x) => x / hours
   check('7 天联调不越界', badCount === 0, { badCount })
   check('慢情绪每小时跳不超过 0.2', maxJump <= 0.2 + 1e-9, { maxJump })
-  check('慢情绪站在快情绪那侧（不是被底色拉过去）',
-    Math.abs(avg(sSum) - avg(fSum)) < Math.abs(avg(sSum) - avg(bSum)),
-    { s: +avg(sSum).toFixed(3), f: +avg(fSum).toFixed(3), b: +avg(bSum).toFixed(3) })
+  /* β 抬高之后，慢情绪是快情绪和水位的加权平均：两边都拉得动，谁也不独占。
+     所以要验的不是「站在快情绪那侧」，而是「落在两者之间、没被谁吃掉」。 */
+  const sAvg = avg(sSum)
+  const fAvg = avg(fSum)
+  const bAvg = avg(bSum)
+  check('慢情绪落在快情绪和水位之间（两边都拉得动）',
+    (sAvg - bAvg) * (sAvg - fAvg) <= 0 && Math.abs(sAvg - bAvg) > 0.005,
+    { s: +sAvg.toFixed(3), f: +fAvg.toFixed(3), b: +bAvg.toFixed(3) })
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

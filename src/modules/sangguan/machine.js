@@ -13,6 +13,7 @@ const SUB_FAIL = [...POLES_BACK, { role: 'sub', from: ['provisional'], to: 'with
 
 export const CLAIM_MOVES = Object.freeze({
   CLAIM_WITHDRAW: [{ role: 'claim_id', from: ['active'], to: 'withdrawn' }],
+  CLAIM_RETIRE: [{ role: 'claim_id', from: ['active'], to: 'withdrawn', guard: 'belt' }],
   REV: [{ role: 'old_id', from: ['active'], to: 'superseded', guard: 'belt' }],
   CON: [{ role: 'claim_id', from: ['active'], to: 'falsified', guard: 'belt' }],
   CORE_ESTABLISH: [{ role: 'from_id', from: ['active'], to: 'superseded', guard: 'belt' }],

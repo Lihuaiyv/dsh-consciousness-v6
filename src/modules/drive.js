@@ -5,6 +5,7 @@ import { learnSetpoint, SP_FLOOR, SP_CEIL } from '../algo/deficit.js'
 import { affectNeedDeltas, capDayDeltas, E2N_DAY_CAP, moodTilt } from '../algo/affect_need.js'
 import { createInboxItem, recordSystemChange, countChangesOnDay } from './selfmod_store.js'
 import { computeNeedProxies } from './proxies.js'
+import { foldValueWeights } from './sangguan/vweights.js'
 
 const DORMANT_DAYS = 14
 const EVENT_CAP = 0.08
@@ -63,17 +64,12 @@ function personaNumbers(db, aid) {
   return out
 }
 
-/** 价值观十维（权重），给 v3 的重要度用；老库没有 persona_values 时返回空对象（按 0.1 均匀算）。 */
+/** 价值观十维（权重）：从三观命题折算；没有命题就是空对象（按 0.1 均匀算）。只读账本，不读旧表。 */
 function valueNumbers(db, aid) {
-  const out = {}
   try {
-    const rows = db.prepare('SELECT key,weight FROM persona_values WHERE agent_id=?').all(aid)
-    for (const r of rows) {
-      const v = Number(r.weight)
-      if (Number.isFinite(v)) out[r.key] = v
-    }
-  } catch { /* 老库没有价值观表 */ }
-  return out
+    const folded = foldValueWeights(db, aid)
+    return folded && folded.weights ? folded.weights : {}
+  } catch { return {} }
 }
 
 /**

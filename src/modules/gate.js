@@ -13,6 +13,9 @@
 
 import { askAboutConflict } from './conflict_ask.js'
 import { attrConflict } from './contradict.js'
+import { buildSearchText } from './memory.js'
+import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
+import { tx } from '../kernel.js'
 
 const NEG = new Set([...'不没别无取消换改'])
 
@@ -109,11 +112,21 @@ export function polarityFlip(a, b, minRun = 4) {
 
 /**
  * 判定一个候选该怎么写。
- * @param {{text:string, entity_id?:string|null}} cand
- * @returns {{action:'new'|'merge'|'conflict'|'drop', score:number, target?:object, reason?:string}}
+ * @param {{text:string, entity_id?:string|null, fact_key?:string|null, op?:string}} cand
+ * @returns {{action:'new'|'merge'|'conflict'|'update'|'delete'|'drop', score:number, target?:object, reason?:string}}
  */
 export function decideWrite(db, aid, cand = {}) {
   const text = String(cand.text || '').trim()
+  const factKey = String(cand.fact_key || '').trim()
+  // 明确的删除指令：找到同 key 的现行条目，交给 DELETE 分支
+  if (String(cand.op || '') === 'delete') {
+    if (!factKey) return { action: 'new', score: 0, reason: 'delete_no_key' }
+    let row = null
+    try {
+      row = db.prepare(`SELECT * FROM memory_items WHERE agent_id=? AND fact_key=? AND status='active' AND invalid_at IS NULL ORDER BY created_at DESC LIMIT 1`).get(aid, factKey)
+    } catch { row = null }
+    return row ? { action: 'delete', score: 1, target: row } : { action: 'new', score: 0, reason: 'delete_no_target' }
+  }
   if (text.length < GATE.MIN_LEN) return { action: 'drop', score: 0, reason: '太短' }
   if (NOISE.test(text)) return { action: 'drop', score: 0, reason: '运行时噪音' }
 
@@ -142,11 +155,55 @@ export function decideWrite(db, aid, cand = {}) {
   const attr = attrConflict(text, best.row.text)
   if (attr) return { action: 'conflict', score: best.score, target: best.row, attr }
   if (best.score >= mergeLine) return { action: 'merge', score: best.score, target: best.row }
+  // 同一个 fact_key：换了说法，还是同一件事 → 原地改写（旧句先留底，不能直接覆盖）
+  if (factKey) {
+    let row = null
+    try {
+      row = db.prepare(`SELECT * FROM memory_items WHERE agent_id=? AND fact_key=? AND status='active' AND invalid_at IS NULL ORDER BY created_at DESC LIMIT 1`).get(aid, factKey)
+    } catch { row = null }
+    if (row && String(row.text).trim() !== text) return { action: 'update', score: best.score, target: row }
+  }
   if (best.score >= GATE.CONFLICT) {
     // 相近但没到合并线、极性也一样：可能是换了说法，也可能只是用词接近 → 新增
     return { action: 'new', score: best.score, reason: '相近但不确定' }
   }
   return { action: 'new', score: best.score }
+}
+
+/**
+ * 原地改写：旧句先存进冷库（`<id>:hist:<version>`），再改正文。
+ * 存根写不进去（槽位被占 / 老库）就整笔回滚、退回「新增一行」——宁可多一条，不能丢旧句。
+ */
+function commitUpdate(db, aid, target, cand, write) {
+  const oldText = String(target.text || '')
+  const ver = Number(target.version || 1)
+  const histId = target.id + ':hist:' + ver
+  const at = new Date().toISOString()
+  const text = String(cand.text || '')
+  const key = cand.fact_key || target.fact_key || null
+  const searchText = buildSearchText(text, key, cand.terms)
+  let ok = false
+  try {
+    tx(db, () => {
+      const ins = db.prepare(`INSERT OR IGNORE INTO fact_archive(id,agent_id,memory_id,text,type,mark,fact_key,source,payload,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+        histId, aid, histId, oldText, target.type || 'fact', 'normal', key,
+        'update_history', JSON.stringify({ at, actor: 'gate' }), at,
+      )
+      if (!Number(ins.changes)) throw new Error('hist_slot_taken')
+      reviseMemory(db, aid, target.id, text, { textRef: histId, at, actor: 'gate' })
+      db.prepare('UPDATE memory_items SET search_text=?, fact_key=COALESCE(?, fact_key) WHERE id=?').run(searchText, key, target.id)
+      try {
+        db.prepare('DELETE FROM memory_fts WHERE id=?').run(target.id)
+        db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(target.id, searchText)
+      } catch { /* 老库没有 FTS 就跳过 */ }
+    })
+    ok = true
+  } catch { ok = false }
+  if (ok) return { action: 'update', id: target.id, score: 1 }
+  // 留底失败：不覆盖正文，退回新增
+  const r = write(cand)
+  return { action: 'new', id: r && r.id, score: 0, fallback: 'update_failed' }
 }
 
 /**
@@ -163,6 +220,11 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
     } catch { /* 强化失败不影响判定 */ }
     return { action: 'merge', id: d.target.id, score: d.score }
   }
+  if (d.action === 'update') return commitUpdate(db, aid, d.target, cand, write)
+  if (d.action === 'delete') {
+    deleteMemoryByGate(db, aid, d.target.id, { reason: 'gate', actor: 'gate' })
+    return { action: 'delete', id: d.target.id, score: d.score }
+  }
 
   const r = write(cand)
   if (d.action !== 'conflict') return { action: 'new', id: r && r.id, score: d.score }
@@ -178,7 +240,8 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
   const at = new Date().toISOString()
   const kind = d.attr ? 'attribute' : 'polarity'
   try {
-    db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(at, d.target.id)
+    invalidateMemory(db, aid, d.target.id, { at, reason: 'conflict', causeId: r.id, actor: 'gate' })
+    disputeOpen(db, aid, [d.target.id, r.id], cid, { at, actor: 'gate' })
     db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,evidence,escalation_level)
       VALUES(?,?,?,?, 'open', ?, 'high',?,?,0)`).run(
       cid, aid, d.target.id, r.id, at, kind,

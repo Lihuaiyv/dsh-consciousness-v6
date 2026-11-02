@@ -3,6 +3,10 @@ import { run as runAlgo, has as algoHas, runBound, resolveVersion } from '../alg
 import { err, nid, tx, agent, active, event, getParam } from '../kernel.js'
 import { bandOf, heatOf, nowRow } from './tiers.js'
 import { archiveFact } from './archive.js'
+import {
+  logAdd, invalidateMemory, reactivateMemory, hideMemory, unhideMemory,
+  disputeOpen, disputeClose,
+} from './timeline.js'
 import { normalizeTerms } from './terms.js'
 import { attrConflict } from './contradict.js'
 import { askAboutConflict } from './conflict_ask.js'
@@ -105,8 +109,10 @@ export function supersedeByKey(db, aid, mid, factKey, typ = 'fact') {
   } catch { return [] }
   if (!rows.length) return []
   const at = now()
-  const upd = db.prepare('UPDATE memory_items SET invalid_at=?, superseded_by=?, version=version+1 WHERE id=?')
-  for (const r of rows) upd.run(at, mid, r.id)
+  for (const r of rows) {
+    // G1：旧说法退场也记一笔——「什么时候被谁取代的」不能只靠被覆盖的 invalid_at 单列
+    invalidateMemory(db, aid, r.id, { at, supersededBy: mid, bumpVersion: true, reason: 'supersede', causeId: mid, actor: 'extract' })
+  }
   try { event(db, aid, 'memory.fact_superseded', { by: mid, old: rows.map((r) => r.id), key }) } catch { /* 事件失败不影响写入 */ }
   return rows.map((r) => r.id)
 }
@@ -120,10 +126,12 @@ export function supersedeMany(db, aid, mid, ids = [], reason = 'merged') {
   const list = [...new Set((ids || []).filter(Boolean))].filter((x) => x !== mid)
   if (!list.length) return []
   const at = now()
-  const upd = db.prepare('UPDATE memory_items SET invalid_at=?, superseded_by=?, version=version+1 WHERE id=? AND agent_id=?')
   const done = []
   for (const id of list) {
-    try { upd.run(at, mid, id, aid); done.push(id) } catch { /* 单条失败不影响其余 */ }
+    try {
+      invalidateMemory(db, aid, id, { at, supersededBy: mid, bumpVersion: true, agentScoped: true, reason, causeId: mid, actor: 'consolidate' })
+      done.push(id)
+    } catch { /* 单条失败不影响其余 */ }
   }
   if (done.length) {
     try { event(db, aid, 'memory.superseded_many', { by: mid, old: done, reason }) } catch { /* 事件失败不影响写入 */ }
@@ -191,16 +199,24 @@ export function addMemory(db, aid, body) {
     // 事实失效：同一个 fact_key 的旧说法当场退场（不删，只标记被谁取代）
     superseded = supersedeByKey(db, aid, mid, factKey, typ)
     // T4 事实存根：这条事实「出生时」长什么样，永远留一份（只追加，之后衰减/推翻/合并都不动它）
+    let birthRef = null
     try {
-      archiveFact(db, aid, {
+      const fa = archiveFact(db, aid, {
         memory_id: mid, text: safe, type: typ, mark: 'normal',
         importance, salience, confidence: body.confidence != null ? Number(body.confidence) : 0.8,
         fact_key: factKey, source_turn_id: body.turn_id || null,
         source: body.source || 'model',
       })
+      birthRef = fa && fa.id ? fa.id : null
     } catch {
       try { event(db, aid, 'memory.archive_failed', { memory_id: mid }) } catch { /* 连事件都失败就只剩写入 */ }
     }
+    // G1：出生事件。text_ref 指向出生照；valid_from 认来源原话/纪要的说话时间
+    logAdd(db, aid, mid, {
+      sourceTurnId: body.turn_id || null,
+      textRef: birthRef,
+      actor: String(body.source || 'model').slice(0, 24),
+    })
     event(db, aid, 'memory.written', { memory_id: mid })
     if (kind === 'conflict') {
       const cid = nid('cfl_')
@@ -221,11 +237,15 @@ export function addMemory(db, aid, body) {
         event(db, aid, 'memory.conflict_superseded', { conflict_id: cid, a: old.id, b: mid })
       } else {
         // 属性矛盾只顶掉事实/评价；两段摘要（流水账）都留，别把整段纪要判死
-        if (!opt || opt.invalidate !== false) db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(now(), old.id)
+        if (!opt || opt.invalidate !== false) {
+          invalidateMemory(db, aid, old.id, { reason: 'conflict', causeId: mid, actor: 'extract' })
+        }
         const kindCol = opt && opt.attr ? 'attribute' : 'polarity'
         db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,source_turn_id,evidence)
           VALUES(?,?,?,?, 'open', ?, 'high',?,?,?)`)
           .run(cid, aid, old.id, mid, now(), kindCol, body.turn_id || null, evidence)
+        // G1：争议区间。两条都记开案，投影才知道「那段时间它们有争议」
+        disputeOpen(db, aid, [old.id, mid], cid, { actor: 'extract' })
         event(db, aid, 'memory.conflict', { conflict_id: cid, a: old.id, b: mid, via: (opt && opt.via) || 'polarity' })
         db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)')
           .run(nid('alr_'), aid, 'data', 2, '有一条记忆冲突未处理', 'open', now())
@@ -281,7 +301,8 @@ export function restoreAgent(db, aid) {
 export function softDelete(db, mid) {
   const row = db.prepare('SELECT * FROM memory_items WHERE id=?').get(mid)
   if (!row) err(404, 'NOT_FOUND', '记忆不存在')
-  db.prepare("UPDATE memory_items SET status='soft_deleted', deleted_at=? WHERE id=?").run(now(), mid)
+  // G1：软删 = HIDE；恢复 = UNHIDE。时光机靠这两条判断「那天看不看得见」
+  hideMemory(db, row.agent_id, mid, { reason: 'user', actor: 'user' })
   return { id: mid, status: 'soft_deleted' }
 }
 
@@ -289,7 +310,7 @@ export function restoreMemory(db, mid) {
   const row = db.prepare('SELECT * FROM memory_items WHERE id=?').get(mid)
   if (!row || row.status !== 'soft_deleted') err(404, 'NOT_FOUND', '没有可恢复的记忆')
   if (Date.now() - Date.parse(row.deleted_at) > 7 * 86400000) err(410, 'GONE', '恢复窗口已过')
-  db.prepare("UPDATE memory_items SET status='active', deleted_at=NULL WHERE id=?").run(mid)
+  unhideMemory(db, row.agent_id, mid, { reason: 'user', actor: 'user' })
   return { id: mid, status: 'active' }
 }
 
@@ -382,10 +403,14 @@ export function resolveConflict(db, aid, cid, body = {}) {
   const keep = String(body.keep || '')
   if (!['a', 'b', 'both'].includes(keep)) err(400, 'INVALID_ARGUMENT', 'keep 只能是 a / b / both')
   const reason = body.reason == null ? null : String(body.reason).slice(0, 160)
-  const inv = (id, on) => db.prepare('UPDATE memory_items SET invalid_at=? WHERE id=?').run(on ? now() : null, id)
+  // G1：拍板也是一次「生效/作废」变更——复活记 REACTIVATE，再作废记 INVALIDATE，双方都记结案
+  const inv = (id, on) => on
+    ? invalidateMemory(db, aid, id, { reason: 'resolve', causeId: cid, actor: 'user' })
+    : reactivateMemory(db, aid, id, { reason: 'resolve', causeId: cid, actor: 'user' })
   if (keep === 'a') { inv(c.a_id, false); inv(c.b_id, true) }
   else if (keep === 'b') { inv(c.a_id, true); inv(c.b_id, false) }
   else { inv(c.a_id, false); inv(c.b_id, false) }
+  disputeClose(db, aid, [c.a_id, c.b_id], cid, { actor: 'user' })
   db.prepare("UPDATE conflicts SET state='resolved', resolution=?, reason=?, resolved_at=? WHERE id=?").run(keep, reason, now(), cid)
   try { db.prepare("UPDATE alerts SET state='resolved' WHERE agent_id=? AND kind='data' AND title LIKE '%冲突%' AND state='open'").run(aid) } catch { /* 老库没有告警表 */ }
   // 已经拍板了，就别再把「到底是哪个」的问句排着队发出去

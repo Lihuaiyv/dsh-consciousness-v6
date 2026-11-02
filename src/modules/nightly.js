@@ -14,8 +14,8 @@
  */
 
 import { now } from '../db.js'
-import { nid, getParam, getFlag } from '../kernel.js'
-import { growValues } from './values.js'
+import { nid, getParam, getFlag, model } from '../kernel.js'
+import { writeNote } from './selfnote.js'
 import { growWorldview } from './worldview.js'
 import { growLifeview } from './lifeview.js'
 import { buildEpisode, buildDiary } from './archive.js'
@@ -29,6 +29,7 @@ import { prune as pruneAxisEvidence } from './axis_evidence.js'
 import { scan as scanPersona } from './self_scan.js'
 import { run as runPersonaJudge } from './persona_judge.js'
 import { run as runProbes } from './persona_probe.js'
+import { auditTimeline } from './timeline.js'
 
 /** 本地日期（不要用 toISOString，那是 UTC，跨零点会错一天）。 */
 export function localDay(d = new Date()) {
@@ -213,19 +214,8 @@ export async function runNightly(db, aid, opt = {}) {
     push('persona_probe', { ok: true, error: String(e && e.message) })
   }
 
-  // ⑪ 价值观 / 世界观 / 人生观 重长（三观引擎的旧仪表；sangguan.cleaned 之后跳过）
-  try {
-    const cleaned = String(getFlag(db, 'sangguan.cleaned') || '') === '1'
-    const on = !cleaned && String(getParam(db, aid, 'persona.values.nightly') || 'on') !== 'off'
-    if (on) {
-      const vals = growValues(db, aid, { force: true })
-      push('values', { ok: true, n: Array.isArray(vals) ? vals.length : 0 })
-    } else {
-      push('values', { ok: true, skipped: true, reason: cleaned ? 'cleaned' : 'off' })
-    }
-  } catch (e) {
-    push('values', { ok: false, error: String(e && e.message) })
-  }
+  // ⑪ 价值观已下线：不再有旧十维表可重算。三观引擎的价值观从命题折算。
+  push('values', { ok: true, skipped: true, reason: 'removed' })
   try {
     const cleaned = String(getFlag(db, 'sangguan.cleaned') || '') === '1'
     const on = !cleaned && String(getParam(db, aid, 'persona.worldview.nightly') || 'on') !== 'off'
@@ -271,6 +261,63 @@ export async function runNightly(db, aid, opt = {}) {
     }
   } catch (e) {
     push('sangguan', { ok: true, skipped: true, error: String(e && e.message) })
+  }
+
+  // ⑫ 时效索引对账：白天钩子漏写的事件，这里按主表现状补 SYNC（标近似）。
+  //    不做的话 as-of 会慢慢漂移，而且漂了没人知道。
+  try {
+    const tl = auditTimeline(db, aid, { limit: 500 })
+    push('timeline_audit', { ok: tl.ok !== false, checked: tl.checked, fixed: tl.fixed, missing: tl.missing })
+  } catch (e) {
+    push('timeline_audit', { ok: false, error: String(e && e.message) })
+  }
+
+  // ⑬ 今天的她：有模型时写三五句「今天是什么状态」，存进 flags，白天注入优先读这份。
+  //    为什么放夜里：白天那一轮只该读一份收拾好的东西，不该现拼日记再临时总结——
+  //    那既慢又抖，而且模型在对话里同时干「总结」和「回话」很容易写成助手腔。
+  //    没有模型就跳过，不拦别的步骤（照 ⑫ 的写法）。
+  try {
+    const engine = opt.model || model
+    let can = false
+    try { can = !!(engine.capabilities() || {}).complete } catch { can = false }
+    if (!can) {
+      push('self_note', { ok: true, skipped: 'no-model' })
+    } else {
+      const d = db.prepare('SELECT text FROM diaries WHERE agent_id=? AND day=?').get(aid, day)
+      const memories = db.prepare("SELECT text FROM memory_items WHERE agent_id=? AND status='active' ORDER BY created_at DESC LIMIT 6").all(aid)
+      const source = [
+        d && d.text ? '今天的日记：\n' + String(d.text).slice(0, 800) : '',
+        memories.length ? '最近记得的事：\n' + memories.map((m) => '- ' + m.text).join('\n') : '',
+      ].filter(Boolean).join('\n\n')
+      if (!source) {
+        push('self_note', { ok: true, skipped: 'empty' })
+      } else {
+        const text = String(await engine.complete({
+          system: '你在替一个意识体写「今天她是什么状态」。用第一人称，三到五句，写状态和感受，不用总结今天做了什么，不要列点，不要对小汐之外的人说话。只输出正文。',
+          text: source,
+        }) || '').trim().slice(0, 400)
+        if (!text) {
+          push('self_note', { ok: true, skipped: 'empty-reply' })
+        } else {
+          const kept = writeNote(db, aid, day, text)
+          push('self_note', { ok: true, chars: text.length, kept })
+        }
+      }
+    }
+  } catch (e) {
+    // 写不出来不算这一夜失败：白天少一段「今天的她」而已
+    push('self_note', { ok: true, skipped: 'error', error: String(e && e.message).slice(0, 120) })
+  }
+
+  // ⑭ 反刍：挑一条被反复想起的旧事，再看一眼。只读记忆，不改情绪；没模型就跳过。
+  try {
+    const { reappraiseTick } = await import('./reappraise.js')
+    const rr = await reappraiseTick(db, aid, { at: Date.now(), model: opt.model || model })
+    push('reappraise', rr.ok
+      ? { ok: true, memory_id: rr.memory_id, changed: rr.changed }
+      : { ok: true, skipped: rr.skipped })
+  } catch (e) {
+    push('reappraise', { ok: false, error: String(e && e.message).slice(0, 120) })
   }
 
   const ok = steps.every((s) => s.ok !== false)

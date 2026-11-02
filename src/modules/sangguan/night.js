@@ -12,7 +12,7 @@ import { append, hasJob, readEvents } from './ledger.js'
 import { lastSeq } from './ledger.js'
 import { isoWeek } from './budget.js'
 import { loadState } from './projection.js'
-import { checkDue, conCheck, degenCheck, repairHurt, deriveCross, attributeCross } from './practice.js'
+import { checkDue, conCheck, degenCheck, repairHurt, deriveCross, attributeCross, suspendStaleKappas } from './practice.js'
 import { establishCores } from './core.js'
 import { openCandidates } from './open.js'
 import { elevTimeouts, runElev } from './elev.js'
@@ -86,6 +86,8 @@ export async function runMid(db, aid, now, opt = {}) {
   const core = opt.core === false || degraded ? { did: [] } : await trap(errors, 'core', () => establishCores(db, aid, now, opt), { did: [] })
   const repair = opt.repair === false ? { did: [] } : await trap(errors, 'repair', () => repairHurt(db, aid, now, opt), { did: [] })
   const degen = await trap(errors, 'degen', () => degenCheck(db, aid, now), { did: [] })
+  // 卡死的 κ：太久没人审的 struggle 先挂起，别让一句话被永久下架
+  const stale = await trap(errors, 'stale', () => suspendStaleKappas(db, aid, now, opt), { did: [] })
   // 升维提案超过 T_approve 视为拒绝，解除 Frozen（零模型）
   const elev = await trap(errors, 'elev', () => elevTimeouts(db, aid, now), { did: [] })
   const open = opt.open === false || degraded ? { did: [] } : await trap(errors, 'open', () => openCandidates(db, aid, now, opt), { did: [] })
@@ -108,7 +110,7 @@ export async function runMid(db, aid, now, opt = {}) {
   const sum = opt.summary === false ? { did: [] } : await trap(errors, 'summary', () => buildSummary(db, aid, now, opt), { did: [] })
   const res = {
     status: n1.postponed ? 'budget' : 'done', degraded, job_key: key, errors,
-    n1, cross, settle: settle.did, con: con.did, core: core.did, repair: repair.did, degen: degen.did, elev: elev.did, open: open.did, night,
+    n1, cross, settle: settle.did, con: con.did, core: core.did, repair: repair.did, degen: degen.did, stale: stale.did, elev: elev.did, open: open.did, night,
     inquiry: inq.did, abduce: abd.did, flip: flip.did, qi, move, week, summary: sum.did,
   }
   if (opt.job !== false) {

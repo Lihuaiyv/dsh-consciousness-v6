@@ -460,12 +460,12 @@ export function shadowTick(db, pid) {
   return { shadow_done: n, shadow_total: p.shadow_total, shadow_hit: +hit.toFixed(3), state: 'shadowed' }
 }
 
-function metricSnapshot(db, aid) {
+export function metricSnapshot(db, aid) {
   const stats = memoryStats(db, aid)
   const inject = db.prepare("SELECT value FROM metric_samples WHERE agent_id=? AND key='sys.inject_tokens' ORDER BY rowid DESC LIMIT 1").get(aid)
   const latency = db.prepare("SELECT AVG(value) v FROM metric_samples WHERE agent_id=? AND key='sys.inject_latency'").get(aid)
-  const changes = db.prepare('SELECT COUNT(*) n FROM changes WHERE agent_id=?').get(aid).n
-  const rolled = db.prepare('SELECT COUNT(*) n FROM changes WHERE agent_id=? AND rolled_back_at IS NOT NULL').get(aid).n
+  const changes = db.prepare("SELECT COUNT(*) n FROM changes WHERE agent_id=? AND source<>'self-authorship'").get(aid).n
+  const rolled = db.prepare("SELECT COUNT(*) n FROM changes WHERE agent_id=? AND rolled_back_at IS NOT NULL AND source<>'self-authorship'").get(aid).n
   return {
     'memory.core_token': inject && inject.value != null ? +Number(inject.value).toFixed(0) : null, 'memory.conflict': stats.open_conflicts,
     'sys.inject_latency': latency && latency.v != null ? +Number(latency.v).toFixed(3) : null,
@@ -689,6 +689,24 @@ function restoreAlgoFromChange(db, ch) {
   } catch { /* ignore */ }
 }
 
+/**
+ * 回滚 persona 字段。原来的 rollbackChange 只恢复算法绑定/工件，
+ * 「语气」「口头禅」这类她自己的样子改了之后回滚不了——等于假回滚。
+ * before 存的是 JSON.stringify(旧值)，恢复时按同一形状写回。
+ */
+export function restorePersonaFromChange(db, ch) {
+  const field = String((ch && ch.field) || '')
+  if (!field.startsWith('persona.')) return false
+  const path = field.slice('persona.'.length)
+  if (!path) return false
+  let before
+  try { before = JSON.parse(ch.before) } catch { before = ch.before }
+  if (before === undefined || before === null) return false
+  db.prepare('INSERT OR REPLACE INTO persona VALUES(?,?,?,?,?)')
+    .run(ch.agent_id, path, JSON.stringify(before), 'auto', now())
+  return true
+}
+
 export function rollbackChange(db, cid, role) {
   if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以回滚')
   const ch = db.prepare('SELECT * FROM changes WHERE id=?').get(cid)
@@ -699,6 +717,7 @@ export function rollbackChange(db, cid, role) {
     .run(nid('chg_'), ch.proposal_id, ch.agent_id, ch.field + '.rollback', ch.after, ch.before, now(), 'user', 'user', 'manual', null, null)
   if (ch.proposal_id) db.prepare("UPDATE proposals SET state='rolled_back' WHERE id=?").run(ch.proposal_id)
   restoreAlgoFromChange(db, ch)
+  restorePersonaFromChange(db, ch)
   try {
     const kind = String(ch.field || '').startsWith('taxonomy') ? 'taxonomy' : String(ch.field || '').startsWith('structure') ? 'structure' : null
     if (kind) {

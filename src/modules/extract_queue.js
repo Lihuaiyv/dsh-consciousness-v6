@@ -12,11 +12,31 @@ import { now } from '../db.js'
 export const MAX_ATTEMPTS = 5
 const KEEP_DONE_DAYS = 7
 
+/**
+ * 这一轮的身份证。用户那句和助手那句共用一个 turn_id，
+ * 记忆存下它才能回到原话。时间戳 + 序号 + 随机尾巴，够唯一。
+ */
+let turnSeq = 0
+export function makeTurnId() {
+  turnSeq = (turnSeq + 1) % 1000000
+  return 'turn_' + Date.now().toString(36) + '_' + turnSeq.toString(36) + Math.random().toString(36).slice(2, 6)
+}
+
+/** 从一批 turns 里取这一批的 turn_id（最后一条带 id 的）。一条都没有就 null。 */
+export function pickBatchTurnId(turns) {
+  const list = Array.isArray(turns) ? turns : []
+  for (let i = list.length - 1; i >= 0; i--) {
+    const t = list[i] && list[i].turnId
+    if (t) return String(t)
+  }
+  return null
+}
+
 /** 入队。返回 {id, duplicate}；空输入返回 null。 */
 export function enqueueExtraction(db, aid, turns) {
   const list = (Array.isArray(turns) ? turns : [])
     .filter((t) => t && String(t.text || '').trim())
-    .map((t) => ({ role: String(t.role || 'user'), text: String(t.text).slice(0, 2000) }))
+    .map((t) => ({ role: String(t.role || 'user'), text: String(t.text).slice(0, 2000), turnId: t.turnId ? String(t.turnId) : null }))
   if (!list.length) return null
   const fingerprint = aid + '\u0001' + JSON.stringify(list.map((t) => [t.role, t.text.slice(0, 200)]))
   const id = 'exq_' + crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 16)

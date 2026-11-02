@@ -92,11 +92,36 @@ export const PARAMS = {
   // 写入侧闸门：摘要的重要度交给模型判（on/off），低于 floor 的落库但进深查层。
   'memory.write.reflect_judge': ['C4', 'on'],
   'memory.write.reflect_floor': ['C4', 0.7],
+  // 每轮摘要要不要直接写进 T1 事实区（默认保留现状 on）。
+  // 关掉后摘要只留在 T2 纪要里，记忆库不再被「用户关心什么」的旁白占位。
+  'memory.write.summary_to_t1': ['C4', 'on'],
   // 原文层分龄：深查时默认只翻最近 N 天的对话原文（0 = 不限）；
   // 查询里有「最早/一开始/很久以前」这类词时自动放开（retrieve.oldAccountQuery）。
   'memory.recall.archive.days': ['C4', 30],
   'memory.inject.pool': ['C4', 50],
   'memory.inject.budget': ['C4', 800],
+  // 行为示例：把「语气：可爱粘人」这种标签补成几条具体反应（on/off）。
+  // off 时与改造前逐字一致，方便对照与回滚。
+  'memory.inject.examples': ['C4', 'on'],
+  // 记忆的时间与清晰度标签：（3 天前）/（3 个月前，有点糊）。off 时与改造前逐字一致。
+  'memory.inject.age': ['C4', 'on'],
+  // 内容级模糊：30 天以上的旧事，括号 / 数字 / 引号原话会被删掉（只删不改）。
+  // 钉住的、重要度 ≥0.7、冲突类不参与；off 时只贴标签、正文一字不动。
+  'memory.inject.fade': ['C4', 'on'],
+  // G1「某天当时」：总开关；时间轴按 said（说话时间）还是 recorded（入库时间）切；
+  // auto=on 才会在问句带过去时间时往每轮注入补「那时」段（会占上下文，默认关）。
+  'memory.asof': ['C4', 'on'],
+  'memory.asof.axis': ['C4', 'said'],
+  'memory.asof.auto': ['C4', 'off'],
+  // 模糊最多用几档：1 只删括号 / 2 再删数字 / 3 再删引号原话。默认 3（到头）。
+  'memory.fade.max_level': ['C4', 3],
+  // 复习抵年龄：被想起过的旧事糊得慢一点（有效年龄 = 真实年龄 ÷ 复习系数，下限 50%）。
+  'memory.fade.rehearsal': ['C4', 'on'],
+  // 说话模式：auto = 按最近一句判闲聊/干活；chat / work 强制。
+  // 干活时不开文体约束——不然改代码会写成小作文。
+  'style.mode': ['C4', 'auto'],
+  // 文体清单：off 不写、soft 三条（默认）、strong 再加顺序词和小节标题。
+  'style.guard': ['C4', 'soft'],
   // 冲突开案后要不要真的开口问：on = 排一条主动消息问「到底是哪个」；off = 只记进面板。
   'memory.conflict.ask': ['C4', 'on'],
   // 「浮上来」三条通道（配额制）：相关度照旧，额外给重要度锚点 / 24h 新近 / 开环固定名额。
@@ -138,17 +163,53 @@ export const PARAMS = {
   'affect.fast.tau': ['C4', 20],
   'affect.fast.shape': ['C4', 1.5],
   // 慢情绪（真 EMA）：α = 追快情绪的速率，β = 回底色的速率。α+β 管「多久退掉」，α:β 管「谁更算数」。
-  // α=0.09、β=0.07 → λ=0.165，τ≈6h（一夜退到三成），稳态里快情绪五成半、底色四成。
+  // α=0.09、β=0.11 → λ=0.205，τ≈4.9h；稳态里快情绪四成半、水位五成半（水位拉得回来，大事也改得动她）。
   // β 太小球会在刚才那一下上黏死；太大就只剩底色，没有余温。
   'affect.slow.alpha': ['C4', 0.09],
-  'affect.slow.beta': ['C4', 0.07],
+  'affect.slow.beta': ['C4', 0.11],
+  // 恢复速度分正负：低落退得慢一点（neg=1.4 → 用时 ×1.4），被抬高退得快一点（pos=0.8 → 用时 ×0.8）。
+  // 两个都给 1 就是「好坏一样快」的旧行为。
+  'affect.recover.neg': ['C4', 1.4],
+  'affect.recover.pos': ['C4', 0.8],
+  // 恢复还要看是「哪一种」坏：说不清的闷（lost/confused）拖得久，被凶一下（irritated）反而散得快，
+  // 高兴（joy/curious）散得最快，平静（calm/peaceful）居中。值是「用时倍数」，都在 1 就是只分正负。
+  'affect.recover.deep': ['C4', 1.3],
+  'affect.recover.sharp': ['C4', 0.9],
+  'affect.recover.bright': ['C4', 0.8],
+  'affect.recover.soft': ['C4', 1],
   // 底色自己的波浪（叠在段式慢波上）：日节律 + 累积负荷。
   // 日节律：一天一个来回，相位随 agent 定；0 = 关。
   'affect.baseline.circadian': ['C4', 0.06],
+  // 激素纹：水位上的脉冲（一两个小时一个尖，有大小、有安静的时候）+ 1/f 漂移，
+  // 刻意不平滑——真实激素不是一条漂亮的正弦。0 = 退回旧的三层平滑底色。
+  'affect.baseline.rough': ['C4', 0.08],
+  // 长周期：十几到三十几天一个来回，一天里根本看不出来（要拉「一月」才看得到）。
+  'affect.baseline.cycle': ['C4', 0.07],
   // 累积负荷（allostatic load）：一直偏着，水位本身被拖走；没刺激就代谢回来。
   // gain 大 / tau 长 = 几天缓不过来；都小 = 没心没肺。
   'affect.baseline.load.gain': ['C4', 0.01],
   'affect.baseline.load.tau': ['C4', 168],
+  // 睡眠：两段对话之间的夜里长空档。睡着时回落更快（λ × 这个倍数），醒来重置一部分。
+  // lambda=1 等于「睡着和醒着一样慢」，重置=0 等于「醒来不重置」，两个都给 0/1 就是旧行为。
+  'affect.sleep.lambda': ['C4', 1.5],
+  'affect.sleep.reset': ['C4', 0.06],
+  // 不可逆的那一层：水位的随机游走。sd 是稳态标准差（0 = 关，退回纯函数底色），
+  // tau 是「走散了多久会被拉回来」的时标（小时）。带状态、存库，重算不会变回原样。
+  'affect.walk.sd': ['C4', 0.03],
+  'affect.walk.tau': ['C4', 36],
+  // 节律被经历改写：深夜（23:00–06:00）还在说话，日节律的相位就往后挪一点（分钟/次，一小时最多一次），
+  // 平时按 tau 小时慢慢收回。nightShift=0 = 相位永远不动（旧行为）。
+  'affect.circ.nightShift': ['C4', 12],
+  'affect.circ.cap': ['C4', 180],
+  'affect.circ.tau': ['C4', 72],
+  // 快慢耦合：同一句刺激，水位低的时候反应更大、水位高的时候更扛得住。
+  // 0 = 关掉（谁说的话都一样重，旧行为）；0.5 = 水位差 1 倍时反应差 ±50%。
+  'affect.couple.gain': ['C4', 0.5],
+  // 自发扰动：很久没人说话的时候，偶尔自己心里动一下（没来由的烦 / 松一口气）。
+  // rate = 每 24 小时几次；idle = 至少要空多久才掷；mag = 那一下的强度。rate=0 关掉。
+  'affect.spont.rate': ['C4', 0.6],
+  'affect.spont.idle': ['C4', 3],
+  'affect.spont.mag': ['C4', 0.12],
   // 事件生命周期：同一段情绪几分钟内再来一句话 → 复现（重新点亮并加强）；刚散场又来 → 不应期打折
   'affect.event.renew': ['C4', 20],
   'affect.event.boost': ['C4', 0.2],

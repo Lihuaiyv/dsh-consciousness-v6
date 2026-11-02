@@ -128,8 +128,13 @@ CREATE TABLE IF NOT EXISTS relations(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'acquaintance',
   closeness REAL NOT NULL DEFAULT 0.2, trust REAL NOT NULL DEFAULT 0.2, dependence REAL NOT NULL DEFAULT 0.0,
   root INTEGER NOT NULL DEFAULT 0, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS persona_values(
-  agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.1, evidence TEXT,
+-- persona_values（旧十维价值观表）已随三观引擎清退：新库不再建，旧库只读不写。
+-- 世界观 / 人生观仍是独立的仪表，各自一张表（以前只在老库里手工建过，新库缺表会崩）。
+CREATE TABLE IF NOT EXISTS persona_worldview(
+  agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
+  updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key));
+CREATE TABLE IF NOT EXISTS persona_lifeview(
+  agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
   updated_at TEXT NOT NULL, PRIMARY KEY(agent_id, key));
 CREATE TABLE IF NOT EXISTS preferences(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, tag TEXT NOT NULL, aversion REAL NOT NULL DEFAULT 0.0,
@@ -161,13 +166,37 @@ CREATE TABLE IF NOT EXISTS action_log(
   status TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS chat_turns(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
-  pack TEXT, mood TEXT, created_at TEXT NOT NULL);
+  pack TEXT, mood TEXT, created_at TEXT NOT NULL, conversation_id TEXT);
 CREATE INDEX IF NOT EXISTS idx_chat_agent ON chat_turns(agent_id, created_at);
+-- 会话账（schema 13）：一段外部会话（QQ 私聊/群）归哪个意识体。
+-- 和 bindings 分开：bindings 管 DSH 网页会话，conversations 管外部通道；都不写死到配置里。
+CREATE TABLE IF NOT EXISTS conversations(
+  conversation_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  channel TEXT NOT NULL DEFAULT 'qq', handle TEXT NOT NULL DEFAULT '',
+  person_id TEXT, state TEXT NOT NULL DEFAULT 'active',
+  created_at TEXT NOT NULL, last_seen_at TEXT,
+  released_at TEXT, released_by TEXT);
+CREATE INDEX IF NOT EXISTS idx_conv_agent ON conversations(agent_id, last_seen_at DESC);
 CREATE TABLE IF NOT EXISTS proactive(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, text TEXT NOT NULL, reason TEXT,
   dim TEXT, state TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, delivered_at TEXT);
+-- 会话绑定（schema 12）：一个 session 同时只认一个 agent；一个 agent 可绑多段会话。
+-- state=bound 才注入；released 行留着可查（谁改的绑、什么时候）。
 CREATE TABLE IF NOT EXISTS bindings(
-  session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, created_at TEXT NOT NULL);
+  session_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, created_at TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'bound', source TEXT NOT NULL DEFAULT 'auto',
+  bound_at TEXT, last_seen_at TEXT, released_at TEXT, released_by TEXT);
+-- 每实例心跳账：调度器只认 next_at，不看进程内有没有 timer。
+CREATE TABLE IF NOT EXISTS heartbeats(
+  agent_id TEXT PRIMARY KEY, interval_ms INTEGER NOT NULL DEFAULT 300000,
+  next_at INTEGER NOT NULL, last_at INTEGER, last_ms INTEGER,
+  last_error TEXT, failures INTEGER NOT NULL DEFAULT 0,
+  skips INTEGER NOT NULL DEFAULT 0, mode TEXT NOT NULL DEFAULT 'auto',
+  deep_at INTEGER, deep_ms INTEGER NOT NULL DEFAULT 900000);
+-- 在场状态缓存（派生值：真值由 bindings + 时间算；这里只给界面/诊断读）。
+CREATE TABLE IF NOT EXISTS agent_runtime(
+  agent_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'idle',
+  since TEXT NOT NULL, reason TEXT, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS flags(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS algo_bindings(
   agent_id TEXT NOT NULL, name TEXT NOT NULL,
@@ -239,6 +268,24 @@ CREATE TABLE IF NOT EXISTS fact_archive(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fa_mem ON fact_archive(agent_id, memory_id);
 CREATE INDEX IF NOT EXISTS idx_fa_agent ON fact_archive(agent_id, created_at DESC);
 CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
+
+-- G1 时效索引（只追加、无正文）：每条记忆「何时出生 / 改写 / 作废 / 复活 / 有争议 / 被隐藏」。
+-- 正文永远从 fact_archive / raw_turns 取；这里只定位时间。写失败静默，漏记由夜巡对账补 SYNC。
+-- 只允许三处删行：单条硬删、意识体整删、journal 回滚。
+CREATE TABLE IF NOT EXISTS memory_timeline(
+  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id   TEXT NOT NULL,
+  memory_id  TEXT NOT NULL,
+  op         TEXT NOT NULL,
+  at         TEXT NOT NULL,
+  valid_from TEXT,
+  reason     TEXT,
+  cause_id   TEXT,
+  text_ref   TEXT,
+  actor      TEXT,
+  approx     INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_tl_mem ON memory_timeline(agent_id, memory_id, seq);
+CREATE INDEX IF NOT EXISTS idx_tl_at ON memory_timeline(agent_id, at);
 
 -- 检索回放日志：每次召回一行，用来调阈值（scene / 候选数 / 过门数 / 注入量 / 耗时）。
 -- 只用于观测，不进任何召回路径；默认留 30 天。
@@ -488,8 +535,26 @@ CREATE INDEX IF NOT EXISTS idx_browse_agent_at ON browse_items(agent_id, at DESC
 CREATE INDEX IF NOT EXISTS idx_browse_domain ON browse_items(agent_id, domain);
 `
 
+/** 升级前整份复制一份（含 WAL/SHM）；新库、已是最新、复制失败都不阻断启动。 */
+function backupBeforeUpgrade(file) {
+  try {
+    if (!fs.existsSync(file)) return
+    const probe = new DatabaseSync(file, { readOnly: true })
+    let v = 0
+    try { const r = probe.prepare('SELECT version FROM schema_meta').get(); v = Number(r && r.version || 0) } catch { v = 0 } finally { probe.close() }
+    if (!(v > 0 && v < 13)) return
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const dst = `${file}.bak-schema${v}-${stamp}`
+    fs.copyFileSync(file, dst)
+    for (const ext of ['-wal', '-shm']) {
+      if (fs.existsSync(file + ext)) fs.copyFileSync(file + ext, dst + ext)
+    }
+  } catch { /* 备份失败不阻断；迁移只加列 */ }
+}
+
 export function openDb(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
+  backupBeforeUpgrade(file)
   const db = new DatabaseSync(file)
   db.exec(SCHEMA)
   db.exec(EXT)
@@ -510,6 +575,9 @@ export function openDb(file) {
   try { db.exec('ALTER TABLE drive_state ADD COLUMN smooth TEXT') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE drive_state ADD COLUMN unlocked TEXT') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE proposals ADD COLUMN fork_artifact_id TEXT') } catch { /* 已存在 */ }
+  // schema 13：旧库补会话列（新库在建表时已有）；索引必须等列补完再建
+  try { db.exec('ALTER TABLE chat_turns ADD COLUMN conversation_id TEXT') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_turns(agent_id, conversation_id, created_at)') } catch { /* 老库异常不影响启动 */ }
   // 情绪 v3：底色 / 慢 / 快 / 总。独立表，不动 affect_state 的定长 INSERT。
   db.exec(`CREATE TABLE IF NOT EXISTS affect_v3(
     agent_id TEXT PRIMARY KEY, baseline REAL NOT NULL DEFAULT 0,
@@ -520,6 +588,14 @@ export function openDb(file) {
   // 累积负荷：底色的第三层（日节律之外）。被慢情绪的持续偏离拖走一点，几天代谢回来。
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN base_off REAL DEFAULT 0') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN base_off_at TEXT') } catch { /* 已存在 */ }
+  // 不可逆的那一层：水位的随机游走（带状态的，不是 (seed,t) 的纯函数）
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN walk REAL DEFAULT 0') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN walk_at TEXT') } catch { /* 已存在 */ }
+  // 日节律的相位偏移（分钟）：熬夜会把高点往后拖，平时自己收回来
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN circ_phase REAL DEFAULT 0') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN circ_phase_at TEXT') } catch { /* 已存在 */ }
+  // 这一段情绪是「哪一种」起的：恢复快慢按它算（被凶散得快、闷着拖得久）
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN rec_label TEXT') } catch { /* 已存在 */ }
   // 底色段表：一行一段，不靠 tick 累积
   db.exec(`CREATE TABLE IF NOT EXISTS affect_baseline(
     agent_id TEXT NOT NULL, seg_no INTEGER NOT NULL,
@@ -533,6 +609,8 @@ export function openDb(file) {
     reason TEXT, state TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL, expires_at TEXT);`)
   db.exec('CREATE INDEX IF NOT EXISTS idx_sq_agent ON surface_queue(agent_id, state, created_at)')
+// 生活流每天按 agent 查最近事件；events 只增不减，没索引会全表扫。
+try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, created_at DESC)') } catch { /* 索引失败不影响开库 */ }
   // 三观引擎：只增账本 + 投影缓存。开关（sangguan.enabled）关闭时只是空表，不影响其他模块。
   try {
     ensureSangguanSchema(db)
@@ -612,6 +690,31 @@ export function openDb(file) {
   try { db.exec('ALTER TABLE proactive ADD COLUMN answered INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE proactive ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE proactive ADD COLUMN answered_at TEXT') } catch { /* 已存在 */ }
+  // schema 12：会话绑定要能记住「谁改的、什么时候松的」；老库这里补列。
+  for (const [col, spec] of [
+    ['state', "TEXT NOT NULL DEFAULT 'bound'"], ['source', "TEXT NOT NULL DEFAULT 'auto'"],
+    ['bound_at', 'TEXT'], ['last_seen_at', 'TEXT'], ['released_at', 'TEXT'], ['released_by', 'TEXT'],
+  ]) {
+    try { db.exec(`ALTER TABLE bindings ADD COLUMN ${col} ${spec}`) } catch { /* 已存在 */ }
+  }
+  // 老库里「bindings」早就被写过（10 月底的老功能），补列时 state 的默认值会把它们
+  // 一起标成 bound——那等于凭空多出几段"正在挂"的对话。没有 bound_at 的就是老行，一律松开。
+  try { db.exec("UPDATE bindings SET state='released', released_by='legacy' WHERE bound_at IS NULL AND state='bound'") } catch { /* 老库没这表 */ }
+  // schema 12：在场状态与心跳时间直接挂到 agents 上，界面一次查询就能出全表。
+  for (const [col, spec] of [
+    ['runtime_state', "TEXT NOT NULL DEFAULT 'idle'"],
+    ['last_seen_at', 'TEXT'],
+    ['last_heartbeat_at', 'TEXT'],
+  ]) {
+    try { db.exec(`ALTER TABLE agents ADD COLUMN ${col} ${spec}`) } catch { /* 已存在 */ }
+  }
+  // schema 12：心跳分两档（零模型的 light / 可能调模型的 deep），各走各的到期时间
+  for (const [col, spec] of [
+    ['deep_at', 'INTEGER'],
+    ['deep_ms', 'INTEGER NOT NULL DEFAULT 900000'],
+  ]) {
+    try { db.exec(`ALTER TABLE heartbeats ADD COLUMN ${col} ${spec}`) } catch { /* 已存在 */ }
+  }
   try {
     db.exec(`CREATE TABLE IF NOT EXISTS proactive_stats(
       agent_id TEXT NOT NULL, dim TEXT NOT NULL,
@@ -738,9 +841,9 @@ export function openDb(file) {
     if (!cols.includes('weak')) db.exec('ALTER TABLE axis_evidence ADD COLUMN weak INTEGER DEFAULT 0')
   } catch { /* 老库补列失败不影响写入（写入时会再试） */ }
   const row = db.prepare('SELECT version FROM schema_meta').get()
-  // schema 11：行动层（action_config / research_seen / research_runs），关系域仍是 schema 10 的投影
-  if (!row) db.prepare('INSERT INTO schema_meta(version) VALUES(11)').run()
-  else db.prepare('UPDATE schema_meta SET version=11').run()
+  // schema 13：外部会话账（conversations）+ chat_turns.conversation_id；只加表加列，不动旧数据
+  if (!row) db.prepare('INSERT INTO schema_meta(version) VALUES(13)').run()
+  else db.prepare('UPDATE schema_meta SET version=13').run()
   return db
 }
 

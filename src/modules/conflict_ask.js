@@ -32,6 +32,30 @@ export function conflictAskText(aText, bText) {
   return '你先前说「' + A + '」，可后来又说「' + B + '」——到底哪个才是现在的呀？'
 }
 
+const ASK_DEDUP_DAYS = 7
+
+/** 只留字和数字：同一处矛盾换标点、换语序，归一化后还是同一句。 */
+function normClaim(text) {
+  return String(text || '').replace(/[，。！？、；：""''（）()\s]/g, '').slice(0, 60)
+}
+
+function sameClaim(a, b) {
+  if (!a || !b) return false
+  if (a === b) return true
+  const [s, l] = a.length <= b.length ? [a, b] : [b, a]
+  return s.length >= 8 && l.includes(s)
+}
+
+function samePair(ev, A, B) {
+  let a = ''
+  let b = ''
+  try {
+    a = normClaim((ev.attribute && ev.attribute.sentence_a) || ev.a_text || '')
+    b = normClaim((ev.attribute && ev.attribute.sentence_b) || ev.b_text || '')
+  } catch { return false }
+  return (sameClaim(a, A) && sameClaim(b, B)) || (sameClaim(a, B) && sameClaim(b, A))
+}
+
 /**
  * 给一条刚开的冲突排一条问句。同一个 id 对、或者同一对说法已经排过，就不再排。
  * @returns {null|{id:string, text:string}}
@@ -53,6 +77,26 @@ export function askAboutConflict(db, aid, { cid, aId, bId, aText, bText }) {
     }
     const text = conflictAskText(aText, bText)
     if (!text) return null
+    // 同一处矛盾被两条不同 conflict id 各开一次时，别问两遍。
+    // 归一化后比「说法对」和「问句本身」，7 天内问过就跳过。
+    const A = normClaim(aText)
+    const B = normClaim(bText)
+    const since = new Date(Date.now() - ASK_DEDUP_DAYS * 86400000).toISOString()
+    try {
+      const recent = db.prepare(
+        "SELECT evidence FROM conflicts WHERE agent_id=? AND id<>? AND opened_at>=?",
+      ).all(aid, cid, since)
+      for (const r of recent) {
+        let ev = {}
+        try { ev = JSON.parse(r.evidence || '{}') } catch { ev = {} }
+        if (samePair(ev, A, B)) return null
+      }
+      const asked = db.prepare(
+        "SELECT text FROM proactive WHERE agent_id=? AND reason LIKE 'conflict:%' AND created_at>=?",
+      ).all(aid, since)
+      const nText = normClaim(text)
+      if (asked.some((r) => sameClaim(normClaim(r.text), nText))) return null
+    } catch { /* 去重查不动就照常问，不能因为查重失败把话说没 */ }
     const id = nid('prc_')
     db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
       .run(id, aid, text, 'conflict:' + cid, 'R', 'pending', now(), null)

@@ -34,8 +34,9 @@ const clamp01 = (x) => clamp(x, 0, 1)
 /** 慢情绪追快情绪的速率（每小时）。α+β 决定「多久退掉」，α:β 决定「谁说话更算数」 */
 export const SLOW_ALPHA = 0.09
 /** 底色回归（每小时）。不能太小：太小等于底色没力气，慢情绪会黏在刚才那一下上；
- *  现在 α:β ≈ 4.5:3 → 稳态里五成半由刚才的事定，四成由水位定，底色自己的波浪才透得出来。 */
-export const SLOW_BETA = 0.07
+ *  也不能太大：太大就成了没心没肺。现在 α:β ≈ 9:11 → 稳态里四成半由刚才的事定、五成半由水位定，
+ *  水位拉得回来，但一件大事仍然改得动她。 */
+export const SLOW_BETA = 0.11
 /** 标签先验的拉力（每小时）：只留一丝，不让它冒充底色 */
 export const SLOW_W_LABEL = 0.005
 
@@ -89,6 +90,18 @@ export function fastOf({ fSelf = 0, eUser = 0, ePrev = 0, closeness = 0.5, kappa
   const c = clamp01(num(closeness, 0.5))
   const w = clamp(num(kappa, EMPATHY_KAPPA), 0, 1) * Math.abs(e) * (num(closeBase, CLOSE_BASE) + num(closeSpan, CLOSE_SPAN) * c)
   const out = num(fSelf, 0) + w * e + num(sway, EMPATHY_SWAY) * w * (e - prev)
+  return Math.round(clamp(out, -1, 1) * 1000) / 1000
+}
+
+/**
+ * 快慢耦合：同样的刺激，水位低（累了、压着）的时候反应更大，水位高的时候更扛得住。
+ * couple = 1 − gain·b，夹在 0.4~2 之间；gain=0 就是旧的「加不加都一样」。
+ */
+export function coupledF(raw = 0, b = 0, gain = 0) {
+  const g = Math.max(0, num(gain, 0))
+  const bb = clamp(num(b, 0), -1, 1)
+  const couple = clamp(1 - g * bb, 0.4, 2)
+  const out = num(raw, 0) * couple
   return Math.round(clamp(out, -1, 1) * 1000) / 1000
 }
 

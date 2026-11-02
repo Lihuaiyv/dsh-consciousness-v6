@@ -9,6 +9,7 @@
 
 import { now } from '../db.js'
 import { nid } from '../kernel.js'
+import { timelineDrift } from './timeline.js'
 
 export const KEEP_DAYS = 30
 
@@ -101,4 +102,24 @@ export function retrievalStats(db, aid, days = 7) {
     tokens: total ? Math.round(scenes.reduce((s, x) => s + x.tokens * x.calls, 0) / total) : 0,
     scenes,
   }
+}
+/**
+ * 记忆体检：召回健康度 + 时效索引漂移 + 待处理冲突。
+ * 面板 / 夜巡 / 脚本都能调；只读，不改任何东西。
+ */
+export function memoryHealth(db, aid) {
+  let timeline_drift = { total: 0, drift: 0, missing: 0 }
+  try { timeline_drift = timelineDrift(db, aid) } catch { /* 老库没有时效索引 */ }
+  let mem = { active: 0, soft_deleted: 0 }
+  try {
+    const r = db.prepare(`SELECT SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) active,
+        SUM(CASE WHEN status='soft_deleted' THEN 1 ELSE 0 END) soft
+      FROM memory_items WHERE agent_id=?`).get(aid)
+    mem = { active: Number(r && r.active || 0), soft_deleted: Number(r && r.soft || 0) }
+  } catch { /* 忽略 */ }
+  let conflicts_open = 0
+  try { conflicts_open = Number(db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=? AND state='open'").get(aid).n || 0) } catch { /* 忽略 */ }
+  let retrieval = null
+  try { retrieval = retrievalStats(db, aid, 7) } catch { /* 忽略 */ }
+  return { memory: mem, conflicts_open, timeline_drift, retrieval }
 }

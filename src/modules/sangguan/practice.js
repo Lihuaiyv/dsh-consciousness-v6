@@ -4,6 +4,7 @@
  */
 import { LAYERS, isCoreKind, isTerminal, SIGMA_OPEN, BELT_KINDS } from './catalog.js'
 import { theta } from './fold.js'
+import { settleMiss } from './pledge.js'
 import { loadState } from './projection.js'
 import { append, newId, readEvents } from './ledger.js'
 import { call } from './llm.js'
@@ -254,6 +255,21 @@ export async function checkDue(db, aid, now, opt = {}) {
   // §8.1：(t_reg, t_due] 内找不到外部记录 → void，[D] 判定，不花 J7
   const withRec = []
   for (const n of due) {
+    // 自己许的承诺：只看「这一条 ν 上有没有正面证据」，不看旁证——做到了才算数，否则算没做到
+    if (/^我答应/.test(String(texts[n.claim_id] || ''))) {
+      const hit = readEvents(db, aid, { types: ['EVIDENCE'] })
+        .some((e) => (e.payload.evidence || []).some((x) => x.target_type === 'nu' && x.target_id === n.id && x.sign > 0))
+      try {
+        if (hit) {
+          append(db, aid, [{ type: 'NU_RESOLVE', actor: 'sys', at: now, payload: { nu_id: n.id, outcome: 'hit', why: 'pledge_done' } }], { nus: { [n.id]: 'pending' } })
+          did.push({ id: n.id, outcome: 'hit' })
+        } else {
+          settleMiss(db, aid, n, now)
+          did.push({ id: n.id, outcome: 'miss' })
+        }
+      } catch (e) { skipped.push({ id: n.id, reason: e.code || 'ERR' }) }
+      continue
+    }
     const recs = recordsFor(db, aid, n)
     const nuIds = Object.values(s.nus).filter((x) => x.claim_id === n.claim_id).map((x) => x.id)
     const picked = pickRecords(recs, n.claim_id, nuIds)
@@ -315,6 +331,30 @@ export async function checkDue(db, aid, now, opt = {}) {
     }
   }
   return { status: 'done', due: due.length, did, skipped }
+}
+
+/**
+ * N1b：卡死的 κ。开了超过 T_stale 天、一次都没被审议过的 struggle，自动挂起：
+ * 两极回 active（那句重新能被听见），κ 留着以后还能 REOPEN。
+ * 没有这一步，三次违背会把一句话永久下架——没有模型就永远回不来。
+ */
+export function suspendStaleKappas(db, aid, now, opt = {}) {
+  if (opt.requireEnabled !== false && !isEnabled(db, aid) && !opt.force) return { did: [], off: true }
+  const s = loadState(db, aid)
+  const days = Number(opt.days) > 0 ? Number(opt.days) : (theta(s, 'T_stale') || 21)
+  const since = Date.parse(now) - days * 86400000
+  const deliberated = new Set(readEvents(db, aid, { types: ['DELIBERATE'] }).map((e) => e.payload && e.payload.kappa_id))
+  const did = []
+  for (const k of Object.values(s.kappas)) {
+    if (k.sigma !== 'struggle') continue
+    if (deliberated.has(k.id)) continue
+    if (!(Date.parse(k.opened_at) <= since)) continue
+    try {
+      append(db, aid, [{ type: 'SUSPEND', layer: k.layer, actor: 'sys', at: now, payload: { kappa_id: k.id, why: 'stale:' + days + 'd' } }], { kappas: { [k.id]: 'struggle' } })
+      did.push({ id: k.id, layer: k.layer })
+    } catch { /* 已被别处改过 */ }
+  }
+  return { did }
 }
 
 /** L3 惊奇（Eq.16）：hit 为 −ln p，miss 为 −ln(1−p)；void 无惊奇。 */

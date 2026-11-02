@@ -15,7 +15,8 @@ export function liveValueClaims(db, aid) {
     const s = loadState(db, aid)
     const tx = new Map(db.prepare('SELECT id, text FROM persona_claims WHERE agent_id=?').all(aid).map((r) => [r.id, r.text || '']))
     return Object.values(s.claims)
-      .filter((c) => c.layer === 'V' && !isTerminal(c.status))
+      // commit（承诺）不是价值取向：不进十维，免得把待办当成人格
+      .filter((c) => c.layer === 'V' && !isTerminal(c.status) && c.kind !== 'commit')
       .map((c) => ({ id: c.id, text: tx.get(c.id) || '', pi: c.pi, n: c.n }))
   } catch {
     return []

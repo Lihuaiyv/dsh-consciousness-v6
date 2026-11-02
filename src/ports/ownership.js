@@ -95,11 +95,21 @@ export const OWNERSHIP = {
       'relations', 'rel_person', 'affect_v3', 'condition_state', 'browse_items', 'affect_state',
     ],
   },
+  selfhood: {
+    // 生活流 / 自我改写 / 反刍：只写自己的事件、记忆来源和 persona 白名单
+    files: ['modules/life.js', 'modules/self_author.js', 'modules/reappraise.js'],
+    tables: [
+      'events', 'memory_items', 'agent_params', 'persona', 'changes',
+      'affect_samples', 'affect_state', 'conflicts', 'proactive',
+    ],
+  },
   selfmod: {
     files: ['modules/selfmod.js', 'modules/selfmod_store.js', 'modules/artifacts.js'],
     tables: [
       'proposals', 'changes', 'rule_versions', 'inbox_items', 'metric_samples',
       'rule_artifacts', 'agent_bindings', 'chat_turns', 'drive_state', 'change_journal',
+      // 回滚她自己改的样子（persona.style.*）时按 changes.before 写回
+      'persona',
     ],
   },
   ops: {
@@ -112,9 +122,9 @@ export const OWNERSHIP = {
       'open_loops',
       'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'drive_state',
       'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'alerts', 'algo_bindings',
-      'agent_params', 'agent_bindings', 'rule_artifacts',
+      'agent_params', 'agent_bindings', 'rule_artifacts', 'proactive',
       // 分层记忆的级联清理
-      'episodes', 'diaries', 'raw_turns', 'raw_fts', 'fact_archive', 'fact_fts',
+      'episodes', 'diaries', 'raw_turns', 'raw_fts', 'fact_archive', 'fact_fts', 'memory_timeline',
       // 人物账本的级联清理（purge 时按子表 → person 顺序删）
       'rel_mention', 'rel_evidence', 'rel_edge', 'rel_channel', 'rel_extract_queue', 'rel_review', 'rel_event', 'rel_person',
     ],
@@ -130,7 +140,7 @@ export const OWNERSHIP = {
       // 累计重要性 → 反思的游标（consolidate.js 读写）
       'reflect_cursor',
       // 只读：写日记时快照状态、仓库统计体量、注入用量
-      'persona', 'persona_values', 'drive_state', 'relations', 'preferences', 'taboos', 'metric_samples',
+      'persona', 'persona_values', 'drive_state', 'relations', 'preferences', 'taboos', 'metric_samples', 'conflicts',
       // 只读：检索时的实体扩散（entities）与同实体一跳（memory_links）
       'entities', 'memory_links',
       // 向量通道：检索读已存向量
@@ -143,8 +153,15 @@ export const OWNERSHIP = {
   },
   writegate: {
     // 写入侧：实体归一化 / 写入门控 / 抽取队列 / 检索卡补写（门控只改 memory_items 的强化计数）
+    // fact_archive：原地改写的旧句留底（`<id>:hist:<version>`）
     files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js'],
-    tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts'],
+    tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive'],
+  },
+  timeline: {
+    // G1 时效索引：只追加写 memory_timeline；作废 / 复活仍按原 UPDATE 写 memory_items。
+    // 其余只读：正文从 memory_items / fact_archive 取，说话时间从 raw_turns / episodes 认。
+    files: ['modules/timeline.js', 'modules/timeparse.js', 'modules/asof.js'],
+    tables: ['memory_timeline', 'memory_items', 'fact_archive', 'raw_turns', 'episodes', 'conflicts', 'flags'],
   },
   sangguan: {
     // 三观引擎：L0 只增账本 + 可重建投影 + 判定缓存；claim_purge 只在整 agent 清除的事务里存在
@@ -171,7 +188,7 @@ export const OWNERSHIP = {
       'events', 'agents', 'flags', 'bindings', 'chat_turns', 'proactive', 'proactive_stats', 'proactive_decisions',
       'affect_episodes', 'memory_items', 'memory_fts', 'sqlite_master',
       // 全量导出 / 导入清单
-      'fact_archive', 'fact_fts', 'raw_turns', 'episodes', 'diaries',
+      'fact_archive', 'fact_fts', 'raw_turns', 'episodes', 'diaries', 'memory_timeline',
       // 全量导出动态 ${t}（扫不到）；保留导出清单核心表以防静态化
       'memory_links', 'persona', 'affect_state', 'alerts', 'drive_state',
       'open_loops',

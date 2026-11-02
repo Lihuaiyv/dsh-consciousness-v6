@@ -3,9 +3,11 @@ import { model, err, nid, agent, active, event, getParam, getFlag, setFlag } fro
 import { nudgeDeficit } from './drive.js'
 import { readAxes } from './traits.js'
 import { runBound } from '../algo/index.js'
-import { planSegments, valueAt, valueAtTime, circadianAt, stepLoad } from '../algo/baseline.js'
-import { stepSlow, fastOf, totalOf, SLOW_ALPHA, SLOW_BETA } from '../algo/emotion.js'
+import { planSegments, valueAt, valueAtTime, circadianAt, rhythmAt, stepLoad } from '../algo/baseline.js'
+import { stepSlow, fastOf, totalOf, coupledF, SLOW_ALPHA, SLOW_BETA } from '../algo/emotion.js'
 import { PAD_PRIOR } from '../algo/affect_dyn.js'
+import { classifyGap, decayCurve, wakeReset, localHour } from '../algo/sleep.js'
+import { stepWalk } from '../algo/walk.js'
 import { significanceOf, gateOf, labelMargin, socialFloorOf, GATE } from '../algo/gate.js'
 
 const HOUR_MS = 3600000
@@ -52,9 +54,14 @@ function ensureBaseline(db, aid, untilMs) {
   return segs
 }
 
-/** 某个时刻的底色值 */
+/** 某个时刻的底色值（段式慢波 + 日节律 + 激素纹；不含累积负荷，负荷要读库） */
 export function baselineNow(db, aid, atMs = Date.now()) {
-  return valueAtTime(ensureBaseline(db, aid, atMs), atMs)
+  const circAmp = paramNum(db, aid, 'affect.baseline.circadian', 0.06, 0, 0.3)
+  const roughAmp = paramNum(db, aid, 'affect.baseline.rough', 0.08, 0, 0.2)
+  const cycleAmp = paramNum(db, aid, 'affect.baseline.cycle', 0.07, 0, 0.2)
+  return Math.round((valueAtTime(ensureBaseline(db, aid, atMs), atMs)
+    + circadianAt(atMs, aid, circAmp)
+    + rhythmAt(atMs, aid, { rough: roughAmp, cycle: cycleAmp })) * 1000) / 1000
 }
 
 /**
@@ -475,6 +482,10 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   const alpha = paramNum(db, aid, 'affect.slow.alpha', SLOW_ALPHA, 0, 1)
   const beta = paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 1)
   const circAmp = paramNum(db, aid, 'affect.baseline.circadian', 0.06, 0, 0.3)
+  /* 水位上的激素纹：脉冲 + 1/f 漂移，再加一条二三十天的长周期。0 = 退回旧的三层平滑底色。 */
+  const roughAmp = paramNum(db, aid, 'affect.baseline.rough', 0.08, 0, 0.2)
+  const cycleAmp = paramNum(db, aid, 'affect.baseline.cycle', 0.07, 0, 0.2)
+  const rhythm = (ms) => rhythmAt(ms, aid, { rough: roughAmp, cycle: cycleAmp })
   const loadGain = paramNum(db, aid, 'affect.baseline.load.gain', 0.01, 0, 0.2)
   const loadTau = paramNum(db, aid, 'affect.baseline.load.tau', 168, 1, 8760)
   /* 累积负荷：底色的第三层。存的是「水位被拖走了多少」，跟着慢情绪走、自己代谢。 */
@@ -495,16 +506,68 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   }
   const MAX_BACKFILL_MS = 720 * HOUR_MS // 上限只防坏时钟；30 天内照算
   const endMs = Math.min(at, fromMs + MAX_BACKFILL_MS)
+  /* 不可逆的那一层：水位自己走的那点随机。带状态、存在库里——走过就是走过，
+     重算历史不会把它变回原样。sd 给 0 就退回纯函数底色。 */
+  const walkSd = paramNum(db, aid, 'affect.walk.sd', 0.03, 0, 0.2)
+  const walkTau = paramNum(db, aid, 'affect.walk.tau', 36, 1, 720)
+  const walkFromMs = cur.walk_at ? Date.parse(cur.walk_at) : endMs
+  const walkDtH = Number.isFinite(walkFromMs) ? Math.max(0, (endMs - walkFromMs) / HOUR_MS) : 0
+  const walk = stepWalk({
+    walk: Number(cur.walk) || 0,
+    dtHours: walkDtH,
+    tauH: walkTau,
+    sd: walkSd,
+  })
+  /* 日节律被经历改写：熬夜会把相位往后拖（一晚最多挪一档），平时按 tau 自己收回。
+     存的是「此刻的相位偏移」，所以历史不是靠今天重算出来的。 */
+  const phaseTauH = paramNum(db, aid, 'affect.circ.tau', 72, 6, 720)
+  const phaseCap = paramNum(db, aid, 'affect.circ.cap', 180, 0, 720)
+  const nightShift = paramNum(db, aid, 'affect.circ.nightShift', 12, 0, 60)
+  const phaseGapH = Math.max(0, (endMs - fromMs) / HOUR_MS)
+  let circPhase = (Number(cur.circ_phase) || 0) * Math.exp(-phaseGapH / phaseTauH)
+  const lastPhaseMs = cur.circ_phase_at ? Date.parse(cur.circ_phase_at) : NaN
+  const sincePhaseH = Number.isFinite(lastPhaseMs) ? (at - lastPhaseMs) / HOUR_MS : Infinity
+  const hourAt = localHour(at)
+  const lateNight = hourAt >= 23 || hourAt < 6
+  let phaseNudged = false
+  if (nightShift > 0 && lateNight && sincePhaseH >= 1) {
+    circPhase = Math.min(phaseCap, circPhase + nightShift)
+    phaseNudged = true
+  }
+  circPhase = Math.round(circPhase * 100) / 100
+  /* 这一整段是不是睡过去了：按本地时间判（夜里长空档）。睡着时回落更快，
+     醒来再往水位重置一段——睡一觉不能等于什么都没发生。 */
+  const sleepGap = classifyGap(fromMs, endMs)
+  const sleepMul = paramNum(db, aid, 'affect.sleep.lambda', 1.5, 0.5, 4)
+  const nightMul = sleepGap && sleepGap.kind === 'sleep' ? sleepMul : 1
+  /* 恢复速度分正负：低落退得慢、被抬高退得快（neg/pos 是「用时倍数」） */
+  const recNeg = paramNum(db, aid, 'affect.recover.neg', 1.4, 0.5, 4)
+  const recPos = paramNum(db, aid, 'affect.recover.pos', 0.8, 0.5, 4)
+  /* 还要看是哪一种：说不清的闷拖得久、被凶一下散得快、高兴散得最快。
+     用「这段情绪是谁起的」（rec_label），不是用这一句话的标签——中间插一句 calm 不该把速度洗掉 */
+  const recLabel = labelRecMul(cur.rec_label || label, readRecLabelParams(db, aid))
   let cursor = fromMs
   while (cursor < endMs) {
     const next = Math.min(endMs, cursor + HOUR_MS)
     const dtHours = (next - cursor) / HOUR_MS
     const mid = (cursor + next) / 2
     /* 底色 = 段式慢波 + 日节律 + 累积负荷；三层叠起来才是会呼吸的水位 */
-    const bPlan = valueAtTime(segs, mid) + circadianAt(mid, aid, circAmp)
+    const bPlan = valueAtTime(segs, mid) + circadianAt(mid, aid, circAmp, circPhase) + rhythm(mid) + walk
     const bEff = Math.max(-1, Math.min(1, bPlan + load))
     const fSeg = avgOver((ms) => warmthAt(ms, bEff), cursor, next)
-    s = stepSlow({ s, b: bEff, p, fHourly: fSeg, dtHours, alpha, beta })
+    /* 恢复的快慢看是哪一边：低于水位（低落）按 neg 拉长，高于水位（被抬高）按 pos 缩短。
+       贴着水位时不来回切（死区 0.01），免得在 0 附近抖出花来。 */
+    const dev = s - bEff
+    /* 正负那一层 × 标签那一层：两条都是「用时倍数」，转成速率要取倒数 */
+    const recMul = (Math.abs(dev) < 0.01 ? 1 : (dev < 0 ? 1 / recNeg : 1 / recPos)) / recLabel
+    /* λ 乘在 α（追快情绪）和 β（回底色）上，比例不变、只变快慢 */
+    s = stepSlow({
+      s, b: bEff, p, fHourly: fSeg, dtHours,
+      alpha: alpha * nightMul * recMul, beta: beta * nightMul * recMul,
+    })
+    if (process.env.DSHC_DEBUG_SLOW) {
+      console.log('[slow] dt=' + dtHours.toFixed(4), 'bEff=' + bEff.toFixed(3), 'fSeg=' + fSeg.toFixed(3), 'p=' + Number(p).toFixed(2), 's=' + s, 'alpha=' + alpha, 'beta=' + beta, 'recMul=' + (recMul || 0).toFixed(3), 'recLabel=' + recLabel)
+    }
     /* 负荷被「这一段慢情绪偏离水位多少」拖着走：偏得久 → 水位跟着挪 → 缓过来也慢 */
     load = stepLoad({ load, s, bPlan, dtHours, gain: loadGain, tauH: loadTau })
     cursor = next
@@ -516,23 +579,124 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   let dtMin = Number.isFinite(lastFastMs) ? (at - lastFastMs) / 60000 : 0
   if (!Number.isFinite(dtMin) || dtMin < 0) dtMin = 0
   dtMin = Math.min(dtMin, 240)
-  const level = fastOf({ fSelf: Number(pleasure) || 0, eUser, ePrev, closeness })
+  const bPlanNow = valueAtTime(segs, at) + circadianAt(at, aid, circAmp, circPhase) + rhythm(at) + walk
+  const bNow = Math.max(-1, Math.min(1, bPlanNow + load))
+  /* 快慢耦合：同一句话，人累的时候反应更大、心情好的时候更扛得住。
+     couple = 1 − gain·b：水位低（负）时放大，水位高时收一点。gain=0 就是旧的「加不加都一样」。 */
+  const coupleGain = paramNum(db, aid, 'affect.couple.gain', 0.5, 0, 2)
+  const rawLevel = fastOf({ fSelf: Number(pleasure) || 0, eUser, ePrev, closeness })
+  const level = coupledF(rawLevel, bNow, coupleGain)
   const f = fresh
     ? level
     : Math.round((level + (fPrev - level) * fastDecayOf(db, aid, dtMin)) * 1000) / 1000
+  /* 醒来那一下：往水位重置一段，但走不满——睡 8 小时清掉将近一半，剩下的气过夜还在 */
+  if (sleepGap && sleepGap.kind === 'sleep') {
+    const resetPerH = paramNum(db, aid, 'affect.sleep.reset', 0.06, 0, 0.3)
+    const before = s
+    s = wakeReset({ s, b: bNow, hours: sleepGap.hours, perHour: resetPerH })
+    try {
+      event(db, aid, 'affect.sleep', {
+        hours: Math.round(sleepGap.hours * 100) / 100,
+        night_hours: sleepGap.night_hours,
+        s_before: before,
+        s_after: s,
+        shift: Math.round((s - before) * 1000) / 1000,
+        per_hour: resetPerH,
+      })
+    } catch { /* 日志失败不影响对话 */ }
+  }
   const total = totalOf(s, f)
-  const bPlanNow = valueAtTime(segs, at) + circadianAt(at, aid, circAmp)
-  const bNow = Math.max(-1, Math.min(1, bPlanNow + load))
   const stamp = new Date(at).toISOString()
-  db.prepare('UPDATE affect_v3 SET baseline=?, slow=?, fast=?, total=?, slow_at=?, fast_at=?, base_off=?, base_off_at=? WHERE agent_id=?')
-    .run(bNow, s, f, total, stamp, stamp, load, stamp, aid)
+  /* 这一段情绪是哪种起的：刚进来一句有分量的，就换标签；否则保留原来那段 */
+  const recLabelNow = fresh && Math.abs(Number(pleasure) || 0) >= 0.05 ? label : (cur.rec_label || label)
+  db.prepare('UPDATE affect_v3 SET baseline=?, slow=?, fast=?, total=?, slow_at=?, fast_at=?, base_off=?, base_off_at=?, walk=?, walk_at=?, circ_phase=?, circ_phase_at=?, rec_label=? WHERE agent_id=?')
+    .run(bNow, s, f, total, stamp, stamp, load, stamp, walk, stamp, circPhase,
+      phaseNudged ? stamp : (cur.circ_phase_at || stamp), recLabelNow, aid)
   return {
     baseline: bNow, slow: s, fast: f, total,
     baseOff: load,
+    walk,
+    circPhase,
     fastSelf: Number(pleasure) || 0,
     fastEmpathy: f - (Number(pleasure) || 0),
     eUser, ePrev, hours,
   }
+}
+
+/** 自发扰动里能冒出来的几种「没来由」：没有事件，也没有人说话，就是心里起了一下 */
+const SPONT_POS = ['peaceful', 'calm', 'curious']
+const SPONT_NEG = ['irritated', 'frustrated', 'lost', 'confused']
+
+/**
+ * 自发的小起伏：很久没人说话的时候，偶尔自己心里动一下。
+ *
+ * 为什么要有它：现在所有情绪都要靠「有人说话」才动，没人理的整天就是一条死线。
+ * 真人不是——空着的下午也会突然烦一下、松一口气，而且这一下也会留在情绪里。
+ *
+ * 规则（纯泊松，不攒次数）：
+ *   - 空档不够长（默认 3 小时）不掷；
+ *   - 每次心跳按「过了多久 × 每天几次」掷一次，落在哪次就哪次；
+ *   - 方向偏向她此刻的心情（已经低着就更可能往下，高着就往上），不是纯随机。
+ * rate=0 就是关掉，回到「没人说话就不动」的旧行为。
+ */
+export function spontaneousTick(db, aid, at = Date.now(), { rnd = Math.random } = {}) {
+  const rate = paramNum(db, aid, 'affect.spont.rate', 0.6, 0, 48)
+  if (!(rate > 0)) return null
+  const idleMinH = paramNum(db, aid, 'affect.spont.idle', 3, 0.5, 72)
+  const mag = paramNum(db, aid, 'affect.spont.mag', 0.12, 0, 0.5)
+  let lastMs = NaN
+  try {
+    /* 没跟人说过话的新实例：拿创建时间当「上次互动」，别一出生就当她孤独了很久 */
+    const a = db.prepare('SELECT last_interaction_at, created_at FROM agents WHERE id=?').get(aid)
+    const raw = (a && a.last_interaction_at) || (a && a.created_at) || ''
+    lastMs = raw ? Date.parse(raw) : NaN
+  } catch { lastMs = NaN }
+  const idleH = Number.isFinite(lastMs) ? (at - lastMs) / HOUR_MS : Infinity
+  if (!(idleH >= idleMinH)) return null
+  /* 上一次掷点是多久以前：泊松的等待时间只跟过了多久有关，不攒次数、不补掷 */
+  const key = 'affect.spont.at:' + aid
+  let prevMs = NaN
+  try { prevMs = Date.parse(getFlag(db, key) || '') } catch { prevMs = NaN }
+  const dtH = Number.isFinite(prevMs) ? Math.max(0, (at - prevMs) / HOUR_MS) : 1
+  try { setFlag(db, key, new Date(at).toISOString()) } catch { /* 记不上就下轮再算 */ }
+  const p = 1 - Math.exp(-rate * Math.min(dtH, 24) / 24)
+  if (!(rnd() < p)) return null
+  let sBefore = 0
+  try { sBefore = Number(db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(aid).slow) || 0 } catch { sBefore = 0 }
+  const down = sBefore < -0.05 ? true : sBefore > 0.05 ? false : rnd() < 0.5
+  const pool = down ? SPONT_NEG : SPONT_POS
+  const label = pool[Math.floor(rnd() * pool.length) % pool.length]
+  const pleasure = Math.round((down ? -1 : 1) * mag * (0.4 + 0.6 * rnd()) * 1000) / 1000
+  let v3 = null
+  try { v3 = applyEmotionV3(db, aid, { pleasure, label, eUser: 0, closeness: 0.5, at, fresh: true }) } catch { v3 = null }
+  if (!v3) return null
+  try {
+    event(db, aid, 'affect.spontaneous', {
+      label,
+      pleasure,
+      idle_h: Number.isFinite(idleH) ? Math.round(idleH * 10) / 10 : null,
+      rate,
+      s_before: Math.round(sBefore * 1000) / 1000,
+      s_after: v3.slow,
+    })
+  } catch { /* 日志失败不影响情绪 */ }
+  try {
+    sampleAffect(db, aid, label, Math.abs(pleasure), {
+      pleasure: v3.fast, arousal: 0, dominance: 0,
+    }, {
+      slow: v3.slow,
+      fast: v3.fast,
+      total: v3.total,
+      baseline: v3.baseline,
+      base_off: v3.baseOff,
+      walk: v3.walk,
+      circ_phase: v3.circPhase,
+      fast_self: v3.fastSelf,
+      fast_empathy: v3.fastEmpathy,
+      spontaneous: true,
+    }, at)
+  } catch { /* 样本写不上不影响情绪 */ }
+  return { label, pleasure, idleH, s_before: sBefore, s_after: v3.slow, baseline: v3.baseline }
 }
 
 const DECAY_TAU_H = 6 // 强度回落的时标（× 敏感度）：约 8 小时后剩下三成
@@ -549,6 +713,31 @@ function paramNum(db, aid, key, dflt, lo, hi) {
   const v = Number(getParam(db, aid, key))
   const x = Number.isFinite(v) ? v : dflt
   return Math.max(lo, Math.min(hi, x))
+}
+
+/* 恢复快慢的「哪一类」：说不清的闷拖得久，被凶一下散得快，高兴散得最快，平静居中 */
+const REC_DEEP = new Set(['lost', 'confused'])
+const REC_SHARP = new Set(['irritated'])
+const REC_BRIGHT = new Set(['joy', 'curious'])
+const REC_SOFT = new Set(['peaceful', 'calm'])
+
+function readRecLabelParams(db, aid) {
+  return {
+    deep: paramNum(db, aid, 'affect.recover.deep', 1.3, 0.5, 4),
+    sharp: paramNum(db, aid, 'affect.recover.sharp', 0.9, 0.5, 4),
+    bright: paramNum(db, aid, 'affect.recover.bright', 0.8, 0.5, 4),
+    soft: paramNum(db, aid, 'affect.recover.soft', 1, 0.5, 4),
+  }
+}
+
+/** 这一种情绪「用时倍数」：>1 代表退得比平均更久 */
+function labelRecMul(label, p) {
+  const l = String(label || '')
+  if (REC_DEEP.has(l)) return p.deep
+  if (REC_SHARP.has(l)) return p.sharp
+  if (REC_BRIGHT.has(l)) return p.bright
+  if (REC_SOFT.has(l)) return p.soft
+  return 1
 }
 
 /** 强度回落的时标（小时）。affect.decay <= 0 表示关掉衰减（返回 0 由调用方判断）。 */
@@ -703,6 +892,8 @@ export function affectTrend(db, aid, days = 7) {
   let segs = []
   try { segs = ensureBaseline(db, aid, toMs) } catch { segs = [] }
   const circAmp = paramNum(db, aid, 'affect.baseline.circadian', 0.06, 0, 0.3)
+  const roughAmp = paramNum(db, aid, 'affect.baseline.rough', 0.08, 0, 0.2)
+  const cycleAmp = paramNum(db, aid, 'affect.baseline.cycle', 0.07, 0, 0.2)
   const rows = db.prepare('SELECT * FROM affect_samples WHERE agent_id=? AND at>=? ORDER BY at').all(aid, new Date(fromMs).toISOString())
 
   const points = []
@@ -724,21 +915,130 @@ export function affectTrend(db, aid, days = 7) {
     const noRead = fRaw === null || Math.abs(fRaw) >= 0.9995
     /* 拆得开就拆，拆不开就老实给 null —— 不编一个「共情 0.00」糊上去 */
     const bo = Number.isFinite(Number(d.base_off)) ? Number(d.base_off) : 0
+    /* 随机游走只认「这条样本当时记下来的那个值」：老样本没有就是 0，不拿今天的 walk 去改历史。
+       null / 没这个键都算「没记」，不能拿 Number(null)=0 混过去 */
+    const walkRaw = d.walk === null || d.walk === undefined || d.walk === '' ? NaN : Number(d.walk)
+    const wk = Number.isFinite(walkRaw) ? walkRaw : 0
+    const phRaw = d.circ_phase === null || d.circ_phase === undefined || d.circ_phase === '' ? NaN : Number(d.circ_phase)
+    const ph = Number.isFinite(phRaw) ? phRaw : 0
     points.push({
       at,
-      /* 底色 = 段式慢波 + 日节律 + 当时的累积负荷。老样本没存负荷，就只画前两层（少的那层不拿 0 硬补）。 */
-      b: segs.length ? Math.round((valueAtTime(segs, at) + circadianAt(at, aid, circAmp) + bo) * 1000) / 1000 : 0,
+      /* 底色 = 段式慢波 + 日节律 + 当时的累积负荷 + 当时走过的那点随机。老样本没存负荷/游走，就只画有的那几层（不拿 0 硬补成一模一样）。 */
+      b: segs.length ? Math.round((valueAtTime(segs, at) + circadianAt(at, aid, circAmp, ph)
+        + rhythmAt(at, aid, { rough: roughAmp, cycle: cycleAmp }) + bo + wk) * 1000) / 1000 : 0,
       s: sVal,
       f: noRead ? null : Math.round(fRaw * 1000) / 1000,
       fs: Number.isFinite(Number(d.fast_self)) ? Math.round(Number(d.fast_self) * 1000) / 1000 : null,
       fe: Number.isFinite(Number(d.fast_empathy)) ? Math.round(Number(d.fast_empathy) * 1000) / 1000 : null,
       /* 累积负荷：老样本没有这一项，就给 null —— 不拿 0 冒充「当时没负荷」 */
       bo: Number.isFinite(Number(d.base_off)) ? Math.round(Number(d.base_off) * 1000) / 1000 : null,
+      wk: Number.isFinite(walkRaw) ? Math.round(walkRaw * 1000) / 1000 : null,
+      ph: Number.isFinite(phRaw) ? Math.round(phRaw * 10) / 10 : null,
       lb: r.label || null,
       t: noRead ? null : totalOf(sVal, fRaw),
     })
   }
-  return { days: span, from: new Date(fromMs).toISOString(), to: new Date(toMs).toISOString(), points }
+  /* 空档 → 回落曲线：服务端把推演算好（和宿主用的是同一套动力学），前端只负责画。
+     - 睡着 / 不在：压淡的线（sleep）
+     - 醒着但是断了十几分钟：也画，但更淡（rest）——她本来就在往水位走，以前图上拉直线看不出来 */
+  const sleep = []
+  const rest = []
+  const sleepMul = paramNum(db, aid, 'affect.sleep.lambda', 1.5, 0.5, 4)
+  const recNeg = paramNum(db, aid, 'affect.recover.neg', 1.4, 0.5, 4)
+  const recPos = paramNum(db, aid, 'affect.recover.pos', 0.8, 0.5, 4)
+  const recLabelParams = readRecLabelParams(db, aid)
+  /* 醒着的回落速率：按这台实例真正在用的 α/β 算，别拿代码里的默认值硬套 */
+  const lamAwake = paramNum(db, aid, 'affect.slow.alpha', SLOW_ALPHA, 0, 1)
+    + paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 1) + 0.005
+  const REST_MIN_H = 10 / 60
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]
+    const b = points[i + 1]
+    const g = classifyGap(a.at, b.at)
+    const hours = (b.at - a.at) / 3600000
+    /* 太短的断点不画（一两分钟那种，画出来是一团毛） */
+    if (!g && hours < REST_MIN_H) continue
+    const kind = g ? g.kind : 'wake'
+    const dayMs = Math.max(1, b.at - a.at)
+    const loadA = Number.isFinite(Number(a.bo)) ? Number(a.bo) : 0
+    const loadB = Number.isFinite(Number(b.bo)) ? Number(b.bo) : loadA
+    const walkA = Number.isFinite(Number(a.wk)) ? Number(a.wk) : 0
+    const walkB = Number.isFinite(Number(b.wk)) ? Number(b.wk) : walkA
+    const phA = Number.isFinite(Number(a.ph)) ? Number(a.ph) : 0
+    const phB = Number.isFinite(Number(b.ph)) ? Number(b.ph) : phA
+    /* 水位：段式慢波 + 日节律 + 激素纹 + 负荷 + 走过的那点随机（都按两头线性过渡） */
+    const bAt = (ms) => {
+      const u = (ms - a.at) / dayMs
+      return valueAtTime(segs, ms) + circadianAt(ms, aid, circAmp, phA + (phB - phA) * u)
+        + rhythmAt(ms, aid, { rough: roughAmp, cycle: cycleAmp })
+        + (loadA + (loadB - loadA) * u) + (walkA + (walkB - walkA) * u)
+    }
+    /* 恢复快慢看差在哪边：低落退得慢、被抬高退得快（和宿主里同一个规则） */
+    const dev0 = Number(a.s) - bAt(a.at)
+    const recMul = (Math.abs(dev0) < 0.01 ? 1 : (dev0 < 0 ? 1 / recNeg : 1 / recPos))
+      / labelRecMul(a.lb, recLabelParams)
+    const lambda = lamAwake * recMul * (kind === 'sleep' ? sleepMul : 1)
+    /* 短空档的曲线只要形，不要精度：最多六个点，别为了一条二十分钟的断点塞几十个采样 */
+    const stepMs = g ? 15 * 60000 : Math.max(5 * 60000, Math.round(dayMs / 6))
+    const curve = decayCurve({ s0: a.s, fromMs: a.at, toMs: b.at, bAt, lambda, stepMs })
+    /* 两头都是真读数：推演的曲线必须落在真实的那一点上。
+       形状是算的（指数回落），端点是测的——差多少补回去。
+       补的权重用 √u 而不是 u：误差早点摊掉，不会临到醒前突然拐一个大弯。 */
+    if (curve.length && Number.isFinite(Number(b.s))) {
+      const delta = Number(b.s) - curve[curve.length - 1].s
+      if (Math.abs(delta) > 0.0005) {
+        for (let k = 0; k < curve.length; k++) {
+          const u = curve.length > 1 ? k / (curve.length - 1) : 1
+          curve[k].s = Math.round((curve[k].s + delta * Math.sqrt(u)) * 1000) / 1000
+        }
+      }
+    }
+    const item = {
+      from: new Date(a.at).toISOString(),
+      to: new Date(b.at).toISOString(),
+      kind,
+      hours: Math.round(hours * 100) / 100,
+      s0: a.s,
+      s_end: curve.length ? curve[curve.length - 1].s : a.s,
+      actual: b.s,
+      curve,
+    }
+    if (g) sleep.push({ ...item, night_hours: g.night_hours })
+    else rest.push(item)
+  }
+  /* 短空档可能几十上百段：只留最近的 240 段，别把一天的聊天全塞进接口 */
+  if (rest.length > 240) rest.splice(0, rest.length - 240)
+  /* 面板上那两个数：现在离水位多远、照这个速度多久回一半（按 sign 选恢复速度） */
+  let nowInfo = null
+  for (let k = points.length - 1; k >= 0; k--) {
+    const p = points[k]
+    if (!Number.isFinite(Number(p.s)) || !Number.isFinite(Number(p.b))) continue
+    const dist = Number(p.s) - Number(p.b)
+    /* 回一半的速度：先按高/低，再按「哪一种情绪」（同一个规则，和宿主里一致） */
+    const mul = (Math.abs(dist) < 0.01 ? 1 : (dist < 0 ? 1 / recNeg : 1 / recPos))
+      / labelRecMul(p.lb, recLabelParams)
+    const halfH = Math.log(2) / Math.max(1e-6, lamAwake * mul)
+    nowInfo = {
+      at: p.at,
+      s: p.s,
+      b: p.b,
+      dist: Math.round(dist * 1000) / 1000,
+      half_h: Math.round(halfH * 10) / 10,
+      side: Math.abs(dist) < 0.01 ? 'flat' : (dist < 0 ? 'down' : 'up'),
+      label: p.lb || null,
+      rec_mul: Math.round(labelRecMul(p.lb, recLabelParams) * 100) / 100,
+    }
+    break
+  }
+  return {
+    days: span,
+    from: new Date(fromMs).toISOString(),
+    to: new Date(toMs).toISOString(),
+    points,
+    sleep,
+    rest,
+    now: nowInfo,
+  }
 }
 
 /**
@@ -1051,6 +1351,10 @@ export async function appraise(db, aid, text, opts = {}) {
         fast: v3 ? v3.fast : null,
         baseline: v3 ? v3.baseline : null,
         base_off: v3 ? v3.baseOff : null,
+        /* 不可逆的那点随机：只有这条样本知道当时的 walk，所以历史照它画，不按今天重算 */
+        walk: v3 && Number.isFinite(Number(v3.walk)) ? v3.walk : null,
+        /* 当时的日节律相位偏移（分钟）：熬夜拖出来的那点，也一样只认记录 */
+        circ_phase: v3 && Number.isFinite(Number(v3.circPhase)) ? v3.circPhase : null,
         /* 快情绪拆开存：自己那半 + 从你这儿共情来的那半。老样本没有这两项，前端就别硬编 */
         fast_self: v3 ? v3.fastSelf : null,
         fast_empathy: v3 ? v3.fastEmpathy : null,
@@ -1137,9 +1441,10 @@ export function listEpisodes(db, aid) {
   }))
 }
 
-export function sampleAffect(db, aid, label, intensity, fast, slow) {
+export function sampleAffect(db, aid, label, intensity, fast, slow, atMs = Date.now()) {
   db.prepare('INSERT INTO affect_samples VALUES(?,?,?,?,?,?,?)')
-    .run(nid('afs_'), aid, now(), label, intensity, JSON.stringify(fast || {}), JSON.stringify(slow || {}))
+    .run(nid('afs_'), aid, new Date(Number(atMs) || Date.now()).toISOString(), label, intensity,
+      JSON.stringify(fast || {}), JSON.stringify(slow || {}))
 }
 
 export function affectHistory(db, aid, days = 7) {

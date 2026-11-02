@@ -2,7 +2,7 @@
  * P1b 装箱与仲裁测试：去重 / 配额 / 超预算丢弃顺序。
  * 运行：node test/pack.test.mjs
  */
-import { estTokens, isSameText, dedupe, packInjection, QUOTA } from '../src/modules/pack.js'
+import { estTokens, isSameText, dedupe, packInjection, QUOTA, oneLine } from '../src/modules/pack.js'
 
 let pass = 0
 let fail = 0
@@ -77,6 +77,35 @@ function check(name, ok, detail) {
   check('记忆行带「- 」', out.lines[1].text.startsWith('- '), out.lines[1].text)
   check('没东西可丢', out.dropped.length === 0, out.dropped.length)
   check('text 是可注入的整段', out.text.split('\n').length === 2, out.text)
+}
+
+// ---- oneLine：超长时按语义收口，不硬切出半句
+{
+  check('短句原样', oneLine('用户喜欢咖啡') === '用户喜欢咖啡')
+  check('只取第一句', oneLine('事实：用户喜欢咖啡。第二句不该出现') === '事实：用户喜欢咖啡')
+  check('清掉加粗与编号',
+    oneLine('- **事实**：用户喜欢咖啡。后面还有') === '事实：用户喜欢咖啡',
+    oneLine('- **事实**：用户喜欢咖啡。后面还有'))
+
+  // 有逗号：在逗号处收口，不带省略号、不留尾逗号
+  const soft = oneLine('第一句话比较长内容写在这里，第二句话也比较长内容写在这里，第三句话', 20)
+  check('软边界收口', soft === '第一句话比较长内容写在这里', { soft, len: soft.length })
+  check('软收口不带省略号', !soft.includes('…'))
+
+  // 尾巴太短：整句给完，别造「…」
+  const long = '一'.repeat(55) + '，' + '二三四五六'
+  const whole = oneLine(long, 60)
+  check('尾巴 ≤8 字时整句保留', whole === long && !whole.includes('…'), { len: whole.length })
+
+  // 一个软边界都没有：硬切 + 省略号，省略号也算进上限
+  const hard = oneLine('x'.repeat(120), 60)
+  check('无边界才硬切', hard.endsWith('…') && [...hard].length === 60, { len: [...hard].length })
+
+  // 软收口一定落在原串里，且长度不超上限
+  const src = '先说了第一件事然后又说第二件事接着还有第三件事最后一件事也没说完就这样'
+  const cut = oneLine(src, 18)
+  check('收口结果不超过上限', [...cut].length <= 18, { cut, len: [...cut].length })
+  check('收口结果是原串前缀', src.startsWith(cut.replace(/…$/, '')))
 }
 
 console.log(`\n通过 ${pass} / ${pass + fail}`)

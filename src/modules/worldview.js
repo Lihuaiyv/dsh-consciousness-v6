@@ -14,6 +14,7 @@ import { now } from '../db.js'
 import { agent, tx } from '../kernel.js'
 import { listPreferences, listTaboos } from './persona.js'
 import { WORLD_DIMS as DIMS, WORLD_PAIRS as PAIRS, WORLD_INIT as INIT, WORLD_FLOOR as FLOOR, WORLD_CEIL as CEIL } from './persona_dims.js'
+import { foldValueWeights } from './sangguan/vweights.js'
 
 export { DIMS, PAIRS, INIT, FLOOR, CEIL }
 
@@ -166,16 +167,16 @@ function derive(db, aid) {
     }
   } catch { /* */ }
 
-  // 价值观耦合（弱）：普世/仁善 → 公正与人性；自主 → 能动；安全价值 → 安全世界
+  // 价值观弱耦合：读三观命题折算出来的十维，不读旧表；没有命题时 m 为空，等同于不耦合。
   try {
-    const vals = db.prepare('SELECT key,weight FROM persona_values WHERE agent_id=?').all(aid)
-    const m = Object.fromEntries(vals.map((v) => [v.key, Number(v.weight) || 0]))
-    if (m.universalism > 0.12) add('just', delta('values', '看重普世', 0.02 * (m.universalism - 0.1)), 'values', 0.04)
-    if (m.benevolence > 0.12) add('trustPeople', delta('values', '看重仁善', 0.02 * (m.benevolence - 0.1)), 'values', 0.04)
-    if (m.selfDirection > 0.12) add('agency', delta('values', '看重自主', 0.018 * (m.selfDirection - 0.1)), 'values', 0.04)
-    if (m.security > 0.14) add('safe', delta('values', '看重安全', -0.01 * (m.security - 0.1)), 'values', 0.03)
-    if (m.stimulation > 0.12) add('enticing', delta('values', '看重刺激', 0.015 * (m.stimulation - 0.1)), 'values', 0.04)
-  } catch { /* */ }
+    const folded = foldValueWeights(db, aid)
+    const m = (folded && folded.weights) || {}
+    if (m.universalism > 0.12) add('just', delta('claims', '看重普世', 0.02 * (m.universalism - 0.1)), 'claims', 0.04)
+    if (m.benevolence > 0.12) add('trustPeople', delta('claims', '看重仁善', 0.02 * (m.benevolence - 0.1)), 'claims', 0.04)
+    if (m.selfDirection > 0.12) add('agency', delta('claims', '看重自主', 0.018 * (m.selfDirection - 0.1)), 'claims', 0.04)
+    if (m.security > 0.14) add('safe', delta('claims', '看重安全', -0.01 * (m.security - 0.1)), 'claims', 0.03)
+    if (m.stimulation > 0.12) add('enticing', delta('claims', '看重刺激', 0.015 * (m.stimulation - 0.1)), 'claims', 0.04)
+  } catch { /* 没有三观账本 */ }
 
   const habit = {}
   for (const [k] of DIMS) {

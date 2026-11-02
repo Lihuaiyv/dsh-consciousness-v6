@@ -197,6 +197,23 @@ const SPECIAL = {
       if (o.id !== c.id && (o.pred || []).includes(c.id)) bad(ctx.ev, '已经长出后续，不能撤回')
     }
   },
+  // 违背：说了没做到。π 往下走，但不归零——还给它改的机会
+  VIOLATE(ctx) {
+    const c = claimOf(ctx, ctx.p.claim_id, '违背目标')
+    if (c.layer !== 'V') bad(ctx.ev, '违背只作用在价值层')
+    const b = theta(ctx.s, 'beta')
+    c.pi = Math.max(-1, c.pi - 0.5 * b * (1 + c.pi))
+    c.e = eOf(c)
+    touch(ctx, 'claims', c)
+  },
+  // 已验证过（或已长进证据）的保护带：人可以直接收回，终态 withdrawn，账本只增
+  CLAIM_RETIRE(ctx) {
+    const c = claimOf(ctx, ctx.p.claim_id, '收回目标')
+    if (isCoreKind(c.layer, c.kind)) bad(ctx.ev, '核心不能收回，换核心只能走升维')
+    for (const k of Object.values(ctx.s.kappas)) {
+      if (SIGMA_OPEN.includes(k.sigma) && (k.pos_id === c.id || k.neg_id === c.id)) bad(ctx.ev, '先等这场矛盾结束')
+    }
+  },
   REV(ctx) {
     const c = created(ctx)
     if (!c.pred.includes(ctx.p.old_id)) bad(ctx.ev, 'REV 新命题的 pred 须含被替换者')

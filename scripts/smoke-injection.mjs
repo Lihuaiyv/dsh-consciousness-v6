@@ -53,16 +53,18 @@ const hasFelt = block.includes('感觉现在大概')
 const hasWish = block.includes('我想怎么说')
 const hasOldCommand = block.includes('这一轮的说话分寸') || block.includes('只说 1 句')
 const hasSpontaneous = block.includes('心里忽然浮上来')
+const hasExamples = block.includes('## 我说话的样子')
 const toneLines = block.split('\n').filter((l) => l.startsWith('感觉现在大概') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('此刻情绪') || l.includes('说话分寸'))
-
+const tokens = Math.ceil(block.length / 2)
 console.log(block)
 console.log('\n--- 断言 ---')
 console.log(JSON.stringify({
   queued: !!queued,
-  hasFelt, hasWish, hasOldCommand, hasSpontaneous,
+  hasFelt, hasWish, hasOldCommand, hasSpontaneous, hasExamples,
   tone_line_count: toneLines.length,
-  ok: hasFelt && hasWish && !hasOldCommand && hasSpontaneous && toneLines.length === 2,
+  tokens,
+  ok: hasFelt && hasWish && !hasOldCommand && hasSpontaneous && hasExamples && toneLines.length === 2 && tokens <= 800,
 }, null, 2))
 
 db.close()
-if (!(hasFelt && hasWish && !hasOldCommand && hasSpontaneous && toneLines.length === 2)) process.exitCode = 1
+if (!(hasFelt && hasWish && !hasOldCommand && hasSpontaneous && hasExamples && toneLines.length === 2 && tokens <= 800)) process.exitCode = 1

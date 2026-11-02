@@ -211,39 +211,16 @@ function dimLabel(key) {
 
 export function listValuesRich(db, aid) {
   agent(db, aid)
-  return db.prepare('SELECT * FROM persona_values WHERE agent_id=? ORDER BY weight DESC').all(aid).map((r) => {
-    const meta = DIMS.find(([k]) => k === r.key)
-    let raw = null
-    try { raw = JSON.parse(r.evidence || 'null') } catch { raw = null }
-    const evidence = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.items) ? raw.items : [])
-    return {
-      key: r.key,
-      label: meta ? meta[1] : r.key,
-      hint: meta ? meta[2] : '',
-      weight: Number(r.weight),
-      evidence: evidence.slice(0, 4),
-      habit: !!(raw && raw.habit),
-      origin: 'auto',
-      updated_at: r.updated_at,
-    }
-  })
+  return derive(db, aid).items
 }
 
-/** 空库、过期或 force 时重新长一遍；否则直接读缓存 */
+/**
+ * 已下线：不再写 persona_values。
+ * 保留纯计算供「性格不写价值观」这类断言使用；结果不落库，调用方读不到缓存。
+ */
 export function growValues(db, aid, opts = {}) {
   agent(db, aid)
-  const force = !!opts.force
-  const latest = db.prepare('SELECT MAX(updated_at) t, COUNT(*) n FROM persona_values WHERE agent_id=?').get(aid)
-  const fresh = latest && latest.n > 0 && Date.now() - Date.parse(latest.t || 0) < TTL_MS
-  if (!force && fresh) return listValuesRich(db, aid)
-  const out = derive(db, aid)
-  tx(db, () => {
-    for (const item of out.items) {
-      db.prepare('INSERT OR REPLACE INTO persona_values VALUES(?,?,?,?,?)')
-        .run(aid, item.key, item.weight, JSON.stringify({ items: item.evidence, habit: item.habit }), out.updated_at)
-    }
-  })
-  return listValuesRich(db, aid)
+  return derive(db, aid).items
 }
 
 /** 技术视图：张力、证据条数、初值——解释「这些权重是怎么来的」 */

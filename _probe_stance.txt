@@ -1,0 +1,11 @@
+库：C:\Users\ygys1\AppData\Local\Temp\dshc-stance-NVhTIv\app.db
+agent：agt_3977d80f17
+
+[该拒] W 电脑关机或插件没开，这套服务就不存在，微信也发不出去。 → REJECT (not_stance)
+[该拒] W 线上 dsh-consciousness-v6 的 536 个测试全过，代码本身 → REJECT (not_stance)
+[该拒] W 项目真正乱的地方在于同一份东西存在多份，而不在代码质量。 → REJECT (not_stance)
+[该拒] W 桌面 dsh-plugin 是一份过期副本，比线上少 255 个文件，而且两边互 → REJECT (not_stance)
+[该拒] L 先做开机自启和后台守护，把本机长时间在线跑顺，再考虑上服务器。 → REJECT (not_stance)
+
+[该放] W 人多数时候愿意讲道理，只是要先被听完 → EXP
+[该放] V 我更看重把话说清楚，而不是说得漂亮 → EXP

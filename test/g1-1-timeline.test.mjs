@@ -142,8 +142,8 @@ const disputedAt = (p, t) => p.disputes.some((iv) => overlaps(iv, t, new Date(Da
   // saidAt：原话 / 纪要 / 兜底
   db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
     .run('r1', aid, 's1', 't1', 0, 'user', '我喜欢美式', d(10, -1), '2026-03-11')
-  db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,seg,start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?,?)`)
-    .run('ep1', aid, 's1', '2026-03-11', 0, d(10, -2), d(10, -1), d(10, 1))
+  db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?)`)
+    .run('ep1', aid, 's1', '2026-03-11', d(10, -2), d(10, -1), d(10, 1))
   check('saidAt 原话', saidAt(db, aid, { at: d(10, 1), sourceTurnId: 't1' }) === d(10, -1))
   check('saidAt 纪要（turn_id=纪要 id）', saidAt(db, aid, { at: d(10, 1), sourceTurnId: 'ep1' }) === d(10, -2))
   check('saidAt 显式优先', saidAt(db, aid, { at: d(10, 1), validAt: d(9), sourceTurnId: 't1' }) === d(9))

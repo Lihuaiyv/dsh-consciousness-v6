@@ -85,8 +85,58 @@ export function wishLine({ level } = {}) {
   return WISH[String(level || 'normal')] || WISH.normal
 }
 
+/**
+ * 这一轮怎么写（P2）：愿望管「说多少」，这里管「写成什么样」。
+ *
+ * 只有愿望是不够的——模型默认的文体是助手体：先结论、再分点、最后收尾。
+ * 「我想说得短一点」压不住这个默认值，得单独说一句「说完就停、不总结、不列点」。
+ *
+ * 仍然写成「我想…」的倾向，不是「只说 1 句」的命令：命令会让她照着演。
+ */
+/**
+ * 这一轮怎么说（P2 · 合并版）：愿望和文体合成一句。
+ *
+ * 以前是两行命令——「我想说得短一点」+「一句就停，不解释」——
+ * 两条都在管「说多少」，叠在一起就成了念检讨的调子。
+ * 现在只给一句：说多少 + 一句底线（不列点、不总结），姿态交给材料。
+ */
+const CARD = {
+  quiet: '一句就停，不解释；不用道歉，也不用检讨。',
+  brief: '两三句说完就收，不总结，也不检讨自己。',
+  normal: '随口说，说完就停。',
+  warm: '我今天愿意多说一点，不总结、不列点。',
+}
+
+export function cardLine({ level } = {}) {
+  return CARD[String(level || 'normal')] || CARD.normal
+}
+
+export function styleLine({ level } = {}) {
+  return cardLine({ level })
+}
+
 /** 表达档 → 温度基准：低落压过关系，不反过来。 */
 const TONE_WARMTH = { cool: 0.25, plain: 0.5, warm: 0.8, short: 0.45 }
+
+const LEVELS = ['quiet', 'brief', 'normal', 'warm']
+
+/**
+ * 快情绪的「影子档」：只算给你看，不生效。
+ *
+ * 现在 level 只看慢情绪（v3.slow），所以刚被扎一下、快情绪很高的时候，
+ * 她说话还是那副平稳样子。要不要把它接进表达，是个产品判断；
+ * 先让它在旁边算着，攒够对比数据再决定——免得凭感觉改了又改回去。
+ */
+export function shadowLevel(baseLevel, { fast = 0, slow = 0 } = {}) {
+  const at = LEVELS.indexOf(String(baseLevel || 'normal'))
+  const i = at >= 0 ? at : LEVELS.indexOf('normal')
+  const f = clamp(num(fast, 0), -1, 1)
+  const s = clamp(num(slow, 0), -1, 1)
+  let j = i
+  if (f >= 0.35 && s > -0.2) j = Math.min(LEVELS.length - 1, i + 1)
+  if (f <= -0.35) j = Math.max(0, i - 1)
+  return LEVELS[j]
+}
 
 /**
  * 合成一次表达状态。
@@ -97,6 +147,7 @@ const TONE_WARMTH = { cool: 0.25, plain: 0.5, warm: 0.8, short: 0.45 }
  */
 export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35 } = {}) {
   const slow = clamp(num(affect && affect.v3 ? affect.v3.slow : 0, 0), -1, 1)
+  const fast = clamp(num(affect && affect.v3 ? affect.v3.fast : 0, 0), -1, 1)
   const intensity = clamp01(num(affect ? affect.intensity : 0.4, 0.4))
   // 总情绪：优先 v3（-1~1）；老库退回 affect.mood（0~1），换算到同一口径
   const total = affect && affect.v3 && affect.v3.total != null
@@ -116,6 +167,9 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
 
   return {
     level: base.level,
+    // 影子：fast 高一点会怎样（不进 style / wish，只给评测和面板看）
+    fast: Math.round(fast * 100) / 100,
+    wouldLevel: shadowLevel(base.level, { fast, slow }),
     sentences: base.sentences,
     proactive: base.proactive,
     tone: base.tone,
@@ -125,5 +179,6 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
     initiative: Math.round(initiative * 100) / 100,
     felt: feltLine({ label: affect && affect.primary_label, intensity, slow, mood: total, weight }),
     wish: wishLine({ level: base.level }),
+    style: styleLine({ level: base.level }),
   }
 }

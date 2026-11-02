@@ -14,6 +14,7 @@ import { budgetSnapshot, UNITS } from './budget.js'
 import { jaccard } from './sim.js'
 import { eGates } from './gates.js'
 import { closeAround, coreTargets, e1Ready, mOf, revOf } from './practice.js'
+import { revisionBudget } from './revision.js'
 import './templates.js'
 
 const DAY = 86400000
@@ -144,6 +145,8 @@ export function approveElev(db, aid, proposalId, now) {
   if (!st.open || st.open.id !== proposalId) return { ok: false, reason: 'closed' }
   const old = s.claims[prop.payload.old_core_id]
   if (!old || old.status !== 'active') return { ok: false, reason: old && old.status === 'contested' ? 'locked' : 'stale' }
+  // 换核心的额度：30 天一次，改了就别再改
+  if (!revisionBudget(db, aid, prop.layer, now).core_ok) return { ok: false, reason: 'budget' }
   const b = commitBatch(s, prop.layer, prop, now, 'user')
   const wr = append(db, aid, b.evs, b.expect)
   return { ok: true, new_core_id: b.new_core_id, seqs: wr.seqs }

@@ -126,8 +126,23 @@ function applyValueFold(db, aid, view) {
   } catch { /* 折算失败就留在初值 */ }
 }
 
-export function shadowOf(db, aid) {
-  try { return shadowVerdict(JSON.parse(getFlag(db, shadowKey(aid)) || '[]')) } catch { return shadowVerdict([]) }
+/** 技术视图：价值观从命题折算的过程，不读旧表。 */
+export function explainValues(db, aid, opt = {}) {
+  const view = readViews(db, aid, { only: 'V', at: opt.at })
+  const folded = view.V.fold
+  return {
+    source: 'engine',
+    claims: folded ? folded.claims : 0,
+    max: folded ? folded.max : null,
+    items: view.V.items,
+    tensions: view.V.tensions,
+    initial: 0.1,
+    floor: 0.02,
+    total: +Object.values(view.V.weights).reduce((a, b) => a + b, 0).toFixed(4),
+  }
+}
+
+export function shadowOf(db, aid) {  try { return shadowVerdict(JSON.parse(getFlag(db, shadowKey(aid)) || '[]')) } catch { return shadowVerdict([]) }
 }
 
 const frozenKey = (aid) => 'sangguan.frozen:' + aid
@@ -143,7 +158,7 @@ export function markCleaned(db) {
 }
 
 function headsLine(db, aid, layer, lead) {
-  const heads = listHeads(db, aid, layer).filter((h) => h.status === 'active' && h.text && !isHollowSeed(h))
+  const heads = listHeads(db, aid, layer).filter((h) => h.status === 'active' && h.kind !== 'commit' && h.text && !isHollowSeed(h))
   if (!heads.length) return ''
   const core = (h) => (isCoreKind(layer, h.kind) ? 1 : 0)
   const pick = [...heads].sort((a, b) => core(b) - core(a) || (b.e || 0) - (a.e || 0)).slice(0, 3)
@@ -164,7 +179,7 @@ export function noteShadow(db, aid, at) {
     const s = loadState(db, aid)
     const tx = new Map(db.prepare('SELECT id, text FROM persona_claims WHERE agent_id=?').all(aid).map((r) => [r.id, r.text || '']))
     const claims = Object.values(s.claims)
-      .filter((c) => c.layer === 'V' && !isTerminal(c.status))
+      .filter((c) => c.layer === 'V' && !isTerminal(c.status) && c.kind !== 'commit')
       .map((c) => ({ id: c.id, text: tx.get(c.id) || '', pi: c.pi, n: c.n }))
     const assigned = assignDims(claims)
     if (!assigned || !assigned.length) return shadowOf(db, aid)

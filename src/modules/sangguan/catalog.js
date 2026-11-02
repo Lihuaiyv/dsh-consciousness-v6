@@ -9,7 +9,7 @@ export const ORIGINS = Object.freeze(['extract', 'seed', 'synth', 'elev', 'user'
 
 // Core(ℓ) 只有一种；其余为该层保护带 Belt(ℓ)
 export const CORE_KIND = Object.freeze({ W: 'core', L: 'telos', V: 'principle' })
-export const BELT_KINDS = Object.freeze({ W: ['belt', 'obs'], L: ['chapter', 'role'], V: ['norm', 'ideal'] })
+export const BELT_KINDS = Object.freeze({ W: ['belt', 'obs'], L: ['chapter', 'role'], V: ['norm', 'ideal', 'commit'] })
 export const isCoreKind = (layer, kind) => CORE_KIND[layer] === kind
 export const kindOk = (layer, kind) => isCoreKind(layer, kind) || (BELT_KINDS[layer] || []).includes(kind)
 
@@ -34,11 +34,15 @@ export const EVENTS = Object.freeze({
   CLAIM_EXP: { layer: true, slots: { claims: 1 } },
   // 用户撤回尚未被占用的种子。终态 withdrawn；不是删除。
   CLAIM_WITHDRAW: { layer: true, need: ['claim_id'] },
+  // 收回已经长出证据的保护带命题（例如从已下线仪表种进来的旧句）。终态 withdrawn；核心只能走升维。
+  CLAIM_RETIRE: { layer: true, need: ['claim_id'] },
   DUP: { layer: true, need: ['claim_id'] },
   REV: { layer: true, slots: { claims: 1 }, need: ['old_id'] },
   CON: { layer: true, need: ['claim_id'] },
   REJECT: {},
   CORE_ESTABLISH: { layer: true, slots: { claims: 1 }, need: ['from_id'] },
+  // 违背：回复踩了它自己认下的命题（P2）。只减 π，不改状态
+  VIOLATE: { layer: true, need: ['claim_id'] },
   FLIP: { layer: true, need: ['claim_id'] },
   // 矛盾
   KAPPA_CANDIDATE: { layer: true, need: ['a_id', 'b_id'] },

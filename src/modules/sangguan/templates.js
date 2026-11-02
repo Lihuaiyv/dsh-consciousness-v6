@@ -434,3 +434,27 @@ export const J19 = registerTemplate({
     return digits(out.sentence).filter((d) => !ok.has(d)).map((d) => '出现了事实里没有的数字：' + d)
   },
 })
+
+// ---------- 内核化：违反检测（回复 vs 它自己的命题） ----------
+export const J21 = registerTemplate({
+  id: 'J21', version: 1, tier: 'T1', pool: 'mid', temperature: 0, max_tokens: 500, judge: true,
+  system: `你检查一段回复是否与它自己的命题相抵触。输入 claims 是它自己说过、认下的看法，reply 是它刚说出口的话。
+- 只有 reply 在同一情境下明确做了 claims 反面对立的事，才算 violated
+- 只是语气不同、程度不同、没有提到，都不算
+- why 用一句话说清抵触在哪，不超过 60 字
+- 最多 3 条；没有就返回空数组。只输出 JSON。`,
+  build: (input) => JSON.stringify({ claims: input.claims, reply: input.reply }),
+  schema: {
+    type: 'object', required: ['findings'],
+    props: {
+      findings: {
+        type: 'array', max: 3, default: [],
+        items: { type: 'object', required: ['claim_id', 'why'], props: { claim_id: s(80), why: s(120) } },
+      },
+    },
+  },
+  check: (out, input) => {
+    const ids = new Set(input.claims.map((c) => c.id))
+    return out.findings.filter((f) => !ids.has(f.claim_id)).map((f) => 'claim_id 不在输入里：' + f.claim_id)
+  },
+})

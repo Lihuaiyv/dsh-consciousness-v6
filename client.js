@@ -1199,7 +1199,7 @@ window.__ModuleLoader__.load({
       const visW = Math.max(2, (dataSpan / span) * W)
       const nb = Math.max(2, Math.min(320, Math.round(visW / 2)))
       const step = dataSpan / nb
-      const bucket = (pick) => {
+      const bucket = (pick, fix) => {
         const raw = []
         for (let i = 0; i < nb; i++) {
           const a0 = t0 + i * step
@@ -1218,6 +1218,14 @@ window.__ModuleLoader__.load({
           if (prev < 0) { if (next >= 0) filled[i] = raw[next] }
           else if (next < 0) filled[i] = raw[prev]
           else filled[i] = raw[prev] + (raw[next] - raw[prev]) * ((i - prev) / (next - prev))
+        }
+        /* 空档里让出位置：那段形状由服务端的推演曲线给，不在直线上硬拉。
+           换在磨平之前，前后两个桶还能把这根线和曲线接上，接缝就不会跳。 */
+        if (fix) {
+          for (let i = 0; i < nb; i++) {
+            const v = fix(t0 + i * step + step / 2)
+            if (v !== null && v !== undefined) filled[i] = v
+          }
         }
         const out = []
         for (let i = 0; i < nb; i++) if (filled[i] !== null) out.push({ at: t0 + i * step + step / 2, v: filled[i] })
@@ -1258,7 +1266,43 @@ window.__ModuleLoader__.load({
       const hasLine = pts.length >= 2
       /* 这段在屏幕上不到 8 像素宽（比如只有几天记录却看一年），就别画线了，画出来是根竖刺 */
       const drawLine = hasLine && visW >= 8
-      const rows = hasLine ? bucket((p) => p.s) : []
+      /* 空档 → 回落曲线：服务端算好形状，这里只负责画。
+         sleep = 睡着/不在（压淡），rest = 醒着但断了十分钟以上（更淡）。 */
+      const sleeps = (data && data.sleep) || []
+      const rests = (data && data.rest) || []
+      const toRange = (s) => ({ aMs: Date.parse(s.from), bMs: Date.parse(s.to) })
+      const sleepRanges = sleeps.map(toRange)
+        .filter((g) => Number.isFinite(g.aMs) && Number.isFinite(g.bMs) && g.bMs > g.aMs)
+      const restRanges = rests.map(toRange)
+        .filter((g) => Number.isFinite(g.aMs) && Number.isFinite(g.bMs) && g.bMs > g.aMs)
+      const modeAt = (ms) => (sleepRanges.some((g) => ms > g.aMs && ms < g.bMs) ? 'sleep'
+        : (restRanges.some((g) => ms > g.aMs && ms < g.bMs) ? 'rest' : 'live'))
+      /* 每段空档拼成「起点 → 推演曲线 → 下一个真读数」一条点列。
+         主线也走这份点，所以淡的那截和亮的那截是同一根线，接缝处不会一根停在这、一根从别处起。 */
+      const gapSeries = [...sleeps, ...rests].map((s) => {
+        const list = [{ at: Date.parse(s.from), v: Number(s.s0) }]
+        for (const p of s.curve || []) list.push({ at: Number(p.at), v: Number(p.s) })
+        if (Number.isFinite(Number(s.actual))) list.push({ at: Date.parse(s.to), v: Number(s.actual) })
+        return list
+          .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.v))
+          .sort((a, b) => a.at - b.at)
+      }).filter((l) => l.length >= 2)
+      /* 空档里的值：在推演曲线上按时间线性取；不在任何空档里就返回 null（那用真读数） */
+      const restValAt = (ms) => {
+        for (const list of gapSeries) {
+          if (ms < list[0].at || ms > list[list.length - 1].at) continue
+          for (let i = 1; i < list.length; i++) {
+            if (ms <= list[i].at) {
+              const a = list[i - 1]
+              const b = list[i]
+              const u = (ms - a.at) / (b.at - a.at || 1)
+              return a.v + (b.v - a.v) * u
+            }
+          }
+        }
+        return null
+      }
+      const rows = hasLine ? bucket((p) => p.s, restValAt) : []
       /* 水位：底色三段叠出来的那条线（段式慢波 + 日节律 + 累积负荷）。
          慢情绪是水面，水位是它要去的地方；两条摆在一起才看得出「谁在拖谁」。 */
       const hasB = pts.some((p) => Number.isFinite(Number(p.b)))
@@ -1266,10 +1310,34 @@ window.__ModuleLoader__.load({
       const gxOf = (p) => X(p.at)
       const gyOf = (p) => Y(p.v)
       const waterD = drawLine && bRows.length >= 2 ? curve(bRows, gxOf, gyOf) : ''
-      const slowD = drawLine && rows.length >= 2 ? curve(rows, gxOf, gyOf) : ''
-      const areaD = slowD
-        ? slowD + 'L' + X(rows[rows.length - 1].at).toFixed(1) + ',' + H
-          + ' L' + gxOf(rows[0]).toFixed(1) + ',' + H + ' Z'
+      /* 把慢情绪那条线按「实 / 短空档 / 睡着」切成几段：边界点两边共用，接缝处看不出断头 */
+      const runs = []
+      if (drawLine && rows.length >= 2) {
+        let cur = [rows[0]]
+        let curMode = modeAt((rows[0].at + rows[1].at) / 2)
+        for (let i = 1; i < rows.length; i++) {
+          const mode = modeAt((rows[i - 1].at + rows[i].at) / 2)
+          if (mode === curMode) { cur.push(rows[i]); continue }
+          runs.push({ mode: curMode, pts: cur })
+          cur = [rows[i - 1], rows[i]]
+          curMode = mode
+        }
+        runs.push({ mode: curMode, pts: cur })
+      }
+      const liveRuns = runs.filter((r) => r.mode === 'live' && r.pts.length >= 2)
+      const slowD = liveRuns.map((r) => curve(r.pts, gxOf, gyOf)).join(' ')
+      /* 整条线先最淡画一遍（含短空档）：它和亮的是同一份点、同一条曲线。
+         短空档那截靠这一层，睡着那截再叠一层更亮一点的淡色。 */
+      const restD = drawLine && rows.length >= 2 && runs.some((r) => r.mode !== 'live')
+        ? curve(rows, gxOf, gyOf)
+        : ''
+      const sleepD = drawLine && rows.length >= 2 && runs.some((r) => r.mode === 'sleep')
+        ? runs.filter((r) => r.mode === 'sleep').map((r) => curve(r.pts, gxOf, gyOf)).join(' ')
+        : ''
+      const areaD = liveRuns.length
+        ? liveRuns.map((r) => curve(r.pts, gxOf, gyOf)
+          + 'L' + X(r.pts[r.pts.length - 1].at).toFixed(1) + ',' + H
+          + ' L' + gxOf(r.pts[0]).toFixed(1) + ',' + H + ' Z').join(' ')
         : ''
       const hasF = (p) => Number.isFinite(Number(p.f))
       const totalOfP = (p) => (Number.isFinite(Number(p.t))
@@ -1374,11 +1442,23 @@ window.__ModuleLoader__.load({
               x1: emptyX.toFixed(1), x2: emptyX.toFixed(1), y1: 0, y2: H,
               stroke: 'currentColor', strokeOpacity: 0.18, strokeWidth: 1, strokeDasharray: '3 4',
             }) : null,
+            /* 休息的那几段：浅斜纹，边界给一根更淡的虚线，一眼能看出「这里她没说话」 */
             waterD ? h('path', {
               d: waterD, fill: 'none', stroke: 'currentColor', strokeOpacity: 0.16,
               strokeWidth: 1.3, strokeDasharray: '4 4', strokeLinecap: 'round',
             }) : null,
             h('path', { d: areaD, fill: 'url(#dshcTrendFill)' }),
+            /* 整条线先最淡画一遍：短空档那截就靠这一层（她本来就在往水位走，只是断了十几分钟） */
+            restD ? h('path', {
+              d: restD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.16, strokeWidth: 1.3,
+              strokeLinecap: 'round', strokeLinejoin: 'round',
+            }) : null,
+            /* 睡着/不在的那几截：同一根曲线，再叠一层更亮一点的淡色 */
+            sleepD ? h('path', {
+              d: sleepD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.42, strokeWidth: 1.6,
+              strokeLinecap: 'round', strokeLinejoin: 'round',
+            }) : null,
+            /* 醒来那个点不画圈了：颜色一变本来就看得出来哪儿醒的，圈是多余的记号 */
             h('path', {
               d: slowD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.13, strokeWidth: 9,
               style: { filter: 'blur(6px)' },
@@ -1489,7 +1569,21 @@ window.__ModuleLoader__.load({
                 width: 7, height: 7, background: '#5ec8ff', borderRadius: '50%',
                 display: 'inline-block', boxShadow: '0 0 8px #5ec8ff',
               },
-            }), '此刻')))
+            }), '此刻'),
+          sleeps.length ? h('span', { className: 'dshc-sub', style: { display: 'flex', alignItems: 'center', gap: 6 } },
+            h('span', {
+              style: {
+                width: 16, height: 2, display: 'inline-block', borderRadius: 2,
+                background: '#fff', opacity: 0.4,
+              },
+            }), '休眠（睡着的几小时，淡色是推演）') : null,
+          /* 两个数：现在离水位多远、照这个速度多久回一半（按心情在高位/低位选速度） */
+          (data && data.now) ? h('span', {
+            className: 'dshc-sub dshc-mono',
+            title: '离水位 = 慢情绪 − 水位；回一半 = 按当前的恢复速度算的半衰期',
+          }, (Number(data.now.dist) >= 0 ? '离水位 +' : '离水位 −')
+            + Math.abs(Number(data.now.dist) || 0).toFixed(2)
+            + ' · 约 ' + Number(data.now.half_h || 0).toFixed(1) + ' 小时回一半') : null))
     }
 
     function MiniBars({ rows }) {      return h('div', { className: 'dshc-list' }, (rows || []).map(([k, v, max], i) => h('div', { key: i, className: 'dshc-item' },
@@ -2013,7 +2107,22 @@ window.__ModuleLoader__.load({
 
     /* ============================================================ roster */
 
-    function CharacterCard({ a, onOpen, onExport, onDelete, featured, arrived, ov: preloaded, actions, actionsAlign, headActions }) {
+    /** 在场状态：一张卡上只写一件事，别让「运行中」和「绑着几段」挤在一句里。 */
+    function presenceOf(a) {
+      // status 是用户意图真值；runtime_state=offline 只在 paused 时成立，
+      // 激活后若缓存没刷干净，不能再当小卡。
+      const st = a.status === 'soft_deleted' ? 'deleted'
+        : a.status === 'paused' ? 'offline'
+          : (a.runtime_state === 'offline' ? 'idle' : (a.runtime_state || 'idle'))
+      const n = Number(a.bound_sessions || 0)
+      if (st === 'deleted') return { key: 'deleted', label: '已删除', pill: '已删除', tone: 'bad' }
+      if (st === 'offline') return { key: 'offline', label: '休眠', pill: '休眠', tone: 'warn', tip: '用户关掉的：不注入、不推送、不跳心跳' }
+      if (st === 'dormant') return { key: 'dormant', label: '自动休眠', pill: '自动休眠', tone: 'warn', tip: '14 天没互动，自己退到一边（心跳照跳，很慢）' }
+      if (st === 'bound' || n > 0) return { key: 'bound', label: '运行中', pill: '接着 ' + n + ' 段对话', tone: 'ok', tip: '只在这 ' + n + ' 段对话里说话，别处是普通 DSH' }
+      return { key: 'idle', label: '在线 · 空闲', pill: '在线 · 还没对话', tone: null, tip: '醒着，但还没绑到任何对话' }
+    }
+
+    function CharacterCard({ a, onOpen, onExport, onDelete, onPause, featured, arrived, ov: preloaded, actions, actionsAlign, headActions }) {
       const [ov] = useAsync(
         () => preloaded ? Promise.resolve(preloaded) : call('GET', '/v1/agents/' + enc(a.id) + '/overview'),
         [a.id, preloaded ? 1 : 0])
@@ -2056,13 +2165,14 @@ window.__ModuleLoader__.load({
                 }, '需处理')
                 : h('span', { style: { color: 'var(--ok)', fontSize: 12.5, fontWeight: 600 } }, '良好')),
             h('div', { className: 'dshc-sub' },
-              running ? '运行中' : '休眠', ' · ', a.mode === 'work' ? '工作模式' : '日常模式',
+              presenceOf(a).label, ' · ', a.mode === 'work' ? '工作模式' : '日常模式',
               ' · 出生 ' + Math.max(1, ageDays(a.created_at)) + ' 天',
               ' · 上次互动 ', ago(o.recent && o.recent.last_interaction) + (a.last_interaction_at ? '' : '（还没聊过）'))),
           h('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flex: '0 0 auto', paddingTop: 6 } },
-            running
-              ? h(Pill, { tone: 'ok' }, '正在接管所有对话')
-              : h(Pill, { tone: 'warn', title: '现在所有对话都恢复成普通 DSH' }, '休眠'))),
+            (() => {
+              const p = presenceOf(a)
+              return h(Pill, { tone: p.tone, title: p.tip || p.pill }, p.pill)
+            })())),
 
         h('div', { className: 'meta' },
           h(Pill, null, AFFECT_KEY[(o.affect && o.affect.label)] || '平静'),
@@ -2083,6 +2193,12 @@ window.__ModuleLoader__.load({
           : h('div', null,
             h('div', { className: 'acts' },
               h(Btn, { primary: true, onClick: () => onOpen(a, running) }, running ? '进入' : '选择并进入'),
+              running && onPause
+                ? h(Btn, {
+                  ghost: true, onClick: () => onPause(a),
+                  title: '关掉：不注入、不推送、不跳心跳',
+                }, '休眠')
+                : null,
               onExport
                 ? h(Btn, {
                   ghost: true, disabled: expBusy, onClick: doExport,
@@ -2132,6 +2248,67 @@ window.__ModuleLoader__.load({
             boxShadow: '0 0 10px color-mix(in srgb, var(--accent) 18%, transparent)',
           },
         }, busy ? '唤醒中…' : '唤醒'))
+    }
+
+    /**
+     * 运行与心跳：谁在跑、各挂几段对话、心跳跳得怎么样。
+     * 以前这里什么都看不到——只有一个全局 tick，停了也没人知道。
+     */
+    function RuntimePanel({ reload }) {
+      const [rt, retry] = useAsync(() => call('GET', '/v1/runtime'), [])
+      useLive(retry, 15000)
+      const d = rt.data || {}
+      const [cap, setCap] = useState('')
+      const [saving, setSaving] = useState(false)
+      const [note, setNote] = useState('')
+      useEffect(() => {
+        if (d.max_running != null) setCap(String(d.max_running))
+      }, [d.max_running])
+      const items = Array.isArray(d.agents) ? d.agents : []
+      function hbLine(x) {
+        const hb = x.heartbeat
+        if (!hb) return '还没心跳过'
+        const nowMs = Date.now()
+        const ago2 = hb.last_at ? Math.round((nowMs - Number(hb.last_at)) / 1000) : null
+        const next = Math.round((Number(hb.next_at) - nowMs) / 1000)
+        return (ago2 == null ? '还没跳过' : ago2 + 's 前跳过（' + (hb.last_ms || 0) + 'ms）')
+          + ' · 下次 ' + (next > 0 ? next + 's 后' : '已到期')
+          + (hb.failures ? ' · 连续失败 ' + hb.failures + ' 次' : '')
+      }
+      async function saveCap() {
+        if (saving) return
+        setSaving(true); setNote('')
+        try {
+          await call('POST', '/v1/runtime/max-running', { max_running: Number(cap) || 0 }, true)
+          setNote('已保存：同时最多 ' + (Number(cap) || 0) + ' 个' + (Number(cap) === 0 ? '（不限）' : ''))
+          if (reload) await reload()
+          await retry()
+        } catch (e) { setNote('保存失败：' + (e.message || e)) } finally { setSaving(false) }
+      }
+      return h(Card, { style: { marginBottom: 14 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+          h('b', { style: { fontSize: 13 } }, '运行与心跳'),
+          h(Pill, { tone: d.slots_left === 0 ? 'warn' : null },
+            '运行中 ' + (d.running || 0) + ' / ' + (d.max_running || 0) + (d.slots_left == null ? '' : ' · 还能开 ' + d.slots_left + ' 个')),
+          h('div', { style: { flex: 1 } }),
+          h(Input, {
+            className: 'dshc-input', style: { width: 72 }, value: cap, inputMode: 'numeric',
+            onChange: (e) => setCap(e.target.value.replace(/[^\d]/g, '')),
+            title: '同时最多几个实例在跑（0 = 不限）',
+          }),
+          h(Btn, { ghost: true, sm: true, disabled: saving, onClick: saveCap }, saving ? '保存中…' : '保存上限')),
+        note ? h('div', { className: note.startsWith('保存失败') ? 'dshc-err' : 'dshc-sub', style: { marginTop: 6 } }, note) : null,
+        items.length
+          ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 } },
+            items.map((x) => h('div', {
+              key: x.id,
+              style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--muted)', flexWrap: 'wrap' },
+            },
+              h('span', { style: { color: 'var(--ink)', minWidth: 72 } }, x.name),
+              h(Pill, { tone: x.runtime_state === 'bound' ? 'ok' : x.runtime_state === 'offline' ? 'warn' : null },
+                x.runtime_state === 'bound' ? '接着 ' + x.bound_sessions + ' 段' : x.runtime_state === 'idle' ? '在线空闲' : x.runtime_state === 'dormant' ? '自动休眠' : '休眠'),
+              h('span', { className: 'dshc-mono' }, hbLine(x)))))
+          : h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '还没有意识体。'))
     }
 
     function Roster({ agents, loading, error, reload, setAid, act }) {
@@ -2258,8 +2435,20 @@ window.__ModuleLoader__.load({
         } catch (e) { setMsg(e.message) }
       }
 
-      const runningCard = live.find((a) => a.status === 'active') || null
-      const others = live.filter((a) => !runningCard || a.id !== runningCard.id)
+      async function pause(a) {
+        setMsg('')
+        try {
+          await act(() => call('POST', '/v1/agents/' + enc(a.id) + '/pause', {}, true))
+          await reload()
+          PRESENCE.bump()
+        } catch (e) { setMsg(e.message) }
+      }
+
+      // 大卡 = 醒着（active）；小卡 = 用户休眠 / 自动休眠。不拿可能过期的 runtime_state 挡展开。
+      const runningCards = live.filter((a) => a.status === 'active' && presenceOf(a).key !== 'dormant')
+        .sort((x, y) => Number(y.bound_sessions || 0) - Number(x.bound_sessions || 0)
+          || String(y.last_interaction_at || '').localeCompare(String(x.last_interaction_at || '')))
+      const others = live.filter((a) => !runningCards.some((r) => r.id === a.id))
         .sort((x, y) => String(y.last_interaction_at || '').localeCompare(String(x.last_interaction_at || '')))
 
       return h('div', { className: 'dshc', 'data-view': 'user' },
@@ -2291,15 +2480,22 @@ window.__ModuleLoader__.load({
             msg ? h('div', { className: 'dshc-err' }, msg) : null,
             okMsg ? h('div', { className: 'dshc-sub', style: { color: 'var(--ok)' } }, okMsg) : null)),
 
-        h(Sec, { title: '角色卡', desc: '同一时间只有一个在运行；选择新的，其余自动休眠。' },
+        h(Sec, {
+          title: '角色卡',
+          desc: '可以同时有好几个在运行；每一段对话只认一个人（新对话默认没有角色）。',
+        },
+          h(RuntimePanel, { reload }),
           loading ? h(Empty, null, '读取中…')
             : error ? h(LoadErr, { error, retry: reload })
               : live.length === 0 ? h(Empty, null, '还没有意识体。上面建一个，它才有「今天」。')
                 : h('div', null,
-                  runningCard ? h('div', { style: { marginBottom: 14 } }, h(CharacterCard, {
-                    key: runningCard.id, a: runningCard, featured: true, arrived: arrived === runningCard.id,
-                    onOpen: open, onExport: exportOne, onDelete: remove,
-                  })) : null,
+                  runningCards.length
+                    ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 14 } },
+                      runningCards.map((a) => h(CharacterCard, {
+                        key: a.id, a, featured: true, arrived: arrived === a.id,
+                        onOpen: open, onExport: exportOne, onDelete: remove, onPause: pause,
+                      })))
+                    : null,
                   others.length ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
                     others.map((a) => h(CompactCard, {
                       key: a.id, a, onAscend: ascend, busy: ascending === a.id,
@@ -3414,7 +3610,8 @@ window.__ModuleLoader__.load({
 
     /**
      * 它拿不准的事：两条记忆看起来互相矛盾。
-     * 只给三种判决——留先记的 / 留后记的 / 它理解错了（两条都留）。
+     * 只给三种判决——留这条（另一条作废）/ 留那条 / 它理解错了（两条都留）。
+     * 按钮必须带方向动词：「就是这条」说不清是「这条对」还是「这条错」。
      * 不做成表单：这里要的是「判一句」，不是「填一张词卡」。
      */
     function ConflictPanel({ list, loading, error, busyId, onResolve }) {
@@ -3452,8 +3649,9 @@ window.__ModuleLoader__.load({
             m && m.invalid_at ? h('span', { className: 'dshc-sub' }, '已被判失效') : null,
             h(Btn, {
               sm: true, ghost: true, disabled: busyId === c.id,
+              title: '这条说的对：点完这条留下，另一条会被标成失效',
               onClick: () => onResolve(c.id, which),
-            }, '就是这条'))
+            }, '留这条，废掉另一条'))
           return h(Card, { key: c.id, style: { padding: 12, marginBottom: 10 } },
             h('div', { className: 'dshc-sub', style: { marginBottom: 8 } }, meta),
             side('a', c.a, '更早记下的那句'),
@@ -3575,7 +3773,7 @@ window.__ModuleLoader__.load({
         h('div', { id: 'dshc-conflicts' },
           h(Sec, {
             title: '它拿不准的事',
-            desc: '两条记忆看起来互相矛盾。挑一条「就是这条」，或者说它「理解错了」——判完状态就不挂在「需处理」了。',
+            desc: '两条记忆看起来互相矛盾。点某条下面的「留这条，废掉另一条」，就是认定这条对、另一条作废；两句其实不矛盾（只是说得像）就点「它理解错了」，两条都留。判完就不挂在「需处理」了。',
           },
             h(ConflictPanel, {
               list: cf.data, loading: cf.loading, error: cf.error,
@@ -5289,6 +5487,40 @@ window.__ModuleLoader__.load({
           h(Btn, { sm: true, disabled: t.length < 4, onClick: () => act(() => call('POST', base + '/seed', { layer, text: t }, true)).then(() => { setText(''); done() }).catch(() => {}) }, '种下')))
     }
 
+    /**
+     * 三个数：它有没有为哪句话真的付过账。
+     * 违背 / 兑现 / 改主意，全部取 /sangguan/scorecard 的服务端现算结果，前端只做显示，不重算。
+     * 没发生过就写 0，不写「暂无」——0 是实话，含糊不是。
+     */
+    function SgLedgerBar({ sc, tech }) {
+      if (!sc) return null
+      const v = sc.violated || {}
+      const n = sc.nu || {}
+      const c = sc.changed || {}
+      const rate = n.kept_rate == null ? '还没到期' : Math.round(n.kept_rate * 100) + '%'
+      const item = (label, value, note, tone) => h('div', { style: { flex: '1 1 128px', minWidth: 118 } },
+        h('div', { className: 'dshc-sub' }, label),
+        h('div', { style: { fontSize: 19, fontWeight: 600, lineHeight: 1.35, color: tone || 'inherit', fontVariantNumeric: 'tabular-nums' } }, value),
+        h('div', { className: 'dshc-note', style: { marginTop: 2 } }, note))
+      const ready = (sc.kernel && sc.kernel.ready) || false
+      const four = sc.kernel ? ['pain', 'debt', 'revision', 'tension'].filter((k) => sc.kernel[k]).length : 0
+      return h('div', { style: { marginBottom: 10 } },
+        h('div', { style: { display: 'flex', gap: 18, flexWrap: 'wrap' } },
+          item('说过的没做到', (v.total || 0) + ' 次', v.window ? '近 30 天 ' + v.window + ' 次' : '近 30 天没有', v.total ? 'var(--warn)' : null),
+          item('答应的事兑现了', rate, n.settled ? '到期 ' + n.settled + ' 件：对 ' + (n.hit || 0) + '、没对 ' + (n.miss || 0) : '还没有到期的承诺'),
+          item('自己改了主意', (c.total || 0) + ' 次', c.window ? '近 30 天 ' + c.window + ' 次' : '近 30 天没有'),
+          tech ? h('div', { className: 'dshc-sub dshc-mono', style: { flex: '1 1 100%', alignSelf: 'flex-end' } },
+            'VIOLATE ' + (v.total || 0) + ' · 结算 ' + (n.settled || 0) + '（hit ' + (n.hit || 0) + ' / miss ' + (n.miss || 0) + ' / pending ' + (n.pending || 0) + '）'
+            + ' · 自改 ' + (c.self || 0) + ' / 人替 ' + (c.owner || 0) + ' · 闸门四点 ' + (ready ? '齐' : four + '/4')) : null),
+        h('details', { className: 'dshc-fold', style: { marginTop: 2 } },
+          h('summary', null, '这三个数怎么来的'),
+          h('div', { className: 'dshc-note' },
+            '说过的没做到：它自己认下的话，跟实际回复对不上的次数，每记一笔都要有原句。'
+            + '答应的事兑现了：它说过「我明天…」这类带期限的话，到期看有没有做到；只算已经到期的，没到期的不能算数，所以这里可能是「还没到期」。'
+            + '自己改了主意：它主动改说法、升维、认下合题的次数。人替它收掉的旧账不算在这里。'
+            + '三个数都是 0 的时候，是它还没为自己的哪句话付过账，不是没记。')))
+    }
+
     function SangguanPage({ aid, view, act }) {
       const tech = view === 'tech'
       const base = '/v1/agents/' + enc(aid) + '/sangguan'
@@ -5304,6 +5536,7 @@ window.__ModuleLoader__.load({
       const [ep] = useAsync(get('/epochs'), [aid, tick, on])
       const [lv] = useAsync(get('/liveness'), [aid, tick, on])
       const [tl] = useAsync(get('/timeline?days=365'), [aid, tick, on])
+      const [sc] = useAsync(get('/scorecard?days=30'), [aid, tick, on])
       const [el] = useAsync(get('/elev'), [aid, tick, on])
       const [evBefore, setEvBefore] = useState(0)
       const [ev] = useAsync(() => (on && tech ? call('GET', base + '/events?limit=30' + (evBefore ? '&before=' + evBefore : '')) : null), [aid, tick, on, tech, evBefore])
@@ -5343,7 +5576,8 @@ window.__ModuleLoader__.load({
       const onOpen = (id) => setOpen((o) => (o === id ? null : id))
       const live = (l) => (layers[l] || []).filter((c) => !SG_TERMINAL_OF(c.status))
       const cores = (l) => live(l).filter((c) => c.kind === SG_CORE[l] && c.status === 'active').sort(sgRank)
-      const belts = (l, kind) => live(l).filter((c) => c.kind !== SG_CORE[l] && (!kind || c.kind === kind)).sort(sgRank)
+      // 承诺（kind=commit）不算价值观：它是到点要兑现的一笔账，只在「预见与回流」里露
+      const belts = (l, kind) => live(l).filter((c) => c.kind !== SG_CORE[l] && c.kind !== 'commit' && (!kind || c.kind === kind)).sort(sgRank)
       const kOf = (l, pred) => kappas.filter((k) => k.layer === l && (!pred || pred(k)))
       const cap = (arr) => (tech ? arr : arr.slice(0, 5))
 
@@ -5376,11 +5610,23 @@ window.__ModuleLoader__.load({
         return '第 ' + n + ' 季 · ' + (c ? '自 ' + sgDay(c.at) : '自启用起')
       }
       const established = (c) => !(c.origin === 'seed' && c.pi === 0 && c.n === 0)
+      // 空着就说清为什么空着。写「尚未立论」四个字容易让人以为是坏了，
+      // 其实多半只是这段时间没出现够分量的取舍 / 冲突。
+      const SG_EMPTY_WHY = {
+        W: '还没碰到需要它解释世界的冲突',
+        L: '还没想清楚自己要来做什么',
+        V: '这段时间没出现让它非选不可的取舍',
+      }
       const headLine = (l) => {
         const cs = cores(l).filter(established)
         const bs = belts(l).filter((c) => c.status === 'active' && established(c))
         const pick = cs.length ? cs : bs
-        if (!pick.length) return h('div', { className: 'dshc-row', key: l }, h('span', { className: 'l' }, SG_LAYER[l]), h('span', { className: 'dshc-sub', style: { flex: 1 } }, '尚未立论'), h('span', { className: 'v dshc-sub' }, stamp(l)))
+        if (!pick.length) return h('div', { key: l },
+          h('div', { className: 'dshc-row' },
+            h('span', { className: 'l' }, SG_LAYER[l]),
+            h('span', { className: 'dshc-sub', style: { flex: 1 } }, '尚未立论'),
+            h('span', { className: 'v dshc-sub' }, stamp(l))),
+          h('div', { className: 'dshc-note', style: { marginLeft: 76 } }, SG_EMPTY_WHY[l]))
         return h('div', { key: l },
           h('div', { className: 'dshc-row' }, h('span', { className: 'l' }, SG_LAYER[l]),
             h('span', { style: { flex: 1, fontWeight: 600, cursor: 'pointer' }, onClick: () => onOpen(pick[0].id) }, pick[0].text, cs.length ? null : h('span', { className: 'dshc-sub' }, '（还只是一种说法）')),
@@ -5507,7 +5753,7 @@ window.__ModuleLoader__.load({
       return h('div', null,
         msg ? h('div', { className: 'dshc-note', style: { marginBottom: 8 } }, msg) : null,
         h(Sec, { title: '三观', desc: S.inject.mode === 'live' ? '这些看法已经在影响它说话。' : '这些看法还在影子期：只记录，不影响它说话（' + S.inject.shadow_days + ' / 7 天）。' },
-          h(Card, null, ['W', 'L', 'V'].map(headLine), judgeBar), drawer),
+          h(Card, null, h(SgLedgerBar, { sc: sc.data, tech }), ['W', 'L', 'V'].map(headLine), judgeBar), drawer),
         h(Sec, { title: '世界观', desc: '它认定世界是怎样的，以及围着它的辅助说法。' },
           h(Card, null,
             cores('W').length ? cores('W').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '硬核', layer: 'W', base, act, done: bump }),
@@ -5607,7 +5853,7 @@ window.__ModuleLoader__.load({
             h('span', { style: { opacity: 0.5 } },
               view === 'user'
                 ? '· 上半是此刻，下半是它这一程怎么走过来的；虚线是它的水位。'
-                : '· 大字=label；虚线=水位（底色+日节律+负荷），白线=慢情绪，蓝尾=这一下。')),
+                : '· 大字=label；虚线=水位（底色+日节律+激素纹+负荷），白线=慢情绪，蓝尾=这一下。')),
         },
           h(Card, {
             className: 'dshc-emo',
@@ -5648,7 +5894,7 @@ window.__ModuleLoader__.load({
                   if (!v3) return null
                   const sg = (x) => (Number(x) >= 0 ? '+' : '') + Number(x).toFixed(2)
                   const items = [
-                    ['水位', v3.baseline, '底色 + 日节律 + 累积负荷：慢情绪要去的地方'],
+                    ['水位', v3.baseline, '底色 + 日节律 + 激素纹 + 累积负荷：慢情绪要去的地方'],
                     ['负荷', v3.base_off, '累积负荷：被持续情绪拖走的那部分，几天代谢回来'],
                     ['慢情绪', v3.slow, '慢情绪（v3.slow）：最近几小时到几天的整体；它不是上面那个 0~1 的「心情」'],
                     ['快情绪', v3.fast, '快情绪（v3.fast）：这一下的反应 + 共情，按分钟回落'],
@@ -5669,7 +5915,7 @@ window.__ModuleLoader__.load({
               ? h('div', { className: 'dshc-note', style: { padding: '12px 0' } },
                 /接口不存在|NOT_FOUND/.test(trend.error) ? '宿主重启一次就能画' : trend.error)
               : h(TrendChart, { data: trend.data || null, look })))),
-        view === 'tech' ? h(Tech, null, 'intensity_t = clamp(0.3·intensity_{t-1} + 0.7·Δ, 0, 1)\nΔ = 0.3 + 0.3·|goal_congruence| + 0.1·novelty\nPAD_t = 0.45·PAD_{t-1} + 0.55·prior(label)\n\n底色不是一条线，是三层叠出来的（affect.baseline.*）：\nb = 段式慢波（几天一个来回，±0.2~0.3）\n  + 日节律 circ(t)（24h 一个来回，相位随个体，幅度 0.06）\n  + 累积负荷 L（allostatic load：一直偏着就把水位拖走，几天代谢回来，±0.35 封顶）\n\n慢情绪（真 EMA，2026-11-01 起）：\nds/dt = α·(fast − s) + β·(b − s) + ω·(prior − s)\ns* = (α·fast + β·b + ω·prior) / (α+β+ω)，λ = α+β+ω\ns_{t+Δt} = s* + (s_{t−1} − s*)·exp(−λ·Δt)\nα=0.09/h · β=0.07/h · ω=0.005/h → λ=0.165（τ≈6h，一夜退到三成）\n稳态：快情绪五成半 / 底色四成\n参数：affect.slow.alpha / affect.slow.beta / baseline.circadian / baseline.load.*\n慢情绪按余温积分 ∫fast dt，不再拿一个常数值糊过去；差 50 分钟也走一步，9.9 小时不截断\n\n快情绪：fast_t = level + (fast_{t-1} − level)·exp(−(Δt/τ)^shape)，τ=20min、shape=1.5\n惯性：label 连续 2 轮一致才切换\n闸门：只有事件才换主情绪；两次事件之间强度自己回落，标签留着\n用户情绪：user_label 单独进 episode，不写 primary_label') : null,
+        view === 'tech' ? h(Tech, null, 'intensity_t = clamp(0.3·intensity_{t-1} + 0.7·Δ, 0, 1)\nΔ = 0.3 + 0.3·|goal_congruence| + 0.1·novelty\nPAD_t = 0.45·PAD_{t-1} + 0.55·prior(label)\n\n底色不是一条线，是四层叠出来的（affect.baseline.*）：\nb = 段式慢波（几天一个来回，±0.2~0.3）\n  + 日节律 circ(t)（24h 一个来回，相位随个体，幅度 0.06）\n  + 激素纹（≈90min 脉冲 + 几小时到一天的 1/f 漂移 + 18~34 天长周期）：\n    脉冲上升 12min、回落 35min，每格约一半有，尖有大小；纹理刻意不平滑。\n    幅度 = baseline.rough（漂移，默认 0.08）+ baseline.cycle（长周期，默认 0.07）；给 0 = 退回旧样子\n  + 累积负荷 L（allostatic load：一直偏着就把水位拖走，几天代谢回来，±0.35 封顶）\n\n慢情绪（真 EMA，2026-11-01 起）：\nds/dt = α·(fast − s) + β·(b − s) + ω·(prior − s)\ns* = (α·fast + β·b + ω·prior) / (α+β+ω)，λ = α+β+ω\ns_{t+Δt} = s* + (s_{t−1} − s*)·exp(−λ·Δt)\nα=0.09/h · β=0.07/h · ω=0.005/h → λ=0.165（τ≈6h，一夜退到三成）\n稳态：快情绪五成半 / 底色四成\n参数：affect.slow.alpha / affect.slow.beta / baseline.circadian / baseline.rough / baseline.cycle / baseline.load.*\n慢情绪按余温积分 ∫fast dt，不再拿一个常数值糊过去；差 50 分钟也走一步，9.9 小时不截断\n\n快情绪：fast_t = level + (fast_{t-1} − level)·exp(−(Δt/τ)^shape)，τ=20min、shape=1.5\n惯性：label 连续 2 轮一致才切换\n闸门：只有事件才换主情绪；两次事件之间强度自己回落，标签留着\n用户情绪：user_label 单独进 episode，不写 primary_label') : null,
         /* 「它现在觉得你」：它读你这句话得出的情绪（user_scores），不是它自己的情绪 */
         (function () {
           const g = (guess.data && guess.data.latest) || null
@@ -7547,6 +7793,85 @@ window.__ModuleLoader__.load({
           : null)
     }
 
+    /**
+     * QQ 通道：她「在不在线」。
+     * 桥和 NapCat 分两层显示：桥没起 vs QQ 掉了，处理办法不一样。
+     * 顺带能改多轮历史和召回条数——这两个只影响 QQ 这边说话的手感。
+     */
+    function QQChannelCard({ act }) {
+      const [s, reload] = useAsync(() => call('GET', '/v1/qq/health'), [])
+      const [cfg, setCfg] = useAsync(() => call('GET', '/v1/qq/settings'), [])
+      const [convs, reloadConvs] = useAsync(() => call('GET', '/v1/conversations'), [])
+      const [agents] = useAsync(() => call('GET', '/v1/agents'), [])
+      const [draft, setDraft] = useState(null)
+      const [note, setNote] = useState(null)
+      const h0 = s.data || {}
+      const bridge = h0.bridge || {}
+      const qq = h0.napcat || {}
+      const c = cfg.data || {}
+      const agentList = Array.isArray(agents.data) ? agents.data : []
+      // 只列还活着的会话：释放掉的那几条（联调时留下的）不该继续挂在页面上
+      const convList = ((convs.data && convs.data.conversations) || []).filter((x) => x.state !== 'released')
+      const nameOf = (id) => (agentList.find((a) => a.id === id) || {}).name || id
+      const v = draft || { history_turns: c.history_turns == null ? 8 : c.history_turns, recall_items: c.recall_items == null ? 10 : c.recall_items }
+      const t = (x) => (x ? String(x).replace('T', ' ').slice(5, 19) : '—')
+      const state = s.loading && !s.data ? ['…', ''] : h0.ok ? ['在线', 'ok'] : bridge.reachable ? ['QQ 掉线', 'bad'] : ['桥没起', 'bad']
+      // 桥掉了不会有人来通知这个卡片，只能自己探：15 秒一次，页面切后台就停。
+      useLive(reload, 15000)
+      async function save() {
+        setNote(null)
+        try {
+          const r = await act(() => call('PUT', '/v1/qq/settings', { history_turns: Number(v.history_turns) || 0, recall_items: Number(v.recall_items) || 10 }, true))
+          setNote('已保存：带 ' + r.history_turns + ' 轮历史 · 每轮召 ' + r.recall_items + ' 条')
+          setDraft(null); reload()
+        } catch (e) { setNote('保存失败：' + (e.message || String(e))) }
+      }
+      async function rebind(conv, agentId) {
+        setNote(null)
+        try {
+          const r = await act(() => call('POST', '/v1/conversations/bind', { conversation_id: conv.conversation_id, agent_id: agentId, handle: conv.handle || '' }, true))
+          setNote('已改：' + (conv.handle || conv.conversation_id) + ' 现在由「' + r.agent_name + '」接，下一句生效')
+          reloadConvs()
+        } catch (e) { setNote('改绑失败：' + (e.message || String(e))) }
+      }
+      async function release(conv) {
+        setNote(null)
+        try {
+          await act(() => call('DELETE', '/v1/conversations/' + encodeURIComponent(conv.conversation_id), null, true))
+          setNote('已释放：' + (conv.handle || conv.conversation_id) + ' 回到默认角色，下一句重绑')
+          reloadConvs()
+        } catch (e) { setNote('释放失败：' + (e.message || String(e))) }
+      }
+      return h(Card, null,
+        h(Row, { label: '状态' },
+          h(Pill, { on: !!h0.ok, tone: state[1] === 'bad' ? 'bad' : undefined }, state[0]),
+          h('span', { className: 'm dshc-sub' }, h0.ok ? '桥和 QQ 都在' : bridge.reachable ? '桥活着，但 NapCat / QQ 没应答' : '桥没连上，先看网关有没有起来'),
+          h(Btn, { ghost: true, sm: true, onClick: reload }, '重新检测')),
+        h(Row, { label: '机器人号' }, h('span', { className: 'v' }, qq.nickname ? qq.nickname + '（' + (qq.user_id || '') + '）' : (qq.error || '—'))),
+        h(Row, { label: '桥' }, h('span', { className: 'm dshc-mono' }, (bridge.url || '') + (bridge.uptime_sec != null ? ' · 已运行 ' + Math.floor(bridge.uptime_sec / 60) + ' 分钟' : ''))),
+        h(Row, { label: '最近收到' }, h('span', { className: 'v' }, t(bridge.last_inbound_at) + '（收 ' + (bridge.inbound == null ? '—' : bridge.inbound) + ' / 发 ' + (bridge.sent == null ? '—' : bridge.sent) + '）')),
+        bridge.last_error ? h(Row, { label: '上次出错' }, h('span', { className: 'm' }, String(bridge.last_error).slice(0, 120))) : null,
+        h('div', { className: 'dshc-sub', style: { marginTop: 12 } }, '谁在接：改一下，下一句生效；旧账留在原来那位名下。'),
+        convList.length === 0 ? h('div', { className: 'dshc-sub' }, '还没有 QQ 会话。') : null,
+        convList.map((conv) => h(Row, { key: conv.conversation_id, label: conv.handle || conv.conversation_id },
+          conv.handle === (c.owner || '') ? h(Pill, { on: true }, '主人') : null,
+          h('select', {
+            className: 'dshc-sel', value: conv.agent_id,
+            onChange: (e) => rebind(conv, e.target.value),
+          }, agentList.map((a) => h('option', { key: a.id, value: a.id }, a.name))),
+          h('span', { className: 'm dshc-sub' }, '现在：' + nameOf(conv.agent_id)),
+          h(Btn, { ghost: true, sm: true, onClick: () => release(conv) }, '释放'))),
+        h('div', { style: { marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+          h('span', { className: 'dshc-sub' }, '带几轮历史'),
+          h(Input, { style: { width: 64 }, value: String(v.history_turns), onChange: (e) => setDraft({ ...v, history_turns: e.target.value }) }),
+          h('span', { className: 'dshc-sub' }, '轮 · 每轮召'),
+          h(Input, { style: { width: 64 }, value: String(v.recall_items), onChange: (e) => setDraft({ ...v, recall_items: e.target.value }) }),
+          h('span', { className: 'dshc-sub' }, '条记忆'),
+          h(Btn, { sm: true, onClick: save }, '保存')),
+        note ? h('div', { className: 'dshc-note', style: { marginTop: 6 } }, note) : null,
+        h('div', { className: 'dshc-note', style: { marginTop: 6 } }, '历史越多越连贯，但也更慢；0 = 只靠记忆和日记接话。'))
+    }
+
     function ProactiveCard({ aid, act }) {
       const [s, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/proactive/settings'), [aid])
       const [f, setF] = useState(null)
@@ -7882,6 +8207,9 @@ window.__ModuleLoader__.load({
         h(FoldBlock, { title: '主动开口', desc: '每天几句 / 沉默多久 / 半夜安静 / 要不要主动发' },
           h(ProactiveCard, { aid, act })),
 
+        h(FoldBlock, { title: 'QQ 通道', desc: '在不在线 / 最近收发 / 带几轮历史' },
+          h(QQChannelCard, { act })),
+
         h(FoldBlock, { title: '安全边界', desc: '暂停全部 / 恢复运行' },
           h('div', null,
             h('div', { style: { display: 'flex', gap: 8 } },
@@ -8022,17 +8350,19 @@ window.__ModuleLoader__.load({
       bump() { for (const fn of [...this.listeners]) { try { fn() } catch { /* ignore */ } } },
     }
 
-    /** 对话标题旁的身份牌：意识体启用时才出现，休眠就没有。 */
-    function ChatPresence() {
+    /** 对话标题旁的身份牌：按**这段对话**绑定的意识体显示，绑不上就是普通 DSH（不显示）。 */
+    function ChatPresence(props) {
+      const sid = props && props.sessionId ? String(props.sessionId) : ''
       const [who, setWho] = useState(null)
       useEffect(() => {
         let alive = true
         const load = () => {
-          call('GET', '/v1/agents?include_deleted=1')
-            .then((list) => {
+          if (!sid) { setWho(null); return }
+          call('GET', '/v1/sessions/' + enc(sid) + '/agent')
+            .then((r) => {
               if (!alive) return
-              const act = (list || []).find((x) => x && x.status === 'active')
-              setWho(act ? { name: act.name, avatar: act.avatar || DEFAULT_AVATAR } : null)
+              const a = r && r.agent
+              setWho(a ? { name: a.name, avatar: a.avatar || DEFAULT_AVATAR, state: r.state } : null)
             })
             .catch(() => { if (alive) setWho(null) })
         }
@@ -8049,10 +8379,10 @@ window.__ModuleLoader__.load({
           window.removeEventListener('focus', onFocus)
           document.removeEventListener('visibilitychange', onVisible)
         }
-      }, [])
+      }, [sid])
       if (!who) return null
       return h('span', {
-        title: who.name + ' 正在接管对话',
+        title: who.state === 'paused' ? who.name + ' 被暂停了，这段对话暂时是普通 DSH' : who.name + ' 正在这段对话里',
         style: {
           display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 6,
           padding: '2px 9px 2px 2px', borderRadius: 999,

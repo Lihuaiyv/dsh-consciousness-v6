@@ -1,0 +1,39 @@
+﻿{
+  "db": "C:\\Users\\ygys1\\.dsh\\consciousness\\app.db",
+  "all": {
+    "turns": 400,
+    "avg_chars": 423,
+    "median_chars": 139,
+    "std_chars": 580,
+    "p90_chars": 1267,
+    "short_rate": "24.8%",
+    "bullet_rate": "28.3%",
+    "summary_rate": "4.5%",
+    "particle_per100": 0.05,
+    "retract_per100": 0.24
+  },
+  "chat": {
+    "turns": 212,
+    "avg_chars": 110,
+    "median_chars": 71,
+    "std_chars": 122,
+    "p90_chars": 225,
+    "short_rate": "42%",
+    "bullet_rate": "7.5%",
+    "summary_rate": "1.4%",
+    "particle_per100": 0.3,
+    "retract_per100": 0.47
+  },
+  "work": {
+    "turns": 188,
+    "avg_chars": 777,
+    "median_chars": 612,
+    "std_chars": 680,
+    "p90_chars": 1691,
+    "short_rate": "5.3%",
+    "bullet_rate": "51.6%",
+    "summary_rate": "8%",
+    "particle_per100": 0.02,
+    "retract_per100": 0.2
+  }
+}

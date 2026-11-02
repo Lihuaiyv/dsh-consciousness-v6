@@ -19,7 +19,7 @@
 
 import {
   searchFacts, searchByEntity, searchByVector, expandByLinks,
-  searchEpisodes, searchDiaries, evidenceOf, TYPE_WEIGHT,
+  searchEpisodes, searchDiaries, evidenceOf, overlap, TYPE_WEIGHT,
 } from './retrieve.js'
 import { searchRaw, searchFactArchive } from './archive.js'
 import { canEmbed, embedText } from './vector.js'
@@ -27,6 +27,21 @@ import { canEmbed, embedText } from './vector.js'
 export const LAYERS = ['memory', 'episode', 'diary', 'raw', 'fact']
 export const LAYER_LABEL = { memory: '记忆', episode: '纪要', diary: '日记', raw: '原文', fact: '存根' }
 export const DEFAULT_LAYERS = ['memory', 'raw']
+
+/**
+ * 查询和正文之间有没有「实义字面重合」。
+ *
+ * 与 evidenceOf 同源：3-gram 撞上算硬证据；短词（「狗」这种切不出 2-gram 的）
+ * 靠整词包含兜底。2-gram 只认一半以上的覆盖率，避免「这只」「了没」这类虚词凑出来的假命中。
+ */
+export function hasLexOverlap(query, text) {
+  const q = String(query || '')
+  const t = String(text || '')
+  if (!q || !t) return false
+  if (t.includes(q)) return true
+  if (overlap(q, t, 3) > 0) return true
+  return overlap(q, t, 2) >= 0.5
+}
 
 const RRF_K = 60
 const MAX_PHRASINGS = 4

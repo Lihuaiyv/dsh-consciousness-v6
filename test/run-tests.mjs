@@ -118,7 +118,7 @@ try {
   check('压缩摘要不算人话', cleanUserText('This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context.') === '')
 
   const h = await api('GET', '/health')
-  check('健康检查', h.ok === true && h.schema_version === 11, h)
+  check('健康检查', h.ok === true && h.schema_version === 13, h)
 
   let a = await api('POST', '/v1/agents', { name: '测试' }, { key: key() })
   const AV1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII='
@@ -840,11 +840,26 @@ try {
   const evs2 = await api('GET', `/v1/agents/${aid}/events/stream?last=0`)
   check('事件游标', Array.isArray(evs2) && evs2.length >= 1, evs2.length)
 
-  // 单实例运行 + 对话
+  // 多实例运行 + 对话：激活不再踢人，只是「排给下一段新对话」
   const actB = await api('POST', `/v1/agents/${bid}/activate`, {}, { key: key() })
-  check('激活一个', actB.id === bid && actB.status === 'active', actB)
+  check('激活一个', actB.id === bid && actB.status === 'active' && actB.pending === true, actB)
   const listAfter = await api('GET', '/v1/agents')
-  check('只保留一个运行中', listAfter.filter((x) => x.status === 'active').length === 1, listAfter.map((x) => x.status))
+  check('多实例：两个都能同时 active', listAfter.filter((x) => x.status === 'active').length >= 2, listAfter.map((x) => x.status))
+  const bindB = await api('POST', `/v1/agents/${bid}/bind`, { session_id: 'sess-test-b' }, { key: key() })
+  check('手动绑定一段会话', bindB.ok === true && bindB.agent_id === bid, bindB)
+  const sessB = await api('GET', `/v1/agents/${bid}/sessions`)
+  check('绑定的会话查得到', Array.isArray(sessB.items) && sessB.items.some((x) => x.session_id === 'sess-test-b'), sessB)
+  // 头牌按会话查身份：一个上下文一个人
+  const whoB = await api('GET', '/v1/sessions/sess-test-b/agent')
+  check('会话身份牌认对了人', whoB.agent && whoB.agent.id === bid && whoB.state === 'bound', whoB)
+  const whoNone = await api('GET', '/v1/sessions/sess-nobody/agent')
+  check('没绑定的对话不认人（普通 DSH）', whoNone.agent === null && whoNone.state === 'unbound', whoNone)
+  const rt1 = await api('GET', '/v1/runtime')
+  check('运行总览能读', rt1.max_running >= 1 && Array.isArray(rt1.agents), rt1)
+  const cap2 = await api('POST', '/v1/runtime/max-running', { max_running: 2 }, { key: key() })
+  check('并发上限能改', cap2.max_running === 2, cap2)
+  const capBack = await api('POST', '/v1/runtime/max-running', { max_running: 3 }, { key: key() })
+  check('并发上限能改回来', capBack.max_running === 3, capBack)
   const chat1 = await api('POST', `/v1/agents/${bid}/chat`, { text: '你好，我叫小周' }, { key: key() })
   check('对话有回复', typeof chat1.reply === 'string' && chat1.reply.length > 0, chat1)
   check('对话带注入', Array.isArray(chat1.pack), chat1.pack)
@@ -855,10 +870,12 @@ try {
   check('问句能召回', chat2.pack.length >= 1, chat2.pack)
   // 导入过同一套记忆时会有多条近似重复，引用哪条都算“引用记忆”；这里同时要求召回里确实有猫那条。
   check('回复引用记忆', chat2.pack.some((x) => /猫/.test(x.text)) && chat2.reply.includes(chat2.pack[0].text), chat2.reply)
+  // 休眠是用户显式关的开关：暂停之后这个实例才不能说话
+  await api('POST', `/v1/agents/${aid}/pause`, {}, { key: key() })
   const pausedChat = await api('POST', `/v1/agents/${aid}/chat`, { text: '在吗' }, { key: key() })
   check('休眠不能说话', pausedChat.error?.code === 'READ_ONLY', pausedChat)
-  const backA = await api('POST', `/v1/agents/${aid}/activate`, {}, { key: key() })
-  check('切回原实例', backA.paused >= 1, backA)
+  const backA = await api('POST', `/v1/agents/${aid}/resume`, {}, { key: key() })
+  check('切回原实例', backA.status === 'active' && backA.runtime_state !== 'offline', backA)
 
   // INV10：表白名单 + 依赖图 + ports；宿主契约（mock 宿主，不启 DSH）
   const here = path.dirname(fileURLToPath(import.meta.url))
@@ -1331,7 +1348,7 @@ try {
     {
       const g = await api('POST', '/v1/agents', { name: '代理' }, { key: key() })
       db.prepare('DELETE FROM chat_turns WHERE agent_id=?').run(g.id)
-      const addTurn = (role, text) => db.prepare('INSERT INTO chat_turns VALUES(?,?,?,?,?,?,?)')
+      const addTurn = (role, text) => db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at) VALUES(?,?,?,?,?,?,?)')
         .run('cht_' + Math.random().toString(16).slice(2), g.id, role, text, '[]', null, now())
       addTurn('user', '今天还行')
       for (let i = 0; i < 4; i++) addTurn('agent', '好棒，谢谢你，喜欢')
@@ -1703,7 +1720,10 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
         .run('agt_e2e', 0.55, 0.55, 0.55, 0.55, 0.6, JSON.stringify({ R: 0.6, E: 0.6, C: 0.6, A: 0.6, S: 0.6 }),
           'D0', 0, JSON.stringify({ c1: 0, c2: 0, c3: 0, c4: 4 }), new Date().toISOString(),
           '2020-01-01T00:00:00.000Z', null, null, JSON.stringify({ c1: false, c2: false, c3: false, c4: true }))
-      const block = sections.length ? String(sections[0].text()) : ''
+      const at = new Date().toISOString()
+      edb.prepare("INSERT INTO bindings(session_id,agent_id,created_at,state,source,bound_at,last_seen_at) VALUES(?,?,?,?,?,?,?)")
+        .run('s-e2e', 'agt_e2e', at, 'bound', 'manual', at, at)
+      const block = sections.length ? String(sections[0].text({ agent: { id: 's-e2e' } })) : ''
       check('注入：系统提示带上它和它的记忆',
         block.includes('小测') && block.includes('用户喜欢猫') && block.includes('关系'),
         block.slice(0, 120))
@@ -1712,7 +1732,7 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
       const preStep = handlers['agent/pre-step']
       let nexted = false
       const preOut = typeof preStep === 'function'
-        ? await preStep({ messages: [{ content: '用户喜欢猫' }] }, () => { nexted = true; return 'ok' })
+        ? await preStep({ agent: { id: 's-e2e' }, messages: [{ content: '用户喜欢猫' }] }, () => { nexted = true; return 'ok' })
         : null
       const dyn = mod.recentRecall.get('agt_e2e')
       check('注入：pre-step 真召回并续上链路',
@@ -2371,10 +2391,12 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   db.prepare('DELETE FROM agents WHERE id=?').run(pa)
 }
 
-// 注入预算：新的「此刻我 / 我想怎么说」也归入情绪档，超预算照旧先丢
+// 注入预算：情绪行不整行丢（A2）——挤的时候削别的、削它自己，但留得住
 {
   const packed2 = clampInjection(['## 意识体：X', '此刻我：我有点烦。', '我想怎么说：' + 'x'.repeat(300)], 60)
-  check('注入预算：感受行归入情绪档', packed2.dropped.includes('affect') && packed2.text.includes('意识体'), packed2)
+  check('注入预算：情绪行不被整行丢弃',
+    !packed2.dropped.includes('affect') && packed2.text.includes('意识体') && packed2.text.includes('此刻我') && packed2.tokens <= 60,
+    packed2)
 }
 
 // 回读自己那句话：小步修正慢情绪，短句 / 差得不多都不动
@@ -2391,13 +2413,14 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   db.prepare('INSERT OR REPLACE INTO affect_v3(agent_id,baseline,slow,fast,total,slow_at,fast_at) VALUES(?,?,?,?,?,?,?)')
     .run(ra, -0.2, -0.5, 0, -0.5, now(), now())
   const up = applySelfRead(db, ra, '好呀，今天想多聊一会儿～你慢慢说，我听着呢。')
-  const afterUp = db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(ra).slow
-  check('回读：说得比情绪热 → 往上挪一点', up.applied === true && afterUp > -0.5 && afterUp < -0.4, { up, afterUp })
+  const afterUp = db.prepare('SELECT slow, fast FROM affect_v3 WHERE agent_id=?').get(ra)
+  check('回读：语气暖只碰快情绪，不碰慢情绪', up.applied === true && afterUp.fast > 0 && afterUp.slow === -0.5, { up, afterUp })
+  check('回读：快情绪只挪一点点（≤0.02）', afterUp.fast <= 0.02 + 1e-9, { fast: afterUp.fast })
 
   const flatRead = applySelfRead(db, ra, '嗯。')
   check('回读：短句不动情绪', flatRead.applied === false && flatRead.reason === 'flat', flatRead)
 
-  db.prepare('UPDATE affect_v3 SET slow=?, total=? WHERE agent_id=?').run(-0.1, -0.1, ra)
+  db.prepare('UPDATE affect_v3 SET fast=?, total=? WHERE agent_id=?').run(-0.1, -0.1, ra)
   const closeRead = applySelfRead(db, ra, '差不多吧，就这样。')
   check('回读：差得不多不抖', closeRead.applied === false && closeRead.reason === 'close', closeRead)
 
@@ -2405,12 +2428,14 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   db.prepare('DELETE FROM agents WHERE id=?').run(ra)
 }
 
-console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)
-if (fail.length) { console.log('失败:', fail); process.exit(1) }
-
-// 注入预算：超了先丢情绪、再丢记忆，核心永远保留
+// 注入预算：超了先丢记忆，情绪行与核心永远保留（A2 之后情绪不再进丢弃名单）
 {
   const big = ['## 意识体：测试', '此刻情绪：烦躁，强度 0.80，心情 -0.2。', '需求缺口档位：D3。', '关于这句话，你能想起的事：\n' + '- ' + 'x'.repeat(2000)]
   const packed = clampInjection(big, 200)
-  check('注入预算先丢情绪再丢记忆', packed.tokens <= 200 && packed.dropped.includes('affect') && packed.text.includes('意识体'), packed)
+  check('注入预算：超了丢记忆、情绪与核心保留',
+    packed.tokens <= 200 && packed.text.includes('意识体') && packed.text.includes('此刻情绪') && packed.dropped.includes('memory'),
+    packed)
 }
+
+console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)
+if (fail.length) { console.log('失败:', fail); process.exit(1) }

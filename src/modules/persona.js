@@ -4,6 +4,9 @@ import { seedAffect } from './affect.js'
 import { seedDrive, setCooldown, cooldownActive } from './drive.js'
 import { seedRuleBindings } from './artifacts.js'
 import { AXIS_KEYS, AXIS_DEFAULTS, NEUTRAL, shrinkAxes, isAxisPath, axesView, setAxisManual, releaseAxis, isManualAxis } from './traits.js'
+import { VALUE_DIMS as DIMS } from './persona_dims.js'
+import { foldValueWeights } from './sangguan/vweights.js'
+import { claimUserValue } from './sangguan/values_intake.js'
 
 /**
  * 手写区的字数上限。这些字每轮都会进系统提示，所以按「最坏情况注入」定预算：
@@ -156,18 +159,28 @@ export function deleteRelation(db, id) {
   return { id, deleted: true }
 }
 
+/** 十维只由三观命题折算；这里返回折算后的视图，不再读写旧表。 */
 export function listValues(db, aid) {
   agent(db, aid)
-  return db.prepare('SELECT * FROM persona_values WHERE agent_id=? ORDER BY weight DESC').all(aid)
+  try {
+    const folded = foldValueWeights(db, aid)
+    const w = (folded && folded.weights) || {}
+    return DIMS.map(([key, label]) => ({ key, label, weight: Number(w[key] ?? 0.1), evidence: [] }))
+      .sort((a, b) => b.weight - a.weight)
+  } catch { return [] }
 }
 
+/**
+ * 手写一句价值观：只写三观账本（claimUserValue），不再落任何旧表。
+ * 指令句拒收；抬不到初值以上的标准维也不记。
+ */
 export function setValue(db, aid, body) {
   active(db, aid)
   const key = requireText(body.key, LIMITS.valueKey, '价值观键')
   const w = Math.max(0, Math.min(1, Number(body.weight ?? 0.1)))
-  db.prepare('INSERT OR REPLACE INTO persona_values VALUES(?,?,?,?,?)')
-    .run(aid, key, w, JSON.stringify(body.evidence || []), now())
-  return { key, weight: w }
+  const r = claimUserValue(db, aid, { key, weight: w })
+  if (r && r.reason === 'instruction') err(400, 'INVALID_ARGUMENT', '这句像指令，不像看法')
+  return { ...r, key, weight: w }
 }
 
 export function listPreferences(db, aid) {

@@ -155,14 +155,109 @@ export function valueAtTime(segs, tMs) {
  * 而不是第二天早上就被日程表拽回去。
  */
 
-/** 日节律：一天一个来回，相位由 agent 定（每个个体不一样），amplitude=0 时关掉 */
-export function circadianAt(tMs, seed, amplitude) {
+/**
+ * 日节律：一天一个来回，相位由 agent 定（每个个体不一样），amplitude=0 时关掉。
+ * phaseMin 是「被经历拖走的相位」（分钟，正数 = 往后挪）：连着熬夜，高点就来得更晚，
+ * 不是每天按北京时间准点醒。默认 0，等于旧行为。
+ */
+export function circadianAt(tMs, seed, amplitude, phaseMin = 0) {
   const amp = Number(amplitude)
   if (!Number.isFinite(amp) || amp <= 0) return 0
   const s = hashSeed('circ:' + String(seed))
   const phaseH = (s % 1440) / 60 // 0~24 小时，按分钟散开
+  const shiftH = (Number(phaseMin) || 0) / 60
   const h = ((Number(tMs) / 3600000) % 24 + 24) % 24
-  return amp * Math.sin((2 * Math.PI * (h - phaseH)) / 24)
+  return amp * Math.sin((2 * Math.PI * (h - phaseH - shiftH)) / 24)
+}
+
+/* ================================================== 激素纹：脉冲 / 漂移 / 长周期
+ *
+ * 只有段式慢波 + 一条正弦的话，水位平滑得像画出来的——一眼能看出是算的。
+ * 真实的激素曲线是这几层叠的：
+ *
+ *   1. 脉冲式分泌（pulseAt）：一两个小时一个尖，尖完拖条尾巴；有的尖大有的尖小，
+ *      也有整段安静的时候。不是等幅振荡。
+ *   2. 1/f 漂移（driftAt）：几小时到一天的随机游走，看着没周期，但也不是白噪声。
+ *   3. 长周期（cycleAt）：二三十天一个来回（性激素 / 季节那种），一天里根本看不出。
+ *
+ * 三层都是 (seed, tMs) 的纯函数：同一个时刻怎么算都一样，不因为「算过几次」而漂。
+ * 所以不存库、不重算历史，也不会把已经过去的段改掉（段式慢波那条铁律不用破）。
+ * 幅度给 0 就逐字退回旧的三层底色。
+ */
+
+const MIN = 60000
+const HR = 3600000
+
+/** 漂移的四个不可通约周期（小时）和权重：叠起来看着没周期，又不是白噪声 */
+const DRIFT_PARTS = [[2.7, 0.45], [6.3, 0.3], [15.7, 0.18], [41, 0.3]]
+
+/**
+ * 脉动：90 分钟一格，一半多一点的格子有；上升 14 分钟、回落 40 分钟。
+ *
+ * 峰顶用 exp(-x^1.5)：x^1.5 在峰上是平的，所以导数在峰顶是 0——
+ * 以前是两条 exp 在峰上硬接，导数从 +1/rise 一下跳到 -1/fall，
+ * 一个像素级的折角，图上就是一根竖刺。现在峰是圆的，尾巴还照样拖着。
+ */
+export function pulseAt(tMs, seed, amp = 0) {
+  const a = clamp(amp, 0, 0.3)
+  const t = Number(tMs)
+  if (!a || !Number.isFinite(t)) return 0
+  const W = 90 * MIN
+  const rise = 14 * MIN
+  const fall = 40 * MIN
+  const SHAPE = 1.5
+  const idx = Math.floor(t / W)
+  let sum = 0
+  /* 看当前格和前后各一格：脉冲最长也就两三个小时；
+     后一格是为了让「快要冒头」的脉冲提前开始爬升，不然会在整格边界上突然跳一下 */
+  for (let k = idx - 1; k <= idx + 1; k++) {
+    const r = mulberry32(hashSeed(seed + ':pulse:' + k))
+    if (r() > 0.55) continue
+    const center = (k + 0.1 + 0.8 * r()) * W
+    const peak = a * (0.35 + 1.3 * r())
+    const dt = t - center
+    if (dt < -4 * rise) continue
+    const tau = dt < 0 ? rise : fall
+    sum += peak * Math.exp(-Math.pow(Math.abs(dt) / tau, SHAPE))
+  }
+  return sum
+}
+
+/** 漂移：几个不可通约的正弦叠起来，相位按 agent 抽；峰值封在 amp */
+export function driftAt(tMs, seed, amp = 0) {
+  const a = clamp(amp, 0, 0.3)
+  const t = Number(tMs)
+  if (!a || !Number.isFinite(t)) return 0
+  let v = 0
+  let w = 0
+  for (let i = 0; i < DRIFT_PARTS.length; i++) {
+    const [periodH, weight] = DRIFT_PARTS[i]
+    const r = mulberry32(hashSeed(seed + ':drift:' + i))
+    v += weight * Math.sin((2 * Math.PI * t) / (periodH * HR) + r() * Math.PI * 2)
+    w += weight
+  }
+  return w ? (a * v) / w : 0
+}
+
+/** 长周期：18~34 天一个来回，周期和相位都按 agent 抽一次 */
+export function cycleAt(tMs, seed, amp = 0) {
+  const a = clamp(amp, 0, 0.3)
+  const t = Number(tMs)
+  if (!a || !Number.isFinite(t)) return 0
+  const r = mulberry32(hashSeed(seed + ':cycle'))
+  const periodH = (18 + 16 * r()) * 24
+  const phase = r() * Math.PI * 2
+  return a * Math.sin((2 * Math.PI * t) / (periodH * HR) + phase)
+}
+
+/**
+ * 水位的纹理层：漂移（rough）+ 脉冲（rough 的六成）+ 长周期（cycle）。
+ * 三个都给 0 就是旧行为。
+ */
+export function rhythmAt(tMs, seed, { rough = 0, cycle = 0 } = {}) {
+  const r = clamp(rough, 0, 0.3)
+  if (!r && !clamp(cycle, 0, 0.3)) return 0
+  return driftAt(tMs, seed, r) + pulseAt(tMs, seed, r * 0.45) + cycleAt(tMs, seed, cycle)
 }
 
 export const LOAD_CAP = 0.35

@@ -196,6 +196,17 @@ put(aid, [{ type: 'INQUIRY', layer: 'W', actor: 'judge', at: tick(), payload: { 
 for (let i = 0; i < 10; i++) put(aid, [{ type: 'EVIDENCE', actor: 'user', at: tick(), payload: { evidence: [{ kind: 'act', target_type: 'claim', target_id: wCore, sign: 1, weight: 0.6, ref: 'r' + i } ] } }])
 put(aid, [{ type: 'SUMMARY_BUILD', actor: 'judge', at: tick(), payload: { summaries: [{ layer: null, kind: 'chapter', from_seq: 0, to_seq: 5, text: JSON.stringify({ chapter: '学会先听', at_the_time: '我那时觉得直说最省事', hindsight: '现在看，先听更省事' }) }] } }])
 
+// ---------- 三个数：违背 / 兑现率 / 改主意 得真取自账本，不是占位 ----------
+{
+  // 另记一条预料并当场结掉：不动上面那条「等着看」的用例
+  const nu = put(aid, [{ type: 'NU_REGISTER', actor: 'judge', at: tick(), payload: { nus: [{ claim_id: wCore, expect: '这一条只用来算兑现率', observe: '算完即弃', p: 0.6, due_at: new Date(clock + 2 * 86400000).toISOString() }] } }]).entities.nus[0]
+  put(aid, [{ type: 'VIOLATE', layer: 'V', actor: 'judge', at: tick(), payload: { claim_id: va } }])
+  put(aid, [{ type: 'NU_RESOLVE', actor: 'judge', at: tick(), payload: { nu_id: nu, outcome: 'hit' } }])
+}
+
+// ---------- 承诺不算价值观：页面上不该在价值观栏出现 ----------
+put(aid, [{ type: 'CLAIM_EXP', layer: 'V', actor: 'sys', at: tick(), payload: { claims: [{ layer: 'V', kind: 'commit', text: '我答应：明天把脚本补上', origin: 'extract' }] } }])
+
 // ---------- F1–F5：用户视图 ----------
 calls = []
 const userState = { slots: [] }
@@ -213,6 +224,7 @@ check('世界观区：在争标记', W && textOf(W).includes('在争'))
 check('终态命题不进主区（F-I4）', W && !textOf(W).includes('已经被推翻的旧看法'))
 check('价值观区：取舍卡「两样都要」+ 偏向 + 代价', V && textOf(V).includes('两样都要') && textOf(V).includes('平时偏向「照顾对方的感受更要紧」') && textOf(V).includes('有时把话说得太软'), V && textOf(V))
 check('价值观区：没有第三栏合题', V && !textOf(V).includes('正在试的说法') && !textOf(V).includes('想通了'))
+check('承诺不算价值观：价值观区不出现「我答应」', V && !textOf(V).includes('我答应'), V && textOf(V))
 check('价值观区：规范 / 理想分两层', V && textOf(V).includes('平时怎么做') && textOf(V).includes('仰望什么'))
 check('人生观区：叙事弧（当时 / 回头看分两栏）+ 角色', Lz && textOf(Lz).includes('当时它这样讲') && textOf(Lz).includes('现在回头看') && textOf(Lz).includes('做一个耐心的倾听者'))
 check('诚实：SUB_ACCEPT 无 CONFIRM → 「正在试」，不出现「想通了」（F-I3）', Lz && textOf(Lz).includes('正在试') && !t.includes('想通了'), Lz && textOf(Lz))
@@ -222,6 +234,11 @@ check('史：转折时间线有「两样都要」「立为核心」', textOf(sec
 check('用户视图零术语：无 κ / π / ν / σ（F-I7）', !/[κπνσ]/.test(t), (t.match(/.{0,20}[κπνσ].{0,20}/g) || []).slice(0, 3))
 check('用户视图不露 id', !/\b(cl|k|nu|q)_[0-9A-Z]{6,}/.test(t))
 check('影子期说明', t.includes('影子期') && t.includes('/ 7 天'))
+check('三个数：违背 / 兑现 / 改主意 都在页头', t.includes('说过的没做到') && t.includes('答应的事兑现了') && t.includes('自己改了主意'), t.slice(0, 400))
+check('三个数：违背数真取自账本（1 次）', t.includes('说过的没做到1 次'), t.slice(0, 400))
+check('三个数：兑现率只按已结算算（1 件对 → 100%）', t.includes('答应的事兑现了100%') && t.includes('到期 1 件'), t.slice(0, 400))
+check('三个数：改主意是 0 就照实写 0', t.includes('自己改了主意0 次'), t.slice(0, 400))
+check('三个数：旁边有「怎么来的」折叠说明', t.includes('这三个数怎么来的') && t.includes('还没到期'), t.slice(0, 600))
 check('页面只读 /sangguan/* 与旧仪表（F-I1）', calls.every((c) => /^GET .*\/(sangguan\/|values$|worldview$|lifeview$)/.test(c)), calls.filter((c) => !/\/(sangguan\/|values$|worldview$|lifeview$)/.test(c)))
 
 // ---------- 点开命题：为什么 + 链 + 对 / 不对（F-I6） ----------
