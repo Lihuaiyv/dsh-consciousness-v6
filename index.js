@@ -27,7 +27,7 @@ import { detectMode, resolveMode, styleInjection } from './src/modules/style_mod
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
-import { expressionState, cardLine, subtextOf } from './src/modules/expression_state.js'
+import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
 import { appendTurn, buildEpisode, recentDiaryLines, migrateArchive, backfillFactArchive, sessionBridge } from './src/modules/archive.js'
@@ -54,7 +54,8 @@ import { ensureHeatBootstrapped, touch } from './src/modules/tiers.js'
 import { model } from './src/kernel.js'
 import * as R from './src/modules/relations.js'
 import { enqueueRelationRead, tickRelationRead } from './src/modules/relations_extract.js'
-import { moodValenceOf } from './src/modules/affect.js'
+import { moodValenceOf, moodLabelOf, trendOf } from './src/modules/affect.js'
+import { addMemory } from './src/modules/memory.js'
 import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
@@ -438,6 +439,10 @@ const eff = useRehearsal ? rehearseAdjustedAge(real, it.hits, it.last_hit_at, at
 
 /** 寮€鐜偅涓€琛岋細鍏崄绉掑唴澶嶇敤锛岄伩鍏嶅悓涓€娆＄郴缁熸彁绀鸿璋冨娆℃椂閲嶅璁拌处銆?*/
 const loopCache = new Map()
+/** 潜台词也一分钟内复用：一次对话里提示会被拼多次，第一次写库、后面会被自己的 24h 冷却挡住。 */
+const subtextCache = new Map()
+/** 上一轮的表达档：档位要变时先看慢情绪挪了多少，避免在阈值上忽冷忽热。 */
+const levelCache = new Map()
 /** 鑷彂娴幇涔熶竴鍒嗛挓鍐呭鐢細涓€娆″璇濋噷妯″瀷鍙兘澶氭鎷兼彁绀猴紝鍒妸闃熷垪鎶藉共銆?*/
 const spontaneousCache = new Map()
 
@@ -462,6 +467,54 @@ export function surfaceLoopLine(db, aid) {
   } catch { text = '' }
   loopCache.set(aid, { at: Date.now(), text, kinds })
   return text
+}
+
+const SUBTEXT_CLS_TEXT = { holdfire: '压着火没发出来', honest: '有句实话没说', conflict: '想问没问' }
+
+/**
+ * 同一类潜台词 3 天内反复出现：写一条「没说出口的事」。
+ * 不写的话，她每轮都重新生成同一句心事，第二天完全不存在——比不说更像假的。
+ * 走 addMemory（尊重冲突检测和 memory.auto），不直接插表。
+ */
+export function recordSubtextMemory(db, aid, cls, at = Date.now()) {
+  try {
+    if (getParam(db, aid, 'memory.auto') === false) return null
+    const cut = new Date(at - 3 * 86400000).toISOString()
+    const n = db.prepare("SELECT COUNT(*) c FROM events WHERE agent_id=? AND type='subtext.shown' AND created_at>?").get(aid, cut).c
+    if (n < 3) return null
+    const text = '有件事一直没说出口：' + (SUBTEXT_CLS_TEXT[cls] || '压着没说') + '。'
+    const exists = db.prepare("SELECT 1 FROM memory_items WHERE agent_id=? AND source='subtext' AND text=?").get(aid, text)
+    if (exists) return null
+    addMemory(db, aid, { text, type: 'appraisal', source: 'subtext', importance: 0.25 })
+    return text
+  } catch { return null }
+}
+
+/**
+ * 这一轮的潜台词。收尾优先（命中收尾直接不出，也不消耗 24h 冷却）；
+ * 60 秒内复用上一次结果，避免同一次对话里第二次拼提示时被自己刚写的冷却挡住。
+ * 纯状态拼接，不调模型。
+ */
+export function subtextForTurn(db, aid, { closing = false, hot = false, userLabel = '', lowTrust = false, conflictLine = '' } = {}) {
+  if (closing) return ''
+  const cached = subtextCache.get(aid)
+  if (cached && Date.now() - cached.at < 60000) return cached.text
+  let line = ''
+  try {
+    const last = db.prepare("SELECT created_at FROM events WHERE agent_id=? AND type='subtext.shown' ORDER BY created_at DESC LIMIT 1").get(aid)
+    const cooled = !!last && Date.now() - Date.parse(last.created_at) < 86400000
+    if (!cooled) {
+      const cls = subtextClass({ conflictLine, hot, userLabel, lowTrust })
+      const said = subtextOf({ conflictLine, hot, userLabel, lowTrust })
+      if (said) {
+        line = '（心里其实想说但没说出口：' + said + '这句不用讲出来，它只是让你说话时有点偏。）'
+        db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), aid, 'subtext.shown', JSON.stringify({ text: said, cls }), now())
+        recordSubtextMemory(db, aid, cls, Date.now())
+      }
+    }
+  } catch { line = '' }
+  subtextCache.set(aid, { at: Date.now(), text: line })
+  return line
 }
 
 export function consciousnessBlock(db, aid, opts) {
@@ -633,6 +686,7 @@ const injectWeight = (() => {
     const raw = Number(getParam(db, aid, 'affect.inject.weight'))
     return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.35
   })()
+  const prevExpr = levelCache.get(aid) || null
   const expr = affect
     ? expressionState({
       affect,
@@ -641,8 +695,11 @@ const injectWeight = (() => {
         : null,
       ei: axisVals && axisVals.ei != null ? axisVals.ei : 0.6,
       weight: injectWeight,
+      prev: prevExpr,
     })
     : null
+  // 记下这一轮算出的档位，给下一轮做迟滞；同一轮多次拼装时结果稳定，不会互相污染
+  if (expr) levelCache.set(aid, { level: expr.level, slow: expr.slow })
   // 收尾倾向：深夜 + 今天聊够了 + 对方没在提问。只读 chat_turns，不写状态。
   let closingLine = ''
   try {
@@ -652,25 +709,21 @@ const injectWeight = (() => {
     }
   } catch { closingLine = '' }
 
-  // 潜台词：心里想说但没说出口的一层。只从现有状态拼，不调模型；24h 内只出一次。
+  // 潜台词：心里想说但没说出口的一层。收尾优先，60 秒内复用上一次结果。
   let subtextLine = ''
   try {
     if (!stranger && String(getParam(db, aid, 'memory.inject.subtext') || 'on') !== 'off') {
-      const last = db.prepare("SELECT created_at FROM events WHERE agent_id=? AND type='subtext.shown' ORDER BY created_at DESC LIMIT 1").get(aid)
-      const cooled = !!last && Date.now() - Date.parse(last.created_at) < 86400000
-      if (!cooled) {
-        const hot = !!affect && ['irritated', 'frustrated'].includes(String(affect.primary_label)) && Number(affect.intensity) > 0.6
-        const lowTrust = !!rel.length && Number(rel[0].trust) < 0.35
-        const said = subtextOf({ conflictLine, hot, userLabel: userEmotion && userEmotion.label, lowTrust })
-        if (said) {
-          subtextLine = '（心里其实想说但没说出口：' + said + '这句不用讲出来，它只是让你说话时有点偏。）'
-          db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), aid, 'subtext.shown', JSON.stringify({ text: said }), now())
-        }
-      }
+      const hot = !!affect && ['irritated', 'frustrated'].includes(String(affect.primary_label)) && Number(affect.intensity) > 0.6
+      const lowTrust = !!rel.length && Number(rel[0].trust) < 0.35
+      subtextLine = subtextForTurn(db, aid, {
+        closing: !!closingLine,
+        hot,
+        userLabel: userEmotion && userEmotion.label,
+        lowTrust,
+        conflictLine,
+      })
     }
   } catch { subtextLine = '' }
-  // 收尾时不再叠潜台词：一个念头已经够了，两个一起会像在演苦情戏
-  if (closingLine) subtextLine = ''
 
   let relLine = rel.length
     ? '关系：' + rel.map((r, i) => {
@@ -727,6 +780,15 @@ let styleLines = []
     relLine = '关系：你还不认识对方。别叫「主人」或任何称呼，也别装作熟；等对方自我介绍之后再叫名字。'
   }
 
+  // 情绪的方向：只在她真的有点情绪时给，免得正常起伏被读成「在下掉」
+  let trendLine = ''
+  try {
+    if (affect && Number(affect.intensity) >= 0.4) {
+      const t = trendOf(db, aid)
+      if (t) trendLine = '（' + t.text + '。）'
+    }
+  } catch { trendLine = '' }
+
   const lines = [
     // ① 身份（§8 注入顺序第 1 段）
     '## 意识体：' + a.name,
@@ -749,6 +811,7 @@ let styleLines = []
     // ③ 情绪：只给「感觉现在大概…」的推测 + 一句软愿望。
     //    不再有「说话分寸 + 语气偏冷」这种命令行——命令会让她照着演。
     expr ? expr.felt : '',
+    trendLine || '',
     // 「现在什么情况」是材料：几点、我上一句说了什么。命令她按什么分寸说，她就照着演
     nowText || '',
     lifeText || '',
@@ -815,6 +878,17 @@ function narrativeAfterTurn(db, aid, sid) {
   // 鏃ヨ浜ょ粰姣忓ぉ 10:00 鐨勫珐鍥?worker锛屼笉鍦ㄧ涓€鏉℃秷鎭椂鎶㈣窇銆?}
 }
 
+/**
+ * 写一条对话记录，顺手记下她当时的情绪。
+ * 宿主回写和 QQ 桥接共用同一个形状；读的时候只认 role='agent' 那行。
+ */
+export function writeChatTurn(db, aid, role, text, at, conversationId = null, pack = '[]') {
+  const mood = moodLabelOf(db, aid)
+  db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
+    .run(nid('cht_'), aid, role, text, pack, mood, at, conversationId)
+  return mood
+}
+
 function commitTurn(db, aid, sid) {
   const u = lastUser.get(sid)
   const aText = pendingReply.get(sid)
@@ -831,8 +905,9 @@ function commitTurn(db, aid, sid) {
   const stranger = !!(qc && !qc.isOwner && !qc.ownerUnset)
   const conv = qc && qc.conversationId ? qc.conversationId : null
   try {
-    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)').run(nid('cht_'), aid, 'user', u, '[]', null, at, conv)
-    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)').run(nid('cht_'), aid, 'agent', aText, '[]', null, now(), conv)
+    // 这一轮她说话时的情绪标签。以前这里写 null，下一轮就读不到「我上一句是什么调子说的」。
+    writeChatTurn(db, aid, 'user', u, at, conv)
+    writeChatTurn(db, aid, 'agent', aText, now(), conv)
     db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(at, aid)
     // T4 鍘熸枃灞傦細assistant 杩欏彞涔熻惤鍐峰簱锛坲ser 閭ｅ彞鍦?captureTurn 鏃跺凡缁忚惤浜嗭級
     if (!stranger) try { appendTurn(db, aid, { sessionId: sid, role: 'assistant', text: aText, turnId: tid, at: now() }) } catch { /* 鍘熸枃澶辫触涓嶅奖鍝嶅璇?*/ }

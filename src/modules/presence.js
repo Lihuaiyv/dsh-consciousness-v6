@@ -39,8 +39,12 @@ const CN = ['', '一', '两', '三', '四', '五', '六']
 export function describeGap(ms, at = Date.now()) {
   const now = at instanceof Date ? at : new Date(at)
   const gap = Math.max(0, Number(ms) || 0)
+  // 0 / 负数：时间戳在未来或同一刻，按「刚刚」算，别报「几秒前」
+  if (gap <= 0) return '上次说话就在刚才'
   const mins = gap / 60000
   const last = new Date(now.getTime() - gap)
+  if (mins < 0.5) return '上一次说话是几秒前'
+  if (mins < 2) return '上一次说话是一两分钟前'
   if (mins < 10) return '上次说话就在刚才'
   if (mins < 60) return '上次说话是不到一小时前'
   const days = Math.round((Date.parse(localDay(now)) - Date.parse(localDay(last))) / 86400000)

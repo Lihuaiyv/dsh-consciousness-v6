@@ -20,6 +20,7 @@
 
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
+import { moodLabelOf } from './affect.js'
 import { now } from '../db.js'
 
 export const QQ_SESSION_PREFIX = 'qq-'
@@ -370,8 +371,9 @@ export function attachQQIngest(opts = {}) {
   }
   const writeTurn = (db, aid, role, text, conv, at) => {
     const id = 'cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
+    // 记下她说话时的情绪；QQ 这条路径以前也写 null，统计里一半是空的。
     db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-      .run(id, aid, role, text, '[]', null, at, conv)
+      .run(id, aid, role, text, '[]', moodLabelOf(db, aid), at, conv)
   }
   const callOwnerHook = (ctxArgs) => {
     if (typeof hooks.onOwnerTurn !== 'function') return true

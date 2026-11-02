@@ -828,6 +828,40 @@ export function moodValenceOf(db, aid) {
   return 0
 }
 
+/**
+ * 它说话那一刻的情绪标签（joy / irritated …），只读。
+ *
+ * 给 `chat_turns.mood` 用。宿主回写这条路径以前一直写 null，于是下一轮只能读到
+ * 「我现在什么情绪」，读不到「我上一句是什么调子说的」。没有情绪或老库 → null，
+ * 不拿 'calm' 冒充：没情绪和有情绪是两回事。
+ */
+export function moodLabelOf(db, aid) {
+  try {
+    const r = db.prepare('SELECT primary_label FROM affect_state WHERE agent_id=?').get(aid)
+    return r && r.primary_label ? String(r.primary_label) : null
+  } catch { return null }
+}
+
+/**
+ * 情绪的方向（不是强度）：现在相对这一段时间底色起点，是缓过来了还是在往下掉。
+ *
+ * 数据来源只认 `affect_baseline` 当前段的 `from_val`（3~7 天一段的起点），
+ * 不假装有「三天前的 slow 采样」——库里没有那条历史。
+ * 差小于 0.08 不出：那是正常起伏，不是方向。
+ */
+export function trendOf(db, aid) {
+  try {
+    const v3 = db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(aid)
+    if (!v3 || !Number.isFinite(Number(v3.slow))) return null
+    const seg = db.prepare('SELECT from_val, to_val FROM affect_baseline WHERE agent_id=? ORDER BY seg_no DESC LIMIT 1').get(aid)
+    if (!seg || !Number.isFinite(Number(seg.from_val))) return null
+    const delta = Number(v3.slow) - Number(seg.from_val)
+    if (delta >= 0.08) return { dir: 'up', text: '这两天在慢慢缓过来', delta }
+    if (delta <= -0.08) return { dir: 'down', text: '这两天在往下掉，说不上为什么', delta }
+    return null
+  } catch { return null }
+}
+
 /** 非事件：超过 45 分钟还没等到下一次事件的 episode 按「散了」收尾 */
 function closeStaleEpisodes(db, aid) {
   const cut = new Date(Date.now() - EPISODE_MAX_H * HOUR_MS).toISOString()

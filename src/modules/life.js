@@ -63,13 +63,18 @@ export function lifeCountToday(db, aid, at = Date.now()) {
   } catch { return 0 }
 }
 
-/** 近 7 天已经生活过的事，别同一条反复看。 */
+/** 近 7 天做过的事 → 次数。同一条最多再做 1 次（续看），不是每天换个新的。 */
 function recentSubjects(db, aid, at) {
+  const out = new Map()
   try {
     const rows = db.prepare("SELECT payload FROM events WHERE agent_id=? AND type='life.done' AND created_at>=?")
       .all(aid, new Date(at - LIFE.dedupDays * DAY).toISOString())
-    return new Set(rows.map((r) => parsePayload(r.payload).subject_id).filter(Boolean))
-  } catch { return new Set() }
+    for (const r of rows) {
+      const id = parsePayload(r.payload).subject_id
+      if (id) out.set(id, (out.get(id) || 0) + 1)
+    }
+  } catch { /* 读不到当没做过 */ }
+  return out
 }
 
 /**
@@ -104,11 +109,13 @@ export function pickLifeSubject(db, aid, at = Date.now()) {
         COALESCE(heat,0) DESC, created_at DESC LIMIT 20`).all(aid, since)
   } catch { rows = [] }
   for (const r of rows) {
-    if (done.has(r.id)) continue
+    const times = done.get(r.id) || 0
+    // 7 天内最多 2 次：第 2 次是「接着看」，不是又换一件
+    if (times >= 2) continue
     const text = String(r.text || '').trim()
     if (!text || text.length < 6) continue
     // 「主人说过想去看海」→ 直接拿这句当检索词，模型/搜索引擎比我们更会拆
-    return { subject_id: r.id, text, kind: 'interest' }
+    return { subject_id: r.id, text, kind: 'interest', repeat: times === 1 }
   }
   return null
 }
@@ -181,7 +188,8 @@ export async function lifeTick(db, aid, { at = Date.now(), browse = null, model 
   let sources = []
   let failed = ''
 
-  if (typeof browse === 'function') {
+  // 续看：同一件事第二次不再抓同一批网页，改成想一想——否则只是把同样的东西再看一遍
+  if (typeof browse === 'function' && !subj.repeat) {
     try {
       const out = await browse({ mode: 'search', query: oneLine(subj.text, 30), limit: 3 })
       const items = Array.isArray(out && out.items) ? out.items : []

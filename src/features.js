@@ -2526,6 +2526,8 @@ export function clampInjection(lines, budget = 800) {
     // 收尾念头和潜台词都比「自己想起的事」更可丢：丢了只是正常聊
     ['closing', (l) => l.startsWith('（你有点想收尾了')],
     ['subtext', (l) => l.startsWith('（心里其实')],
+    // 情绪的方向：一行，丢了只是少个「这两天」的层次，不影响这一轮聊下去
+    ['trend', (l) => l.startsWith('（这两天')],
     ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
   ]
   for (const [name, test] of order) {

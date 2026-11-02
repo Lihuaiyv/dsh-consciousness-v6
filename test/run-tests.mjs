@@ -2348,7 +2348,7 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('感受不写命令、不带生硬免责', felt.startsWith('感觉现在大概') && !/只说|语气|句数|必须|不许|不用照着演|底子/.test(felt), felt)
   check('感受只说整体心情、不说底色', felt.includes('整体心情偏负面') && !felt.includes('底色'), felt)
   const strongFelt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3, weight: 0.7 })
-  check('权重大时改成陈述口吻', strongFelt.startsWith('现在的情绪是：'), strongFelt)
+  check('权重大时改成陈述口吻', strongFelt.startsWith('现在：'), strongFelt)
 
   const wish = wishLine({ level: 'brief' })
   check('愿望是「我想」不是命令', wish.includes('我想') && !/只说|必须|不许/.test(wish), wish)

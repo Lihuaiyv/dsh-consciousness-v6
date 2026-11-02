@@ -33,7 +33,7 @@ check('默认分支仍是推测口吻', low.startsWith('感觉现在大概'), lo
 check('低落补「不太想多说」', low.includes('不太想多说'), low)
 
 const strong = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3, weight: 0.7 })
-check('权重大时仍是陈述口吻', strong.startsWith('现在的情绪是：'), strong)
+check('权重大时仍是陈述口吻', strong.startsWith('现在：'), strong)
 check('权重大时也带行为倾向', strong.includes('提不起劲'), strong)
 
 const unknown = feltLine({ label: 'nope', intensity: 0.4, slow: 0, mood: 0 })

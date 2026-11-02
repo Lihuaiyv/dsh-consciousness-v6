@@ -16,7 +16,7 @@
  * 纯函数：不读库、不调模型，方便单测。
  */
 
-import { expressionFrom } from '../algo/expression.js'
+import { expressionFrom, LEVELS as LEVEL_META } from '../algo/expression.js'
 
 const num = (v, d) => {
   const n = Number(v)
@@ -69,7 +69,7 @@ export function feltLine({ label, intensity, slow, mood, weight = 0.35 } = {}) {
   if (s <= -0.2) bits.push('不太想多说')
   else if (s >= 0.25) bits.push('愿意多说两句')
   const mw = moodWord(mood)
-  const head = Number(weight) >= 0.5 ? '现在的情绪是：' : '感觉现在大概的情绪是：'
+  const head = Number(weight) >= 0.5 ? '现在：' : '感觉现在大概：'
   return head + bits.join('，') + (mw ? '；整体心情' + mw : '') + '。'
 }
 
@@ -77,11 +77,22 @@ export function feltLine({ label, intensity, slow, mood, weight = 0.35 } = {}) {
  * 潜台词：心里想说但没说出口的一句。只从现有状态拼，不调模型。
  * 返回空串 = 这一轮不出这行。优先级：扫兴 > 没敢说 > 想问怕吵。
  */
-export function subtextOf({ conflictLine = '', hot = false, userLabel = '', lowTrust = false } = {}) {
-  if (hot && userLabel === 'joy') return '不想扫兴，所以把火先压着。'
-  if (conflictLine && lowTrust) return '有句实话没敢说。'
-  if (conflictLine) return '想问，但怕一问就变成吵架。'
+/** 潜台词的类别：只用来计数和落库，不直接进提示词。 */
+export function subtextClass({ conflictLine = '', hot = false, userLabel = '', lowTrust = false } = {}) {
+  if (hot && userLabel === 'joy') return 'holdfire'
+  if (conflictLine && lowTrust) return 'honest'
+  if (conflictLine) return 'conflict'
   return ''
+}
+
+const SUBTEXT_TEXT = {
+  holdfire: '不想扫兴，所以把火先压着。',
+  honest: '有句实话没敢说。',
+  conflict: '想问，但怕一问就变成吵架。',
+}
+
+export function subtextOf(p = {}) {
+  return SUBTEXT_TEXT[subtextClass(p)] || ''
 }
 
 /** 我想怎么说：软愿望，按表达档给，不是命令。 */
@@ -156,7 +167,7 @@ export function shadowLevel(baseLevel, { fast = 0, slow = 0 } = {}) {
  * @param {object} [p.relation] 关系三轴 {closeness,trust,kind,warmth,formality,disclosure,initiative}
  * @param {number} [p.ei] 外向度 0..1
  */
-export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35 } = {}) {
+export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35, prev = null } = {}) {
   const slow = clamp(num(affect && affect.v3 ? affect.v3.slow : 0, 0), -1, 1)
   const fast = clamp(num(affect && affect.v3 ? affect.v3.fast : 0, 0), -1, 1)
   const intensity = clamp01(num(affect ? affect.intensity : 0.4, 0.4))
@@ -165,6 +176,14 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
     ? clamp(num(affect.v3.total, 0), -1, 1)
     : affect && affect.mood != null ? clamp(2 * Number(affect.mood) - 1, -1, 1) : null
   const base = expressionFrom({ slow, intensity, ei: clamp01(num(ei, 0.6)) })
+  // 迟滞：档位要变、但慢情绪只挪了一点点，先不换脸。真人不会在阈值上反复横跳。
+  let level = base.level
+  if (prev && prev.level && prev.level !== level && Number.isFinite(Number(prev.slow))) {
+    if (Math.abs(slow - Number(prev.slow)) < 0.08) level = prev.level
+  }
+  const held = LEVEL_META[level] || LEVEL_META[base.level]
+  const sentences = Math.min(base.sentences, held.sentences)
+  const proactive = level === 'quiet' ? 0 : base.proactive
 
   // 关系只进「温度 / 正式 / 披露」；句长和主动性以情绪为准
   const relWarmth = clamp01(num(relation && relation.warmth, 0.5))
@@ -177,19 +196,20 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
   const initiative = clamp01(Math.min(relInitiative, base.proactive / 2))
 
   return {
-    level: base.level,
+    level,
     // 影子：fast 高一点会怎样（不进 style / wish，只给评测和面板看）
     fast: Math.round(fast * 100) / 100,
+    slow: Math.round(slow * 100) / 100,
     wouldLevel: shadowLevel(base.level, { fast, slow }),
-    sentences: base.sentences,
-    proactive: base.proactive,
+    sentences,
+    proactive,
     tone: base.tone,
     warmth: Math.round(warmth * 100) / 100,
     formality: Math.round(relFormality * 100) / 100,
     disclosure: Math.round(relDisclosure * 100) / 100,
     initiative: Math.round(initiative * 100) / 100,
     felt: feltLine({ label: affect && affect.primary_label, intensity, slow, mood: total, weight }),
-    wish: wishLine({ level: base.level }),
-    style: styleLine({ level: base.level }),
+    wish: wishLine({ level }),
+    style: styleLine({ level }),
   }
 }
