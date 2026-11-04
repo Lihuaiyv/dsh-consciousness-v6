@@ -155,8 +155,10 @@ export const OWNERSHIP = {
   writegate: {
     // 写入侧：实体归一化 / 写入门控 / 抽取队列 / 检索卡补写（门控只改 memory_items 的强化计数）
     // fact_archive：原地改写的旧句留底（`<id>:hist:<version>`）
+    // memory_pair_judge：窄门判定的缓存表（pair_judge 负责读写），gate 只把 applied 标成 0/1——
+    // 登记在这里是为了让这次跨模块写可见，不是把表从 pair_judge 抢过来。
     files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js'],
-    tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive'],
+    tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive', 'memory_pair_judge'],
   },
   timeline: {
     // G1 时效索引：只追加写 memory_timeline；作废 / 复活仍按原 UPDATE 写 memory_items。
