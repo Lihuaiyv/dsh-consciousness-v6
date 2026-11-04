@@ -3146,12 +3146,23 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'dshc-sub' }, '没读到：' + String((s.error && s.error.message) || s.error))
           : items.length === 0
             ? h('div', { className: 'dshc-sub' }, '还没记过。开口前觉得有点什么的时候，会写一句。')
-            : h('div', null, items.map((f) => h('div', {
-              key: f.id,
-              style: { padding: '6px 0', borderBottom: '1px solid rgba(127,127,127,.12)' },
-            },
-            h('span', { className: 'dshc-sub dshc-mono', style: { fontSize: 11, opacity: 0.55, marginRight: 8 } }, timeOf(f.at)),
-            h('span', { style: { fontSize: 13.5, lineHeight: 1.6 } }, f.text))))
+            : h('div', null, items.map((f) => {
+              const au = f.around && f.around.user ? String(f.around.user).slice(0, 46) : ''
+              const aa = f.around && f.around.agent ? String(f.around.agent).slice(0, 46) : ''
+              return h('div', {
+                key: f.id,
+                style: { padding: '6px 0', borderBottom: '1px solid rgba(127,127,127,.12)' },
+              },
+              h('div', null,
+                h('span', { className: 'dshc-sub dshc-mono', style: { fontSize: 11, opacity: 0.55, marginRight: 8 } }, timeOf(f.at)),
+                h('span', { style: { fontSize: 13.5, lineHeight: 1.6 } }, f.text)),
+              (au || aa)
+                ? h('div', { className: 'dshc-sub', style: { marginTop: 2, fontSize: 11.5, opacity: 0.62, lineHeight: 1.5 } },
+                  au ? '你：「' + au + '」' : '',
+                  (au && aa) ? '　' : '',
+                  aa ? '我：「' + aa + '」' : '')
+                : null)
+            }))
       return h(Sec, {
         title: '我最近怎么感觉',
         right: h('span', { className: 'dshc-sub', style: { fontSize: 11.5, opacity: 0.5 } }, '开口前写给自己的一句话'),

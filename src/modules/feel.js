@@ -90,20 +90,54 @@ export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480 } = {}) {
   } catch { return null }
 }
 
+/**
+ * 一条 feel 前后那两句：它之前最近一句 user、之后最近一句 agent（各截 90 字）。
+ * 只给眼睛看，不参与注入——「产生这条感觉的那轮对话」。
+ */
+function aroundOfFeel(turns, at) {
+  const t = Date.parse(at)
+  if (!Number.isFinite(t)) return { user: null, agent: null }
+  // 只认「这一轮」：你那句在开口前 5 分钟内，我那句在开口后 5 分钟内。再远就不配。
+  const MAX_MS = 5 * 60000
+  let user = null
+  let agent = null
+  for (const r of turns) {
+    const rt = Date.parse(r.created_at)
+    if (!Number.isFinite(rt)) continue
+    if (r.role === 'user' && rt <= t && t - rt <= MAX_MS && (!user || rt > Date.parse(user.created_at))) user = r
+    if (r.role !== 'user' && rt >= t && rt - t <= MAX_MS && (!agent || rt < Date.parse(agent.created_at))) agent = r
+  }
+  const cut = (x) => (x ? String(x.text || '').replace(/\s+/g, ' ').trim().slice(0, 90) : null)
+  return { user: cut(user), agent: cut(agent) }
+}
+
+/** 取一段时间里的对话，给 feel 配对用。只读。 */
+function turnsOf(db, aid, sinceIso) {
+  try {
+    return db.prepare('SELECT role,text,created_at FROM chat_turns WHERE agent_id=? AND created_at>=? ORDER BY created_at').all(aid, sinceIso)
+  } catch { return [] }
+}
+
 /** 最近 N 条「我说话时的感觉」（界面「我最近怎么感觉」用）。只读，不改任何状态。 */
 export function listFeels(db, aid, { limit = 20 } = {}) {
   const n = Math.max(1, Math.min(100, Number(limit) || 20))
   try {
-    return db.prepare('SELECT id,at,text,label,fast,slow,total,session_id,source FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT ?').all(aid, n)
+    const items = db.prepare('SELECT id,at,text,label,fast,slow,total,session_id,source FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT ?').all(aid, n)
       .map((r) => ({ ...r, text: String(r.text || '') }))
+    const turns = turnsOf(db, aid, new Date(Date.now() - 2 * 3600000).toISOString())
+    return items.map((f) => ({ ...f, around: aroundOfFeel(turns, f.at) }))
   } catch { return [] }
 }
 
-/** 单条 feel；找不到返回 null。 */
+/** 单条 feel；找不到返回 null。也带前后那两句对话。 */
 export function getFeel(db, aid, id) {
   try {
     const r = db.prepare('SELECT id,at,text,label,fast,slow,total,session_id,source FROM affect_feel WHERE agent_id=? AND id=?').get(aid, String(id || ''))
-    return r ? { ...r, text: String(r.text || '') } : null
+    if (!r) return null
+    const at = Date.parse(r.at)
+    const since = new Date((Number.isFinite(at) ? at : Date.now()) - 10 * 60000).toISOString()
+    const turns = turnsOf(db, aid, since)
+    return { ...r, text: String(r.text || ''), around: aroundOfFeel(turns, r.at) }
   } catch { return null }
 }
 
