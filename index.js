@@ -2295,15 +2295,17 @@ try {
     console.error('[dsh-consciousness-v6] qq bridge attach failed:', e)
   }
 
-  // QQ 的 feel 段：宿主那段 systemPrompt 拿不到 QQ 会话 ctx（qq.bridge.no_scope），
-  // 所以「先用 feel 记一句」和「我上一句…」在 QQ 上一直缺着；借桥接的 provider 扩展点补上。
-  // 只给主人私聊；桥接的 extensionToolsEnabled 关着时这条不生效（provider 不会被调用）。
+  // QQ 的提示段：宿主那段 systemPrompt 拿不到 QQ 会话 ctx（qq.bridge.no_scope），
+  // 所以人格和 feel 一直缺着；借桥接的 provider 扩展点，把整份人格包挂进 QQ（和网页同一份）。
+  // 桥接的 extensionToolsEnabled 关着时这条不生效（provider 不会被调用）。
   try {
     const feelHandle = attachQQFeelProvider({
       getCtx: () => hostCtx,
       getDb: () => ensureDb(),
       getAid: () => activeAgentId(ensureDb()),
       resolveAid: (d, key) => qqAidOf(d, key),
+      // 同一份拼装器：网页和 QQ 不再各长一副面孔。
+      persona: (d, aid, opts) => consciousnessBlock(d, aid, opts),
       param: (k, hint) => {
         const d = ensureDb()
         const aid = (hint && qqAidOf(d, hint)) || initiatorAgentId() || activeAgentId(d)

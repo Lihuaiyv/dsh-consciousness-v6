@@ -198,6 +198,9 @@ export function qqChannelBlock(info = {}) {
  */
 export const QQ_FEEL_SECTION_NAME = 'dsh-consciousness-qq-feel'
 export const QQ_FEEL_SECTION_ORDER = 14
+/** QQ 的人格段：和网页同一份 consciousnessBlock（order 12，跟宿主那段同位）。 */
+export const QQ_PERSONA_SECTION_NAME = 'dsh-consciousness-qq-persona'
+export const QQ_PERSONA_SECTION_ORDER = 12
 
 export function buildQQFeelText(db, aid, { isOwner = false, at = Date.now(), hours = null } = {}) {
   if (!isOwner || !db || !aid) return ''
@@ -215,11 +218,13 @@ export function buildQQFeelText(db, aid, { isOwner = false, at = Date.now(), hou
 }
 
 /**
- * 挂 feel provider。opts 与 attachQQBridge 同一套：
- *   getCtx / getDb / getAid / param(k, hint) / resolveAid(db, sessionId) / log
+ * 挂 QQ 的提示段 provider。opts 与 attachQQBridge 同一套，外加：
+ *   persona(db, aid, opts) → 完整人格包（index.js 传 consciousnessBlock 进来，避免循环 import）
+ *
+ * 有 persona 就给完整人格（和网页同一份）；没给才退回旧的「feel 两行」小段。
  */
 export function attachQQFeelProvider(opts = {}) {
-  const { getCtx, getDb, getAid, param, log, resolveAid } = opts
+  const { getCtx, getDb, getAid, param, log, resolveAid, persona } = opts
   let ctx = null
   try { ctx = typeof getCtx === 'function' ? getCtx() : null } catch { ctx = null }
   if (!ctx) return { attached: false, reason: 'no getCtx' }
@@ -263,13 +268,28 @@ export function attachQQFeelProvider(opts = {}) {
       // 参数直接按这条会话自己的意识体读，不再让外层按「当前激活人格」去猜。
       const paramOf = (k) => { try { return getParam(db, aid, k) } catch { return undefined } }
       if (String(paramOf('qq.bridge.enable') ?? 'off') !== 'on') return { sections: [] }
-      if (String(paramOf('affect.feel.inject') ?? 'on') === 'off') return { sections: [] }
       const isGroup = route.messageType === 'group'
       const uid = String(route.targetId == null ? '' : route.targetId)
       const owners = parseOwnerQq(paramOf('qq.bridge.owner_qq'))
       const isOwner = !isGroup && uid !== '' && owners.includes(uid)
-      const text = buildQQFeelText(db, aid, { isOwner })
-      return { sections: text ? [{ name: QQ_FEEL_SECTION_NAME, order: QQ_FEEL_SECTION_ORDER, text }] : [] }
+      const sections = []
+      // ① 完整人格包，和网页同一份：主人私聊给全量；群聊/客人给「不熟的人」那版。
+      let personaText = ''
+      try {
+        if (typeof persona === 'function') {
+          const popt = (isGroup || !isOwner) ? { audience: 'stranger', snap: 'off' } : { snap: 'on' }
+          personaText = String(persona(db, aid, popt) || '')
+        }
+      } catch (e) {
+        try { if (typeof log === 'function') log('[qq_bridge] 人格包拼装失败: ' + (e && e.message ? e.message : e)) } catch { /* ignore */ }
+      }
+      if (personaText) sections.push({ name: QQ_PERSONA_SECTION_NAME, order: QQ_PERSONA_SECTION_ORDER, text: personaText })
+      // ② 没有 persona 拼装器时，退回最小的 feel 两行（老行为，仍可用）。
+      if (!personaText && String(paramOf('affect.feel.inject') ?? 'on') !== 'off') {
+        const text = buildQQFeelText(db, aid, { isOwner })
+        if (text) sections.push({ name: QQ_FEEL_SECTION_NAME, order: QQ_FEEL_SECTION_ORDER, text })
+      }
+      return { sections }
     } catch (e) {
       try { if (typeof log === 'function') log('[qq_bridge] feel provider 抛错: ' + (e && e.message ? e.message : e)) } catch { /* ignore */ }
       return { sections: [] }

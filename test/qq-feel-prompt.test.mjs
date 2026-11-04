@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
 import { setParam, getParam } from '../src/kernel.js'
-import { attachQQFeelProvider, buildQQFeelText, QQ_FEEL_SECTION_NAME } from '../src/modules/qq_bridge.js'
+import { attachQQFeelProvider, buildQQFeelText, QQ_FEEL_SECTION_NAME, QQ_PERSONA_SECTION_NAME } from '../src/modules/qq_bridge.js'
 
 let pass = 0
 let fail = 0
@@ -102,6 +102,26 @@ setParam(db, AID, 'qq.bridge.enable', { value: 'on' })
   db.prepare("INSERT INTO conversations(conversation_id,agent_id,channel,state,created_at) VALUES(?,?,?,?,?)")
     .run('qq:p:' + OWNER, AID, 'qq', 'active', new Date().toISOString())
   check('按 QQ 会话自己的归属找到小汐：给了', (run2(owner).sections || []).length === 1)
+}
+
+// 8) 给了 persona 拼装器：QQ 拿完整人格段（和网页同一份），不再单独塞 feel 小段
+{
+  let p3 = null
+  const api3 = { registerToolProvider: (fn) => { p3 = fn; return () => {} } }
+  const ctx3 = { get: (n) => (n === 'qqBridge' ? api3 : null), on: () => () => {} }
+  let gotOpts = null
+  const h3 = attachQQFeelProvider({
+    getCtx: () => ctx3, getDb: () => db, getAid: () => AID, resolveAid: () => AID, param: () => undefined,
+    persona: (d, aid, opts) => { gotOpts = opts; return '## 意识体：小汐\n人格包正文' },
+  })
+  check('第三份 provider 注册上了', h3.attached === true, h3)
+  const run3 = (route) => p3({ route, key: 'u:' + OWNER, agentCtx: { agent: { id: SID } } })
+  const res = run3(owner)
+  check('人格段取代了 feel 小段', (res.sections || []).length === 1 && res.sections[0].name === QQ_PERSONA_SECTION_NAME, res.sections)
+  check('人格段带正文', (res.sections || [])[0]?.text.includes('人格包正文'), res.sections)
+  check('主人拿全量（不按陌生人裁）', gotOpts && gotOpts.audience === undefined, gotOpts)
+  run3({ messageType: 'group', targetId: 123456 })
+  check('群聊拿「不熟的人」那版', gotOpts && gotOpts.audience === 'stranger', gotOpts)
 }
 
 db.close()
