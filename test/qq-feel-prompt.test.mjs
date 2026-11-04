@@ -85,6 +85,25 @@ setParam(db, AID, 'affect.feel.inject', { value: 'on' })
 setParam(db, AID, 'qq.bridge.enable', { value: 'off' })
 check('qq.bridge.enable=off 时不给', (run(owner).sections || []).length === 0)
 
+// 7) 归属按「这条 QQ 会话自己是谁」找，不按当前激活人格（真机踩过的坑）：
+//    宿主的 active agent 可能是别的人格，qq.bridge.enable 就读到 off，provider 静默给空。
+setParam(db, AID, 'qq.bridge.enable', { value: 'on' })
+{
+  const OTHER = 'agt_other_persona'
+  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
+    .run(OTHER, '另一个人格', 'daily', 'active', new Date().toISOString())
+  let provider2 = null
+  const api2 = { registerToolProvider: (fn) => { provider2 = fn; return () => {} } }
+  const ctx2 = { get: (name) => (name === 'qqBridge' ? api2 : null), on: () => () => {} }
+  const h2 = attachQQFeelProvider({ getCtx: () => ctx2, getDb: () => db, getAid: () => OTHER, resolveAid: () => OTHER, param: () => undefined })
+  check('第二份 provider 也注册上了', h2.attached === true, h2)
+  const run2 = (route) => provider2({ route, key: 'u:' + OWNER, agentCtx: { agent: { id: SID } } })
+  check('只看激活人格的话会读到 off、给空（旧 bug 的样子）', (run2(owner).sections || []).length === 0)
+  db.prepare("INSERT INTO conversations(conversation_id,agent_id,channel,state,created_at) VALUES(?,?,?,?,?)")
+    .run('qq:p:' + OWNER, AID, 'qq', 'active', new Date().toISOString())
+  check('按 QQ 会话自己的归属找到小汐：给了', (run2(owner).sections || []).length === 1)
+}
+
 db.close()
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))
 if (fail) { console.log('失败:', fail); process.exit(1) }

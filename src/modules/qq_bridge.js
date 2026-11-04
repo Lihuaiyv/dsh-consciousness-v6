@@ -234,15 +234,28 @@ export function attachQQFeelProvider(opts = {}) {
     try { return typeof getAid === 'function' ? (getAid() || '') : '' } catch { return '' }
   }
 
+  // 这条会话属于哪个意识体：先按 QQ chatKey 查 conversations（qq:p:<号> → agent），
+  // 再退回宿主那边的会话绑定。不能只靠 activeAgentId：真机上它可能停在别的人格里，
+  // 于是 qq.bridge.enable 读到 off，provider 静默返回空——第一版就栽在这儿。
+  const conversationAid = (db, key) => {
+    try {
+      const conv = conversationIdOf(String(key || ''))
+      if (!conv) return ''
+      const row = db.prepare("SELECT agent_id FROM conversations WHERE conversation_id=? AND state='active'").get(conv)
+      return row && row.agent_id ? String(row.agent_id) : ''
+    } catch { return '' }
+  }
+
   function provider(context = {}) {
     try {
       const db = typeof getDb === 'function' ? getDb() : null
       if (!db) return { sections: [] }
       const route = context.route || {}
       const sessionId = String((context.agentCtx && context.agentCtx.agent && context.agentCtx.agent.id) || '')
-      const aid = aidOf(db, sessionId)
+      const aid = conversationAid(db, context.key) || aidOf(db, sessionId)
       if (!aid) return { sections: [] }
-      const paramOf = (k) => (typeof param === 'function' ? param(k, sessionId) : undefined)
+      // 参数直接按这条会话自己的意识体读，不再让外层按「当前激活人格」去猜。
+      const paramOf = (k) => { try { return getParam(db, aid, k) } catch { return undefined } }
       if (String(paramOf('qq.bridge.enable') ?? 'off') !== 'on') return { sections: [] }
       if (String(paramOf('affect.feel.inject') ?? 'on') === 'off') return { sections: [] }
       const isGroup = route.messageType === 'group'
@@ -277,6 +290,7 @@ export function attachQQFeelProvider(opts = {}) {
       const d = api.registerToolProvider(provider, { name: PROVIDER_NAME })
       dispose = typeof d === 'function' ? d : null
       registered = true
+      try { if (typeof log === 'function') log('[qq_bridge] feel provider 已挂上（provider=' + PROVIDER_NAME + '）') } catch { /* ignore */ }
     } catch (e) {
       try { if (typeof log === 'function') log('[qq_bridge] 注册 feel provider 失败: ' + (e && e.message ? e.message : e)) } catch { /* ignore */ }
     }

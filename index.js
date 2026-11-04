@@ -17,6 +17,7 @@ import { DIMS } from './src/modules/values.js'
 import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
+import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_push.js'
 import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
 import { presenceLine } from './src/modules/presence.js'
@@ -1691,7 +1692,26 @@ function pushPort() {
  * 鎶婂緟鍙戦偅鍙ョ洿鎺ユ帹杩涙渶杩戠殑浼氳瘽锛氫笉鍐嶇瓑瀵规柟鍏堝紑鍙ｃ€? * 鎴愬姛鎵嶆妸 proactive 鏍囨垚 delivered锛涘け璐ュ氨鐣欑潃锛屼笅涓€杞璇濈収鏍蜂細琚甫鍑烘潵銆? */
 async function maybePushProactive(db, aid, out) {
   try {
+    // 没有新排的：看看积压里有没有还该发的——她攒着想说的话，别一直烂在队列里。
+    if (!out || !out.queued || !out.id || !out.text) {
+      try {
+        const row = db.prepare("SELECT id, text FROM proactive WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT 1").get(aid)
+        if (row && pushableLine(row.text)) out = { queued: true, id: row.id, text: row.text }
+      } catch { /* 取不到就不推 */ }
+    }
     if (!out || !out.queued || !out.id || !out.text) return
+    // 先试 QQ：桥的发送口比宿主 prompt 稳，而且真发到手机上。
+    try {
+      if (String(getParam(db, aid, 'qq.push.enable') || 'off') === 'on') {
+        const target = String(getParam(db, aid, 'qq.push.target') || '').trim()
+        const api = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('qqBridge') : null
+        const q = await pushProactiveToQQ({
+          db, aid, api, chatKey: ownerChatKey(target), line: out.text, proactiveId: out.id,
+        })
+        if (q.ok) { __probe('qq-push-ok id=' + out.id); return }
+        __probe('qq-push-skip ' + q.reason + (q.error ? ' ' + q.error : ''))
+      }
+    } catch (e) { __probe('qq-push-err ' + (e && e.message)) }
     let prefs = null
     try { prefs = getProactivePrefs(db, aid) } catch { /* 偏好读不到就不推 */ }
     if (!prefs || !prefs.push) return
