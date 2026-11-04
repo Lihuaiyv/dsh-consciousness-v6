@@ -20,8 +20,8 @@ export const SIGMA_OPEN = Object.freeze(['struggle', 'sub_trial', 'suspended', '
 export const SIGMA_LOCK = Object.freeze(['struggle', 'sub_trial'])
 
 export const NU_OUTCOMES = Object.freeze(['hit', 'miss', 'void'])
-export const EVIDENCE_KINDS = Object.freeze(['act', 'verdict', 'check'])
-export const EDGE_TYPES = Object.freeze(['DEPENDS', 'CONSTRAINS', 'PRESSURE', 'CITES'])
+export const EVIDENCE_KINDS = Object.freeze(['act', 'verdict', 'check', 'invest'])
+export const EDGE_TYPES = Object.freeze(['DEPENDS', 'CONSTRAINS', 'PRESSURE', 'CITES', 'DERIVES'])
 export const BRANCHES = Object.freeze(['RESOLVE', 'SUB', 'COEX', 'SUSPEND'])
 
 /**

@@ -46,19 +46,54 @@ export function clarityPhrase(days) {
   return '记不太清'
 }
 
+/** 来源 → 徽章。默认（manual / chat / ui / remember）不贴：那本来就是「你说的」。 */
+const PROVENANCE = {
+  life: '我自己看到的',
+  self: '我自己记得的',
+  browse: '我自己看到的',
+  tool: '我自己看到的',
+  extract: '从聊天里记下的',
+  episode: '从聊天里记下的',
+  summary: '从聊天里记下的',
+  consolidate: '我自己想的',
+  reflect: '我自己想的',
+  subtext: '我自己想的',
+}
+
+export function provenanceOf(row) {
+  return PROVENANCE[String((row && row.source) || '')] || ''
+}
+
+/** 低置信来源：只有「不是原话」的那几类才值得标「不一定对」。 */
+const INFERRED = new Set(['extract', 'episode', 'summary', 'consolidate', 'reflect', 'subtext', 'self'])
+
 /**
  * 一整条前缀，含括号。空字符串 = 不贴。
  * 今天发生的由 via='fresh' 单独标「今天刚发生」，这里不重复。
+ *
+ * opt.provenance=true 时才贴来源徽章；默认 false 保持旧行为（只有 life 带「我自己看到的」），
+ * 老测试与老调用逐字不变。低置信只在来源本身是推断/转述时标「不一定对」。
  */
-export function memoryTag(row, at = Date.now()) {
-  const d = ageDays(row, at)
-  // 来源徽章：她自己去看到的事，不能和「主人说的」混成一句「你之前说」。
-  // 只给 life 加前缀，老来源保持逐字不变，免得 500 多条测试全红。
-  const own = String((row && row.source) || '') === 'life' ? '我自己看到的' : ''
-  if (d == null) return own ? '（' + own + '）' : ''
+export function memoryTag(row, at = Date.now(), opt = {}) {
+  const showAge = !(opt && opt.age === false)
+  const d = showAge ? ageDays(row, at) : null
+  const source = String((row && row.source) || '')
+  const withProv = !!(opt && opt.provenance)
+  const own = withProv
+    ? provenanceOf(row)
+    : (source === 'life' ? '我自己看到的' : '')
+  const rawConf = row && row.confidence
+  const conf = rawConf == null || rawConf === '' ? NaN : Number(rawConf)
+  const low = withProv && INFERRED.has(source) && Number.isFinite(conf) && conf < 0.55
+  if (d == null) {
+    const parts0 = [own].filter(Boolean)
+    if (low) parts0.push('不一定对')
+    return parts0.length ? '（' + parts0.join('，') + '）' : ''
+  }
   const age = agePhrase(d)
   const clarity = clarityPhrase(d)
-  if (!age && !clarity && !own) return ''
+  if (!age && !clarity && !own && !low) return ''
   const parts = [own, age, clarity].filter(Boolean)
+  if (low) parts.push('不一定对')
   return '（' + parts.join('，') + '）'
 }

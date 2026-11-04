@@ -458,3 +458,122 @@ export const J21 = registerTemplate({
     return out.findings.filter((f) => !ids.has(f.claim_id)).map((f) => 'claim_id 不在输入里：' + f.claim_id)
   },
 })
+
+// ---------- 三列：世界观归纳（夜巡批量） ----------
+// 只看「这一周发生过什么」：一段段经历、落空的预料。要找的是同一件事在三个不同场景里都成立。
+export const J30 = registerTemplate({
+  id: 'J30', version: 1, tier: 'T2', pool: 'mid', temperature: 0.2, max_tokens: 900,
+  system: `你在归纳一个人对「世界和人怎么运转」的看法。输入是一段时间里的经历摘要、落空的预料、它说过的话。
+规则：
+1. 一条判断必须在至少三个不同场景里出现过（scene 写清是哪三个场景，要具体，不要写"生活中"）。
+2. 写的是世界 / 人 / 关系 / 因果，不是"我决定怎么做"。主语是对方或世界。
+3. 必须给一条将来可检验的预期 expectation：对方或世界会怎样，不能是"我会怎么做"。
+4. 必须给 observe：不插手也能看到的观察方式。
+5. 给 falsifier：什么情况算这条判断错了。
+6. 没有满足三条以上的，宁可返回空数组，不要凑。
+只输出 JSON：{"candidates":[{"belief":"…","kind":"belt|obs","scene":["…","…","…"],"expectation":"…","observe":"…","falsifier":"…"}]}`,
+  build: (input) => JSON.stringify(input),
+  schema: {
+    type: 'object', required: ['candidates'],
+    props: {
+      candidates: {
+        type: 'array', max: 5, default: [],
+        items: {
+          type: 'object', required: ['belief', 'scene', 'expectation', 'observe'],
+          props: {
+            belief: s(80), kind: { type: 'string', enum: ['belt', 'obs'], default: 'belt' },
+            scene: { type: 'array', max: 6, items: s(120) },
+            expectation: s(200), observe: s(200), falsifier: opt({ type: 'string', max: 200 }),
+          },
+        },
+      },
+    },
+  },
+})
+
+// ---------- 三列：人生观成章（每周） ----------
+// 不是把日记原文搬进来，是把一段时间压成「我在做什么、为什么、接下来往哪走」。
+export const J31 = registerTemplate({
+  id: 'J31', version: 1, tier: 'T2', pool: 'slow', temperature: 0.3, max_tokens: 700,
+  system: `你在替一个人把这一周压成一章自传。输入是这一周的日记、它实际把时间花在哪、以前写过的章节。
+规则：
+1. 写的是它自己：我在做什么、为什么这么做、接下来想往哪走。不是"用户想让我怎样"。
+2. 必须能解释过去至少两个具体的转折（past 里写清是哪两件事）。
+3. direction 要说清方向，不要写"变好""成长"这种空词。
+4. 允许不确定的口吻，但不要写口号。
+5. 没有值得成章的，返回空数组。
+只输出 JSON：{"candidates":[{"self":"…","direction":"…","past":["…","…"],"scene":["…"]}]}`,
+  build: (input) => JSON.stringify(input),
+  schema: {
+    type: 'object', required: ['candidates'],
+    props: {
+      candidates: {
+        type: 'array', max: 3, default: [],
+        items: {
+          type: 'object', required: ['self', 'direction', 'past'],
+          props: {
+            self: s(90), direction: s(60),
+            past: { type: 'array', max: 3, items: s(120) },
+            scene: { type: 'array', max: 6, items: s(120) },
+          },
+        },
+      },
+    },
+  },
+})
+
+// ---------- 草稿：反事实标注 ----------
+// 每个取舍现场都要回答三问：当时另一条路是什么、放弃了什么、谁受损。答不上来就丢掉。
+export const J32 = registerTemplate({
+  id: 'J32', version: 1, tier: 'T1', pool: 'mid', temperature: 0, max_tokens: 900,
+  system: `你在读一个人过去的取舍现场。每条给三样东西：
+- alt：当时另一个也说得通的做法，要具体（不要写"做别的"）
+- foregone：选了现在这条，放弃了什么，要具体（多花了几天 / 被当面说敷衍 / 少做了另一件事）
+- cost_to：这个代价落在谁身上（对方 / 自己 / 关系）
+判断不了就跳过这一条，不要编。宁可只标三条，也不要凑满。
+只输出 JSON：{"items":[{"idx":0,"alt":"…","foregone":"…","cost_to":"…"}]}`,
+  build: (input) => JSON.stringify({ episodes: input.map((e, i) => ({ idx: i, kind: e.kind, trigger: e.trigger, before: e.before, after: e.after, at: e.at })) }),
+  schema: {
+    type: 'object', required: ['items'],
+    props: {
+      items: {
+        type: 'array', max: 12, default: [],
+        items: {
+          type: 'object', required: ['idx', 'alt', 'foregone'],
+          props: { idx: { type: 'number', int: true, min: 0 }, alt: s(160), foregone: s(160), cost_to: opt({ type: 'string', max: 60 }) },
+        },
+      },
+    },
+  },
+  check: (out, input) => out.items.filter((x) => !(x.idx >= 0 && x.idx < input.length)).map((x) => 'idx 越界：' + x.idx),
+})
+
+// ---------- 草稿：起草 ----------
+// 给结构不给句式。exclusion 是硬要求：补不出「所以它不会___」就是口号。
+export const J33 = registerTemplate({
+  id: 'J33', version: 1, tier: 'T2', pool: 'slow', temperature: 0.6, max_tokens: 900,
+  system: `你在替一个人写它自己的取舍。输入是同类取舍现场（放弃的都是同一样东西）。
+写 2–3 个版本，每个版本：
+- text：第一人称，40–90 字，像自己跟自己交代，不像宣言。不要用「我重视/我坚持/我始终相信」开头，不要对仗排比。允许犹豫（“我大概”“我还没想清楚”）。写具体的事，不写抽象名词。
+- exclusion：补完「所以这件事上它不会______」这句话。补不出就说明这不是取舍，整条不要。
+- boundary：什么情况下这条不适用（可空）
+- counterexample：它哪一次违背过；没有就写 null，不要编。
+不要为了显得深刻而拔高。只输出 JSON：{"drafts":[{"text":"…","exclusion":"…","boundary":["…"],"counterexample":"…"}]}`,
+  build: (input) => JSON.stringify(input),
+  schema: {
+    type: 'object', required: ['drafts'],
+    props: {
+      drafts: {
+        type: 'array', max: 3, default: [],
+        items: {
+          type: 'object', required: ['text', 'exclusion'],
+          props: {
+            text: s(120), exclusion: s(120),
+            boundary: { type: 'array', max: 4, default: [], items: s(120) },
+            counterexample: opt({ type: 'string', max: 200 }),
+          },
+        },
+      },
+    },
+  },
+})

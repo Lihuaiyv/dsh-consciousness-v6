@@ -72,6 +72,17 @@ function normalizeHint(hint) {
     none,
     label: String(hint.label || 'calm'),
     source: String(hint.source || 'model'),
+    /* 判的理由和靶子：这里不白名单化就会在上游丢光——
+       2026-11-03 那版写成只挑固定字段，结果 affect_events 里 1266 条 why 全是 null，
+       复查只能靠光秃秃的文本重判，看不出当时抓的是哪个词。 */
+    why: String(hint.why || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+    target: ['me', 'other', 'none'].includes(hint.target) ? hint.target : (none ? 'none' : 'me'),
+    /* 这一次它自己判断该怎么接。和 why 同一个坑：这里不白名单化就会在上游丢光。 */
+    receive: ['follow', 'hold', 'dampen'].includes(String(hint.receive || '').toLowerCase())
+      ? String(hint.receive).toLowerCase() : 'auto',
+    /* 咽回去的那半句（P3）。同一个坑第三次：字段名得写在这里，少一行就永远拿不到。
+       先影子：只落库、不进提示词，攒够样本再谈回读。 */
+    unsaid: String(hint.unsaid || '').replace(/\s+/g, ' ').trim().slice(0, 120),
   }
 }
 
@@ -87,7 +98,9 @@ function makeAppraise(version, preferModel, rulesFn) {
       let body
       if (preferModel && hint && hint.source === 'model') body = hint
       else body = rulesFn(text)
-      return { ...body, algo: { name: 'appraise', version } }
+      /* 规则兜底那条路没有 unsaid（rulesFn 只给固定几个字段）。
+         不在这里补一个空串，下游就得处处判 undefined——字段缺失比空串更容易出静默 bug。 */
+      return { ...body, unsaid: String(body.unsaid || '').trim(), algo: { name: 'appraise', version } }
     },
   }
 }

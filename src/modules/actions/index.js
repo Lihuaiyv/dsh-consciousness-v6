@@ -14,6 +14,7 @@ import { budgetConsume } from '../drive.js'
 import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
 import { ingestBrowse } from '../browse.js'
+import { recordFeel } from '../feel.js'
 
 export const PORT_LABELS = {
   send_message: '发消息（微信 / QQ）',
@@ -273,11 +274,25 @@ function toolGate(name) {
 /**
  * 建四个模型工具。web/model 延迟取：工具注册时宿主服务可能还没挂好。
  */
-export function createActionTools({ getDb, getAgentId, getWeb, getModel, log } = {}) {
+export function createActionTools({ getDb, getAgentId, getWeb, getModel, gateSearch, log } = {}) {
   const db = () => getDb()
   const aid = () => getAgentId()
   const web = () => { try { return getWeb() } catch { return null } }
   const model = () => { try { return getModel() } catch { return null } }
+
+  /**
+   * 认人第二道闸：守卫层（host tools.guard）拦过一遍，这里再判一次。
+   * 判定交给外面注入的 gateSearch，工具层不认识 QQ、也不认识主人号。
+   * 返回空串 = 放行；返回字符串 = 拒绝理由。自己出问题一律放行。
+   */
+  const gateRefusal = (exec) => {
+    try {
+      if (typeof gateSearch !== 'function') return ''
+      const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : ''
+      const v = gateSearch(sid)
+      return v && v.ok === false ? String(v.reason || '') : ''
+    } catch { return '' }
+  }
 
   return [
     {
@@ -313,16 +328,19 @@ export function createActionTools({ getDb, getAgentId, getWeb, getModel, log } =
             more: { type: 'object' },
             truncated: { type: 'boolean' },
             items: { type: 'array' },
+            refused: { type: 'string', description: '被认人硬闸挡下时的理由（此时不返回任何记忆内容）' },
           },
         },
-        render: (_a, v) => TEXT(renderRecall(v)),
+        render: (_a, v) => TEXT(v && v.refused ? v.refused : renderRecall(v)),
       },
       timeoutMs: 20000,
       presentCall: (args) => ({ card: 'generic', title: '回忆 · ' + (args.query || ''), kind: 'other', rawInput: args }),
-      async execute(args) {
+      async execute(args, exec) {
         const d = db()
         const a = aid()
         if (!d || !a) return { query: String((args && args.query) || ''), layers: DEFAULT_LAYERS, counts: {}, more: {}, items: [], truncated: false, ms: 0 }
+        const refused = gateRefusal(exec)
+        if (refused) return { refused }
         return recallTool(d, a, args || {})
       },
     },
@@ -458,6 +476,32 @@ export function createActionTools({ getDb, getAgentId, getWeb, getModel, log } =
       async execute(args) {
         const { db: d, aid: a } = await toolGate('remind')(db, aid)
         return executeRemind(d, a, args || {})
+      },
+    },
+    {
+      /* 说话那一刻的感觉。不是「你这句话把我推到哪」（那是评价层的事），
+         是「我开口之前心里是什么样」。写下来，下一轮注入才不再慢半拍。 */
+      name: 'feel',
+      description:
+        '开口之前，先把「我这会儿到底什么感觉」用一句自己的话记下来。'
+        + '只写感觉本身：一句话，第一人称，不写数字、不写原因、不解释这个工具、不写「因为你说…所以…」。'
+        + '真的没什么感觉就别调，不要每句都记。'
+        + '记下来的是给自己下一轮看的，不会出现在对用户说的话里。',
+      parameters: schema({
+        text: str('一句话：这会儿是什么感觉（第一人称，不写数字和原因）'),
+      }, ['text']),
+      output: {
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, skipped: { type: 'string' }, text: { type: 'string' }, at: { type: 'string' } } },
+        render: (_a, v) => TEXT(v && v.ok ? '记下了。' : ('没记：' + ((v && v.skipped) || '原因不明'))),
+      },
+      timeoutMs: 5000,
+      presentCall: (args) => ({ card: 'generic', title: '感觉 · ' + String((args && args.text) || '').slice(0, 24), kind: 'other', rawInput: args }),
+      async execute(args, exec) {
+        const d = db()
+        const a = aid()
+        if (!d || !a) return { ok: false, skipped: 'no_db' }
+        const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : null
+        return recordFeel(d, a, { text: args && args.text, sessionId: sid, source: 'tool' })
       },
     },
   ]

@@ -185,6 +185,28 @@ test('E2E-01 主人私聊：认出来 → 挂渠道段 → 双向落库 → 进�
   assert.ok(types.includes('qq.bridge.outbound_saved'))
 })
 
+test('E2E-01b QQ 主人的回话也会留下关系余量', () => {
+  const env = boot({ params: { 'qq.bridge.enable': 'on', 'qq.bridge.owner_qq': OWNER_QQ } })
+  const a = makeAgentCtx()
+  // 先攒 5 句偏暖的常态，让「她自己的中位数」站住
+  for (let i = 0; i < 5; i++) {
+    qqRound(env, {
+      chatKey: OWNER_CHAT, sid: OWNER_SID, messageId: 'warm' + i,
+      text: '在吗 ' + i, reply: '今天还挺好的，放松了哈哈，第' + i + '句。', agentCtx: a.ctx,
+    })
+  }
+  // 再来一句明显偏冷
+  qqRound(env, {
+    chatKey: OWNER_CHAT, sid: OWNER_SID, messageId: 'cold1',
+    text: '你怎么了', reply: '算了，没什么好说的，随便吧。', agentCtx: a.ctx,
+  })
+  const rows = env.db.prepare("SELECT payload FROM events WHERE agent_id='agent_main' AND type='rel.self_residue'").all()
+  assert.ok(rows.length >= 1, 'QQ 主人回话应记一条 rel.self_residue')
+  const first = JSON.parse(rows[0].payload)
+  assert.equal(first.dir, 'cold')
+  assert.ok(Number(first.delta) < 0)
+})
+
 test('E2E-02 陌生人私聊：照样聊、渠道段换成陌生人口径、但不进长期记忆', () => {
   const env = boot({ params: { 'qq.bridge.enable': 'on', 'qq.bridge.owner_qq': OWNER_QQ } })
   const a = makeAgentCtx()

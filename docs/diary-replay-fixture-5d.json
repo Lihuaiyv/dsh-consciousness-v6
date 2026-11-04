@@ -1,0 +1,112 @@
+[
+ {
+  "day": "2026-10-29",
+  "candidates": 10,
+  "old": {
+   "source": "model",
+   "chars": 353,
+   "paragraphs": 4,
+   "enumWords": 0,
+   "reportWords": 0
+  },
+  "new": {
+   "source": "model",
+   "pending": false,
+   "fail_reason": null,
+   "scenes": 2,
+   "chars": 152,
+   "paragraphs": 2,
+   "enumWords": 0,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-10-30",
+  "candidates": 74,
+  "old": {
+   "source": "rules",
+   "chars": 221,
+   "paragraphs": 4,
+   "enumWords": 2,
+   "reportWords": 0
+  },
+  "new": {
+   "source": "model",
+   "pending": false,
+   "fail_reason": null,
+   "scenes": 2,
+   "chars": 135,
+   "paragraphs": 2,
+   "enumWords": 1,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-10-31",
+  "candidates": 6,
+  "old": {
+   "source": "model",
+   "chars": 355,
+   "paragraphs": 5,
+   "enumWords": 0,
+   "reportWords": 0
+  },
+  "new": {
+   "source": "model",
+   "pending": false,
+   "fail_reason": null,
+   "scenes": 1,
+   "chars": 123,
+   "paragraphs": 2,
+   "enumWords": 2,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-11-01",
+  "candidates": 32,
+  "old": {
+   "source": "model",
+   "chars": 360,
+   "paragraphs": 4,
+   "enumWords": 0,
+   "reportWords": 1
+  },
+  "new": {
+   "source": "model",
+   "pending": false,
+   "fail_reason": null,
+   "scenes": 2,
+   "chars": 138,
+   "paragraphs": 2,
+   "enumWords": 0,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-11-02",
+  "candidates": 36,
+  "old": {
+   "source": "model",
+   "chars": 378,
+   "paragraphs": 5,
+   "enumWords": 0,
+   "reportWords": 1
+  },
+  "new": {
+   "source": "model",
+   "pending": false,
+   "fail_reason": null,
+   "scenes": 2,
+   "chars": 132,
+   "paragraphs": 2,
+   "enumWords": 0,
+   "reportWords": 0,
+   "gate": true
+  }
+ }
+]

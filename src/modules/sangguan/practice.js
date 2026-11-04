@@ -299,10 +299,12 @@ export async function checkDue(db, aid, now, opt = {}) {
     for (const n of batch) {
       const item = byId[n.id]
       let outcome = item && ['hit', 'miss', 'void'].includes(item.outcome) ? item.outcome : 'void'
+      // 为什么作废要留下来：面板上「判不了」和「不是判错」是两回事
+      let why = outcome === 'void' ? 'no_evidence' : ''
       // ref 只认输入给出的外部记录；编造的 id 丢掉
       const known = new Set(((input.items.find((x) => x.nu_id === n.id) || {}).records || []).map((x) => x.id))
       const refs = ((item && item.refs) || []).filter((x) => known.has(x))
-      if ((outcome === 'hit' || outcome === 'miss') && !refs.length) outcome = 'void'
+      if ((outcome === 'hit' || outcome === 'miss') && !refs.length) { outcome = 'void'; why = 'no_ref' }
       if ((outcome === 'hit' || outcome === 'miss') && !(Date.parse(now) > Date.parse(n.reg_at))) {
         skipped.push({ id: n.id, reason: 'P5' })
         continue
@@ -321,7 +323,7 @@ export async function checkDue(db, aid, now, opt = {}) {
         })
       }
       const sur = surpriseOf(n.p, outcome)
-      evs.push({ type: 'NU_RESOLVE', actor: 'sys', at: now, payload: { nu_id: n.id, outcome, ...(sur ? { surprise: +sur.toFixed(4) } : {}) } })
+      evs.push({ type: 'NU_RESOLVE', actor: 'sys', at: now, payload: { nu_id: n.id, outcome, ...(why ? { why } : {}), ...(sur ? { surprise: +sur.toFixed(4) } : {}) } })
       try {
         append(db, aid, evs, { nus: { [n.id]: 'pending' } })
         did.push({ id: n.id, outcome })

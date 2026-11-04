@@ -3,7 +3,7 @@
  * 都先变成句子；证据仍只来自用户回合和能对上的行动结局。禁忌不读。
  */
 import { getFlag, setFlag } from '../../kernel.js'
-import { isEnabled } from './config.js'
+import { isEnabled, laneOn } from './config.js'
 import { append } from './ledger.js'
 import { loadState } from './projection.js'
 import { theta } from './fold.js'
@@ -41,7 +41,7 @@ export function intakeCandidates(db, aid) {
     // 只认志向。reflection 是 features 每轮 summarize 出来的「用户画像」（事实/偏好/边界），
     // 主语是用户，不是它的立场；日记同理是流水账。把它们原样搬进 L 层，
     // 页首就会变成「用户只问…未提供其他信息」——那不是人生观。
-    const rows = db.prepare("SELECT id, text, type FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type='aspiration' ORDER BY created_at").all(aid)
+    const rows = laneOn(db, aid, 'L') ? [] : db.prepare("SELECT id, text, type FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND type='aspiration' ORDER BY created_at").all(aid)
     for (const r of rows) {
       if (seen[r.id]) continue
       mark(r.id)
@@ -53,7 +53,7 @@ export function intakeCandidates(db, aid) {
     }
   } catch { /* 老库没有记忆表 */ }
   try {
-    const rows = db.prepare("SELECT id, a_id, b_id FROM conflicts WHERE agent_id=? AND state='open'").all(aid)
+    const rows = laneOn(db, aid, 'W') ? [] : db.prepare("SELECT id, a_id, b_id FROM conflicts WHERE agent_id=? AND state='open'").all(aid)
     for (const r of rows) {
       if (seen['c:' + r.id]) continue
       const a = memoryText(db, r.a_id)
@@ -69,7 +69,9 @@ export function intakeCandidates(db, aid) {
     }
   } catch { /* 没有冲突表 */ }
   try {
-    const rows = db.prepare('SELECT id, text FROM diaries WHERE agent_id=? ORDER BY created_at').all(aid)
+    const rows = laneOn(db, aid, 'L')
+      ? []
+      : db.prepare('SELECT id, text FROM diaries WHERE agent_id=? ORDER BY created_at').all(aid)
     for (const r of rows) {
       if (seen['d:' + r.id]) continue
       const text = String(r.text || '').trim()

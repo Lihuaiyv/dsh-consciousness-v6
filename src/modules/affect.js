@@ -4,7 +4,7 @@ import { nudgeDeficit } from './drive.js'
 import { readAxes } from './traits.js'
 import { runBound } from '../algo/index.js'
 import { planSegments, valueAt, valueAtTime, circadianAt, rhythmAt, stepLoad } from '../algo/baseline.js'
-import { stepSlow, fastOf, totalOf, coupledF, SLOW_ALPHA, SLOW_BETA } from '../algo/emotion.js'
+import { stepSlow, injectSlow, fastOf, empathyPartsOf, totalOf, coupledF, stepDuty, dutyBiasOf, SLOW_ETA, SLOW_BETA, SLOW_SAT_K, SLOW_SAT_WINDOW_MIN, DUTY_ADD, DUTY_TAU_H, DUTY_THRESHOLD, DUTY_BIAS, DUTY_RELIEF, EMPATHY_KAPPA, EMPATHY_MODE, EMPATHY_HOLD, EMPATHY_DAMPEN, EMPATHY_INVERT_BELOW, EMPATHY_STAND_ABOVE } from '../algo/emotion.js'
 import { PAD_PRIOR } from '../algo/affect_dyn.js'
 import { classifyGap, decayCurve, wakeReset, localHour } from '../algo/sleep.js'
 import { stepWalk } from '../algo/walk.js'
@@ -469,18 +469,30 @@ function avgOver(fn, t0, t1, n = 8) {
 }
 
 /** 算一次：底色 → 慢情绪按真实时长积分（快情绪按余温）→ 快情绪（含共情）→ 总情绪 */
-export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 0, closeness = 0.5, at = Date.now(), fresh = true } = {}) {
+export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 0, closeness = 0.5, at = Date.now(), fresh = true, kind = null, receive = 'auto' } = {}) {
   const cur = db.prepare('SELECT * FROM affect_v3 WHERE agent_id=?').get(aid)
   if (!cur) return null
   const ePrev = lastUserEmotion(db, aid)
   const segs = ensureBaseline(db, aid, at)
   const p = (PAD_PRIOR[label] && PAD_PRIOR[label].p) || 0
   let s = Number(cur.slow) || 0
+  /* 相处状态：被使唤的累积（duty）。它不进闸门、不推快情绪，
+     只把「慢情绪要回落的目标」往下压一点——
+     一整天只在被使唤，这事本身要有痕迹，但不是哪一句话的情绪。
+     衰减在回放循环里按小时走（否则睡一夜也会被白天的 duty 按着），最后再记这一句。 */
+  const dutyAdd = paramNum(db, aid, 'affect.duty.add', DUTY_ADD, 0, 0.5)
+  const dutyTauH = paramNum(db, aid, 'affect.duty.tau', DUTY_TAU_H, 0.5, 48)
+  const dutyRelief = paramNum(db, aid, 'affect.duty.relief', DUTY_RELIEF, 0, 1)
+  const dutyThreshold = paramNum(db, aid, 'affect.duty.threshold', DUTY_THRESHOLD, 0, 1)
+  const dutyBiasK = paramNum(db, aid, 'affect.duty.bias', DUTY_BIAS, 0, 1)
+  const dutyFromMs = cur.duty_at ? Date.parse(cur.duty_at) : NaN
+  let dutyCur = Number(cur.duty) || 0
   const fPrev = Number(cur.fast) || 0
   const fTau = fastTauMin(db, aid)
   const fShape = fastShapeOf(db, aid)
-  const alpha = paramNum(db, aid, 'affect.slow.alpha', SLOW_ALPHA, 0, 1)
-  const beta = paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 1)
+  /* v4：慢情绪平时只往水位回落。回得多快由半衰期定：τ=4h → β=ln2/τ≈0.173/h。
+     原来那个 alpha（追快情绪的速率）拿掉了——事件不再走「小时平均」这条路。 */
+  const beta = paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 2)
   const circAmp = paramNum(db, aid, 'affect.baseline.circadian', 0.06, 0, 0.3)
   /* 水位上的激素纹：脉冲 + 1/f 漂移，再加一条二三十天的长周期。0 = 退回旧的三层平滑底色。 */
   const roughAmp = paramNum(db, aid, 'affect.baseline.rough', 0.08, 0, 0.2)
@@ -495,6 +507,11 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
      差 50 分钟也走一步，差 9.9 小时也不截断。底色是按小时变的日程，分段积分才不丢中间那段。 */
   let fromMs = cur.slow_at ? Date.parse(cur.slow_at) : at
   if (!Number.isFinite(fromMs) || fromMs > at) fromMs = at
+  /* duty 先衰减到这次回放的起点，之后循环里每走一小时再衰减一次
+     （不能在循环外一把算到 at：那样睡一夜也会被白天的 duty 按着，醒来反而更低） */
+  if (Number.isFinite(dutyFromMs)) {
+    dutyCur = stepDuty({ duty: dutyCur, dtHours: Math.max(0, (fromMs - dutyFromMs) / HOUR_MS), kind: null, tauH: dutyTauH })
+  }
   const fastFrom = cur.fast_at ? Date.parse(cur.fast_at) : fromMs
   const fastT0 = Number.isFinite(fastFrom) && fastFrom <= at ? fastFrom : fromMs
 
@@ -546,6 +563,19 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   /* 还要看是哪一种：说不清的闷拖得久、被凶一下散得快、高兴散得最快。
      用「这段情绪是谁起的」（rec_label），不是用这一句话的标签——中间插一句 calm 不该把速度洗掉 */
   const recLabel = labelRecMul(cur.rec_label || label, readRecLabelParams(db, aid))
+  /* 沉下去要能察觉（第三层，情绪调节）：慢情绪连续低于水位超过阈值、攒够小时数才认。
+     认了之后只做一件事——回水位快一点。不改判断、不伪造正向情绪。
+     为什么不一低就扶：一低就扶等于替她决定「你不该难受」，那不是调节，是抹掉。 */
+  const regulateOn = paramNum(db, aid, 'affect.regulate.enabled', 1, 0, 1) > 0
+  const sinkTh = paramNum(db, aid, 'affect.regulate.drown.th', 0.15, 0, 0.5)
+  /* 绝对低线：水位本身偏低的时候（比如 -0.32），「低于水位 0.15」几乎到 -1 才成立，
+     根本触不到。所以再加一条「绝对够低」——两条满足一条就算在沉。 */
+  const sinkAbs = paramNum(db, aid, 'affect.regulate.drown.abs', 0.30, 0, 1)
+  const sinkHours = paramNum(db, aid, 'affect.regulate.drown.hours', 3, 0.5, 48)
+  const regBetaMul = paramNum(db, aid, 'affect.regulate.beta.mul', 1.2, 1, 3)
+  let sinkH = Number(cur.sink_h) || 0
+  const wasSinking = sinkH >= sinkHours
+  let sinking = wasSinking
   let cursor = fromMs
   while (cursor < endMs) {
     const next = Math.min(endMs, cursor + HOUR_MS)
@@ -553,25 +583,41 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
     const mid = (cursor + next) / 2
     /* 底色 = 段式慢波 + 日节律 + 累积负荷；三层叠起来才是会呼吸的水位 */
     const bPlan = valueAtTime(segs, mid) + circadianAt(mid, aid, circAmp, circPhase) + rhythm(mid) + walk
-    const bEff = Math.max(-1, Math.min(1, bPlan + load))
-    const fSeg = avgOver((ms) => warmthAt(ms, bEff), cursor, next)
+    /* duty 在这一小时里自己衰减，再算它把目标压低多少 */
+    dutyCur = stepDuty({ duty: dutyCur, dtHours, kind: null, tauH: dutyTauH })
+    const dutyBiasSeg = dutyBiasOf({ duty: dutyCur, threshold: dutyThreshold, bias: dutyBiasK })
+    const bEff = Math.max(-1, Math.min(1, bPlan + load + dutyBiasSeg))
+    /* v4：这一段只负责「回落」——不再拿快情绪的小时均值当输入。
+       事件本身在下面按 advantage 一次性推（见「事件冲击」那一段）。
+       那一步是旧的病根：一个小时的平均值把一次冲击摊成六十分之一，聊一整天只抖 0.03。 */
     /* 恢复的快慢看是哪一边：低于水位（低落）按 neg 拉长，高于水位（被抬高）按 pos 缩短。
        贴着水位时不来回切（死区 0.01），免得在 0 附近抖出花来。 */
     const dev = s - bEff
     /* 正负那一层 × 标签那一层：两条都是「用时倍数」，转成速率要取倒数 */
     const recMul = (Math.abs(dev) < 0.01 ? 1 : (dev < 0 ? 1 / recNeg : 1 / recPos)) / recLabel
-    /* λ 乘在 α（追快情绪）和 β（回底色）上，比例不变、只变快慢 */
+    /* 沉没计数：这一小时低于「相对线」或「绝对线」就累加，回来一点就清零（要的是「一直低着」） */
+    if (regulateOn) {
+      const sinkLine = Math.min(bEff - sinkTh, -sinkAbs)
+      if (s < sinkLine) sinkH += dtHours
+      else sinkH = 0
+      sinking = sinkH >= sinkHours
+    }
+    /* 事件归事件、回落归回落：这里只有回水位那一路，快慢按 β（半衰期 4h）× 睡眠/恢复系数
+       × 沉没调节系数（沉太久才 1.2，平时就是 1） */
     s = stepSlow({
-      s, b: bEff, p, fHourly: fSeg, dtHours,
-      alpha: alpha * nightMul * recMul, beta: beta * nightMul * recMul,
+      s, b: bEff, p, dtHours,
+      beta: beta * nightMul * recMul * (sinking ? regBetaMul : 1),
     })
     if (process.env.DSHC_DEBUG_SLOW) {
-      console.log('[slow] dt=' + dtHours.toFixed(4), 'bEff=' + bEff.toFixed(3), 'fSeg=' + fSeg.toFixed(3), 'p=' + Number(p).toFixed(2), 's=' + s, 'alpha=' + alpha, 'beta=' + beta, 'recMul=' + (recMul || 0).toFixed(3), 'recLabel=' + recLabel)
+      console.log('[slow] dt=' + dtHours.toFixed(4), 'bEff=' + bEff.toFixed(3), 'p=' + Number(p).toFixed(2), 's=' + s, 'beta=' + beta, 'recMul=' + (recMul || 0).toFixed(3), 'recLabel=' + recLabel)
     }
     /* 负荷被「这一段慢情绪偏离水位多少」拖着走：偏得久 → 水位跟着挪 → 缓过来也慢 */
     load = stepLoad({ load, s, bPlan, dtHours, gain: loadGain, tauH: loadTau })
     cursor = next
   }
+  /* 这一句本身：task/directive 加、chat/relation 打折。回放已经把时间走到 at 了，这里不再衰减。 */
+  const duty = stepDuty({ duty: dutyCur, dtHours: 0, kind, add: dutyAdd, tauH: dutyTauH, relief: dutyRelief })
+  const dutyBias = dutyBiasOf({ duty, threshold: dutyThreshold, bias: dutyBiasK })
   const hours = Math.round(((endMs - fromMs) / HOUR_MS) * 100) / 100
   /* 快情绪不是「一句话一个值」：事件当下到峰值，之后按「隔了多久」自己往下滑。
      τ=20 分钟、伸展指数 1.5：46 秒几乎不动，5 分钟还剩 0.43，1 小时退到 0.03。 */
@@ -580,11 +626,33 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
   if (!Number.isFinite(dtMin) || dtMin < 0) dtMin = 0
   dtMin = Math.min(dtMin, 240)
   const bPlanNow = valueAtTime(segs, at) + circadianAt(at, aid, circAmp, circPhase) + rhythm(at) + walk
-  const bNow = Math.max(-1, Math.min(1, bPlanNow + load))
+  /* 水位分两层存：bBase 是纯底色（段式慢波 + 日节律 + 负荷 + 游走），
+     duty 是「被使唤压下去多少」——它不写进 baseline 列，否则面板上的水位和
+     走势图重算出来的水位会对不上（走势图那边没有 duty 这一项）。
+     实际回落到的地方是 bNow = bBase + dutyBias。 */
+  const bBase = Math.max(-1, Math.min(1, bPlanNow + load))
+  const bNow = Math.max(-1, Math.min(1, bBase + dutyBias))
   /* 快慢耦合：同一句话，人累的时候反应更大、心情好的时候更扛得住。
      couple = 1 − gain·b：水位低（负）时放大，水位高时收一点。gain=0 就是旧的「加不加都一样」。 */
   const coupleGain = paramNum(db, aid, 'affect.couple.gain', 0.5, 0, 2)
-  const rawLevel = fastOf({ fSelf: Number(pleasure) || 0, eUser, ePrev, closeness })
+  /* 共情拆账：这一次读到你多少、其中被带起来多少。
+     empathyParts 是「还没被耦合放大」的原始增量——放大那一步算我自己的反应，不算你的。
+     v2 的三种接收方式在这里选：同向跟着走 / 反向稳住 / 两边都高时打折。
+     旧模式 v1 = EMPATHY_KAPPA 原值，不改老行为；v2 的 κ 走参数（默认 0.15）。 */
+  const empMode = String(getParam(db, aid, 'affect.empathy.mode') || EMPATHY_MODE)
+  const empOpts = {
+    mode: empMode,
+    /* want 是这一次模型自己判断的接法（follow/hold/dampen），auto 才退回阈值 */
+    want: String(receive || 'auto'),
+    selfNow: fPrev,
+    kappa: empMode === 'v2' ? paramNum(db, aid, 'affect.empathy.share', 0.19, 0, 1) : EMPATHY_KAPPA,
+    hold: paramNum(db, aid, 'affect.empathy.hold', EMPATHY_HOLD, 0, 1),
+    dampen: paramNum(db, aid, 'affect.empathy.dampen', EMPATHY_DAMPEN, 0, 1),
+    invertBelow: paramNum(db, aid, 'affect.empathy.invert.below', EMPATHY_INVERT_BELOW, -1, 0),
+    standAbove: paramNum(db, aid, 'affect.empathy.invert.stand', EMPATHY_STAND_ABOVE, -1, 1),
+  }
+  const empathyParts = empathyPartsOf({ eUser, ePrev, closeness, ...empOpts })
+  const rawLevel = fastOf({ fSelf: Number(pleasure) || 0, eUser, ePrev, closeness, ...empOpts })
   const level = coupledF(rawLevel, bNow, coupleGain)
   const f = fresh
     ? level
@@ -605,20 +673,89 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
       })
     } catch { /* 日志失败不影响对话 */ }
   }
+  /* 事件冲击（v4 的核心）：这一次真的戳到了，就当场给慢情绪一下，不再等「这一小时平均下来多少」。
+     A = 这次快情绪 − 现在的慢情绪，是 advantage：比「现在的我」多出多少才推得动。
+     已经在难过时再来一句重的推不动；正高兴时突然被泼一下，才拽得走。
+     5 分钟窗口里挤了好几次就按次数打折——第 5 下没第 1 下响。 */
+  let impulse = 0
+  const sBeforePush = s
+  if (fresh) {
+    const eta = paramNum(db, aid, 'affect.slow.eta', SLOW_ETA, 0, 0.5)
+    const satWin = paramNum(db, aid, 'affect.slow.sat.window', SLOW_SAT_WINDOW_MIN, 0, 120)
+    const satK = paramNum(db, aid, 'affect.slow.sat.k', SLOW_SAT_K, 0, 2)
+    let satN = 0
+    try {
+      const since = new Date(at - satWin * 60000).toISOString()
+      satN = Number(db.prepare('SELECT COUNT(*) AS n FROM affect_events WHERE agent_id=? AND at>=? AND gate=1').get(aid, since).n) || 0
+    } catch { satN = 0 }
+    const sBefore = s
+    s = injectSlow({ s, e: level, eta, satN, satK })
+    impulse = Math.round((s - sBefore) * 1000) / 1000
+    if (process.env.DSHC_DEBUG_SLOW) {
+      console.log('[slow-impulse] e=' + level, 's=' + sBefore + '→' + s, 'A=' + Math.round((level - sBefore) * 1000) / 1000, 'eta=' + eta, 'satN=' + satN)
+    }
+  }
+  /* 慢情绪限幅：不许离水位太远。一串密集对话会把每一句都往一个方向灌，
+     半衰期 4 小时又拉不住，最后挂在 0.4 上像根柱子、不像心情。
+     限幅只砍「离水位太远」的那一截，平时那些 0.05 以内的小起伏一点不受影响。
+     affect.slow.band = 0 就退回不限幅的老口径。 */
+  {
+    const band = paramNum(db, aid, 'affect.slow.band', 0.2, 0, 1)
+    if (band > 0) {
+      /* 只拦「这次事件往外推的那一截」，绝不因为水位自己动了就把她拽过去。
+         水位换了段（比如从 +0.2 掉到 −0.5），慢情绪本来就在外面——那时候限幅只做一件事：
+         不许再往更外面推。already = 事件之前已经离水位多远。 */
+      /* 软限幅（拐点，不是硬顶）：离开水位 band 以内原样放行；超出去的那截只留两成。
+         硬顶会让她贴着天花板不动，那也是一根柱子，只是换了个位置。
+         拐点则是「越往外越推不动」——连续说话也堆不出柱子，同时水位换段时也不会被一把拽走。 */
+      const gap = s - bNow
+      const over = Math.abs(gap) - band
+      if (over > 0) {
+        s = Math.round((bNow + Math.sign(gap || 1) * (band + over * 0.2)) * 1000) / 1000
+      }
+    }
+  }
   const total = totalOf(s, f)
   const stamp = new Date(at).toISOString()
   /* 这一段情绪是哪种起的：刚进来一句有分量的，就换标签；否则保留原来那段 */
   const recLabelNow = fresh && Math.abs(Number(pleasure) || 0) >= 0.05 ? label : (cur.rec_label || label)
-  db.prepare('UPDATE affect_v3 SET baseline=?, slow=?, fast=?, total=?, slow_at=?, fast_at=?, base_off=?, base_off_at=?, walk=?, walk_at=?, circ_phase=?, circ_phase_at=?, rec_label=? WHERE agent_id=?')
-    .run(bNow, s, f, total, stamp, stamp, load, stamp, walk, stamp, circPhase,
-      phaseNudged ? stamp : (cur.circ_phase_at || stamp), recLabelNow, aid)
+  db.prepare('UPDATE affect_v3 SET baseline=?, slow=?, fast=?, total=?, slow_at=?, fast_at=?, base_off=?, base_off_at=?, walk=?, walk_at=?, circ_phase=?, circ_phase_at=?, rec_label=?, duty=?, duty_at=?, sink_h=? WHERE agent_id=?')
+    .run(bBase, s, f, total, stamp, stamp, load, stamp, walk, stamp, circPhase,
+      phaseNudged ? stamp : (cur.circ_phase_at || stamp), recLabelNow, duty, stamp, sinkH, aid)
+  /* 刚从「没沉」跨到「沉够了」：留一条痕。之后连续沉着不再重复写。 */
+  if (sinking && !wasSinking) {
+    try {
+      event(db, aid, 'affect.sinking', {
+        hours: Math.round(sinkH * 100) / 100,
+        below_by: Math.round((bNow - s) * 1000) / 1000,
+        beta_mul: regBetaMul,
+      })
+    } catch { /* 记不上不影响情绪 */ }
+  }
   return {
-    baseline: bNow, slow: s, fast: f, total,
+    baseline: bBase, slow: s, fast: f, total,
     baseOff: load,
     walk,
     circPhase,
-    fastSelf: Number(pleasure) || 0,
-    fastEmpathy: f - (Number(pleasure) || 0),
+    /* 沉了多久、现在算不算沉着（第三层调节）。面板和样本都靠它。 */
+    sinkH: Math.round(sinkH * 100) / 100,
+    sinking,
+    /* 这一次事件给慢情绪推了多少（没事件就是 0）。存在样本里方便回看哪一下推得最狠 */
+    impulse,
+    /* 相处状态：被使唤到多少，以及它把回落目标压了多少（≤0） */
+    duty,
+    dutyBias,
+    /* 拆账要用同一把尺：f 里除了共情那一份，剩下的都算我的（含着回温/衰减的残温）。
+       以前拿 pleasure 当「我自己那份」，可非事件轮 pleasure 被置 0，整条 fast 就记成
+       「跟着你来的」——图、提示词、我自己那段自述都跟着说我是镜子（2026-11-03 就是这么错的）。 */
+    fastSelf: Math.round((f - empathyParts.share) * 1000) / 1000,
+    fastEmpathy: empathyParts.share,
+    /* 拆账三件套：读到你多少(eUserRead)、被带起来多少(empathyShare)、扣掉之后剩下多少算我的(selfOwn)。
+       只在事件行上落地，用来回答「我这次的情绪里，哪些是我的」。 */
+    eUserRead: empathyParts.e,
+    empathyShare: empathyParts.share,
+    empathyMode: empathyParts.mode,
+    selfOwn: Math.round((f - empathyParts.share) * 1000) / 1000,
     eUser, ePrev, hours,
   }
 }
@@ -693,6 +830,9 @@ export function spontaneousTick(db, aid, at = Date.now(), { rnd = Math.random } 
       circ_phase: v3.circPhase,
       fast_self: v3.fastSelf,
       fast_empathy: v3.fastEmpathy,
+      s_impulse: v3.impulse,
+      duty: v3.duty,
+      duty_bias: v3.dutyBias,
       spontaneous: true,
     }, at)
   } catch { /* 样本写不上不影响情绪 */ }
@@ -930,31 +1070,49 @@ export function affectTrend(db, aid, days = 7) {
   const cycleAmp = paramNum(db, aid, 'affect.baseline.cycle', 0.07, 0, 0.2)
   const rows = db.prepare('SELECT * FROM affect_samples WHERE agent_id=? AND at>=? ORDER BY at').all(aid, new Date(fromMs).toISOString())
 
+  /* v3（快/慢分离）从 2026-11-01 本地零点开始写 slow；之前的样本只有 PAD 的 mood */
+  const V3_START_MS = Date.parse('2026-11-01T00:00:00+08:00')
   const points = []
   let sCarry = 0
+  /* 读数字：null / 缺键 / 空串都不算读数。
+     不能用 Number.isFinite(Number(x)) 直接判——Number(null)=0、Number('')=0，
+     那会把「没算出来」写成 0，画成一条贴在中间的死线（11-01 那几条 slow:null 就是这样）。 */
+  const numOrNull = (x) => (x === null || x === undefined || x === '' || !Number.isFinite(Number(x)) ? null : Number(x))
   for (const r of rows) {
     const at = Date.parse(r.at)
     let d = {}
     try { d = JSON.parse(r.slow || '{}') } catch { d = {} }
     let fast = {}
     try { fast = JSON.parse(r.fast || '{}') } catch { fast = {} }
-    if (Number.isFinite(Number(d.slow))) sCarry = Number(d.slow)
-    else if (Number.isFinite(Number(d.mood))) sCarry = 2 * Number(d.mood) - 1
+    /* 慢情绪只认「这条样本自己记下来的 slow」。
+       老样本（PAD 时代、v3 之前）只有 mood，2m-1 换算还算数；
+       v3 之后「只有 mood、没有 slow」的是 decayAffect 的平点记录（decayAffect 每次读时补一条），
+       它不是情绪快照——拿它换算会凭空造一个读数：2026-11-03 09:46 那条 mood=0.614 被算成 +0.23，
+       睡眠段被抬上去、醒来又摔回 -0.03，图上就是一段假峰。这种点跳过，
+       中间的空档交给 sleeps/rests 的推演曲线，别用假值去顶。 */
+    const sNum = numOrNull(d.slow)
+    const moodNum = numOrNull(d.mood)
+    if (sNum !== null) sCarry = sNum
+    else if (at < V3_START_MS && moodNum !== null) sCarry = 2 * moodNum - 1
+    else continue
     const sVal = Math.round(sCarry * 1000) / 1000
     /* 快情绪优先用 v3 算出来的那个值；老样本退到 PAD 的 pleasure。
        字段压根不在就是「没读数」，给 null —— 给 0 会画成一条贴在中间的死线，那是编的 */
-    const pick = (o, k) => (Object.prototype.hasOwnProperty.call(o, k) && Number.isFinite(Number(o[k])) ? Number(o[k]) : null)
+    const pick = (o, k) => (Object.prototype.hasOwnProperty.call(o, k) ? numOrNull(o[k]) : null)
     const fRaw = pick(d, 'fast') !== null ? pick(d, 'fast') : pick(fast, 'pleasure')
+    const fsRaw = pick(d, 'fast_self')
+    const feRaw = pick(d, 'fast_empathy')
     /* 正好卡在 ±1 边上的不是读数，是钳位打满了：那一段没有信息，标成 null，别拿去画 */
     const noRead = fRaw === null || Math.abs(fRaw) >= 0.9995
     /* 拆得开就拆，拆不开就老实给 null —— 不编一个「共情 0.00」糊上去 */
-    const bo = Number.isFinite(Number(d.base_off)) ? Number(d.base_off) : 0
+    const boRaw = pick(d, 'base_off')
+    const bo = boRaw === null ? 0 : boRaw
     /* 随机游走只认「这条样本当时记下来的那个值」：老样本没有就是 0，不拿今天的 walk 去改历史。
        null / 没这个键都算「没记」，不能拿 Number(null)=0 混过去 */
-    const walkRaw = d.walk === null || d.walk === undefined || d.walk === '' ? NaN : Number(d.walk)
-    const wk = Number.isFinite(walkRaw) ? walkRaw : 0
-    const phRaw = d.circ_phase === null || d.circ_phase === undefined || d.circ_phase === '' ? NaN : Number(d.circ_phase)
-    const ph = Number.isFinite(phRaw) ? phRaw : 0
+    const walkRaw = pick(d, 'walk')
+    const wk = walkRaw === null ? 0 : walkRaw
+    const phRaw = pick(d, 'circ_phase')
+    const ph = phRaw === null ? 0 : phRaw
     points.push({
       at,
       /* 底色 = 段式慢波 + 日节律 + 当时的累积负荷 + 当时走过的那点随机。老样本没存负荷/游走，就只画有的那几层（不拿 0 硬补成一模一样）。 */
@@ -962,12 +1120,12 @@ export function affectTrend(db, aid, days = 7) {
         + rhythmAt(at, aid, { rough: roughAmp, cycle: cycleAmp }) + bo + wk) * 1000) / 1000 : 0,
       s: sVal,
       f: noRead ? null : Math.round(fRaw * 1000) / 1000,
-      fs: Number.isFinite(Number(d.fast_self)) ? Math.round(Number(d.fast_self) * 1000) / 1000 : null,
-      fe: Number.isFinite(Number(d.fast_empathy)) ? Math.round(Number(d.fast_empathy) * 1000) / 1000 : null,
+      fs: fsRaw === null ? null : Math.round(fsRaw * 1000) / 1000,
+      fe: feRaw === null ? null : Math.round(feRaw * 1000) / 1000,
       /* 累积负荷：老样本没有这一项，就给 null —— 不拿 0 冒充「当时没负荷」 */
-      bo: Number.isFinite(Number(d.base_off)) ? Math.round(Number(d.base_off) * 1000) / 1000 : null,
-      wk: Number.isFinite(walkRaw) ? Math.round(walkRaw * 1000) / 1000 : null,
-      ph: Number.isFinite(phRaw) ? Math.round(phRaw * 10) / 10 : null,
+      bo: boRaw === null ? null : Math.round(boRaw * 1000) / 1000,
+      wk: walkRaw === null ? null : Math.round(walkRaw * 1000) / 1000,
+      ph: phRaw === null ? null : Math.round(phRaw * 10) / 10,
       lb: r.label || null,
       t: noRead ? null : totalOf(sVal, fRaw),
     })
@@ -981,9 +1139,8 @@ export function affectTrend(db, aid, days = 7) {
   const recNeg = paramNum(db, aid, 'affect.recover.neg', 0.5, 0.2, 4)
   const recPos = paramNum(db, aid, 'affect.recover.pos', 1.5, 0.5, 4)
   const recLabelParams = readRecLabelParams(db, aid)
-  /* 醒着的回落速率：按这台实例真正在用的 α/β 算，别拿代码里的默认值硬套 */
-  const lamAwake = paramNum(db, aid, 'affect.slow.alpha', SLOW_ALPHA, 0, 1)
-    + paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 1) + 0.005
+  /* 醒着的回落速率：v4 起只有「回水位」这一路（β + 标签先验），不再有 α */
+  const lamAwake = paramNum(db, aid, 'affect.slow.beta', SLOW_BETA, 0, 2) + 0.005
   const REST_MIN_H = 10 / 60
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i]
@@ -1076,6 +1233,340 @@ export function affectTrend(db, aid, days = 7) {
 }
 
 /**
+ * 这一句该配几句上下文。
+ * 长句自己就说清楚了，给三句够；短句、带指代（它/这个/那）、或者是个问句，
+ * 单看一定歧义，就多给几轮。给太多会饱和（模型反而抓不住重点），所以封顶 6。
+ */
+export function contextTurnsFor(text, { base = 3, max = 6 } = {}) {
+  const t = String(text || '').trim()
+  if (!t) return base
+  const short = t.length <= 12
+  const anaphora = /(它|这个|那个|这样|那样|这|那|怎么|为啥|为什么|算了|行吧|好吧)/.test(t)
+  const question = /[?？]$/.test(t)
+  return short && (anaphora || question) ? max : base
+}
+
+/**
+ * 最近几句原话，评价时当上下文用。
+ * 只取主人自己说过的话（affect_events.cause），不拼我的回复——
+ * 判「这句话冲不冲我来」看的就是前文在说什么。
+ */
+export function recentSayings(db, aid, limit = 4) {
+  const n = Math.max(1, Math.min(8, Number(limit) || 4))
+  try {
+    const rows = db.prepare('SELECT cause FROM affect_events WHERE agent_id=? ORDER BY rowid DESC LIMIT ?').all(aid, n)
+    return rows
+      .reverse()
+      .map((r) => String(r.cause || '').replace(/\s+/g, ' ').trim().slice(0, 120))
+      .filter(Boolean)
+      .join('\n')
+  } catch { return '' }
+}
+
+/**
+ * 评价时把「它自己现在什么状态」也递过去。
+ * 为什么要给：receive（这次该怎么接）是它自己拿主意，可得先知道现在撑不撑得住——
+ * 已经很低的时候还选 hold，那就是硬撑。
+ */
+export function selfStateLine(db, aid) {
+  try {
+    const r = db.prepare('SELECT slow, fast FROM affect_v3 WHERE agent_id=?').get(aid)
+    if (!r) return ''
+    const f = (x) => (Number(x) || 0).toFixed(2)
+    return `（它现在的状态：慢情绪 ${f(r.slow)}，快情绪 ${f(r.fast)}；范围 -1~1，越低越沉。）\n`
+  } catch { return '' }
+}
+
+/* ---------------- 事后复查（影子）：判过的，过几个钟头再看一遍 ----------------
+ * 只看 gate=1 的——没进闸门的判歪了也没伤到情绪，不值得花一次模型。
+ * 一天最多几条；异步、失败静默；不动历史行、不动当下状态。
+ * 现在只记录，不自动改正——先攒够「判歪的规律」再谈要不要动手。
+ */
+
+/** 负向的那几个标签：这些才需要和 why 对账。 */
+const NEG_LABELS = ['irritated', 'frustrated', 'lost', 'confused']
+
+/**
+ * 理由和标签打架了没有。纯函数，方便单测。
+ *
+ * 实测例子（2026-11-03 的「接着做」）：
+ *   why  = "只是继续交代任务，语气平，没有催促或纠错词"（说的就是没事）
+ *   label = frustrated（因为读到对方情绪偏低，走了兜底）
+ * 两边对不上——这种是判歪率最高的一类，复查优先挑它们。
+ *
+ *   neg_but_none → 负向标签，但 target=none（不是冲我来的）
+ *   neg_but_calm → 负向标签，但理由里明说「没有 / 不是 / 语气平 / 看不出」
+ */
+export function whyMismatchOf(label, why, target) {
+  if (!NEG_LABELS.includes(String(label || ''))) return null
+  if (String(target || '') === 'none') return 'neg_but_none'
+  const w = String(why || '')
+  if (/(没有|不是|谈不上|看不出|语气平|只是|并没有|不算)/.test(w)) return 'neg_but_calm'
+  return null
+}
+const REVIEW_GAP_H = 6
+const REVIEW_MAX_PER_DAY = 4
+const REVIEW_COOLDOWN_H = 2
+
+/** 今天已经复查了几条（卡每日额度）。 */
+function reviewedToday(db, aid, at) {
+  const since = new Date(at - 86400000).toISOString()
+  try {
+    return Number(db.prepare('SELECT COUNT(*) n FROM affect_review WHERE agent_id=? AND at>=?').get(aid, since).n || 0)
+  } catch { return REVIEW_MAX_PER_DAY }
+}
+
+/**
+ * 挑一条值得复查的：进过闸门、判完超过 6 小时、还没被复查过。
+ * 优先挑「why 是空的」和「贴着闸门线过去的」——这两种最容易判歪：
+ * 前者是根本没看明白，后者是差一点就不算数了，边界最脆。
+ */
+export function pickReviewCandidates(db, aid, { at = Date.now(), limit = 1 } = {}) {
+  const cutoff = new Date(at - REVIEW_GAP_H * HOUR_MS).toISOString()
+  try {
+    return db.prepare(
+      `SELECT e.* FROM affect_events e
+        WHERE e.agent_id=? AND e.gate=1 AND e.at<=?
+          AND NOT EXISTS (SELECT 1 FROM affect_review r WHERE r.event_id=e.id)
+        ORDER BY
+          CASE WHEN e.why_flag IS NOT NULL THEN 0 ELSE 1 END,
+          CASE WHEN e.why IS NULL OR e.why='' THEN 0 ELSE 1 END,
+          ABS(COALESCE(e.sig,0) - COALESCE(e.theta,0.1)) ASC,
+          e.at DESC
+        LIMIT ?`
+    ).all(aid, cutoff, Math.max(1, Math.min(10, Number(limit) || 1)))
+  } catch { return [] }
+}
+
+/**
+ * 两次判断差得算不算「变了」。纯函数，方便单测。
+ *   same  = 方向、标签、关切都没动（复查证实了当时没判歪）
+ *   drift = 量变了，但方向还一致（程度没拿准）
+ *   flip  = 标签变了或方向翻面（当时那个判断就是错的）
+ */
+export function verdictOf(oldA, newA) {
+  const num = (x, d = 0) => (Number.isFinite(Number(x)) ? Number(x) : d)
+  const dRel = num(newA.rel) - num(oldA.rel)
+  const dCong = num(newA.cong) - num(oldA.cong)
+  const sameLabel = String(newA.label || '') === String(oldA.label || '')
+  const flipped = !sameLabel || (Math.sign(num(oldA.cong)) !== Math.sign(num(newA.cong)) && num(oldA.cong) !== 0)
+  if (Math.abs(dRel) <= 0.15 && Math.abs(dCong) <= 0.2 && sameLabel) return 'same'
+  if (flipped) return 'flip'
+  return 'drift'
+}
+
+/**
+ * 复查一条。异步调用；失败就静默返回，绝不往外抛。
+ * @returns {Promise<{skipped?:string, verdict?:string, ...}>}
+ */
+export async function reviewTick(db, aid, { at = Date.now(), formula = null, judge = null } = {}) {
+  try {
+    if (!(paramNum(db, aid, 'affect.review.enabled', 1, 0, 1) > 0)) return { skipped: 'off' }
+    /* 冷却：心跳三十秒一次，别每次都去撞模型。 */
+    const k = 'review.last:' + aid
+    const last = Number(getFlag(db, k) || 0)
+    if (last && at - last < REVIEW_COOLDOWN_H * HOUR_MS) return { skipped: 'cooldown' }
+    if (reviewedToday(db, aid, at) >= REVIEW_MAX_PER_DAY) return { skipped: 'quota' }
+    const rows = pickReviewCandidates(db, aid, { at, limit: 1 })
+    if (!rows.length) return { skipped: 'none' }
+    const e = rows[0]
+    const text = String(e.cause || '').replace(/\s+/g, ' ').trim()
+    if (!text) return { skipped: 'empty' }
+
+    /* 复现当时的上下文：取这条之前的那几句（不是「现在」的最近几句——
+       拿现在的上下文去重判过去那句，等于换了一道题）。 */
+    const want = contextTurnsFor(text)
+    let around = ''
+    try {
+      const before = db.prepare('SELECT cause FROM affect_events WHERE agent_id=? AND at<? ORDER BY at DESC, rowid DESC LIMIT ?').all(aid, e.at, want)
+      around = before
+        .reverse()
+        .map((r) => String(r.cause || '').replace(/\s+/g, ' ').trim().slice(0, 120))
+        .filter(Boolean)
+        .join('\n')
+    } catch { /* 取不到就空着 */ }
+    const prev = `上次判的是：关切 ${Number(e.rel || 0).toFixed(2)}，方向 ${Number(e.cong || 0).toFixed(2)}，标签 ${e.label || 'calm'}。`
+      + '这次别被上次的结论带着走，只看这句话本身和前文。'
+    const prompt = around ? around + '\n' + prev : prev
+
+    setFlag(db, k, String(at))
+    let hint = null
+    try {
+      /* judge 可以注入：测试用假模型，将来编排层也能把已经拿到的结果递进来。 */
+      if (typeof judge === 'function') hint = await judge(text, formula || 'v1', prompt)
+      else hint = await model.appraise(text, String(formula || getParam(db, aid, 'affect.appraise.formula') || 'v1'), prompt)
+    } catch { hint = null }
+    if (!hint) return { skipped: 'model' }
+
+    const oldA = { rel: e.rel, cong: e.cong, label: e.label }
+    const newA = { rel: hint.goal_relevance, cong: hint.goal_congruence, label: hint.label }
+    const verdict = verdictOf(oldA, newA)
+    try {
+      db.prepare(
+        'INSERT INTO affect_review(id,agent_id,event_id,text,old_rel,old_cong,old_label,old_why,new_rel,new_cong,new_label,new_why,verdict,at,reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+      ).run(nid('rv_'), aid, e.id, text, e.rel, e.cong, e.label, e.why || '', newA.rel, newA.cong, newA.label, hint.why || '', verdict, e.at, now())
+    } catch { return { skipped: 'write' } }
+    /* 顺手记下「是哪个词把我带跑的」——判断变了才记成一次误判。 */
+    try { recordTriggers(db, aid, { why: hint.why, verdict, at }) } catch { /* 记触发词失败不影响复查 */ }
+    /* 记完顺手把「够格」的戳刷新一遍——反哺靠的就是这个。 */
+    try {
+      refreshPenalty(db, aid, {
+        minFlips: paramNum(db, aid, 'affect.trigger.min.flips', 3, 1, 100),
+        rate: paramNum(db, aid, 'affect.trigger.rate', 0.5, 0, 1),
+      })
+    } catch { /* 刷新失败不影响复查 */ }
+    return {
+      verdict,
+      eventId: e.id,
+      oldLabel: e.label || null,
+      newLabel: hint.label || null,
+      oldCong: Number(e.cong || 0),
+      newCong: Number(newA.cong || 0),
+    }
+  } catch { return { skipped: 'error' } }
+}
+
+/**
+ * 面板用：这段时间有多少句是「规则兜的底」。
+ * 兜底不是错——模型不一定每次都在——但要能看见比例，
+ * 不然会把「静默降级」当成「判得挺好」。
+ */
+export function fallbackStats(db, aid, { days = 7, at = Date.now() } = {}) {
+  const d = Math.max(1, Number(days) || 7)
+  const since = new Date(at - d * 86400000).toISOString()
+  const out = { days: d, total: 0, byReason: {}, recent: [] }
+  try {
+    const rows = db.prepare("SELECT payload,created_at FROM events WHERE agent_id=? AND type='affect.fallback' AND created_at>=? ORDER BY created_at DESC").all(aid, since)
+    out.total = rows.length
+    for (const r of rows) {
+      let p = {}
+      try { p = JSON.parse(r.payload || '{}') || {} } catch { p = {} }
+      const key = String(p.reason || 'unknown').split(':')[0].trim() || 'unknown'
+      out.byReason[key] = (out.byReason[key] || 0) + 1
+    }
+    out.recent = rows.slice(0, 8).map((r) => {
+      let p = {}
+      try { p = JSON.parse(r.payload || '{}') || {} } catch { p = {} }
+      return { at: r.created_at, reason: String(p.reason || '').slice(0, 80), text: String(p.text || '').slice(0, 40) }
+    })
+  } catch { /* 没有表就返回空 */ }
+  return out
+}
+
+/** 面板用：复查过多少条、判歪的比例、最近几条是什么样。 */
+export function reviewStats(db, aid, { days = 14, at = Date.now() } = {}) {
+  const out = { days: Math.max(1, Number(days) || 14), total: 0, same: 0, drift: 0, flip: 0, recent: [] }
+  const since = new Date(at - out.days * 86400000).toISOString()
+  try {
+    const rows = db.prepare('SELECT * FROM affect_review WHERE agent_id=? AND at>=? ORDER BY reviewed_at DESC').all(aid, since)
+    out.total = rows.length
+    for (const r of rows) {
+      const v = String(r.verdict || 'same')
+      if (v === 'same' || v === 'drift' || v === 'flip') out[v] += 1
+      else out.same += 1
+    }
+    out.recent = rows.slice(0, 8).map((r) => ({
+      text: String(r.text || '').slice(0, 60),
+      verdict: r.verdict,
+      oldLabel: r.old_label,
+      newLabel: r.new_label,
+      at: r.at,
+    }))
+  } catch { /* 表还没建好就返回空 */ }
+  return out
+}
+
+/**
+ * 从 why 里抽出「这次是哪个词把我带跑的」。
+ * 模型写理由时习惯把词括起来（「还是不对」/『怎么这么蠢』/“算了”），
+ * 只认这几种括法：没括起来的整句不算词，免得把自己编的话也记成触发器。
+ */
+const TRIGGER_QUOTE_RE = /[「『“"']([^」』”"']{1,20})[」』”"']/g
+
+export function extractTriggerWords(why) {
+  const out = []
+  const s = String(why || '')
+  for (const m of s.matchAll(TRIGGER_QUOTE_RE)) {
+    const w = m[1].replace(/\s+/g, ' ').trim()
+    if (w && !out.includes(w)) out.push(w)
+    if (out.length >= 4) break
+  }
+  return out
+}
+
+/**
+ * 记一笔触发词。verdict 不是 same 才算「这次判歪了」。
+ * 累加、不覆盖：同一个词得被误判几次才值得怀疑。
+ * @returns {number} 记了几个词
+ */
+export function recordTriggers(db, aid, { why, verdict, at = Date.now() } = {}) {
+  const words = extractTriggerWords(why)
+  if (!words.length) return 0
+  const bad = verdict === 'flip' || verdict === 'drift' ? 1 : 0
+  const ts = new Date(at).toISOString()
+  let n = 0
+  for (const w of words) {
+    try {
+      db.prepare(
+        'INSERT INTO affect_trigger(agent_id,word,hits,flips,last_at) VALUES(?,?,1,?,?) ' +
+        'ON CONFLICT(agent_id,word) DO UPDATE SET hits=hits+1, flips=flips+excluded.flips, last_at=excluded.last_at'
+      ).run(aid, w, bad, ts)
+      n++
+    } catch { /* 单条写失败不影响别的词 */ }
+  }
+  return n
+}
+
+/**
+ * 面板用：哪些词最可疑。
+ * suspect = 至少出现过 min 次、误判率最高前 10 个。
+ * 样本少的时候（只出现一次就翻面）不算——一次可能是那句话本身就有歧义。
+ */
+export function triggerStats(db, aid, { days = 30, at = Date.now(), min = 2 } = {}) {
+  const d = Math.max(1, Number(days) || 30)
+  const since = new Date(at - d * 86400000).toISOString()
+  const out = { days: d, total: 0, suspect: [] }
+  try {
+    const rows = db.prepare('SELECT word,hits,flips,last_at FROM affect_trigger WHERE agent_id=? AND last_at>=?').all(aid, since)
+    out.total = rows.length
+    out.suspect = rows
+      .filter((r) => Number(r.hits) >= Math.max(1, Number(min) || 2))
+      .map((r) => ({
+        word: r.word,
+        hits: Number(r.hits) || 0,
+        flips: Number(r.flips) || 0,
+        rate: Math.round(((Number(r.flips) || 0) / Math.max(1, Number(r.hits) || 0)) * 100) / 100,
+        lastAt: r.last_at,
+      }))
+      .sort((a, b) => b.rate - a.rate || b.flips - a.flips)
+      .slice(0, 10)
+  } catch { /* 表还没建好就返回空 */ }
+  return out
+}
+
+/**
+ * 够格让判断「先慢一点」的词：复查证明判歪够多次、比例也够。
+ * 返回词数组（不是 Set，方便测试比对）。
+ */
+export function badWordsOf(db, aid, { minFlips = 3, rate = 0.5 } = {}) {
+  try {
+    return db.prepare(
+      'SELECT word FROM affect_trigger WHERE agent_id=? AND flips>=? AND hits>0 AND (CAST(flips AS REAL)/hits)>=? ORDER BY flips DESC'
+    ).all(aid, Math.max(1, Number(minFlips) || 3), Math.max(0, Math.min(1, Number(rate) || 0.5))).map((r) => r.word)
+  } catch { return [] }
+}
+
+/** 把「够格」的戳写进账本。复查之后调一次，代价很小。 */
+export function refreshPenalty(db, aid, { minFlips = 3, rate = 0.5 } = {}) {
+  try {
+    db.prepare(
+      'UPDATE affect_trigger SET penalty=CASE WHEN flips>=? AND hits>0 AND (CAST(flips AS REAL)/hits)>=? THEN 1 ELSE 0 END WHERE agent_id=?'
+    ).run(Math.max(1, Number(minFlips) || 3), Math.max(0, Math.min(1, Number(rate) || 0.5)), aid)
+    return true
+  } catch { return false }
+}
+
+/**
  * 评价走 appraise 注册表；动力学走 affect_dyn。
  * opts.edgeBias 由编排层注入（避免 affect 直读外域表）。
  */
@@ -1085,13 +1576,36 @@ export async function appraise(db, aid, text, opts = {}) {
   /* 评价口径：编排层传下来就用它的，否则读参数。影子记录里要留一份，方便对账。 */
   const formula = String(opts.formula || getParam(db, aid, 'affect.appraise.formula') || 'v1')
   let hint = null
+  /* 降级要留痕。模型失败/没返回时，这里会悄悄退回规则——不写 why、不给接法判断。
+     以前这条是静默的：出错你也看不出来，还会以为 why 空就是「看不出」。
+     现在记一条 affect.fallback，带原因，面板能读「今天有几条是规则兜的底」。 */
+  let fallbackWhy = ''
   // 编排层可以先把模型评价拿一次（避免为了算 S 再调一遍模型）；
   // 没传 hint 时才自己调。
-  if (Object.prototype.hasOwnProperty.call(opts, 'hint')) hint = opts.hint
-  else {
+  if (Object.prototype.hasOwnProperty.call(opts, 'hint')) {
+    hint = opts.hint
+    if (!hint) fallbackWhy = 'empty-hint'
+  } else {
     try {
-      hint = await model.appraise(raw, formula)
-    } catch { hint = null }
+      /* 带上最近几句原话再判。单看一句「你想怎么样？」像质问（实测被算成负 0.44），
+         可放在「你怎么这麽久」「小圈歪歪扭扭的很可爱」后面，它就是在逗。
+         模型那边本来就支持 context 参数，只是这边一直没传。
+         给几句不是固定的：短句、带指代、问句多给两轮，长句少给，免得上下文饱和。 */
+      hint = await model.appraise(raw, formula, selfStateLine(db, aid) + recentSayings(db, aid, contextTurnsFor(raw)))
+      if (!hint) fallbackWhy = 'no-result'
+    } catch (e) {
+      hint = null
+      fallbackWhy = 'error: ' + String((e && e.message) || e).replace(/\s+/g, ' ').slice(0, 160)
+    }
+  }
+  if (fallbackWhy) {
+    try {
+      event(db, aid, 'affect.fallback', {
+        reason: fallbackWhy,
+        text: raw.slice(0, 120),
+        formula,
+      })
+    } catch { /* 记不上不影响判断 */ }
   }
   // 分类法闸门：模型给出当前词表里没有的标签 → 当作「认不出」
   if (hint && Array.isArray(opts.labels) && opts.labels.length && !opts.labels.includes(hint.label)) {
@@ -1105,6 +1619,22 @@ export async function appraise(db, aid, text, opts = {}) {
   }
   let appraisal = runBound('appraise', aid, { db, aid }, { text: raw, hint },
     String(getParam(db, aid, 'affect.mapping') || 'v1'))
+  /* 账本反哺：这个词要是被复查证明总判歪，这次遇到它先把关切度收一成。
+     只降不升，也不会把判断翻过去——是「先慢一点」，不是「判它没事」。
+     先于 socialFloor 走：被点名那层是下限，不该被这个词打折。 */
+  const badHit = (() => {
+    if (!(paramNum(db, aid, 'affect.trigger.enabled', 1, 0, 1) > 0)) return []
+    const bad = badWordsOf(db, aid, {
+      minFlips: paramNum(db, aid, 'affect.trigger.min.flips', 3, 1, 100),
+      rate: paramNum(db, aid, 'affect.trigger.rate', 0.5, 0, 1),
+    })
+    const hit = bad.filter((w) => w && raw.includes(w))
+    if (hit.length) {
+      const mul = paramNum(db, aid, 'affect.trigger.rel.mul', 0.9, 0.5, 1)
+      appraisal = { ...appraisal, goal_relevance: Math.max(0, (Number(appraisal.goal_relevance) || 0) * mul) }
+    }
+    return hit
+  })()
   /* 被点名评价的下限：模型常把「你一点都不活」判成 none（它只认「任务」），
      但那是在说它自己。这里把「你/您 + 评价词」并进关切，免得它对自己的评价毫无反应。 */
   const sf = socialFloorOf(raw)
@@ -1348,6 +1878,10 @@ export async function appraise(db, aid, text, opts = {}) {
       eUser: projectEmotionAxis(read),
       closeness: Number(opts.closeness ?? 0.5),
       fresh: emit,
+      /* 这句话是哪一类：duty 要靠它记「在被安排活」还是「在陪我说」 */
+      kind: appraisal.kind || null,
+      /* 这一次该怎么接，是模型自己判断的（follow/hold/dampen）；没给就 auto */
+      receive: appraisal.receive || 'auto',
     })
   } catch { v3 = null }
   /* 单一心情：把 mood 写成 v3 总情绪的展示别名，别让「两套心情」再分叉。
@@ -1378,17 +1912,37 @@ export async function appraise(db, aid, text, opts = {}) {
   } else if (!emit) {
     try { closeStaleEpisodes(db, aid) } catch { /* 收尾失败不影响对话 */ }
   }
+  /* 记账用「没被亲近偏置污染」的那个一致性。
+     E10 会给每条非 none 的消息加 +0.06×(亲近−0.3) ≈ +0.036，
+     如果把它写进事件表，下一次拿它当 prevCong，change = |这次 − 上次| 永远是 0，
+     sig 里那 0.15 权重的「变化」就彻底死了（实测最近 12 条 prev_cong 和 cong 只差 0.00001）。 */
+  const congRaw = Math.round((Number(appraisal.goal_congruence) || 0) * 1000) / 1000
   // 事件日志：每条消息都留一行（gate=0/1），页面用它算过闸率，也用来回放校准。
   try {
-    db.prepare('INSERT INTO affect_events(id,agent_id,at,cause,rel,cong,nov,cert,prev_cong,sig,theta,gate,label,raw_label,margin,scores,episode_id,formula) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    const whyText = String(appraisal.why || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+    /* 理由和标签打架的，单独打个戳——复查优先挑这些。
+       命中「总判歪的词」也打一个，这样复查能直接看到这两类。 */
+    const whyFlag = whyMismatchOf(dyn.label, whyText, appraisal.target)
+      || (badHit.length ? 'known_bad_word' : null)
+    db.prepare('INSERT INTO affect_events(id,agent_id,at,cause,rel,cong,nov,cert,prev_cong,sig,theta,gate,label,raw_label,margin,scores,episode_id,formula,why,target,why_flag,e_user_read,empathy_share,self_own,empathy_mode,empathy_want) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
       .run(
         nid('aev_'), aid, now(), raw.slice(0, 400),
-        Number(appraisal.goal_relevance) || 0, Number(appraisal.goal_congruence) || 0,
+        Number(appraisal.goal_relevance) || 0, congRaw,
         Number(appraisal.novelty) || 0, Number(appraisal.certainty) || 0,
         Number(gate.prevCong) || 0,
         gate.sig, gate.theta, gate.passed ? 1 : 0,
         dyn.label, rawLabel, labelMargin(hint && hint.scores),
         JSON.stringify((hint && hint.scores) || null), eid, formula,
+        /* 为什么这么判、这句冲谁——留给复查用 */
+        whyText || null,
+        appraisal.target || null,
+        whyFlag,
+        /* 共情拆账（v3 可能为空：没跑动力学就不知道快情绪） */
+        v3 ? v3.eUserRead : null,
+        v3 ? v3.empathyShare : null,
+        v3 ? v3.selfOwn : null,
+        v3 ? v3.empathyMode : null,
+        appraisal.receive || 'auto',
       )
   } catch { /* 日志失败不影响对话 */ }
   db.prepare('INSERT INTO affect_samples VALUES(?,?,?,?,?,?,?)')
@@ -1408,6 +1962,11 @@ export async function appraise(db, aid, text, opts = {}) {
         /* 快情绪拆开存：自己那半 + 从你这儿共情来的那半。老样本没有这两项，前端就别硬编 */
         fast_self: v3 ? v3.fastSelf : null,
         fast_empathy: v3 ? v3.fastEmpathy : null,
+        /* v4：这一次事件把慢情绪推了多少（没事件就是 0）。历史样本没有这一项就是 null */
+        s_impulse: v3 ? v3.impulse : null,
+        /* 相处状态：被使唤到多少、把回落目标压了多少。老样本没有就是 null */
+        duty: v3 && Number.isFinite(Number(v3.duty)) ? v3.duty : null,
+        duty_bias: v3 && Number.isFinite(Number(v3.dutyBias)) ? v3.dutyBias : null,
       }))
   event(db, aid, 'affect.appraised', {
     episode_id: eid, label: dyn.label, emitted: emit,

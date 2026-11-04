@@ -1,13 +1,8 @@
 /**
- * dsh-consciousness-v6 · Client 半
- *
- * 结构（对应 3 号文档 v10 的信息架构）：
- *   ① 意识列表：角色卡（姓名 / 状态环 / 总状态 / 需要你处理 / 上次互动 / 一键导出）
- *   ② 意识详情：页头（实例切换 / 模式 / 视图 / 收件区 / 保存状态）+ 8 个页签
- *   ③ 收件区：待办、变更两个并排入口，各自开抽屉，计数永不合并
- *
- * 对话不在这里：意识体一旦启用，所有 DSH 会话都是它；关掉才恢复原样（宿主半负责注入）。
- */
+ * dsh-consciousness-v6 路 Client 鍗? *
+ * 缁撴瀯锛堝搴?3 鍙锋枃妗?v10 鐨勪俊鎭灦鏋勶級锛? *   鈶?鎰忚瘑鍒楄〃锛氳鑹插崱锛堝鍚?/ 鐘舵€佺幆 / 鎬荤姸鎬?/ 闇€瑕佷綘澶勭悊 / 涓婃浜掑姩 / 涓€閿鍑猴級
+ *   鈶?鎰忚瘑璇︽儏锛氶〉澶达紙瀹炰緥鍒囨崲 / 妯″紡 / 瑙嗗浘 / 鏀朵欢鍖?/ 淇濆瓨鐘舵€侊級+ 8 涓〉绛? *   鈶?鏀朵欢鍖猴細寰呭姙銆佸彉鏇翠袱涓苟鎺掑叆鍙ｏ紝鍚勮嚜寮€鎶藉眽锛岃鏁版案涓嶅悎骞? *
+ * 瀵硅瘽涓嶅湪杩欓噷锛氭剰璇嗕綋涓€鏃﹀惎鐢紝鎵€鏈?DSH 浼氳瘽閮芥槸瀹冿紱鍏虫帀鎵嶆仮澶嶅師鏍凤紙瀹夸富鍗婅礋璐ｆ敞鍏ワ級銆? */
 window.__ModuleLoader__.load({
   id: 'dsh-consciousness-v6',
   factory(require) {
@@ -54,7 +49,7 @@ window.__ModuleLoader__.load({
       joy: '愉悦', calm: '平静', curious: '好奇', peaceful: '安心',
       confused: '困惑', lost: '失落', irritated: '烦躁', frustrated: '挫败',
     }
-    /* 八类的固定顺序：和 AFFECT_TAGS 对齐，选情绪时不会一会儿一个顺序 */
+    /* 鍏被鐨勫浐瀹氶『搴忥細鍜?AFFECT_TAGS 瀵归綈锛岄€夋儏缁椂涓嶄細涓€浼氬効涓€涓『搴?*/
     const AFFECT_ORDER = ['joy', 'peaceful', 'curious', 'calm', 'confused', 'lost', 'irritated', 'frustrated']
     const AXES = [
       ['ei', 'E/I', '外向', '内向'],
@@ -63,9 +58,9 @@ window.__ModuleLoader__.load({
       ['jp', 'J/P', '判断', '知觉'],
       ['sensitivity', '敏感', '敏感', '钝感'],
     ]
-    // 手写区字数上限：服务端 src/modules/persona.js 的 STYLE_LIMITS 才是真源，
-    // 这里是首屏兜底；拿到 /persona/selfview 的 params.limits 后以服务端为准。
-    const DEFAULT_STYLE_LIMITS = {
+    // 鎵嬪啓鍖哄瓧鏁颁笂闄愶細鏈嶅姟绔?src/modules/persona.js 鐨?STYLE_LIMITS 鎵嶆槸鐪熸簮锛?''
+    // 杩欓噷鏄灞忓厹搴曪紱鎷垮埌 /persona/selfview 鐨?params.limits 鍚庝互鏈嶅姟绔负鍑嗐€?''
+              const DEFAULT_STYLE_LIMITS = {
       'style.tone': 8, 'style.address': 4, 'style.catchphrase': 6, 'style.banned': 15, 'style.card': 60,
     }
     const DEFAULT_LIMITS = { valueKey: 24, relationName: 12, preferenceTag: 16, tabooText: 60 }
@@ -82,8 +77,8 @@ window.__ModuleLoader__.load({
       ['G7', '人工', 'PENDING_HUMAN'],
     ]
 
-    // 与 /v1/metrics/catalog 顺序对齐；用于模块页「去处理」深链
-    const METRIC_ACTIONS = {
+    // 涓?/v1/metrics/catalog 椤哄簭瀵归綈锛涚敤浜庢ā鍧楅〉銆屽幓澶勭悊銆嶆繁閾?''
+              const METRIC_ACTIONS = {
       'memory.recall_hit': { tab: 'memory', label: '去看记忆' },
       'memory.false_recall': { tab: 'memory', label: '查误召回' },
       'memory.conflict': { tab: 'memory', label: '看冲突' },
@@ -107,17 +102,17 @@ window.__ModuleLoader__.load({
       self: ['recall', 'decay', 'deficit', 'appraise', 'affect_dyn'],
     }
 
-    // 地基附录 E：52 条，顺序与 /v1/metrics/catalog 对齐；hard = 8 条发版硬门槛
+    // 鍦板熀闄勫綍 E锛?2 鏉★紝椤哄簭涓?/v1/metrics/catalog 瀵归綈锛沨ard = 8 鏉″彂鐗堢‖闂ㄦ
     const SPEC = [
-      ['≥ 0.70', 'LoCoMo', true], ['≥ 0.75', 'BEIR', false], ['≤ 0.15', 'LoCoMo', true],
-      ['≥ 0.90', 'LongMemEval', false], ['≥ 0.65', 'LongMemEval', false],
+      ['鈮?0.70', 'LoCoMo', true], ['鈮?0.75', 'BEIR', false], ['鈮?0.15', 'LoCoMo', true],
+      ['鈮?0.90', 'LongMemEval', false], ['鈮?0.65', 'LongMemEval', false],
       ['≥ 0.85 / ≥ 0.90', '人工冲突对', false], ['≥ 0.60', 'RAGAS', false],
       ['≥ 0.80', '90 天留存', false], ['≤ 预算 90%', '注入统计', false],
-      ['≥ 0.80', 'CharacterEval', true], ['≥ 0.85', 'CharacterEval', false],
+      ['鈮?0.80', 'CharacterEval', true], ['鈮?0.85', 'CharacterEval', false],
       ['≥ 0.85', 'PersonaChat', false], ['≤ 0.10', '产品定义', true],
       ['= 0', '全量扫描', false], ['≥ 0.80', '重复场景', false],
       ['≤ 0.05', '字段占比', false], ['= 100%', '带来源', false],
-      ['≥ 0.60', 'Landis & Koch', true], ['≤ 0.15', 'GoEmotions / MELD', false],
+      ['鈮?0.60', 'Landis & Koch', true], ['鈮?0.15', 'GoEmotions / MELD', false],
       ['≥ 0.75', 'EmpatheticDialogs', false], ['≥ 0.75', '双时间常数', false],
       ['≥ 0.80 / ≥ 0.75', '人工标注', false], ['≥ 0.70', '人工 vs 系统', false],
       ['≤ 0.10', '长时不衰减', false], ['≤ 1 轮', '断流到告警', false],
@@ -130,7 +125,7 @@ window.__ModuleLoader__.load({
       ['≤ 5%', '指标下降', false], ['≤ 1 轮', 'SRE MTTR', false],
       ['= 100%', '变更留痕', false], ['= 100%', '抽样演练', false],
       ['= 100%', 'C1–C3 提案', true], ['= 100%', 'INV9', false],
-      ['= 100%', 'INV11', false], ['≤ 80ms', 'SRE p95', true],
+      ['= 100%', 'INV11', false], ['鈮?80ms', 'SRE p95', true],
       ['≥ 80%', '请求统计', false], ['= 100%', '故障注入', false],
       ['每季度通过', '恢复演练', false], ['通过', '新用户测试', false],
       ['通过', '可用性测试', false], ['≥ 4 / 5', '每周问卷', false],
@@ -163,7 +158,7 @@ window.__ModuleLoader__.load({
 .dshc-fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;
   color:var(--muted);font-size:11.5px;padding:3px 0;transition:color .15s}
 .dshc-fold>summary::-webkit-details-marker{display:none}
-.dshc-fold>summary::before{content:'▸';font-size:10px;opacity:.65;transition:transform .15s}
+.dshc-fold>summary::before{content:'鈻?';font-size:10px;opacity:.65;transition:transform .15s}
 .dshc-fold[open]>summary::before{transform:rotate(90deg)}
 .dshc-fold>summary:hover{color:var(--ink)}
 .dshc-fold[open]>summary{margin-bottom:6px;color:var(--ink)}
@@ -184,7 +179,7 @@ window.__ModuleLoader__.load({
   .dshc-ten .q{flex:1 1 100%}
 }
 
-/* —— 膨胀点 —— */
+/* 鈥斺€?鑶ㄨ儉鐐?鈥斺€?*/
 .dshc-orb{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
 .dshc-orb i{position:absolute;inset:0;border-radius:50%;border:1px solid var(--accent);opacity:0;
   animation:dshc-bloom 3.8s cubic-bezier(.2,.7,.3,1) infinite}
@@ -231,7 +226,7 @@ window.__ModuleLoader__.load({
   animation:dshc-sweep 9s linear infinite}
 @keyframes dshc-sweep{0%{transform:translateY(0)}100%{transform:translateY(140px)}}
 
-/* —— 页头 —— */
+/* 鈥斺€?椤靛ご 鈥斺€?*/
 .dshc-hero{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:16px;
   background:linear-gradient(180deg,var(--panel),transparent 82%);padding:18px 20px;margin-bottom:14px}
 .dshc-hero-row{position:relative;z-index:2;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -251,7 +246,7 @@ window.__ModuleLoader__.load({
 .dshc-avw{display:inline-flex;flex:0 0 auto;transition:filter .45s ease,opacity .45s ease}
 .dshc-avw[data-off="1"]{filter:grayscale(.62) saturate(.55) brightness(.9);opacity:.88}
 
-/* —— 控件 —— */
+/* 鈥斺€?鎺т欢 鈥斺€?*/
 .dshc-seg{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:9px;
   border:1px solid var(--line);background:var(--panel)}
 .dshc-seg button{appearance:none;border:0;background:transparent;color:var(--muted);font:inherit;font-size:12px;
@@ -280,7 +275,7 @@ window.__ModuleLoader__.load({
 .dshc-btn--sm{font-size:12px;padding:3px 10px;border-radius:7px}
 @keyframes dshc-breathe{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 16px -2px color-mix(in srgb,var(--accent) 38%,transparent)}}
 
-/* —— 卡片 / 分节 —— */
+/* 鈥斺€?鍗＄墖 / 鍒嗚妭 鈥斺€?*/
 .dshc-card{position:relative;border:1px solid var(--line);border-radius:12px;background:var(--panel);
   padding:14px 16px;transition:border-color .22s,box-shadow .3s}
 .dshc-card:hover{border-color:color-mix(in srgb,var(--accent) 32%,var(--line));
@@ -298,8 +293,104 @@ window.__ModuleLoader__.load({
 .dshc-row:last-child{border-bottom:0}
 .dshc-row .l{color:var(--muted);font-size:12px;min-width:76px;white-space:nowrap}
 .dshc-row .v{margin-left:auto;text-align:right;font-size:12.5px}
+/* 三观：三列判据 —— 一行一条，像三块独立仪表面板 */
+.dshc-sgwrap{position:relative;margin-top:2px}
+.dshc-sgbar{display:flex;align-items:center;gap:9px;padding:0 1px 9px;font:10.5px/1 var(--mono);
+  letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.dshc-sgbar b{color:var(--ink);font-weight:600;letter-spacing:.2em}
+.dshc-sgbar .ln{flex:1 1 auto;height:1px;background:linear-gradient(90deg,color-mix(in srgb,var(--line2) 85%,transparent),transparent)}
+.dshc-sgbar .sig{display:flex;gap:3px;align-items:flex-end;flex:0 0 auto}
+.dshc-sgbar .sig i{display:block;width:4px;border-radius:1px;background:color-mix(in srgb,var(--muted) 34%,transparent)}
+.dshc-sgbar .sig i.on{background:var(--accent);box-shadow:0 0 7px color-mix(in srgb,var(--accent) 70%,transparent)}
+.dshc-sg3{display:flex;flex-direction:column;gap:11px}
+.dshc-sgcol{--lane:#5b8cff;position:relative;min-width:0;overflow:hidden;border-radius:13px;padding:12px 14px 13px;
+  border:1px solid color-mix(in srgb,var(--lane) 20%,var(--line));border-left:2px solid color-mix(in srgb,var(--lane) 55%,var(--line));
+  display:flex;flex-direction:column;gap:8px;
+  background:
+    radial-gradient(130% 90% at 50% -12%,color-mix(in srgb,var(--lane) 14%,transparent),transparent 62%),
+    repeating-linear-gradient(0deg,color-mix(in srgb,var(--line) 55%,transparent) 0 1px,transparent 1px 26px),
+    color-mix(in srgb,var(--panel) 74%,transparent);
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 6%,transparent),0 24px 46px -46px color-mix(in srgb,var(--lane) 95%,transparent);
+  transition:border-color .24s,box-shadow .34s}
+.dshc-sgcol:hover{border-color:color-mix(in srgb,var(--lane) 42%,var(--line));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,#fff 7%,transparent),0 26px 54px -42px color-mix(in srgb,var(--lane) 100%,transparent)}
+.dshc-sgcol::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;pointer-events:none;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--lane) 88%,transparent) 24%,color-mix(in srgb,var(--lane) 26%,transparent) 72%,transparent)}
+.dshc-sgcol::after{content:'';position:absolute;right:5px;bottom:5px;width:9px;height:9px;pointer-events:none;
+  border-right:1px solid color-mix(in srgb,var(--lane) 48%,transparent);border-bottom:1px solid color-mix(in srgb,var(--lane) 48%,transparent)}
+.dshc-sgcol[data-l=W]{--lane:#3fc6f0}
+.dshc-sgcol[data-l=L]{--lane:#e9a13a}
+.dshc-sgcol[data-l=V]{--lane:#a98bff}
+.dshc-scan{position:absolute;left:-20%;right:-20%;top:0;height:34%;pointer-events:none;opacity:0;transition:opacity .3s;
+  background:linear-gradient(180deg,transparent,color-mix(in srgb,var(--lane) 16%,transparent),transparent)}
+.dshc-sgcol:hover .dshc-scan{opacity:1;animation:dshc-sweep 4.2s linear infinite}
+@keyframes dshc-sweep{0%{transform:translateY(-130%)}100%{transform:translateY(360%)}}
+.dshc-sghead{position:relative;display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-bottom:7px;
+  border-bottom:1px solid color-mix(in srgb,var(--lane) 18%,var(--line))}
+.dshc-sgidx{flex:0 0 auto;font:600 9.5px/1 var(--mono);letter-spacing:.04em;padding:3px 4px;border-radius:4px;
+  color:color-mix(in srgb,var(--lane) 76%,var(--ink));border:1px solid color-mix(in srgb,var(--lane) 34%,transparent)}
+.dshc-sgcol h2{font-size:13px;font-weight:650;letter-spacing:.5px}
+.dshc-sgdot{flex:0 0 auto;width:5px;height:5px;border-radius:50%;background:color-mix(in srgb,var(--muted) 58%,transparent)}
+.dshc-sgdot.on{background:var(--lane);animation:dshc-pulse 2.6s ease-in-out infinite}
+@keyframes dshc-pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 color-mix(in srgb,var(--lane) 55%,transparent)}
+  50%{opacity:.5;box-shadow:0 0 0 4px transparent}}
+.dshc-sgst{flex:0 0 auto;font:9.5px/1 var(--mono);letter-spacing:.12em;color:var(--muted)}
+.dshc-sgst.on{color:color-mix(in srgb,var(--lane) 82%,var(--ink))}
+/* 浜旈椄锛氬儚鐘舵€佺伅锛屼笉鍍忓媼绔?*/
+.dshc-gatebar{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.dshc-gate{display:inline-flex;align-items:center;gap:4px;padding:4px 6px 4px 5px;border-radius:5px;white-space:nowrap;
+  font:10px/1 var(--mono);letter-spacing:.02em;color:var(--muted);
+  border:1px solid color-mix(in srgb,var(--line2) 55%,transparent);background:color-mix(in srgb,var(--panel2) 40%,transparent)}
+.dshc-gate::before{content:'路';font-size:11px;line-height:1;opacity:.65}
+.dshc-gate.on{color:color-mix(in srgb,var(--ok) 78%,var(--ink));
+  border-color:color-mix(in srgb,var(--ok) 42%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent);
+  box-shadow:inset 0 0 8px color-mix(in srgb,var(--ok) 12%,transparent)}
+.dshc-gate.on::before{content:'鉁?';opacity:1}
+/* 草稿：像一份从对话里捞出来的数据包 */
+.dshc-pkt{position:relative;margin-bottom:7px;padding:9px 11px 9px 13px;border-radius:10px;border:1px solid var(--line);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 46%,transparent),transparent 58%);
+  transition:border-color .22s,box-shadow .3s}
+.dshc-pkt::before{content:'';position:absolute;left:0;top:9px;bottom:9px;width:2px;border-radius:2px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent) 78%,transparent),color-mix(in srgb,var(--accent) 10%,transparent))}
+.dshc-pkt:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));
+  box-shadow:0 12px 26px -24px color-mix(in srgb,var(--accent) 80%,transparent)}
+.dshc-pkt.blocked{border-color:color-mix(in srgb,var(--warn) 32%,var(--line))}
+.dshc-pkt.blocked::before{background:linear-gradient(180deg,color-mix(in srgb,var(--warn) 80%,transparent),color-mix(in srgb,var(--warn) 8%,transparent))}
+.dshc-pkt-t{display:flex;align-items:center;gap:6px;margin-bottom:6px;
+  font:9.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.dshc-pkt-t .st{margin-left:auto;letter-spacing:.14em}
+.dshc-pkt-t .st.ok{color:color-mix(in srgb,var(--ok) 80%,var(--ink))}
+.dshc-pkt-t .st.hold{color:color-mix(in srgb,var(--warn) 82%,var(--ink))}
+/* 手写一条：终端 */
+.dshc-term{position:relative;margin-bottom:8px;padding:11px 12px;border-radius:11px;
+  border:1px solid color-mix(in srgb,var(--accent) 32%,var(--line));
+  background:radial-gradient(120% 80% at 0% 0%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 58%),
+    color-mix(in srgb,var(--panel) 80%,transparent)}
+.dshc-term::before{content:'';position:absolute;left:12px;right:12px;top:0;height:1px;
+  background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 68%,transparent),transparent)}
+.dshc-term .lbl{display:flex;align-items:center;gap:8px;margin-bottom:7px;font:9.5px/1 var(--mono);
+  letter-spacing:.14em;text-transform:uppercase;color:color-mix(in srgb,var(--accent) 70%,var(--muted))}
+/* 鍙洖锛氶浄杈?*/
+.dshc-radar{display:flex;align-items:center;gap:7px;margin-top:9px;padding-top:9px;
+  border-top:1px dashed color-mix(in srgb,var(--line2) 70%,transparent)}
+.dshc-ping{position:relative;flex:0 0 auto;width:13px;height:13px;border-radius:50%;
+  border:1px solid color-mix(in srgb,var(--accent) 55%,transparent)}
+.dshc-ping::before{content:'';position:absolute;inset:3px;border-radius:50%;background:color-mix(in srgb,var(--accent) 75%,transparent)}
+.dshc-ping::after{content:'';position:absolute;inset:-1px;border-radius:50%;animation:dshc-ping 2.8s ease-out infinite;
+  border:1px solid color-mix(in srgb,var(--accent) 60%,transparent)}
+@keyframes dshc-ping{0%{transform:scale(.5);opacity:.75}100%{transform:scale(2.1);opacity:0}}
+.dshc-recall-l{display:flex;gap:7px;padding:2px 0;font:12px/1.6 var(--mono);color:var(--ink)}
+.dshc-recall-l .n{flex:0 0 auto;color:color-mix(in srgb,var(--accent) 62%,var(--muted))}
+.dshc-inbox-h{display:flex;align-items:center;gap:8px;margin-bottom:9px;padding-bottom:8px;
+  border-bottom:1px solid var(--line);font:10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+/* 一行一条：面板变宽了，长句子别拉成一行太长 */
+.dshc-sgcol .dshc-note,.dshc-sgcol .dshc-row{max-width:88ch}
+@media(prefers-reduced-motion:reduce){
+  .dshc-sgcol:hover .dshc-scan,.dshc-sgdot.on,.dshc-ping::after{animation:none}
+  .dshc-sgcol:hover .dshc-scan{opacity:0}
+}
 
-/* —— 鱼格大框（MBTI 投影） —— */
+/* 鈥斺€?楸兼牸澶ф锛圡BTI 鎶曞奖锛?鈥斺€?*/
 .dshc-mbti{position:relative;overflow:hidden;border-radius:22px;padding:26px 28px 24px;margin:0 0 14px;
   border:1px solid color-mix(in srgb,var(--accent) 13%,var(--line));
   background:
@@ -345,7 +436,7 @@ window.__ModuleLoader__.load({
 @keyframes dshcGapCaret{0%,100%{opacity:.28;width:9px}50%{opacity:.95;width:14px}}
 @keyframes dshcTileIn{0%{opacity:0;transform:translateY(6px) scale(.9);filter:blur(7px)}100%{opacity:1;transform:none;filter:none}}
 @keyframes dshcTileFloat{0%,100%{translate:0 0}50%{translate:0 -3px}}
-/* —— 列表 / 角色卡 —— */
+/* 鈥斺€?鍒楄〃 / 瑙掕壊鍗?鈥斺€?*/
 .dshc-roster{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
 .dshc-char{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:14px;
   background:linear-gradient(180deg,var(--panel),transparent 76%);padding:14px 16px;
@@ -358,13 +449,13 @@ window.__ModuleLoader__.load({
 .dshc-char .acts{position:relative;z-index:1;display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}
 .dshc-char .meta{position:relative;z-index:1;display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;align-items:center}
 
-/* —— 绑定条 —— */
+/* 鈥斺€?缁戝畾鏉?鈥斺€?*/
 .dshc-bind{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid color-mix(in srgb,var(--ok) 38%,var(--line));
   background:color-mix(in srgb,var(--ok) 9%,transparent);border-radius:12px;padding:10px 14px;margin-bottom:12px}
 .dshc-bind[data-on="0"]{border-color:color-mix(in srgb,var(--warn) 40%,var(--line));
   background:color-mix(in srgb,var(--warn) 9%,transparent)}
 
-/* —— 指标 / 列表项 —— */
+/* 鈥斺€?鎸囨爣 / 鍒楄〃椤?鈥斺€?*/
 .dshc-pill{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;white-space:nowrap;
   border:1px solid var(--line);font-size:11px;color:var(--muted);background:var(--panel)}
 .dshc-pill[data-on="1"]{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 50%,var(--line));
@@ -397,8 +488,9 @@ window.__ModuleLoader__.load({
   transition:width .45s cubic-bezier(.2,.8,.2,1)}
 .dshc-bar[data-tone="warn"] i{background:linear-gradient(90deg,color-mix(in srgb,var(--warn) 60%,transparent),var(--warn))}
 .dshc-bar[data-tone="bad"] i{background:linear-gradient(90deg,color-mix(in srgb,var(--bad) 60%,transparent),var(--bad))}
+.dshc-bar[data-tone="ok"] i{background:linear-gradient(90deg,color-mix(in srgb,var(--ok) 55%,transparent),var(--ok))}
 
-/* —— 情绪特效：越积极越活泼（亮、快、往上飘、偶尔闪一下）；越消极越消沉（冷、暗、慢慢往下坠） —— */
+/* 鈥斺€?鎯呯华鐗规晥锛氳秺绉瀬瓒婃椿娉硷紙浜€佸揩銆佸線涓婇銆佸伓灏旈棯涓€涓嬶級锛涜秺娑堟瀬瓒婃秷娌夛紙鍐枫€佹殫銆佹參鎱㈠線涓嬪潬锛?鈥斺€?*/
 .dshc-emo{position:relative}
 .dshc-emo::after{content:'';position:absolute;inset:0;border-radius:inherit;pointer-events:none;
   box-shadow:inset 0 0 46px var(--emo-glow,transparent);opacity:.6;transition:box-shadow .9s ease}
@@ -432,7 +524,7 @@ window.__ModuleLoader__.load({
 .dshc-emo-vignette{inset:0;border-radius:inherit;pointer-events:none;transition:opacity .9s ease;
   background:radial-gradient(125% 96% at 50% 40%,transparent 30%,rgba(4,7,14,.78) 100%)}
 .dshc-emo-body{position:relative;z-index:1;transition:filter .9s ease}
-/* 大字跟着同一拍呼吸：活的时候轻轻一跳，沉的时候几乎不动 */
+/* 澶у瓧璺熺潃鍚屼竴鎷嶅懠鍚革細娲荤殑鏃跺€欒交杞讳竴璺筹紝娌夌殑鏃跺€欏嚑涔庝笉鍔?*/
 .dshc-emo-word{display:inline-block;transform-origin:0 50%;
   animation:dshcEmoWord var(--emo-beat,3.4s) ease-in-out infinite}
 @keyframes dshcEmoWord{0%,100%{transform:scale(1)}46%{transform:scale(1.018)}}
@@ -441,7 +533,7 @@ window.__ModuleLoader__.load({
 .dshc-emo-beacon{animation:dshcEmoBeacon var(--emo-beacon,3.4s) ease-out infinite}
 @keyframes dshcEmoBeacon{0%{r:3.6px;opacity:.55}74%{r:17px;opacity:0}100%{r:17px;opacity:0}}
 
-/* —— 五个需要：杯子（杯口=胃口，水=满足，空的那截=缺口=欲望） —— */
+/* 鈥斺€?浜斾釜闇€瑕侊細鏉瓙锛堟澂鍙?鑳冨彛锛屾按=婊¤冻锛岀┖鐨勯偅鎴?缂哄彛=娆叉湜锛?鈥斺€?*/
 @keyframes dshc-need-in{from{clip-path:inset(0 100% 0 0 round 7px);opacity:.55}to{clip-path:inset(0 0 0 0 round 7px);opacity:1}}
 @keyframes dshc-need-sheen{0%,58%{transform:translateX(-150%)}88%,100%{transform:translateX(150%)}}
 @keyframes dshc-need-hunger{0%,100%{filter:brightness(1)}50%{filter:brightness(1.32)}}
@@ -491,7 +583,7 @@ window.__ModuleLoader__.load({
   transition:width .45s cubic-bezier(.2,.8,.2,1)}
 .dshc-need .rim{position:absolute;top:-4px;bottom:-4px;width:1px;background:color-mix(in srgb,var(--ink) 42%,transparent);
   transform:translateX(-50%);transition:background .3s}
-/* 越饿越热：琥珀 → 橙红 → 红 → 发烫 */
+/* 瓒婇タ瓒婄儹锛氱惀鐝€ 鈫?姗欑孩 鈫?绾?鈫?鍙戠儷 */
 .dshc-need .halo{position:absolute;top:50%;transform:translateY(-50%);height:26px;border-radius:13px;
   pointer-events:none;opacity:0;filter:blur(9px);
   background:radial-gradient(ellipse at 70% 50%,color-mix(in srgb,var(--bad) 70%,transparent),transparent 72%);
@@ -553,7 +645,7 @@ window.__ModuleLoader__.load({
 .dshc-item .t{flex:1;min-width:0;font-size:12.5px;word-break:break-word}
 .dshc-item .m{color:var(--muted);font-size:11px;white-space:nowrap}
 
-/* —— 它现在觉得你：读数 + 纠错 —— */
+/* 鈥斺€?瀹冪幇鍦ㄨ寰椾綘锛氳鏁?+ 绾犻敊 鈥斺€?*/
 .dshc-read{display:flex;flex-direction:column;gap:6px;margin-top:8px}
 .dshc-read-line{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .dshc-read-pick{padding:9px 10px;border:1px solid color-mix(in srgb,var(--accent) 26%,var(--line));
@@ -572,7 +664,7 @@ window.__ModuleLoader__.load({
 .dshc-readitem-top .m{color:var(--muted);font-size:11px;white-space:nowrap;text-align:right}
 .dshc-read-mini{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
 
-/* —— 价值观张力 —— */
+/* 鈥斺€?浠峰€艰寮犲姏 鈥斺€?*/
 .dshc-tens{margin-top:12px;padding-top:8px;border-top:1px dashed var(--line)}
 .dshc-ten{display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:12.5px;min-width:0}
 .dshc-ten .q{flex:1 1 auto;min-width:0;text-wrap:pretty}
@@ -583,7 +675,7 @@ window.__ModuleLoader__.load({
 .dshc-kv b{font-size:18px;font-weight:600;letter-spacing:.4px}
 .dshc-kv span{color:var(--muted);font-size:11.5px}
 
-/* —— 时间线 · 按天折叠 —— */
+/* 鈥斺€?鏃堕棿绾?路 鎸夊ぉ鎶樺彔 鈥斺€?*/
 .dshc-tl-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
 .dshc-tl-meta .dshc-mono{font-size:11px;color:var(--muted);letter-spacing:.3px}
 .dshc-tl{margin-top:4px}
@@ -625,7 +717,7 @@ window.__ModuleLoader__.load({
 .dshc-tl-more{margin-left:14px}
 @keyframes dshcTlIn{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
 
-/* —— 记忆仓库：极光底 / 尘埃 / 扫描带 / 流光（都按「看得见但不抢戏」调过） —— */
+/* 鈥斺€?璁板繂浠撳簱锛氭瀬鍏夊簳 / 灏樺焹 / 鎵弿甯?/ 娴佸厜锛堥兘鎸夈€岀湅寰楄浣嗕笉鎶㈡垙銆嶈皟杩囷級 鈥斺€?*/
 .dshc-vault{position:relative;overflow:hidden;border-radius:15px;
   box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 15%,transparent),
     inset 0 -26px 54px -44px color-mix(in srgb,var(--accent) 55%,transparent);
@@ -643,19 +735,19 @@ window.__ModuleLoader__.load({
   background:linear-gradient(100deg,transparent,color-mix(in srgb,var(--accent) 10%,transparent),transparent)}
 .dshc-vault:hover::after{opacity:1;animation:dshc-vault-sheen 1.5s ease-out}
 @keyframes dshc-vault-sheen{from{transform:translateX(0)}to{transform:translateX(430%)}}
-/* 两层都是蓝：上亮下淡，不做绿；绿留给「正常/通过」那种状态 */
+/* 涓ゅ眰閮芥槸钃濓細涓婁寒涓嬫贰锛屼笉鍋氱豢锛涚豢鐣欑粰銆屾甯?閫氳繃銆嶉偅绉嶇姸鎬?*/
 .dshc-vault-aura{position:absolute;inset:-30% -18%;z-index:0;pointer-events:none;opacity:.4;filter:blur(10px);
   background:
     radial-gradient(36% 44% at 24% 34%,color-mix(in srgb,var(--accent) 24%,transparent),transparent 70%),
     radial-gradient(30% 38% at 74% 66%,color-mix(in srgb,var(--accent) 16%,transparent),transparent 72%);
   animation:dshc-vault-drift 30s ease-in-out infinite alternate}
 @keyframes dshc-vault-drift{0%{transform:translate3d(-2%,-2%,0) scale(1)}100%{transform:translate3d(2%,1.5%,0) scale(1.05)}}
-/* 顶部那团 logo 蓝：慢慢呼吸，卡片一眼看过去是蓝的 */
+/* 椤堕儴閭ｅ洟 logo 钃濓細鎱㈡參鍛煎惛锛屽崱鐗囦竴鐪肩湅杩囧幓鏄摑鐨?*/
 .dshc-vault-glow{position:absolute;left:6%;top:-46%;width:70%;height:74%;z-index:0;pointer-events:none;border-radius:50%;
   background:radial-gradient(closest-side,color-mix(in srgb,var(--accent) 34%,transparent),transparent 74%);
   filter:blur(16px);animation:dshc-vault-breathe 7.6s ease-in-out infinite}
 @keyframes dshc-vault-breathe{0%,100%{opacity:.3;transform:scale(.97)}50%{opacity:.72;transform:scale(1.03)}}
-/* 右上那颗蓝点：呼应 logo 的节点 */
+/* 鍙充笂閭ｉ钃濈偣锛氬懠搴?logo 鐨勮妭鐐?*/
 .dshc-vault-node{position:absolute;right:15px;top:15px;width:5px;height:5px;border-radius:50%;z-index:2;
   background:color-mix(in srgb,#fff 50%,var(--accent));
   box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 15%,transparent),
@@ -745,12 +837,12 @@ window.__ModuleLoader__.load({
 .dshc-vault-acts .dshc-btn:hover::after{opacity:1;animation:dshc-vault-btn-sheen .75s ease-out}
 @keyframes dshc-vault-btn-sheen{from{transform:translateX(0)}to{transform:translateX(360%)}}
 
-/* —— 记忆增量（默认展开：只有一条线，从底边左边往右上走） —— */
+/* 鈥斺€?璁板繂澧為噺锛堥粯璁ゅ睍寮€锛氬彧鏈変竴鏉＄嚎锛屼粠搴曡竟宸﹁竟寰€鍙充笂璧帮級 鈥斺€?*/
 .dshc-vault-delta{margin-top:12px;padding-top:8px;border-top:1px dashed var(--line)}
 .dshc-vault-delta>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;
   color:var(--muted);font-size:12px;padding:3px 0;transition:color .15s}
 .dshc-vault-delta>summary::-webkit-details-marker{display:none}
-.dshc-vault-delta>summary::before{content:'▸';font-size:10px;opacity:.65;transition:transform .15s}
+.dshc-vault-delta>summary::before{content:'鈻?';font-size:10px;opacity:.65;transition:transform .15s}
 .dshc-vault-delta[open]>summary::before{transform:rotate(90deg)}
 .dshc-vault-delta>summary:hover{color:var(--ink)}
 .dshc-vault-delta[open]>summary{color:var(--ink);margin-bottom:6px}
@@ -777,7 +869,7 @@ window.__ModuleLoader__.load({
   filter:drop-shadow(0 0 7px color-mix(in srgb,var(--accent) 75%,transparent))}
 .dshc-k-err{font-size:11px;color:var(--muted);padding:4px 0}
 
-/* —— 自修改页：状态摘要（不占用页头 dshc-hero） —— */
+/* 鈥斺€?鑷慨鏀归〉锛氱姸鎬佹憳瑕侊紙涓嶅崰鐢ㄩ〉澶?dshc-hero锛?鈥斺€?*/
 .dshc-sum{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 24px;align-items:center;
   padding:15px 18px;margin-bottom:14px;border:1px solid var(--line);border-radius:14px;
   background:linear-gradient(180deg,var(--panel),transparent 88%)}
@@ -815,7 +907,7 @@ window.__ModuleLoader__.load({
 .dshc-empty2{padding:12px 14px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);font-size:12.5px;
   background:color-mix(in srgb,var(--panel) 55%,transparent)}
 
-/* —— 设置页：按页头标签分组 —— */
+/* 鈥斺€?璁剧疆椤碉細鎸夐〉澶存爣绛惧垎缁?鈥斺€?*/
 .dshc-set-lead{padding:12px 14px;border:1px solid var(--line);border-radius:13px;
   background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 7%,transparent),transparent 58%),var(--panel)}
 .dshc-set-lead-t{font-size:14px;font-weight:600;letter-spacing:.2px;line-height:1.4}
@@ -846,7 +938,7 @@ window.__ModuleLoader__.load({
 .dshc-foldsec .dshc-fold-body .dshc-card{border:0;background:transparent;padding:0;border-radius:0;box-shadow:none}
 @media (max-width:560px){.dshc-param-d{padding-left:0}.dshc-param-sel{width:100%;margin-left:0}.dshc-fold-s{display:none}}
 
-/* —— 关系星图 —— */
+/* 鈥斺€?鍏崇郴鏄熷浘 鈥斺€?*/
 .dshc-rmap{display:flex;flex-direction:column;align-items:center;gap:6px;padding:2px 0 2px}
 .dshc-rmap svg{display:block;width:100%;max-width:480px;height:auto;overflow:visible}
 .dshc-rmap .spin{transform-box:fill-box;transform-origin:center;animation:dshcMapSpin 96s linear infinite}
@@ -872,7 +964,7 @@ window.__ModuleLoader__.load({
 @keyframes dshcMapFlow{to{stroke-dashoffset:-22}}
 @keyframes dshcMapIn{from{opacity:0;transform:scale(.55)}to{opacity:1;transform:scale(1)}}
 
-/* —— 关系分组（下拉） —— */
+/* 鈥斺€?鍏崇郴鍒嗙粍锛堜笅鎷夛級 鈥斺€?*/
 .dshc-relgroup{border-top:1px solid var(--line);margin-top:8px}
 .dshc-relgroup:first-of-type{border-top:0;margin-top:2px}
 .dshc-relgroup-h{display:flex;align-items:center;gap:7px;padding:8px 2px;cursor:pointer;user-select:none}
@@ -899,7 +991,7 @@ window.__ModuleLoader__.load({
   min-height:64px;display:flex;flex-direction:column;gap:8px;justify-content:center}
 .dshc-inbox-box .dshc-prop{background:transparent;border-color:var(--line);box-shadow:none;border-radius:10px}
 
-/* —— 行动接口：一张卡里四行「开关 + 展开设置」 —— */
+/* 鈥斺€?琛屽姩鎺ュ彛锛氫竴寮犲崱閲屽洓琛屻€屽紑鍏?+ 灞曞紑璁剧疆銆?鈥斺€?*/
 .dshc-ports{display:flex;flex-direction:column;gap:8px;margin-top:2px}
 .dshc-port{border:1px solid var(--line);border-radius:12px;overflow:hidden;
   background:color-mix(in srgb,var(--panel) 65%,transparent);transition:border-color .15s,background .15s}
@@ -962,13 +1054,9 @@ window.__ModuleLoader__.load({
       h('i'), h('i'), h('i'),
       h('b', { style: { width: Math.round(size * 0.52), height: Math.round(size * 0.52) } }))
 
-    /* ---------------- 情绪 → 外观 ----------------
+    /* ---------------- 鎯呯华 鈫?澶栬 ----------------
      * 一条连续的光谱，不是几档预设：
-     *   积极 = 往上飘、快、亮、边上冒金色星点（活泼）；
-     *   消极 = 冷灰、暗、慢慢往下坠、四周压一层暗（消沉）；
-     *   0 附近 = 很慢地荡着，不活泼也不沉。
-     * 强度 ins 只放大/缩小幅度，不改方向。
-     */
+     *   绉瀬 = 寰€涓婇銆佸揩銆佷寒銆佽竟涓婂啋閲戣壊鏄熺偣锛堟椿娉硷級锛?     *   娑堟瀬 = 鍐风伆銆佹殫銆佹參鎱㈠線涓嬪潬銆佸洓鍛ㄥ帇涓€灞傛殫锛堟秷娌夛級锛?     *   0 闄勮繎 = 寰堟參鍦拌崱鐫€锛屼笉娲绘臣涔熶笉娌夈€?     * 寮哄害 ins 鍙斁澶?缂╁皬骞呭害锛屼笉鏀规柟鍚戙€?     */
     const EMO_COLD = [96, 108, 142]
     const EMO_MID = [116, 172, 216]
     const EMO_WARM = [126, 224, 255]
@@ -1014,7 +1102,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** 卡片里那层会呼吸的气：两团漂移的光 + 往上/往下走的微尘 + 积极时才冒的星点 */
+    /** 鍗＄墖閲岄偅灞備細鍛煎惛鐨勬皵锛氫袱鍥㈡紓绉荤殑鍏?+ 寰€涓?寰€涓嬭蛋鐨勫井灏?+ 绉瀬鏃舵墠鍐掔殑鏄熺偣 */
     function AffectAura({ look }) {
       const motes = []
       for (let i = 0; i < 13; i++) {
@@ -1057,7 +1145,7 @@ window.__ModuleLoader__.load({
         tw)
     }
 
-    /** 同一颗球：积极时一圈圈炸得快、核心亮；消极时慢慢涨、发灰 */
+    /** 鍚屼竴棰楃悆锛氱Н鏋佹椂涓€鍦堝湀鐐稿緱蹇€佹牳蹇冧寒锛涙秷鏋佹椂鎱㈡參娑ㄣ€佸彂鐏?*/
     const AffectOrb = ({ size = 44, look }) => {
       const d = look.ringD
       return h('span', {
@@ -1083,9 +1171,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 数字滚动：目标值到位时数一遍（缓出）。
-     * 「减少动态」或没有 rAF 的环境直接落终值，绝不把 0 留在屏幕上。
-     */
+     * 鏁板瓧婊氬姩锛氱洰鏍囧€煎埌浣嶆椂鏁颁竴閬嶏紙缂撳嚭锛夈€?     * 銆屽噺灏戝姩鎬併€嶆垨娌℃湁 rAF 鐨勭幆澧冪洿鎺ヨ惤缁堝€硷紝缁濅笉鎶?0 鐣欏湪灞忓箷涓娿€?     */
     function useCountUp(target, ms = 900) {
       const to = Number(target) || 0
       const [n, setN] = useState(0)
@@ -1110,7 +1196,7 @@ window.__ModuleLoader__.load({
       return n
     }
 
-    /** 记忆仓库的门牌：保险柜 + 转盘，外面一圈呼吸的光环 */
+    /** 璁板繂浠撳簱鐨勯棬鐗岋細淇濋櫓鏌?+ 杞洏锛屽闈竴鍦堝懠鍚哥殑鍏夌幆 */
     const VaultMark = ({ size = 32 }) => h('span', {
       className: 'dshc-vault-mark', style: { width: size, height: size }, 'aria-hidden': true,
     },
@@ -1146,16 +1232,12 @@ window.__ModuleLoader__.load({
     }
 
     /*
-     * 情绪走势：纵轴 -1 ~ +1（真画刻度线），横轴是真时间（真画时间刻度）。
-     * 白线是慢情绪这一程怎么走的；右端那个蓝点是此刻的快情绪，尾巴是刚才的余温。
-     * 窗口里还没记录的那一段画斜纹——不拉曲线去填，也不假装有数据。
-     */
+     * 鎯呯华璧板娍锛氱旱杞?-1 ~ +1锛堢湡鐢诲埢搴︾嚎锛夛紝妯酱鏄湡鏃堕棿锛堢湡鐢绘椂闂村埢搴︼級銆?     * 鐧界嚎鏄參鎯呯华杩欎竴绋嬫€庝箞璧扮殑锛涘彸绔偅涓摑鐐规槸姝ゅ埢鐨勫揩鎯呯华锛屽熬宸存槸鍒氭墠鐨勪綑娓┿€?     * 绐楀彛閲岃繕娌¤褰曠殑閭ｄ竴娈电敾鏂滅汗鈥斺€斾笉鎷夋洸绾垮幓濉紝涔熶笉鍋囪鏈夋暟鎹€?     */
     const TR_Y = [1, 0.5, 0, -0.5, -1]
     const trP2 = (n) => (Number(n) < 10 ? '0' + Number(n) : '' + Number(n))
 
-    /** 标题下面那行：此刻积极还是消极、快情绪由什么拼出来（情绪名看卡里那个大字，不重复）。
-     *  「此刻」优先用接口现算的 v3：走势最后一点是采样时的值，快情绪会按分钟回落，
-     *  两者差一点就会让标题和卡里的「此刻」对不上。 */
+    /** 鏍囬涓嬮潰閭ｈ锛氭鍒荤Н鏋佽繕鏄秷鏋併€佸揩鎯呯华鐢变粈涔堟嫾鍑烘潵锛堟儏缁悕鐪嬪崱閲岄偅涓ぇ瀛楋紝涓嶉噸澶嶏級銆?     *  銆屾鍒汇€嶄紭鍏堢敤鎺ュ彛鐜扮畻鐨?v3锛氳蛋鍔挎渶鍚庝竴鐐规槸閲囨牱鏃剁殑鍊硷紝蹇儏缁細鎸夊垎閽熷洖钀斤紝
+     *  涓よ€呭樊涓€鐐瑰氨浼氳鏍囬鍜屽崱閲岀殑銆屾鍒汇€嶅涓嶄笂銆?*/
     function TrendNow({ data, raw, cur }) {
       const pts = (data && data.points) || []
       let last = null
@@ -1170,7 +1252,7 @@ window.__ModuleLoader__.load({
       const sg = (x) => (Number(x) >= 0 ? '+' : '') + Number(x).toFixed(2)
       const fsV = last.fs === null || last.fs === undefined ? null : Number(last.fs)
       const feV = last.fe === null || last.fe === undefined ? null : Number(last.fe)
-      /* 拆项要能加得回去才写：旧采样里的「自己 + 共情」可能已经对不上回落后的快情绪 */
+      /* 鎷嗛」瑕佽兘鍔犲緱鍥炲幓鎵嶅啓锛氭棫閲囨牱閲岀殑銆岃嚜宸?+ 鍏辨儏銆嶅彲鑳藉凡缁忓涓嶄笂鍥炶惤鍚庣殑蹇儏缁?*/
       const decomp = fsV !== null && feV !== null && Math.abs(fsV + feV - fV) <= 0.02
       const rawName = raw && raw !== last.lb ? (AFFECT_KEY[raw] || raw) : ''
       return h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 9px' } },
@@ -1208,7 +1290,7 @@ window.__ModuleLoader__.load({
           for (const p of pts) if (p.at >= a0 && p.at < a0 + step) { sum += Number(pick(p)) || 0; n++ }
           raw.push(n ? sum / n : null)
         }
-        /* 空桶不硬拽上一个值（那样画出来是方块）：在前后两个真有数的桶之间拉直线 */
+        /* 绌烘《涓嶇‖鎷戒笂涓€涓€硷紙閭ｆ牱鐢诲嚭鏉ユ槸鏂瑰潡锛夛細鍦ㄥ墠鍚庝袱涓湡鏈夋暟鐨勬《涔嬮棿鎷夌洿绾?*/
         const filled = new Array(nb).fill(null)
         let prev = -1
         for (let i = 0; i < nb; i++) {
@@ -1219,8 +1301,7 @@ window.__ModuleLoader__.load({
           else if (next < 0) filled[i] = raw[prev]
           else filled[i] = raw[prev] + (raw[next] - raw[prev]) * ((i - prev) / (next - prev))
         }
-        /* 空档里让出位置：那段形状由服务端的推演曲线给，不在直线上硬拉。
-           换在磨平之前，前后两个桶还能把这根线和曲线接上，接缝就不会跳。 */
+        /* 绌烘。閲岃鍑轰綅缃細閭ｆ褰㈢姸鐢辨湇鍔＄鐨勬帹婕旀洸绾跨粰锛屼笉鍦ㄧ洿绾夸笂纭媺銆?           鎹㈠湪纾ㄥ钩涔嬪墠锛屽墠鍚庝袱涓《杩樿兘鎶婅繖鏍圭嚎鍜屾洸绾挎帴涓婏紝鎺ョ紳灏变笉浼氳烦銆?*/
         if (fix) {
           for (let i = 0; i < nb; i++) {
             const v = fix(t0 + i * step + step / 2)
@@ -1229,7 +1310,7 @@ window.__ModuleLoader__.load({
         }
         const out = []
         for (let i = 0; i < nb; i++) if (filled[i] !== null) out.push({ at: t0 + i * step + step / 2, v: filled[i] })
-        /* 再过一遍邻域：慢情绪一步一跳，得磨成坡，不然就是台阶。7 点核 = 前后各 3 个桶 */
+        /* 鍐嶈繃涓€閬嶉偦鍩燂細鎱㈡儏缁竴姝ヤ竴璺筹紝寰楃（鎴愬潯锛屼笉鐒跺氨鏄彴闃躲€? 鐐规牳 = 鍓嶅悗鍚?3 涓《 */
         const w = [1, 2, 4, 6, 4, 2, 1]
         const sm = out.map((p, i) => {
           let acc = 0
@@ -1266,19 +1347,21 @@ window.__ModuleLoader__.load({
       const hasLine = pts.length >= 2
       /* 这段在屏幕上不到 8 像素宽（比如只有几天记录却看一年），就别画线了，画出来是根竖刺 */
       const drawLine = hasLine && visW >= 8
-      /* 空档 → 回落曲线：服务端算好形状，这里只负责画。
-         sleep = 睡着/不在（压淡），rest = 醒着但断了十分钟以上（更淡）。 */
+      /* 绌烘。 鈫?鍥炶惤鏇茬嚎锛氭湇鍔＄绠楀ソ褰㈢姸锛岃繖閲屽彧璐熻矗鐢汇€?         sleep = 鐫＄潃/涓嶅湪锛堝帇娣★級锛宺est = 閱掔潃浣嗘柇浜嗗崄鍒嗛挓浠ヤ笂锛堟洿娣★級銆?*/
       const sleeps = (data && data.sleep) || []
       const rests = (data && data.rest) || []
       const toRange = (s) => ({ aMs: Date.parse(s.from), bMs: Date.parse(s.to) })
-      const sleepRanges = sleeps.map(toRange)
-        .filter((g) => Number.isFinite(g.aMs) && Number.isFinite(g.bMs) && g.bMs > g.aMs)
-      const restRanges = rests.map(toRange)
-        .filter((g) => Number.isFinite(g.aMs) && Number.isFinite(g.bMs) && g.bMs > g.aMs)
+      /* 长空档数组里其实混着两种：真睡着（kind=sleep）和白天超过三小时的「不在」（kind=away）。
+         只有真睡着的才画成「睡」那层更亮的淡色；「不在」跟短断聊一样，画最淡的那层。 */
+      const isSleepItem = (s) => String((s && s.kind) || 'sleep') !== 'away'
+      const sleepItems = sleeps.filter(isSleepItem)
+      const awayItems = sleeps.filter((s) => String((s && s.kind) || '') === 'away')
+      const inRange = (g) => Number.isFinite(g.aMs) && Number.isFinite(g.bMs) && g.bMs > g.aMs
+      const sleepRanges = sleepItems.map(toRange).filter(inRange)
+      const restRanges = rests.map(toRange).concat(awayItems.map(toRange)).filter(inRange)
       const modeAt = (ms) => (sleepRanges.some((g) => ms > g.aMs && ms < g.bMs) ? 'sleep'
         : (restRanges.some((g) => ms > g.aMs && ms < g.bMs) ? 'rest' : 'live'))
-      /* 每段空档拼成「起点 → 推演曲线 → 下一个真读数」一条点列。
-         主线也走这份点，所以淡的那截和亮的那截是同一根线，接缝处不会一根停在这、一根从别处起。 */
+      /* 姣忔绌烘。鎷兼垚銆岃捣鐐?鈫?鎺ㄦ紨鏇茬嚎 鈫?涓嬩竴涓湡璇绘暟銆嶄竴鏉＄偣鍒椼€?         涓荤嚎涔熻蛋杩欎唤鐐癸紝鎵€浠ユ贰鐨勯偅鎴拰浜殑閭ｆ埅鏄悓涓€鏍圭嚎锛屾帴缂濆涓嶄細涓€鏍瑰仠鍦ㄨ繖銆佷竴鏍逛粠鍒璧枫€?*/
       const gapSeries = [...sleeps, ...rests].map((s) => {
         const list = [{ at: Date.parse(s.from), v: Number(s.s0) }]
         for (const p of s.curve || []) list.push({ at: Number(p.at), v: Number(p.s) })
@@ -1287,7 +1370,7 @@ window.__ModuleLoader__.load({
           .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.v))
           .sort((a, b) => a.at - b.at)
       }).filter((l) => l.length >= 2)
-      /* 空档里的值：在推演曲线上按时间线性取；不在任何空档里就返回 null（那用真读数） */
+      /* 绌烘。閲岀殑鍊硷細鍦ㄦ帹婕旀洸绾夸笂鎸夋椂闂寸嚎鎬у彇锛涗笉鍦ㄤ换浣曠┖妗ｉ噷灏辫繑鍥?null锛堥偅鐢ㄧ湡璇绘暟锛?*/
       const restValAt = (ms) => {
         for (const list of gapSeries) {
           if (ms < list[0].at || ms > list[list.length - 1].at) continue
@@ -1303,14 +1386,13 @@ window.__ModuleLoader__.load({
         return null
       }
       const rows = hasLine ? bucket((p) => p.s, restValAt) : []
-      /* 水位：底色三段叠出来的那条线（段式慢波 + 日节律 + 累积负荷）。
-         慢情绪是水面，水位是它要去的地方；两条摆在一起才看得出「谁在拖谁」。 */
+      /* 姘翠綅锛氬簳鑹蹭笁娈靛彔鍑烘潵鐨勯偅鏉＄嚎锛堟寮忔參娉?+ 鏃ヨ妭寰?+ 绱Н璐熻嵎锛夈€?         鎱㈡儏缁槸姘撮潰锛屾按浣嶆槸瀹冭鍘荤殑鍦版柟锛涗袱鏉℃憜鍦ㄤ竴璧锋墠鐪嬪緱鍑恒€岃皝鍦ㄦ嫋璋併€嶃€?*/
       const hasB = pts.some((p) => Number.isFinite(Number(p.b)))
       const bRows = hasLine && hasB ? bucket((p) => p.b) : []
       const gxOf = (p) => X(p.at)
       const gyOf = (p) => Y(p.v)
       const waterD = drawLine && bRows.length >= 2 ? curve(bRows, gxOf, gyOf) : ''
-      /* 把慢情绪那条线按「实 / 短空档 / 睡着」切成几段：边界点两边共用，接缝处看不出断头 */
+      /* 鎶婃參鎯呯华閭ｆ潯绾挎寜銆屽疄 / 鐭┖妗?/ 鐫＄潃銆嶅垏鎴愬嚑娈碉細杈圭晫鐐逛袱杈瑰叡鐢紝鎺ョ紳澶勭湅涓嶅嚭鏂ご */
       const runs = []
       if (drawLine && rows.length >= 2) {
         let cur = [rows[0]]
@@ -1326,8 +1408,7 @@ window.__ModuleLoader__.load({
       }
       const liveRuns = runs.filter((r) => r.mode === 'live' && r.pts.length >= 2)
       const slowD = liveRuns.map((r) => curve(r.pts, gxOf, gyOf)).join(' ')
-      /* 整条线先最淡画一遍（含短空档）：它和亮的是同一份点、同一条曲线。
-         短空档那截靠这一层，睡着那截再叠一层更亮一点的淡色。 */
+      /* 鏁存潯绾垮厛鏈€娣＄敾涓€閬嶏紙鍚煭绌烘。锛夛細瀹冨拰浜殑鏄悓涓€浠界偣銆佸悓涓€鏉℃洸绾裤€?         鐭┖妗ｉ偅鎴潬杩欎竴灞傦紝鐫＄潃閭ｆ埅鍐嶅彔涓€灞傛洿浜竴鐐圭殑娣¤壊銆?*/
       const restD = drawLine && rows.length >= 2 && runs.some((r) => r.mode !== 'live')
         ? curve(rows, gxOf, gyOf)
         : ''
@@ -1343,7 +1424,7 @@ window.__ModuleLoader__.load({
       const totalOfP = (p) => (Number.isFinite(Number(p.t))
         ? Number(p.t)
         : Math.max(-1, Math.min(1, (Number(p.s) || 0) + 0.35 * (Number(p.f) || 0))))
-      /* 快情绪那一团挂在最后一个真有读数的点上；钳位打满的点不算读数 */
+      /* 蹇儏缁偅涓€鍥㈡寕鍦ㄦ渶鍚庝竴涓湡鏈夎鏁扮殑鐐逛笂锛涢挸浣嶆墦婊＄殑鐐逛笉绠楄鏁?*/
       let last = null
       for (let i = pts.length - 1; i >= 0; i--) if (hasF(pts[i])) { last = pts[i]; break }
       let nx = 0
@@ -1356,7 +1437,7 @@ window.__ModuleLoader__.load({
         nx = X(last.at)
         ny = Y(totalOfP(last))
         sy = Y(last.s)
-        /* 尾巴 = 这一段里最后那一小截快情绪：窗口一变它也跟着变；一天这种短窗口尾巴给长点，不然看不出起伏 */
+        /* 灏惧反 = 杩欎竴娈甸噷鏈€鍚庨偅涓€灏忔埅蹇儏缁細绐楀彛涓€鍙樺畠涔熻窡鐫€鍙橈紱涓€澶╄繖绉嶇煭绐楀彛灏惧反缁欓暱鐐癸紝涓嶇劧鐪嬩笉鍑鸿捣浼?*/
         const tailFrac = span <= 2 * 86400000 ? 0.3 : 0.18
         const tailFrom = Math.max(t0, last.at - Math.min(span * tailFrac, dataSpan * 0.45))
         const tailPts = []
@@ -1365,7 +1446,7 @@ window.__ModuleLoader__.load({
           if (p.at < tailFrom || !hasF(p)) break
           tailPts.unshift(p)
         }
-        /* 抽稀到 48 个点：以前只取 18 个，30 小时的抖动被画成几个大折角，看着像随手画的 */
+        /* 鎶界█鍒?48 涓偣锛氫互鍓嶅彧鍙?18 涓紝30 灏忔椂鐨勬姈鍔ㄨ鐢绘垚鍑犱釜澶ф姌瑙掞紝鐪嬬潃鍍忛殢鎵嬬敾鐨?*/
         const gstep = Math.max(1, Math.ceil(tailPts.length / 48))
         for (let i = 0; i < tailPts.length - 1; i += gstep) {
           const p = tailPts[i]
@@ -1399,7 +1480,7 @@ window.__ModuleLoader__.load({
       const showHatch = emptyX > 1.5
       return h('div', null,
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'stretch' } },
-          /* 纵轴标尺 */
+          /* 绾佃酱鏍囧昂 */
           h('div', { style: { position: 'relative', width: 24, flex: 'none', height: H } },
             TR_Y.map((v) => h('span', {
               key: 'y' + v,
@@ -1409,7 +1490,7 @@ window.__ModuleLoader__.load({
                 fontSize: 10, lineHeight: '12px', opacity: v === 0 ? 0.8 : 0.4,
               },
             }, v > 0 ? '+' + v : String(v)))),
-          /* 画布 */
+          /* 鐢诲竷 */
           h('div', { style: { position: 'relative', flex: 1, minWidth: 0, height: H } },
             h('svg', {
               viewBox: '0 0 ' + W + ' ' + H,
@@ -1442,23 +1523,22 @@ window.__ModuleLoader__.load({
               x1: emptyX.toFixed(1), x2: emptyX.toFixed(1), y1: 0, y2: H,
               stroke: 'currentColor', strokeOpacity: 0.18, strokeWidth: 1, strokeDasharray: '3 4',
             }) : null,
-            /* 休息的那几段：浅斜纹，边界给一根更淡的虚线，一眼能看出「这里她没说话」 */
+            /* 浼戞伅鐨勯偅鍑犳锛氭祬鏂滅汗锛岃竟鐣岀粰涓€鏍规洿娣＄殑铏氱嚎锛屼竴鐪艰兘鐪嬪嚭銆岃繖閲屽ス娌¤璇濄€?*/
             waterD ? h('path', {
               d: waterD, fill: 'none', stroke: 'currentColor', strokeOpacity: 0.16,
               strokeWidth: 1.3, strokeDasharray: '4 4', strokeLinecap: 'round',
             }) : null,
             h('path', { d: areaD, fill: 'url(#dshcTrendFill)' }),
-            /* 整条线先最淡画一遍：短空档那截就靠这一层（她本来就在往水位走，只是断了十几分钟） */
+            /* 鏁存潯绾垮厛鏈€娣＄敾涓€閬嶏細鐭┖妗ｉ偅鎴氨闈犺繖涓€灞傦紙濂规湰鏉ュ氨鍦ㄥ線姘翠綅璧帮紝鍙槸鏂簡鍗佸嚑鍒嗛挓锛?*/
             restD ? h('path', {
               d: restD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.16, strokeWidth: 1.3,
               strokeLinecap: 'round', strokeLinejoin: 'round',
             }) : null,
-            /* 睡着/不在的那几截：同一根曲线，再叠一层更亮一点的淡色 */
+            /* 睡着的那几截：同一根曲线，再叠一层更淡的白——睡着的时候本来就不该太亮 */
             sleepD ? h('path', {
-              d: sleepD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.42, strokeWidth: 1.6,
+              d: sleepD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.28, strokeWidth: 1.6,
               strokeLinecap: 'round', strokeLinejoin: 'round',
             }) : null,
-            /* 醒来那个点不画圈了：颜色一变本来就看得出来哪儿醒的，圈是多余的记号 */
             h('path', {
               d: slowD, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.13, strokeWidth: 9,
               style: { filter: 'blur(6px)' },
@@ -1466,6 +1546,18 @@ window.__ModuleLoader__.load({
             h('path', {
               d: slowD, fill: 'none', stroke: '#ffffff', strokeWidth: 1.8, strokeOpacity: 0.94,
               strokeLinecap: 'round', strokeLinejoin: 'round',
+            }),
+            /* 醒来那个点：每一觉醒来，在曲线接头处点一个空心小圈。
+               它不解释什么，只是她睡过又醒过来了的记号。 */
+            sleepItems.map((s, i) => {
+              const at = Date.parse(s.to)
+              const v = Number(s.actual != null ? s.actual : s.s_end)
+              if (!Number.isFinite(at) || !Number.isFinite(v) || at < t0 || at > t1) return null
+              const cx = X(at).toFixed(1)
+              const cy = Y(v).toFixed(1)
+              return h('g', { key: 'wake' + i },
+                h('circle', { cx, cy, r: 4.6, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.13, strokeWidth: 1 }),
+                h('circle', { cx, cy, r: 2.3, fill: 'none', stroke: '#ffffff', strokeOpacity: 0.9, strokeWidth: 1.2 }))
             }),
             last ? h('line', {
               x1: nx.toFixed(1), y1: sy.toFixed(1), x2: nx.toFixed(1), y2: ny.toFixed(1),
@@ -1491,7 +1583,7 @@ window.__ModuleLoader__.load({
               })
             }),
             last ? h('circle', { cx: nx.toFixed(1), cy: ny.toFixed(1), r: (11 + 5 * lk.e).toFixed(1), fill: 'url(#dshcTrendGlow)' }) : null,
-            /* 此刻那一圈涟漪：越积极跳得越快越亮，越消极越慢越淡，沉到一定程度干脆不跳 */
+            /* 姝ゅ埢閭ｄ竴鍦堟稛婕細瓒婄Н鏋佽烦寰楄秺蹇秺浜紝瓒婃秷鏋佽秺鎱㈣秺娣★紝娌夊埌涓€瀹氱▼搴﹀共鑴嗕笉璺?*/
             last ? h('circle', {
               className: 'dshc-emo-beacon',
               cx: nx.toFixed(1), cy: ny.toFixed(1), r: 4, fill: 'none',
@@ -1513,7 +1605,7 @@ window.__ModuleLoader__.load({
               onMouseEnter: () => setTip(true),
               onMouseLeave: () => setTip(false),
             }) : null),
-            /* 空的那一段说一句为什么 */
+            /* 绌虹殑閭ｄ竴娈佃涓€鍙ヤ负浠€涔?*/
             showHatch && emptyX > 78 ? h('span', {
               style: {
                 position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)',
@@ -1577,7 +1669,7 @@ window.__ModuleLoader__.load({
                 background: '#fff', opacity: 0.4,
               },
             }), '休眠（睡着的几小时，淡色是推演）') : null,
-          /* 两个数：现在离水位多远、照这个速度多久回一半（按心情在高位/低位选速度） */
+          /* 涓や釜鏁帮細鐜板湪绂绘按浣嶅杩溿€佺収杩欎釜閫熷害澶氫箙鍥炰竴鍗婏紙鎸夊績鎯呭湪楂樹綅/浣庝綅閫夐€熷害锛?*/
           (data && data.now) ? h('span', {
             className: 'dshc-sub dshc-mono',
             title: '离水位 = 慢情绪 − 水位；回一半 = 按当前的恢复速度算的半衰期',
@@ -1605,7 +1697,7 @@ window.__ModuleLoader__.load({
       }, children)
     }
 
-    /** 头像压到 256 的 webp/jpeg，再存库（只给设置页换头像用） */
+    /** 澶村儚鍘嬪埌 256 鐨?webp/jpeg锛屽啀瀛樺簱锛堝彧缁欒缃〉鎹㈠ご鍍忕敤锛?*/
     async function compressAvatar(file) {
       if (!file) return null
       if (!/^image\//.test(file.type || '')) throw new Error('只支持图片文件')
@@ -1690,9 +1782,7 @@ window.__ModuleLoader__.load({
 
     /**
      * 五维需要画成「杯子」：杯口宽度 = 它自己长出来的胃口（setpoint），
-     * 水 = 已经满足到的水位，空着的那截 = 缺口 n_i —— 也就是它现在的欲望。
-     * 缺口越长越饿；0.10 起转橙红，0.25 起烧红，0.45 起发烫（光晕 + 呼吸 + 红点）。
-     */
+     * 姘?= 宸茬粡婊¤冻鍒扮殑姘翠綅锛岀┖鐫€鐨勯偅鎴?= 缂哄彛 n_i 鈥斺€?涔熷氨鏄畠鐜板湪鐨勬鏈涖€?     * 缂哄彛瓒婇暱瓒婇タ锛?.10 璧疯浆姗欑孩锛?.25 璧风儳绾紝0.45 璧峰彂鐑紙鍏夋檿 + 鍛煎惛 + 绾㈢偣锛夈€?     */
     const NEED_LV = [[0.03, '不饿'], [0.10, '一点点'], [0.30, '有点饿'], [0.50, '挺饿'], [1.01, '很饿']]
     function needWord(n) { for (const [t, w] of NEED_LV) if (n < t) return w; return '很饿' }
     function needRank(d) {
@@ -1719,16 +1809,14 @@ window.__ModuleLoader__.load({
         const heat = n >= 0.45 ? 4 : n >= 0.25 ? 3 : n >= 0.10 ? 2 : n >= 0.03 ? 1 : 0
         const isTop = n >= 0.03 && n >= topN - 1e-9
         const isOpen = !!open[k]
-        // 分解：权重表给的是 0.35·T 与 0.25·V，反解出 T、V，再换成胃口的量纲
-        const W = Number(ws[k]) || 1
+        // 鍒嗚В锛氭潈閲嶈〃缁欑殑鏄?0.35路T 涓?0.25路V锛屽弽瑙ｅ嚭 T銆乂锛屽啀鎹㈡垚鑳冨彛鐨勯噺绾?''
+              const W = Number(ws[k]) || 1
         const p = parts[k] || {}
         const tw = Number(p.trait) || 0
         const vw = Number(p.value) || 0
         const T = tw / 0.35
         const V = vw / 0.25
-        /* 账本只有一个来源：服务端算好的胃口拆项。
-           以前这里是自己拿 0.08·(1−h/2) 反推的，把胃口倍率 k 忘了 ——
-           五项加起来 0.700，胃口却写着 0.821，账根本对不上。老库没有 detail 才回退。 */
+        /* 璐︽湰鍙湁涓€涓潵婧愶細鏈嶅姟绔畻濂界殑鑳冨彛鎷嗛」銆?           浠ュ墠杩欓噷鏄嚜宸辨嬁 0.08路(1鈭抙/2) 鍙嶆帹鐨勶紝鎶婅儍鍙ｅ€嶇巼 k 蹇樹簡 鈥斺€?           浜旈」鍔犺捣鏉?0.700锛岃儍鍙ｅ嵈鍐欑潃 0.821锛岃处鏍规湰瀵逛笉涓娿€傝€佸簱娌℃湁 detail 鎵嶅洖閫€銆?*/
         const kk = Math.max(0.2, Math.min(3, Number(d.learn && d.learn.appetite_k) || 2))
         const det = (d.learn && d.learn.detail && d.learn.detail[k]) || null
         const numOr = (v, fb) => (Number.isFinite(Number(v)) ? Number(v) : fb)
@@ -1774,22 +1862,22 @@ window.__ModuleLoader__.load({
                 '缺口 ' + n.toFixed(2),
                 h('span', { className: 'num' }, ' · 胃口 ' + s.toFixed(2) + ' · 现在 ' + x.toFixed(2)))
               : h('span', null, needWord(n), h('span', { className: 'num' }, ' ' + n.toFixed(2)))),
-          h('span', { className: 'chev' }, isOpen ? '⌃' : '⌄'))
+          h('span', { className: 'chev' }, isOpen ? '鈱?' : '鈱?'))
         const detail = isOpen
           ? h('div', { key: k + '-d', className: 'dshc-need-detail' },
-            // ① 一句话先说结论：现在什么状态、在第几位、够不够格开口
-            h('div', { className: 'nd-line nd-strong' },
+            // 鈶?涓€鍙ヨ瘽鍏堣缁撹锛氱幇鍦ㄤ粈涔堢姸鎬併€佸湪绗嚑浣嶃€佸涓嶅鏍煎紑鍙?''
+              h('div', { className: 'nd-line nd-strong' },
               needWord(n),
               '　空着 ', h('b', null, Math.round(n * 100) + '%'),
               '　·　', rankNo === 1 ? '五条里最饿的' : '五条里第 ' + rankNo + ' 饿',
               '　·　', n >= 0.18 ? '够进档位了' : n >= 0.10 ? '还不到想主动说的程度' : '基本满足了'),
-            // ② 用杯子说人话：想要多少 / 现在多少 / 差多少
-            h('div', { className: 'nd-line' },
+            // 鈶?鐢ㄦ澂瀛愯浜鸿瘽锛氭兂瑕佸灏?/ 鐜板湪澶氬皯 / 宸灏?''
+              h('div', { className: 'nd-line' },
               '它想被喂到 ', h('b', null, s.toFixed(2)),
               '，现在只有 ', h('b', null, x.toFixed(2)),
               '，还差 ', h('b', null, Math.max(0, s - x).toFixed(2)),
               h('span', { className: 'nd-soft' }, '　（缺口 = 差多少 ÷ 想要多少，所以永远是 0~1 之间的比例）')),
-            // ③ 胃口怎么攒出来的：一项一句话
+            // 鈶?鑳冨彛鎬庝箞鏀掑嚭鏉ョ殑锛氫竴椤逛竴鍙ヨ瘽
             h('div', { className: 'nd-line nd-soft' }, '这个 ', s.toFixed(2), ' 是怎么攒出来的：'),
             h('div', { className: 'nd-line' }, '　平时就是这样 ', h('b', null, hh.toFixed(2)),
               h('span', { className: 'nd-soft' }, '　习惯在哪儿，胃口就落在哪儿')),
@@ -1803,12 +1891,12 @@ window.__ModuleLoader__.load({
               ? h('div', { className: 'nd-line' }, '　外面也推了 ', h('b', null, sgn(dMod)),
                 h('span', { className: 'nd-soft' }, '　关系亲密度 / 情绪底色 / 工况 / 长期情绪 合起来的'))
               : h('div', { className: 'nd-line nd-soft' }, '　外面没推：关系、情绪底色、工况、长期情绪，这会儿都没动它'),
-            // ④ 换成分数
+            // 鈶?鎹㈡垚鍒嗘暟
             h('div', { className: 'nd-line' },
               '换成分数 ', h('b', null, (W * n).toFixed(3)),
               h('span', { className: 'nd-soft' },
                 '　同一条缺口，落在它更看重的地方就更疼（×' + W.toFixed(2) + '），排档位就看这个')),
-            // ⑤ 原始公式只留给技术视图，平时别看
+            // 鈶?鍘熷鍏紡鍙暀缁欐妧鏈鍥撅紝骞虫椂鍒湅
             tech
               ? h('div', { className: 'nd-line nd-soft' },
                 '缺口 (', s.toFixed(3), ' − ', x.toFixed(3), ') ÷ ', s.toFixed(3), ' = ', n.toFixed(3),
@@ -1820,7 +1908,7 @@ window.__ModuleLoader__.load({
       }))
     }
 
-    /** 八边形雷达：labels 为 { joy:n, ... } */
+    /** 鍏竟褰㈤浄杈撅細labels 涓?{ joy:n, ... } */
     function RadarChart({ labels, size = 180 }) {
       const keys = Object.keys(AFFECT_KEY)
       const raw = keys.map((k) => Number((labels && labels[k]) || 0))
@@ -1842,7 +1930,7 @@ window.__ModuleLoader__.load({
         }))
     }
 
-    /** 模块关系边简图 */
+    /** 妯″潡鍏崇郴杈圭畝鍥?*/
     function EdgeGraphView({ graph }) {
       const g = graph || { nodes: [], edges: [], relations: [] }
       const w = 340, hgt = 220
@@ -1880,7 +1968,7 @@ window.__ModuleLoader__.load({
     const Empty = ({ children }) => h('div', { className: 'dshc-empty' }, children)
 
     const Btn = ({ children, onClick, primary, danger, ghost, tint, disabled, title, sm }) => {
-      // 防重复点击：点下立刻自锁 700ms，避免双击/连点重复提交
+      // 闃查噸澶嶇偣鍑伙細鐐逛笅绔嬪埢鑷攣 700ms锛岄伩鍏嶅弻鍑?杩炵偣閲嶅鎻愪氦
       const [locked, setLocked] = useState(false)
       const fire = (e) => {
         if (locked || !onClick) return
@@ -1901,7 +1989,7 @@ window.__ModuleLoader__.load({
 
     const Input = (props) => h('input', { ...props, className: 'dshc-in ' + (props.className || '') })
     const TextArea = (props) => h('textarea', { ...props, className: 'dshc-ta ' + (props.className || '') })
-    /** 字数计数器：这些字每轮都会进提示词，超限由输入框 maxLength 挡住，显示只做提醒 */
+    /** 瀛楁暟璁℃暟鍣細杩欎簺瀛楁瘡杞兘浼氳繘鎻愮ず璇嶏紝瓒呴檺鐢辫緭鍏ユ maxLength 鎸′綇锛屾樉绀哄彧鍋氭彁閱?*/
     const CharCount = ({ value, limit }) => {
       const n = Array.from(String(value == null ? '' : value)).length
       return h('span', { className: 'dshc-count', 'data-over': n > limit ? '1' : '0' }, n + '/' + limit)
@@ -1922,11 +2010,8 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 页面开着就隔一会儿重取一次。
-     *
-     * 热度里的新鲜度是按秒在衰减的，只在挂载时取一次，看到的永远是开页那一刻的快照。
-     * 窗口切到后台就停（省请求），切回来立刻补一次，不至于回来还看着旧数。
-     */
+     * 椤甸潰寮€鐫€灏遍殧涓€浼氬効閲嶅彇涓€娆°€?     *
+     * 鐑害閲岀殑鏂伴矞搴︽槸鎸夌鍦ㄨ“鍑忕殑锛屽彧鍦ㄦ寕杞芥椂鍙栦竴娆★紝鐪嬪埌鐨勬案杩滄槸寮€椤甸偅涓€鍒荤殑蹇収銆?     * 绐楀彛鍒囧埌鍚庡彴灏卞仠锛堢渷璇锋眰锛夛紝鍒囧洖鏉ョ珛鍒昏ˉ涓€娆★紝涓嶈嚦浜庡洖鏉ヨ繕鐪嬬潃鏃ф暟銆?     */
     function useLive(run, ms) {
       useEffect(() => {
         if (!run || !ms) return undefined
@@ -1947,7 +2032,7 @@ window.__ModuleLoader__.load({
       }, [run, ms])
     }
 
-    /** 只取时分秒：面板上标「算于 13:24:07」比整条 ISO 好读 */
+    /** 鍙彇鏃跺垎绉掞細闈㈡澘涓婃爣銆岀畻浜?13:24:07銆嶆瘮鏁存潯 ISO 濂借 */
     const clockOf = (iso) => {
       const t = Date.parse(iso)
       if (!Number.isFinite(t)) return ''
@@ -1956,27 +2041,20 @@ window.__ModuleLoader__.load({
       return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds())
     }
 
-    // 上层跳转接口：页面只报目的地，Detail 统一切页并聚焦
-    const NAV = { handler: null, queue: [] }
+    // 涓婂眰璺宠浆鎺ュ彛锛氶〉闈㈠彧鎶ョ洰鐨勫湴锛孌etail 缁熶竴鍒囬〉骞惰仛鐒?''
+              const NAV = { handler: null, queue: [] }
     function requestJump(dest) {
       if (!dest) return
       if (NAV.handler) NAV.handler(dest)
       else NAV.queue.push(dest)
     }
 
-    /* ------------------------------------------------ 页面内跳转（落点对齐） */
+    /* ------------------------------------------------ 椤甸潰鍐呰烦杞紙钀界偣瀵归綈锛?*/
 
     /**
-     * 滚到某个区块。这里刻意不用 scrollIntoView({block:'start'})：
-     *
-     * 1) 详情页顶部那条页头是 sticky 的。scrollIntoView 把区块顶边对齐到滚动区
-     *    最上面，标题正好被页头压住 —— 看着就是「跳偏了一大截」。
-     * 2) scrollIntoView 会连带滚动所有外层可滚祖先（设置弹层 + 文档层），偏差叠两遍。
-     * 3) 区块高度是参数异步拉回来才定的，刚跳过去时还是占位高度，落点还会再飘。
-     *
-     * 做法：只滚一个容器；先粗滚到区块顶，再按「实测的遮挡量」校一次
-     * （页头到底吸不吸顶、吸多高，都量出来，不靠猜）；布局稳定后再补校。
-     */
+     * 婊氬埌鏌愪釜鍖哄潡銆傝繖閲屽埢鎰忎笉鐢?scrollIntoView({block:'start'})锛?     *
+     * 1) 璇︽儏椤甸《閮ㄩ偅鏉￠〉澶存槸 sticky 鐨勩€俿crollIntoView 鎶婂尯鍧楅《杈瑰榻愬埌婊氬姩鍖?     *    鏈€涓婇潰锛屾爣棰樻濂借椤靛ご鍘嬩綇 鈥斺€?鐪嬬潃灏辨槸銆岃烦鍋忎簡涓€澶ф埅銆嶃€?     * 2) scrollIntoView 浼氳繛甯︽粴鍔ㄦ墍鏈夊灞傚彲婊氱鍏堬紙璁剧疆寮瑰眰 + 鏂囨。灞傦級锛屽亸宸彔涓ら亶銆?     * 3) 鍖哄潡楂樺害鏄弬鏁板紓姝ユ媺鍥炴潵鎵嶅畾鐨勶紝鍒氳烦杩囧幓鏃惰繕鏄崰浣嶉珮搴︼紝钀界偣杩樹細鍐嶉銆?     *
+     * 鍋氭硶锛氬彧婊氫竴涓鍣紱鍏堢矖婊氬埌鍖哄潡椤讹紝鍐嶆寜銆屽疄娴嬬殑閬尅閲忋€嶆牎涓€娆?     * 锛堥〉澶村埌搴曞惛涓嶅惛椤躲€佸惛澶氶珮锛岄兘閲忓嚭鏉ワ紝涓嶉潬鐚滐級锛涘竷灞€绋冲畾鍚庡啀琛ユ牎銆?     */
     const SCROLL_GAP = 10
     const SCROLL_NAV = { token: 0 }
     const isDocBox = (b) => b === document.scrollingElement || b === document.documentElement
@@ -2010,15 +2088,15 @@ window.__ModuleLoader__.load({
       else box.scrollTop = t
     }
 
-    /** 找不到元素返回 false，调用方可以隔一会儿再试（内容是异步来的） */
+    /** 鎵句笉鍒板厓绱犺繑鍥?false锛岃皟鐢ㄦ柟鍙互闅斾竴浼氬効鍐嶈瘯锛堝唴瀹规槸寮傛鏉ョ殑锛?*/
     function scrollToBlock(target, opts) {
       const el = typeof target === 'string' ? document.getElementById(target) : target
       if (!el) return false
       const my = ++SCROLL_NAV.token
       const smooth = !opts || opts.smooth !== false
       const box = scrollBoxOf(el)
-      // 兜底：实在找不到能滚的容器（没有可滚祖先，文档也不能滚），交给浏览器自己找
-      const scrollable = isDocBox(box)
+      // 鍏滃簳锛氬疄鍦ㄦ壘涓嶅埌鑳芥粴鐨勫鍣紙娌℃湁鍙粴绁栧厛锛屾枃妗ｄ篃涓嶈兘婊氾級锛屼氦缁欐祻瑙堝櫒鑷繁鎵?''
+              const scrollable = isDocBox(box)
         ? document.documentElement.scrollHeight > window.innerHeight + 4
         : box.scrollHeight > box.clientHeight + 4
       if (!scrollable && el.scrollIntoView) {
@@ -2027,8 +2105,8 @@ window.__ModuleLoader__.load({
       }
       const nowTop = isDocBox(box) ? (window.scrollY || 0) : box.scrollTop
       const boxTop = isDocBox(box) ? 0 : box.getBoundingClientRect().top
-      // 粗滚：先把区块顶对齐到容器顶，不猜页头多高
-      scrollBoxTo(box, nowTop + el.getBoundingClientRect().top - boxTop, smooth ? 'smooth' : 'auto')
+      // 绮楁粴锛氬厛鎶婂尯鍧楅《瀵归綈鍒板鍣ㄩ《锛屼笉鐚滈〉澶村楂?''
+              scrollBoxTo(box, nowTop + el.getBoundingClientRect().top - boxTop, smooth ? 'smooth' : 'auto')
 
       let canceled = false
       const cancel = () => { canceled = true }
@@ -2049,8 +2127,7 @@ window.__ModuleLoader__.load({
           scrollBoxTo(b, (isDocBox(b) ? (window.scrollY || 0) : b.scrollTop) + delta, 'auto')
         }
       }
-      // 平滑动画大约 300~600ms；之后按实测校两次，顺便兜住异步长高的区块
-      ;[480, 1000, 1600].forEach((ms) => setTimeout(fix, ms))
+      // 骞虫粦鍔ㄧ敾澶х害 300~600ms锛涗箣鍚庢寜瀹炴祴鏍′袱娆★紝椤轰究鍏滀綇寮傛闀块珮鐨勫尯鍧?      ;[480, 1000, 1600].forEach((ms) => setTimeout(fix, ms))
       setTimeout(cleanup, 1700)
       return true
     }
@@ -2088,7 +2165,7 @@ window.__ModuleLoader__.load({
       return Math.floor(hr / 24) + ' 天前'
     }
 
-    /** 头像压到 256 的 webp/jpeg，再存库 */
+    /** 澶村儚鍘嬪埌 256 鐨?webp/jpeg锛屽啀瀛樺簱 */
     async function compressAvatar(file) {
       if (!file) return null
       if (!/^image\//.test(file.type || '')) throw new Error('只支持图片文件')
@@ -2107,11 +2184,11 @@ window.__ModuleLoader__.load({
 
     /* ============================================================ roster */
 
-    /** 在场状态：一张卡上只写一件事，别让「运行中」和「绑着几段」挤在一句里。 */
+    /** 鍦ㄥ満鐘舵€侊細涓€寮犲崱涓婂彧鍐欎竴浠朵簨锛屽埆璁┿€岃繍琛屼腑銆嶅拰銆岀粦鐫€鍑犳銆嶆尋鍦ㄤ竴鍙ラ噷銆?*/
     function presenceOf(a) {
       // status 是用户意图真值；runtime_state=offline 只在 paused 时成立，
-      // 激活后若缓存没刷干净，不能再当小卡。
-      const st = a.status === 'soft_deleted' ? 'deleted'
+      // 婵€娲诲悗鑻ョ紦瀛樻病鍒峰共鍑€锛屼笉鑳藉啀褰撳皬鍗°€?''
+              const st = a.status === 'soft_deleted' ? 'deleted'
         : a.status === 'paused' ? 'offline'
           : (a.runtime_state === 'offline' ? 'idle' : (a.runtime_state || 'idle'))
       const n = Number(a.bound_sessions || 0)
@@ -2132,7 +2209,7 @@ window.__ModuleLoader__.load({
       const alerts = (o.alerts || []).slice(0, 2)
       const [expBusy, setExpBusy] = useState(false)
       const [expNote, setExpNote] = useState(null)
-      // 整卡备份：全部表打进一个 zip，导入那边吃同一个包
+      // 鏁村崱澶囦唤锛氬叏閮ㄨ〃鎵撹繘涓€涓?zip锛屽鍏ラ偅杈瑰悆鍚屼竴涓寘
       async function doExport() {
         if (!onExport || expBusy) return
         setExpBusy(true); setExpNote(null)
@@ -2251,9 +2328,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 运行与心跳：谁在跑、各挂几段对话、心跳跳得怎么样。
-     * 以前这里什么都看不到——只有一个全局 tick，停了也没人知道。
-     */
+     * 杩愯涓庡績璺筹細璋佸湪璺戙€佸悇鎸傚嚑娈靛璇濄€佸績璺宠烦寰楁€庝箞鏍枫€?     * 浠ュ墠杩欓噷浠€涔堥兘鐪嬩笉鍒扳€斺€斿彧鏈変竴涓叏灞€ tick锛屽仠浜嗕篃娌′汉鐭ラ亾銆?     */
     function RuntimePanel({ reload }) {
       const [rt, retry] = useAsync(() => call('GET', '/v1/runtime'), [])
       useLive(retry, 15000)
@@ -2356,8 +2431,8 @@ window.__ModuleLoader__.load({
         } catch (e) { setMsg(e.message || String(e)) } finally { setAscending('') }
       }
 
-      // 整卡备份：全部表打进一个 zip，导入意识体时吃它（记忆仓库的「导出记忆」只含记忆表）
-      async function exportOne(a) {
+      // 鏁村崱澶囦唤锛氬叏閮ㄨ〃鎵撹繘涓€涓?zip锛屽鍏ユ剰璇嗕綋鏃跺悆瀹冿紙璁板繂浠撳簱鐨勩€屽鍑鸿蹇嗐€嶅彧鍚蹇嗚〃锛?''
+              async function exportOne(a) {
         const r = await act(() => call('GET', '/v1/agents/' + enc(a.id) + '/export'))
         if (r.encrypted) throw new Error('备份包加密了，导入要在服务端配同一个 DSHC_EXPORT_KEY')
         const name = 'consciousness-' + String(a.name || a.id) + '-' + new Date().toISOString().slice(0, 10) + '.zip'
@@ -2399,7 +2474,7 @@ window.__ModuleLoader__.load({
           setTimeout(() => setMsg((m) => (m === '已经有同名的意识体了' ? '' : m)), 2500)
           return
         }
-        setBusy(true); setMsg('')
+        setBusy(true); setMsg('重算中…')
         try {
           const r = await act(() => call('POST', '/v1/agents', { name: name.trim() || '新意识体' }, true))
           await act(() => call('POST', '/v1/agents/' + enc(r.id) + '/activate', {}, true))
@@ -2444,8 +2519,8 @@ window.__ModuleLoader__.load({
         } catch (e) { setMsg(e.message) }
       }
 
-      // 大卡 = 醒着（active）；小卡 = 用户休眠 / 自动休眠。不拿可能过期的 runtime_state 挡展开。
-      const runningCards = live.filter((a) => a.status === 'active' && presenceOf(a).key !== 'dormant')
+      // 澶у崱 = 閱掔潃锛坅ctive锛夛紱灏忓崱 = 鐢ㄦ埛浼戠湢 / 鑷姩浼戠湢銆備笉鎷垮彲鑳借繃鏈熺殑 runtime_state 鎸″睍寮€銆?''
+              const runningCards = live.filter((a) => a.status === 'active' && presenceOf(a).key !== 'dormant')
         .sort((x, y) => Number(y.bound_sessions || 0) - Number(x.bound_sessions || 0)
           || String(y.last_interaction_at || '').localeCompare(String(x.last_interaction_at || '')))
       const others = live.filter((a) => !runningCards.some((r) => r.id === a.id))
@@ -2591,8 +2666,8 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = useState(0)
       const [saveErr, setSaveErr] = useState('')
       const [ov, reloadOv] = useAsync(() => call('GET', '/v1/agents/' + enc(agent.id) + '/overview'), [agent.id])
-      // 嘀咕/互动是聊完后后台写的：停在概览时定时重拉，切回概览或窗口聚焦也补一次（不然只能靠点「观测」才刷新）
-      useLive(reloadOv, tab === 'overview' ? 8000 : 0)
+      // 鍢€鍜?浜掑姩鏄亰瀹屽悗鍚庡彴鍐欑殑锛氬仠鍦ㄦ瑙堟椂瀹氭椂閲嶆媺锛屽垏鍥炴瑙堟垨绐楀彛鑱氱劍涔熻ˉ涓€娆★紙涓嶇劧鍙兘闈犵偣銆岃娴嬨€嶆墠鍒锋柊锛?''
+              useLive(reloadOv, tab === 'overview' ? 8000 : 0)
       useEffect(() => { if (tab === 'overview') reloadOv() }, [tab, reloadOv])
       const [focus, setFocus] = useState(null)
       useEffect(() => {
@@ -2661,7 +2736,7 @@ window.__ModuleLoader__.load({
           h('a', {
             href: '#', className: 'dshc-back', title: '回到角色卡',
             onClick: (e) => { e.preventDefault(); setAid(null) },
-          }, '←'),
+          }, '鈫?'),
           h('span', { className: 'dshc-avw', 'data-off': running ? '0' : '1', title: agent.name },
             h(Avatar, { src: agent.avatar, size: 30 })),
           h('div', { style: { minWidth: 0 } },
@@ -2689,7 +2764,7 @@ window.__ModuleLoader__.load({
         )
     }
 
-    /* ============================================ 人话概览（用户视图的「概览」页） */
+    /* ============================================ 浜鸿瘽姒傝锛堢敤鎴疯鍥剧殑銆屾瑙堛€嶉〉锛?*/
     const NEED_WORD = { r: '被在乎', e: '新鲜感', c: '成就感', a: '自己做主', s: '安心' }
     const MOOD_LINE = {
       joy: '它今天心情不错，嘴角有点压不住。', calm: '挺平静的，没什么事也能自己待着。',
@@ -2710,14 +2785,15 @@ window.__ModuleLoader__.load({
       const [mem] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/memory'), [aid])
       const [pr] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/proposals'), [aid])
       const [gates] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/eval/hard-gates'), [aid])
+      const [sc] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/sangguan/scorecard?days=30'), [aid])
       const o = ov || {}
       const mood = a.data || {}
       const label = mood.primary_label || 'calm'
       const d = drv.data || {}
       const dims = d.dims || {}
       const defs = d.deficits || {}
-      // 概览和驱力页说同一件事：比的是缺口，不是「谁过得最差」。
-      const needRows = ['r', 'e', 'c', 'a', 's'].map((k) => [NEED_WORD[k], Number(defs[k] || 0), 1])
+      // 姒傝鍜岄┍鍔涢〉璇村悓涓€浠朵簨锛氭瘮鐨勬槸缂哄彛锛屼笉鏄€岃皝杩囧緱鏈€宸€嶃€?''
+              const needRows = ['r', 'e', 'c', 'a', 's'].map((k) => [NEED_WORD[k], Number(defs[k] || 0), 1])
       const topNeed = ['r', 'e', 'c', 'a', 's'].map((k) => [NEED_WORD[k], Number(defs[k] || 0)]).sort((x, y) => y[1] - x[1])[0]
       const needTop = topNeed && topNeed[1] >= 0.03 ? topNeed : null
       const memories = (mem.data || []).slice(0, 4)
@@ -2767,7 +2843,8 @@ window.__ModuleLoader__.load({
           h(Card, null,
             h('div', { style: { fontSize: 26, fontWeight: 650 } }, (passed + failed.length) ? Math.round((passed / (passed + failed.length)) * 100) + '%' : '—'),
             h('div', { className: 'dshc-sub' }, (passed + failed.length) ? '能拿出来考的，守住了这些。' : '还没到要考试的时候。'),
-            failed.length ? h('div', { className: 'dshc-sub', style: { marginTop: 6 } }, '还有 ' + failed.length + ' 项差一点，细节在技术视图里。') : null)),
+            failed.length ? h('div', { className: 'dshc-sub', style: { marginTop: 6 } }, '还有 ' + failed.length + ' 项差一点，细节在技术视图里。') : null,
+            h('div', { style: { marginTop: 10 } }, h(SgLedgerBar, { sc: sc.data, tech: false })))),
 
         h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 } },
           running && close ? h(Btn, { primary: true, onClick: () => close() }, '去和它说话') : null,
@@ -2794,7 +2871,7 @@ window.__ModuleLoader__.load({
       out.push('记得你 ' + (o.memory_count || 0) + ' 件事')
       if (o.recent && o.recent.last_interaction) out.push('上次说话是' + ago(o.recent.last_interaction))
       if (o.inbox && o.inbox.todo) out.push('有 ' + o.inbox.todo + ' 件事等你点头')
-      return out.join(' · ')
+      return out.join(' 路 ')
     }
 
     function OverviewPage({ aid, tab, ov, setTab, setAid, agent, act, view, jump, reloadOv, reloadAgents, onToggleRunning, close }) {
@@ -2843,7 +2920,7 @@ window.__ModuleLoader__.load({
         h(MutterSec, { aid, ov: o, act, reloadOv }))
     }
 
-    /** 概览「它的想法」：四段只读 + 手动重新想一遍 */
+    /** 姒傝銆屽畠鐨勬兂娉曘€嶏細鍥涙鍙 + 鎵嬪姩閲嶆柊鎯充竴閬?*/
     function ThoughtsSec({ aid, thData, th, reloadTh, view, act }) {
       const [busy, setBusy] = useState(false)
       async function rethink() {
@@ -2852,7 +2929,7 @@ window.__ModuleLoader__.load({
         try {
           await act(() => call('POST', '/v1/agents/' + enc(aid) + '/thoughts', {}, true))
           if (reloadTh) await reloadTh()
-        } catch { /* act 已提示 */ } finally { setBusy(false) }
+      } catch { /* 服务端不让删就保持原样，绝不装作删掉了 */ } finally { setBusy(false) }
       }
       const generating = thData.status === 'generating' || busy
       return h(Sec, {
@@ -2883,7 +2960,7 @@ window.__ModuleLoader__.load({
           : null)
     }
 
-    /** 嘀咕：专用调用、不进 T1；观测开关默认开，开时显示约耗 token */
+    /** 鍢€鍜曪細涓撶敤璋冪敤銆佷笉杩?T1锛涜娴嬪紑鍏抽粯璁ゅ紑锛屽紑鏃舵樉绀虹害鑰?token */
     function MutterSec({ aid, ov, act, reloadOv }) {
       const m = (ov && ov.mutter) || {}
       const on = m.enabled !== false
@@ -2894,7 +2971,7 @@ window.__ModuleLoader__.load({
         try {
           await act(() => call('PUT', '/v1/agents/' + enc(aid) + '/params/' + enc('ui.mutter.enabled'), { value: !on }, true))
           if (reloadOv) await reloadOv()
-        } catch { /* act 已提示 */ } finally { setBusy(false) }
+        } catch { /* act 宸叉彁绀?*/ } finally { setBusy(false) }
       }
       const tokenHint = on && m.tokens
         ? h('span', {
@@ -2938,7 +3015,7 @@ window.__ModuleLoader__.load({
           const v = key && values && values[key] != null ? values[key].value : null
           const act = key && METRIC_ACTIONS[key]
           return h('div', { key: idx, className: 'dshc-item' },
-            h(Pill, { tone: hard ? 'bad' : undefined }, hard ? '★' : '·'),
+            h(Pill, { tone: hard ? 'bad' : undefined }, hard ? '鈽?' : '路'),
             h('div', { className: 't' },
               h('div', null, label),
               h('div', { className: 'dshc-sub dshc-mono' }, (key || '') + ' · 目标 ' + target + (view === 'tech' ? ' · ' + basis : ''))),
@@ -3015,7 +3092,7 @@ window.__ModuleLoader__.load({
       return Math.floor(d / 30) + ' 个月前'
     }
 
-    /** 账本时间一律按本地时区显示：ISO 里是 UTC，直接 slice 会差 8 小时。 */
+    /** 璐︽湰鏃堕棿涓€寰嬫寜鏈湴鏃跺尯鏄剧ず锛欼SO 閲屾槸 UTC锛岀洿鎺?slice 浼氬樊 8 灏忔椂銆?*/
     const relWhen = (iso) => {
       if (!iso) return ''
       const d = new Date(iso)
@@ -3024,7 +3101,7 @@ window.__ModuleLoader__.load({
       return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
     }
 
-    /** 账本一笔账说人话：新宿主给 summary；旧宿主只给「名字|{...}」，这里先兜住。 */
+    /** 璐︽湰涓€绗旇处璇翠汉璇濓細鏂板涓荤粰 summary锛涙棫瀹夸富鍙粰銆屽悕瀛梶{...}銆嶏紝杩欓噷鍏堝厹浣忋€?*/
     const relEventText = (e) => {
       if (!e) return ''
       if (e.summary) return e.summary
@@ -3043,10 +3120,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 星图布局：三层轨道 + 两两斥力。
-     * 轨道负责「主人 / 熟人 / 生人」的分层，斥力保证任意两个节点连同名字都不叠；
-     * 人再多也只是在轨道上匀开一点，不会互相挡住。
-     */
+     * 鏄熷浘甯冨眬锛氫笁灞傝建閬?+ 涓や袱鏂ュ姏銆?     * 杞ㄩ亾璐熻矗銆屼富浜?/ 鐔熶汉 / 鐢熶汉銆嶇殑鍒嗗眰锛屾枼鍔涗繚璇佷换鎰忎袱涓妭鐐硅繛鍚屽悕瀛楅兘涓嶅彔锛?     * 浜哄啀澶氫篃鍙槸鍦ㄨ建閬撲笂鍖€寮€涓€鐐癸紝涓嶄細浜掔浉鎸′綇銆?     */
     function layoutPersonMap(persons, geo) {
       const { W, H, cx, cy, RING, NODE_R } = geo
       const tiers = ['owner', 'acquaintance', 'stranger']
@@ -3101,8 +3175,7 @@ window.__ModuleLoader__.load({
 
     /**
      * 名字找位：绕节点试八个方向，先挑不压别的点、也不压别的名字的那个；
-     * 都挤不进去就先不写名字（悬停时再露出来），谁也不挡谁。
-     */
+     * 閮芥尋涓嶈繘鍘诲氨鍏堜笉鍐欏悕瀛楋紙鎮仠鏃跺啀闇插嚭鏉ワ級锛岃皝涔熶笉鎸¤皝銆?     */
     function seatPersonLabels(nodes, geo) {
       const { W, H, cx, cy } = geo
       const boxes = []
@@ -3138,7 +3211,7 @@ window.__ModuleLoader__.load({
       })
     }
 
-    /** 点节点弹窗：看卡、改一句话、换层、放进关系图、删掉。主人点不开。 */
+    /** 鐐硅妭鐐瑰脊绐楋細鐪嬪崱銆佹敼涓€鍙ヨ瘽銆佹崲灞傘€佹斁杩涘叧绯诲浘銆佸垹鎺夈€備富浜虹偣涓嶅紑銆?*/
     function PersonCardDialog({ aid, pid, onClose, onChanged }) {
       const [ver, setVer] = useState(0)
       const [d, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/persons/' + enc(pid)), [pid, ver])
@@ -3153,7 +3226,7 @@ window.__ModuleLoader__.load({
       const isOwner = !!(p && p.tier === 'owner')
       const value = draft == null ? ((p && p.summary) || '') : draft
       const refresh = () => { setVer((v) => v + 1); if (onChanged) onChanged() }
-      /** 改称呼：只改名字，旧称呼进别名；同名的人不顶掉，交给合并去处理。 */
+      /** 鏀圭О鍛硷細鍙敼鍚嶅瓧锛屾棫绉板懠杩涘埆鍚嶏紱鍚屽悕鐨勪汉涓嶉《鎺夛紝浜ょ粰鍚堝苟鍘诲鐞嗐€?*/
       async function saveName() {
         if (!p || busy) return
         const next = String(nameEdit == null ? '' : nameEdit).trim()
@@ -3275,7 +3348,7 @@ window.__ModuleLoader__.load({
           err ? h('div', { className: 'dshc-err', style: { marginTop: 8 } }, err) : null))
     }
 
-    /** 关系星图：中心是「我」，三层轨道，节点和名字互不遮挡；线越粗越亲近。 */
+    /** 鍏崇郴鏄熷浘锛氫腑蹇冩槸銆屾垜銆嶏紝涓夊眰杞ㄩ亾锛岃妭鐐瑰拰鍚嶅瓧浜掍笉閬尅锛涚嚎瓒婄矖瓒婁翰杩戙€?*/
     function PersonMap({ aid, fallback, seed, onChanged }) {
       const [hover, setHover] = useState('')
       const [sel, setSel] = useState('')
@@ -3301,15 +3374,15 @@ window.__ModuleLoader__.load({
         } catch { return null }
       }, [aid, seed])
 
-      // 旧宿主 / 接口还没热起来：退回原来那张简图，不留白
-      if (!s.data) return h(RelationOrbit, { relations: fallback })
+      // 鏃у涓?/ 鎺ュ彛杩樻病鐑捣鏉ワ細閫€鍥炲師鏉ラ偅寮犵畝鍥撅紝涓嶇暀鐧?''
+              if (!s.data) return h(RelationOrbit, { relations: fallback })
 
       const W = 480, H = 400
       const cx = W / 2, cy = H / 2
       const RING = { owner: 62, acquaintance: 118, stranger: 164 }
       const NODE_R = { owner: 9, acquaintance: 6.6, stranger: 4.8 }
-      // 显式色值：SVG 里 color-mix 在部分 WebView 不生效，主人会画成灰的
-      const COLOR = {
+      // 鏄惧紡鑹插€硷細SVG 閲?color-mix 鍦ㄩ儴鍒?WebView 涓嶇敓鏁堬紝涓讳汉浼氱敾鎴愮伆鐨?''
+              const COLOR = {
         owner: '#5b8cff',
         acquaintance: '#7f9ec9',
         stranger: '#6d7380',
@@ -3319,9 +3392,9 @@ window.__ModuleLoader__.load({
       const persons = all.slice(0, 14)
       const placed = seatPersonLabels(layoutPersonMap(persons, { W, H, cx, cy, RING, NODE_R }), { W, H, cx, cy })
       const byId = new Map(placed.map((n) => [n.id, n]))
-      // 和「我 / 主人」的边已经画成辐条了，不能再画一条人→人弧线：
-      // 那条弧会从圆心鼓出来，横穿旁边的人，看着就像两个人连上了。
-      const ownerId = (persons.find((p) => p.tier === 'owner') || {}).id
+      // 鍜屻€屾垜 / 涓讳汉銆嶇殑杈瑰凡缁忕敾鎴愯緪鏉′簡锛屼笉鑳藉啀鐢讳竴鏉′汉鈫掍汉寮х嚎锛?''
+      // 閭ｆ潯寮т細浠庡渾蹇冮紦鍑烘潵锛屾í绌挎梺杈圭殑浜猴紝鐪嬬潃灏卞儚涓や釜浜鸿繛涓婁簡銆?''
+              const ownerId = (persons.find((p) => p.tier === 'owner') || {}).id
       const links = (s.data.links || []).filter((e) => byId.has(e.from) && e.other && byId.has(e.other.id)
         && e.other.id !== ownerId && e.from !== ownerId)
       const cur = persons.find((p) => p.id === hover) || persons.find((p) => p.tier === 'owner') || persons[0] || null
@@ -3349,7 +3422,7 @@ window.__ModuleLoader__.load({
             strokeWidth: 1, strokeDasharray: '2 7',
             style: { fill: 'none', stroke: 'var(--line)', animationDuration: (88 + i * 26) + 's' },
           })),
-          // 我 → 每个人：从中心边缘出发，落在节点边缘
+          // 鎴?鈫?姣忎釜浜猴細浠庝腑蹇冭竟缂樺嚭鍙戯紝钀藉湪鑺傜偣杈圭紭
           placed.map((n) => {
             const dx = n.x - cx, dy = n.y - cy
             const d = Math.hypot(dx, dy) || 1
@@ -3368,7 +3441,7 @@ window.__ModuleLoader__.load({
               },
             })
           }),
-          // 人 → 人：向外弓一点，谁和谁有关系一眼看出来
+          // 浜?鈫?浜猴細鍚戝寮撲竴鐐癸紝璋佸拰璋佹湁鍏崇郴涓€鐪肩湅鍑烘潵
           links.map((e) => {
             const a = byId.get(e.from), b = byId.get(e.other.id)
             const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
@@ -3403,8 +3476,8 @@ window.__ModuleLoader__.load({
             const on = hover === n.id
             const clickable = n.tier !== 'owner'
             const k = Math.max(0, Math.min(1, Number(n.p.closeness) || 0))
-            // 关系越近，点越大；轨道越外，本来就越小
-            const rr = n.r * (0.92 + 0.16 * k)
+            // 鍏崇郴瓒婅繎锛岀偣瓒婂ぇ锛涜建閬撹秺澶栵紝鏈潵灏辫秺灏?''
+              const rr = n.r * (0.92 + 0.16 * k)
             return h('g', {
               key: 'n-' + n.id, className: 'node', 'data-dim': hover && !on ? '1' : '0',
               style: { animationDelay: (i * 0.045) + 's', cursor: clickable ? 'pointer' : 'default' },
@@ -3423,7 +3496,7 @@ window.__ModuleLoader__.load({
                   stroke: 'rgba(255,255,255,.35)',
                 },
               }),
-              // 挤不进空位的名字先收着，悬停这个人时才浮出来
+              // 鎸や笉杩涚┖浣嶇殑鍚嶅瓧鍏堟敹鐫€锛屾偓鍋滆繖涓汉鏃舵墠娴嚭鏉?''
               h('text', {
                 className: 'lbl' + (n.label.shown ? '' : ' lbl-hide'),
                 x: n.label.x, y: n.label.y, textAnchor: n.label.anchor,
@@ -3438,7 +3511,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dshc-rmap-info' }, cur
           ? [
             h('b', { key: 'n' }, cur.name),
-            h('span', { key: 't' }, (LABEL[cur.tier] || cur.tier) + ' · '),
+            h('span', { key: 't' }, (LABEL[cur.tier] || cur.tier) + ' 路 '),
             h('span', { key: 'm', className: 'm' },
               '亲近 ' + Number(cur.closeness || 0).toFixed(2)
               + ' · 信任 ' + Number(cur.trust || 0).toFixed(2)
@@ -3450,7 +3523,7 @@ window.__ModuleLoader__.load({
     }
 
 
-    /** 三组张力：用「A，还是 B」问句说人话，哪边更重就说现在偏哪边 */
+    /** 涓夌粍寮犲姏锛氱敤銆孉锛岃繕鏄?B銆嶉棶鍙ヨ浜鸿瘽锛屽摢杈规洿閲嶅氨璇寸幇鍦ㄥ亸鍝竟 */
     const VALUE_TENSION = [
       ['benevolence', 'power', '对人好，还是说了算'],
       ['tradition', 'selfDirection', '守老规矩，还是自己决定'],
@@ -3468,7 +3541,7 @@ window.__ModuleLoader__.load({
           const lean = gap < 0.02 ? null : (aw > bw ? A : B)
           return h('div', { key: a, className: 'dshc-ten' },
             h('span', { className: 'q' }, q),
-            h('span', { className: 'p dshc-mono' }, A.label + ' ' + aw.toFixed(2) + ' ↔ ' + B.label + ' ' + bw.toFixed(2)),
+            h('span', { className: 'p dshc-mono' }, A.label + ' ' + aw.toFixed(2) + ' 鈫?' + B.label + ' ' + bw.toFixed(2)),
             h('span', { className: 'l', 'data-on': lean ? '1' : '0' },
               lean ? (gap < 0.05 ? '略偏「' : '偏「') + lean.label + '」' : '还没偏向'))
         }))
@@ -3499,7 +3572,7 @@ window.__ModuleLoader__.load({
 
     const removePendingLabel = () => null
 
-    /** 最清楚的记忆：事实层按「此刻」heat 取前 99；卡片格式与时间线对齐，按档位折叠。 */
+    /** 鏈€娓呮鐨勮蹇嗭細浜嬪疄灞傛寜銆屾鍒汇€峢eat 鍙栧墠 99锛涘崱鐗囨牸寮忎笌鏃堕棿绾垮榻愶紝鎸夋。浣嶆姌鍙犮€?*/
     const HEAT_BANDS = [
       { key: 'short', label: '短期', hint: '桌面 · 最清楚' },
       { key: 'mid', label: '中期', hint: '还热着' },
@@ -3527,18 +3600,18 @@ window.__ModuleLoader__.load({
       const filled = counts
         ? HEAT_BANDS.filter((b) => Number(counts[b.key] || 0) > 0).length
         : HEAT_BANDS.filter((b) => byBand[b.key].length > 0).length
-      // 本地 mix，避免依赖后面才声明的 tlMix（有的加载器不按函数提升）
-      const mixOf = (arr) => {
+      // 鏈湴 mix锛岄伩鍏嶄緷璧栧悗闈㈡墠澹版槑鐨?tlMix锛堟湁鐨勫姞杞藉櫒涓嶆寜鍑芥暟鎻愬崌锛?''
+              const mixOf = (arr) => {
         const m = new Map()
         for (const it of arr || []) m.set(it.type, (m.get(it.type) || 0) + 1)
         return [...m.entries()].sort((a, b) => b[1] - a[1])
       }
 
-      // 把此刻算出来的热度写回库：每轮注入是按库里的 heat 排序取前 10 条的，
-      // 只现算不写库，注入那头用的还是上一次巡检的数。
-      async function writeHeats(e) {
+      // 鎶婃鍒荤畻鍑烘潵鐨勭儹搴﹀啓鍥炲簱锛氭瘡杞敞鍏ユ槸鎸夊簱閲岀殑 heat 鎺掑簭鍙栧墠 10 鏉＄殑锛?''
+      // 鍙幇绠椾笉鍐欏簱锛屾敞鍏ラ偅澶寸敤鐨勮繕鏄笂涓€娆″贰妫€鐨勬暟銆?''
+              async function writeHeats(e) {
         if (e && e.stopPropagation) e.stopPropagation()
-        setBusy(true); setMsg('重算中…')
+        setBusy(true); setMsg('打包中…')
         try {
           const r = await act(() => call('POST', '/v1/agents/' + enc(aid) + '/tiers/refresh', {}, true))
           setMsg('已写回 · 短期 ' + Number((r && r.short) || 0) + ' / 中期 ' + Number((r && r.mid) || 0) + ' / 长期 ' + Number((r && r.long) || 0))
@@ -3571,7 +3644,7 @@ window.__ModuleLoader__.load({
             return h('details', {
               key: b.key,
               className: 'dshc-tl-day',
-              // 必须先读 open：setState 回调里再碰 currentTarget 会是 null，整页直接白屏
+              // 蹇呴』鍏堣 open锛歴etState 鍥炶皟閲屽啀纰?currentTarget 浼氭槸 null锛屾暣椤电洿鎺ョ櫧灞?''
               onToggle: (e) => {
                 const open = !!(e && e.currentTarget && e.currentTarget.open)
                 setOpenN((n) => Math.max(0, n + (open ? 1 : -1)))
@@ -3609,11 +3682,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 它拿不准的事：两条记忆看起来互相矛盾。
-     * 只给三种判决——留这条（另一条作废）/ 留那条 / 它理解错了（两条都留）。
-     * 按钮必须带方向动词：「就是这条」说不清是「这条对」还是「这条错」。
-     * 不做成表单：这里要的是「判一句」，不是「填一张词卡」。
-     */
+     * 瀹冩嬁涓嶅噯鐨勪簨锛氫袱鏉¤蹇嗙湅璧锋潵浜掔浉鐭涚浘銆?     * 鍙粰涓夌鍒ゅ喅鈥斺€旂暀杩欐潯锛堝彟涓€鏉′綔搴燂級/ 鐣欓偅鏉?/ 瀹冪悊瑙ｉ敊浜嗭紙涓ゆ潯閮界暀锛夈€?     * 鎸夐挳蹇呴』甯︽柟鍚戝姩璇嶏細銆屽氨鏄繖鏉°€嶈涓嶆竻鏄€岃繖鏉″銆嶈繕鏄€岃繖鏉￠敊銆嶃€?     * 涓嶅仛鎴愯〃鍗曪細杩欓噷瑕佺殑鏄€屽垽涓€鍙ャ€嶏紝涓嶆槸銆屽～涓€寮犺瘝鍗°€嶃€?     */
     function ConflictPanel({ list, loading, error, busyId, onResolve }) {
       const all = Array.isArray(list) ? list : []
       const open = all.filter((c) => c.state === 'open')
@@ -3639,7 +3708,7 @@ window.__ModuleLoader__.load({
             Number.isFinite(sim) ? '字面相似 ' + (sim * 100).toFixed(0) + '%' : null,
             c.kind === 'polarity' ? '说法相反' : (c.kind || null),
             c.severity === 'high' ? '它自己有被卡住' : null,
-          ].filter(Boolean).join(' · ')
+          ].filter(Boolean).join(' 路 ')
           const side = (which, m, tip) => h('div', {
             key: which, className: 'dshc-item',
           },
@@ -3674,17 +3743,17 @@ window.__ModuleLoader__.load({
       const [cf, reloadCf] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/conflicts'), [aid, tick])
       const [cfBusy, setCfBusy] = useState('')
       const [vault] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/vault'), [aid])
-      // 旧进程里的 vault 还不会返回 v，此时不要触发导出，免得把新格式覆盖回去
+      // 鏃ц繘绋嬮噷鐨?vault 杩樹笉浼氳繑鍥?v锛屾鏃朵笉瑕佽Е鍙戝鍑猴紝鍏嶅緱鎶婃柊鏍煎紡瑕嗙洊鍥炲幓
       const vaultFresh = Number((vault.data || {}).v) >= 2
       const vaultRoot = ((vault.data || {}).docs || {}).root || ''
       const openConflicts = (cf.data || []).filter((x) => x.state === 'open')
       useEffect(() => {
         if (focus && focus.focus === 'conflicts') {
-          // 冲突面板要等 cf 拉回来才长高：出现就跳，跳完再按实测位置校一次
-          scrollToBlockWhenReady('dshc-conflicts')
+          // 鍐茬獊闈㈡澘瑕佺瓑 cf 鎷夊洖鏉ユ墠闀块珮锛氬嚭鐜板氨璺筹紝璺冲畬鍐嶆寜瀹炴祴浣嶇疆鏍′竴娆?''
+              scrollToBlockWhenReady('dshc-conflicts')
         }
       }, [focus && focus.at])
-      /** keep=a 留先记的 / b 留后记的 / both=「它理解错了」，两条都留并记一句原因 */
+      /** keep=a 鐣欏厛璁扮殑 / b 鐣欏悗璁扮殑 / both=銆屽畠鐞嗚В閿欎簡銆嶏紝涓ゆ潯閮界暀骞惰涓€鍙ュ師鍥?*/
       async function resolveConflict(cid, keep) {
         setCfBusy(cid); setErr('')
         try {
@@ -3697,8 +3766,8 @@ window.__ModuleLoader__.load({
       }
       const metricSlice = useMetricSlice(aid, 0, 9)
 
-      // 与时间线 TLRow 同骨架：圆点 + 正文 + 热度；标记跟右侧，原话单独一行
-      const memRow = (m) => h('div', { key: m.id },
+      // 涓庢椂闂寸嚎 TLRow 鍚岄鏋讹細鍦嗙偣 + 姝ｆ枃 + 鐑害锛涙爣璁拌窡鍙充晶锛屽師璇濆崟鐙竴琛?''
+              const memRow = (m) => h('div', { key: m.id },
         h('div', { className: 'dshc-tl-row' },
           h('span', { className: 'dshc-tl-dot', 'data-t': m.type, title: TYPE_LABEL[m.type] || m.type }),
           h('div', { className: 't', title: m.text }, m.text),
@@ -3733,13 +3802,13 @@ window.__ModuleLoader__.load({
           const y = now.getFullYear()
           const m = p2(now.getMonth() + 1)
           const info = await call('GET', '/v1/agents/' + enc(aid) + '/vault/root')
-          // 旧进程会把 /vault/root 当 /vault 处理，那就从 docs.root 里拿
+          // 鏃ц繘绋嬩細鎶?/vault/root 褰?/vault 澶勭悊锛岄偅灏变粠 docs.root 閲屾嬁
           let root = info.root || (info.docs && info.docs.root) || ''
           if (Number(info.v) >= 2) {
             try {
               const ex = await call('POST', '/v1/agents/' + enc(aid) + '/vault/export', {}, true)
               root = ex.root || root
-            } catch (e) { /* 刷新失败也要能打开 */ }
+          } catch (e) { /* 刷新失败也要能进文件夹 */ }
           }
           const rel = '日记/' + y + '/' + y + '-' + m + '.md'
           const r = await call('POST', '/v1/agents/' + enc(aid) + '/vault/open', { path: root + '/' + rel }, true)
@@ -3750,7 +3819,7 @@ window.__ModuleLoader__.load({
       }
 
       return h('div', null,
-        h(Sec, { title: '记忆仓库' },
+        h(Sec, { title: '鱼格' },
           h(VaultCard, { aid, view, fresh: vaultFresh })),
 
         h(Sec, { title: '昨天的日记', desc: '每天 23:00 自动写；当时不在（关机 / 休眠）会在下次打开时补写，补的标「补写」。第一人称，只读。' },
@@ -3823,8 +3892,8 @@ window.__ModuleLoader__.load({
       const rows = s.data || []
       const get = (p) => { const r = rows.find((x) => x.path === p); return r ? r.value : '' }
       const svd = sv.data || {}
-      // 老宿主没有 /persona/selfview 时 GET 会回落到鱼格数组：明确提示要重启，而不是装作坏了
-      const svReady = !!svd && !Array.isArray(svd) && svd.params !== undefined
+      // 鑰佸涓绘病鏈?/persona/selfview 鏃?GET 浼氬洖钀藉埌楸兼牸鏁扮粍锛氭槑纭彁绀鸿閲嶅惎锛岃€屼笉鏄浣滃潖浜?''
+              const svReady = !!svd && !Array.isArray(svd) && svd.params !== undefined
       const params = svd.params || {}
       const limits = Object.assign({}, DEFAULT_LIMITS, params.limits || {})
       const styleLimits = Object.assign({}, DEFAULT_STYLE_LIMITS, (params.limits && params.limits.style) || {})
@@ -3852,8 +3921,8 @@ window.__ModuleLoader__.load({
       }, [svd.status, svd.updated_at, reloadSv])
 
       // 五条轴会随聊天一点点漂：页面开着就隔一会儿取一次，
-      // 哪条过了 60/40，字母自己冒出来（不用 F5）；切回窗口时也立刻对一次。
-      useEffect(() => {
+      // 鍝潯杩囦簡 60/40锛屽瓧姣嶈嚜宸卞啋鍑烘潵锛堜笉鐢?F5锛夛紱鍒囧洖绐楀彛鏃朵篃绔嬪埢瀵逛竴娆°€?''
+              useEffect(() => {
         const kick = () => {
           if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
           reloadSv()
@@ -3926,9 +3995,8 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * 「喜欢 / 讨厌」是它自己长的：后台每 10 分钟看一次该不该长（有新材料才长），
-       * 不需要人点。这里只负责把状态说清楚——长了几条、哪几条、上一次是什么时候。
-       */
+       * 銆屽枩娆?/ 璁ㄥ帉銆嶆槸瀹冭嚜宸遍暱鐨勶細鍚庡彴姣?10 鍒嗛挓鐪嬩竴娆¤涓嶈闀匡紙鏈夋柊鏉愭枡鎵嶉暱锛夛紝
+       * 涓嶉渶瑕佷汉鐐广€傝繖閲屽彧璐熻矗鎶婄姸鎬佽娓呮鈥斺€旈暱浜嗗嚑鏉°€佸摢鍑犳潯銆佷笂涓€娆℃槸浠€涔堟椂鍊欍€?       */
       const prefRows = prefs.data || []
       const autoPrefs = prefRows.filter((r) => r.origin === 'auto')
       const manualPrefs = prefRows.filter((r) => r.origin !== 'auto')
@@ -3963,10 +4031,10 @@ window.__ModuleLoader__.load({
       })
 
       const modeLabel = ({ off: '关（只按事件）', shadow: '只算不用（只更新数字）', on: '开（MBTI 生效）' })[params.axes_mode] || String(params.axes_mode || 'on')
-      // 鱼格大框：只做四字母投影。偏过 60/40 才写字母，没到就留空位（待输入）
-      // 阈值按「页面上显示出来的两位小数」判：0.598 右边写着 0.60，就该有 E，而不是藏着。
-      // 不依赖宿主算好的 show（宿主没重启时还是老规则），只借它的字母方向；其余本地算。
-      const POLES = { ei: ['I', 'E'], sn: ['S', 'N'], tf: ['F', 'T'], jp: ['P', 'J'] }
+      // 楸兼牸澶ф锛氬彧鍋氬洓瀛楁瘝鎶曞奖銆傚亸杩?60/40 鎵嶅啓瀛楁瘝锛屾病鍒板氨鐣欑┖浣嶏紙寰呰緭鍏ワ級
+      // 闃堝€兼寜銆岄〉闈笂鏄剧ず鍑烘潵鐨勪袱浣嶅皬鏁般€嶅垽锛?.598 鍙宠竟鍐欑潃 0.60锛屽氨璇ユ湁 E锛岃€屼笉鏄棌鐫€銆?''
+      // 涓嶄緷璧栧涓荤畻濂界殑 show锛堝涓绘病閲嶅惎鏃惰繕鏄€佽鍒欙級锛屽彧鍊熷畠鐨勫瓧姣嶆柟鍚戯紱鍏朵綑鏈湴绠椼€?''
+              const POLES = { ei: ['I', 'E'], sn: ['S', 'N'], tf: ['F', 'T'], jp: ['P', 'J'] }
       const axVal = {}
       for (const t of axesRows) axVal[t.key] = Number(t.value) || 0
       const serverLetters = (svd.now && svd.now.type && Array.isArray(svd.now.type.letters)) ? svd.now.type.letters : []
@@ -3982,8 +4050,8 @@ window.__ModuleLoader__.load({
         }
       })
       return h('div', null,
-        // ① 置顶：鱼格 = MBTI 四轴 + 敏感轴（先看这个）
-        h(Sec, { title: '鱼格' },
+        // 鈶?缃《锛氶奔鏍?= MBTI 鍥涜酱 + 鏁忔劅杞达紙鍏堢湅杩欎釜锛?''
+        h(Sec, { title: '记忆仓库' },
           h(Card, null,
             h('div', { className: 'dshc-mbti' },
               h('div', { className: 'dshc-mbti-sheen' }),
@@ -4003,8 +4071,8 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'dshc-sub', style: { minWidth: 40 } }, hi),
                 h('span', { className: 'm dshc-mono' }, Number(t.value).toFixed(2)))
             }),
-            // 两池拉力：左右各一根，谁长谁在赢；净力到 0.30 才可能挪一步
-            (rope && rope.axes && rope.axes.length)
+            // 涓ゆ睜鎷夊姏锛氬乏鍙冲悇涓€鏍癸紝璋侀暱璋佸湪璧紱鍑€鍔涘埌 0.30 鎵嶅彲鑳芥尓涓€姝?''
+              (rope && rope.axes && rope.axes.length)
               ? h('div', { style: { marginTop: 12, borderTop: '1px dashed var(--line)', paddingTop: 10 } },
                 h('div', { className: 'dshc-note', style: { marginBottom: 6 } },
                   '两池拉力（7 天半衰期）· 净力 ≥0.30、且赢的一边 ≥3 条，才挪一步（≤0.05）'),
@@ -4046,7 +4114,7 @@ window.__ModuleLoader__.load({
               : null,
             view === 'tech' ? h('div', { className: 'dshc-note' }, '当前挡位 ' + modeLabel) : null)),
 
-        // ② 它的自述：第一人称，放在鱼格框下面
+        // 鈶?瀹冪殑鑷堪锛氱涓€浜虹О锛屾斁鍦ㄩ奔鏍兼涓嬮潰
         h(Sec, { title: '它的自述' },
           h(Card, null,
             narrative
@@ -4066,7 +4134,7 @@ window.__ModuleLoader__.load({
               : null,
             err ? h('div', { className: 'dshc-err' }, err) : null)),
 
-        // ② 技术页：这段自述是怎么来的
+        // 鈶?鎶€鏈〉锛氳繖娈佃嚜杩版槸鎬庝箞鏉ョ殑
         h(Sec, {
           techOnly: true,
           title: '这段自述是怎么来的',
@@ -4085,7 +4153,7 @@ window.__ModuleLoader__.load({
                 h(Tech, null, svd.facts))
               : null)),
 
-        // ③ 技术页：鱼格参数与预算
+        // 鈶?鎶€鏈〉锛氶奔鏍煎弬鏁颁笌棰勭畻
         h(Sec, { techOnly: true, title: '鱼格参数与预算', desc: '手写字段字数、关系模式、语气档、注入预算；MBTI 投影在上面那栏。' },
           h(Card, null,
             (params.style || []).map((x) => h(Row, {
@@ -4115,8 +4183,8 @@ window.__ModuleLoader__.load({
                 + ' · 禁忌 ' + (counts.taboos || 0),
             }))),
 
-        // ④ 你想让它：手写区（每轮注入提示词，因此有字数上限）
-        h(Sec, {
+        // 鈶?浣犳兂璁╁畠锛氭墜鍐欏尯锛堟瘡杞敞鍏ユ彁绀鸿瘝锛屽洜姝ゆ湁瀛楁暟涓婇檺锛?''
+              h(Sec, {
           title: view === 'user' ? '你想让它' : '手写区（每轮注入提示词）',
           desc: view === 'tech' ? '说话方式归你管；这些字每轮都进提示词，所以每个字段都有上限。' : undefined,
         },
@@ -4170,7 +4238,7 @@ window.__ModuleLoader__.load({
                 + (budget ? ' · 五个字段合计上限 ' + budget.chars + ' 字（≈' + budget.tokens + ' token / 轮）。' : '')) : null),
             err ? h('div', { className: 'dshc-err' }, err) : null)),
 
-        // ⑤ 价值观：由三观账本的命题折算出来（不是人填的，也不是词表扫出来的）
+        // 鈶?浠峰€艰锛氱敱涓夎璐︽湰鐨勫懡棰樻姌绠楀嚭鏉ワ紙涓嶆槸浜哄～鐨勶紝涔熶笉鏄瘝琛ㄦ壂鍑烘潵鐨勶級
         h(Sec, {
           title: view === 'user' ? '它的价值观' : '价值观（命题折算）',
           desc: view === 'user'
@@ -4188,8 +4256,8 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'dshc-list' }, valueNodes))),
             h('div', { className: 'dshc-note' }, '改它只能靠新的经历或直接说出「我更看重…」；手写区只影响说话方式。'))),
 
-        // ⑤b 世界观（Primals / WAS / Social Axioms）
-        h(Sec, {
+        // 鈶 涓栫晫瑙傦紙Primals / WAS / Social Axioms锛?''
+              h(Sec, {
           title: view === 'user' ? '它眼中的世界' : '世界观（自己长出来的）',
           desc: view === 'user'
             ? '世界安不安全、公不公正、人可不可信——从经历里慢慢偏出来，不是填的。'
@@ -4234,8 +4302,8 @@ window.__ModuleLoader__.load({
               h('div', { className: 'dshc-note' }, '默认角色目的：扩展所陪伴之人的能动——不是假装独立灵魂目的。')))
         })(),
 
-        // ⑦ 固定偏好（自己长的 + 手写的，同一种行；自己长的删不掉）
-        h(Sec, {
+        // 鈶?鍥哄畾鍋忓ソ锛堣嚜宸遍暱鐨?+ 鎵嬪啓鐨勶紝鍚屼竴绉嶈锛涜嚜宸遍暱鐨勫垹涓嶆帀锛?''
+              h(Sec, {
           title: view === 'user' ? '它记住的喜欢和讨厌' : '固定偏好',
           desc: '标签 + 厌恶度 0–1。自己长出来的删不掉；手写的那条可以收回。',
         },
@@ -4251,7 +4319,7 @@ window.__ModuleLoader__.load({
               : h('div', { className: 'dshc-note' }, '还没自己长过：等它记住几件新事，后台会自己补一批（不用点）。'),
             h(PreferenceForm, { aid, act, onDone: bumpPrefs, limit: limits.preferenceTag || DEFAULT_LIMITS.preferenceTag }))),
 
-        // ⑧ 禁忌
+        // 鈶?绂佸繉
         h(Sec, { title: view === 'user' ? '绝对不能碰的线' : '禁忌', desc: 'root 一票否决；soft 仍会被 G1 记下来。禁忌违反率目标 = 0。' },
           h(Card, null,
             (taboos.data || []).length === 0 ? h('div', { className: 'dshc-sub' }, '还没有禁忌条目。')
@@ -4262,7 +4330,7 @@ window.__ModuleLoader__.load({
 
         view === 'tech' ? h(Tech, null, 'MBTI 四轴 ∈ [0,1]（ei / sn / tf / jp）+ sensitivity；手写 origin=manual 优先于 auto\ndrift = Σ w_i·|auto_i - manual_i|（鱼格 §自动区）\n价值观 Σweight = 1；关系 closeness/trust/dependence ∈ [0,1]') : null,
 
-        // ⑨ 漂移
+        // 鈶?婕傜Щ
         h(Sec, { title: view === 'user' ? '它最近有没有变' : '漂移', desc: '一致性、手写与自动的比例、禁忌违反次数。' },
           h(Card, null, (() => {
             const d = drift.data || {}
@@ -4272,14 +4340,14 @@ window.__ModuleLoader__.load({
               h(Row, { label: '禁忌违反', value: String(d.taboo_violation ?? 0) }))
           })())),
 
-        // ⑩ 验收指标
+        // 鈶?楠屾敹鎸囨爣
         h(Sec, { techOnly: true, title: '验收指标（8 条 · 地基附录 E）', desc: '同一性盲测可在验收页一键跑。' },
           h(Card, null, h(MetricList, {
             from: 9, to: 17, view, setTab,
             catalog: metricSlice.catalog, values: metricSlice.values,
           }))),
 
-        // ⑪ 关系边
+        // 鈶?鍏崇郴杈?''
         h(Sec, { title: view === 'user' ? '性格都跟什么有关' : '模块关系边', desc: '鱼格 ↔ 记忆 / 情绪 / 关系（6 号 12 边）。' },
           h(Card, null, h(EdgeGraphPanel, { aid }))))
     }
@@ -4297,8 +4365,7 @@ window.__ModuleLoader__.load({
       const persons = Array.isArray(ps.data) ? ps.data : []
       const events = (ev.data && ev.data.items) || []
       const mentions = ((mt.data && mt.data.items) || [])
-        // 早期「引号里像人名就当提及」的误抽已下线；旧库里那批是 confidence 0.5 的 name 类
-        .filter((m) => !(m.how === 'name' && Number(m.confidence || 0) <= 0.5))
+        // 鏃╂湡銆屽紩鍙烽噷鍍忎汉鍚嶅氨褰撴彁鍙娿€嶇殑璇娊宸蹭笅绾匡紱鏃у簱閲岄偅鎵规槸 confidence 0.5 鐨?name 绫?        .filter((m) => !(m.how === 'name' && Number(m.confidence || 0) <= 0.5))
         .slice(0, 20)
       const groups = ['owner', 'acquaintance', 'stranger']
         .map((tier) => [tier, persons.filter((p) => p.tier === tier)])
@@ -4327,8 +4394,8 @@ window.__ModuleLoader__.load({
                   onAdded: (info) => {
                     setJustAdded({ ...info, at: Date.now() })
                     bump()
-                    // 高亮几秒就退，别让人以为是常驻状态
-                    setTimeout(() => setJustAdded(null), 6000)
+                    // 楂樹寒鍑犵灏遍€€锛屽埆璁╀汉浠ヤ负鏄父椹荤姸鎬?''
+              setTimeout(() => setJustAdded(null), 6000)
                   },
                 })))),
 
@@ -4371,7 +4438,7 @@ window.__ModuleLoader__.load({
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
     }
 
-    /** 字节量级：B → KB → MB → GB → TB，跟总量涨。 */
+    /** 瀛楄妭閲忕骇锛欱 鈫?KB 鈫?MB 鈫?GB 鈫?TB锛岃窡鎬婚噺娑ㄣ€?*/
     function fmtBytes(bytes) {
       const b = Number(bytes) || 0
       if (!(b > 0)) return '<0.1 KB'
@@ -4385,10 +4452,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 记忆量曲线：只有一条线，从底边左角起笔往右上走。
-     * 固定「从出生到现在」；跨度大时横轴改成 YYYY-MM，免得跨年看不清。
-     * 数据走 /vault/history（新接口；宿主没重启时只留一句提示）。
-     */
+     * 璁板繂閲忔洸绾匡細鍙湁涓€鏉＄嚎锛屼粠搴曡竟宸﹁璧风瑪寰€鍙充笂璧般€?     * 鍥哄畾銆屼粠鍑虹敓鍒扮幇鍦ㄣ€嶏紱璺ㄥ害澶ф椂妯酱鏀规垚 YYYY-MM锛屽厤寰楄法骞寸湅涓嶆竻銆?     * 鏁版嵁璧?/vault/history锛堟柊鎺ュ彛锛涘涓绘病閲嶅惎鏃跺彧鐣欎竴鍙ユ彁绀猴級銆?     */
     function VaultDelta({ aid }) {
       const [s] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/vault/history?days=0'), [aid])
 
@@ -4401,8 +4465,8 @@ window.__ModuleLoader__.load({
       const all = s.data.series || []
       const first = all.findIndex((x) => x.close > 0 || x.add_b > 0)
       const src = first < 0 ? [] : all.slice(first)
-      // 前面垫一个 0 点，线就从底边左角起笔
-      const prevDay = src.length ? new Date(Date.parse(src[0].day + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10) : ''
+      // 鍓嶉潰鍨竴涓?0 鐐癸紝绾垮氨浠庡簳杈瑰乏瑙掕捣绗?''
+              const prevDay = src.length ? new Date(Date.parse(src[0].day + 'T00:00:00Z') - 86400000).toISOString().slice(0, 10) : ''
       const rows = src.length
         ? [{ day: prevDay, close: 0 }].concat(src)
         : (all.length >= 2 ? all.slice(-2) : [{ day: '', close: 0 }, { day: '', close: 0 }])
@@ -4421,7 +4485,7 @@ window.__ModuleLoader__.load({
       }
       const area = d + 'L' + W + ' ' + H + ' L0 ' + H + ' Z'
 
-      // 跨度 ≥90 天或跨年 → YYYY-MM；否则 MM-DD
+      // 璺ㄥ害 鈮?0 澶╂垨璺ㄥ勾 鈫?YYYY-MM锛涘惁鍒?MM-DD
       const spanDays = Math.max(0, n - 1)
       const y0 = String(rows[0].day || '').slice(0, 4)
       const y1 = String(rows[n - 1].day || '').slice(0, 4)
@@ -4430,8 +4494,8 @@ window.__ModuleLoader__.load({
         const s = String(x || '')
         return useYm ? s.slice(0, 7) : s.slice(5)
       }
-      // 纵轴：三格共用顶刻度那一档（KB/MB/…），半档不会写成别的单位
-      const yUnit = (() => {
+      // 绾佃酱锛氫笁鏍煎叡鐢ㄩ《鍒诲害閭ｄ竴妗ｏ紙KB/MB/鈥︼級锛屽崐妗ｄ笉浼氬啓鎴愬埆鐨勫崟浣?''
+              const yUnit = (() => {
         const t = fmtBytes(max)
         const sp = t.lastIndexOf(' ')
         return sp > 0 ? t.slice(sp + 1) : 'KB'
@@ -4472,29 +4536,29 @@ window.__ModuleLoader__.load({
       const [dlg, setDlg] = useState('')
       const [reveal, setReveal] = useState(false)
       const [busy, setBusy] = useState(false)
-      // 光带联动：鼠标停在哪一行，上面那条占比彩带就点亮哪一段
-      const [hi, setHi] = useState('')
-      // 注水：先画 0 宽，下一帧再放到目标宽度
+      // 鍏夊甫鑱斿姩锛氶紶鏍囧仠鍦ㄥ摢涓€琛岋紝涓婇潰閭ｆ潯鍗犳瘮褰╁甫灏辩偣浜摢涓€娈?''
+              const [hi, setHi] = useState('')
+      // 娉ㄦ按锛氬厛鐢?0 瀹斤紝涓嬩竴甯у啀鏀惧埌鐩爣瀹藉害
       const [grow, setGrow] = useState(false)
-      // 增量图默认收起；展开时才去拉时间线
-      const [delta, setDelta] = useState(true)
+      // 澧為噺鍥鹃粯璁ゆ敹璧凤紱灞曞紑鏃舵墠鍘绘媺鏃堕棿绾?''
+              const [delta, setDelta] = useState(true)
 
       const d = s.data || {}
       const parts = d.parts || []
       const root = (d.docs && d.docs.root) || ''
-      // 占比 = 现在条数 / 这个模块「预计能存多少」，不是占总字节；满了才说明该清理或扩容
-      const bar = (x) => Math.max(1, Math.min(100, Math.round(Number(x.pct) || 0)))
+      // 鍗犳瘮 = 鐜板湪鏉℃暟 / 杩欎釜妯″潡銆岄璁¤兘瀛樺灏戙€嶏紝涓嶆槸鍗犳€诲瓧鑺傦紱婊′簡鎵嶈鏄庤娓呯悊鎴栨墿瀹?''
+              const bar = (x) => Math.max(1, Math.min(100, Math.round(Number(x.pct) || 0)))
       const full = (x) => Number(x.pct) >= 100
       const color = (x) => (full(x) ? '#e5534b' : Number(x.pct) >= 80 ? '#d29922' : 'var(--dsw-alias-brand-primary, #6cf)')
       const tech = view === 'tech'
       const tokensOf = (x) => Math.ceil((Number(x.bytes) || 0) / 2)
-      // 只有两种真数据：存量（条数 / 字节）和每轮注入用量（token）
+      // 鍙湁涓ょ鐪熸暟鎹細瀛橀噺锛堟潯鏁?/ 瀛楄妭锛夊拰姣忚疆娉ㄥ叆鐢ㄩ噺锛坱oken锛?''
       const unitOf = (x) => ({ T3: '篇', T4: '轮' })[x.key] || '条'
       const sizeText = (x) => fmtBytes(x.bytes)
       const LABEL = { T2: '书签', T4: '对话档案', FA: '事实档案' }
       const labelOf = (x) => LABEL[x.key] || x.label
-      // 后端还没重载时 inject 为空，就用 history 接口的日均值兜底
-      const history = (hist.data && hist.data.series && hist.data.series['sys.inject_tokens']) || []
+      // 鍚庣杩樻病閲嶈浇鏃?inject 涓虹┖锛屽氨鐢?history 鎺ュ彛鐨勬棩鍧囧€煎厹搴?''
+              const history = (hist.data && hist.data.series && hist.data.series['sys.inject_tokens']) || []
       const histAvg = history.length ? Math.round(history.reduce((n, p) => n + Number(p.value || 0), 0) / history.length) : 0
       const inj = d.inject || (history.length ? { avg: histAvg, budget: 800, max: null, days: history.length } : null)
       const injPct = inj && inj.budget ? Math.max(1, Math.min(100, Math.round(Number(inj.avg) / Number(inj.budget) * 100))) : 0
@@ -4531,9 +4595,9 @@ window.__ModuleLoader__.load({
           reload()
         } catch (e) { setMsg(e.message) } finally { setBusy(false) }
       }
-      // 导出记忆 = 只含记忆六个分区的 zip；导入吃它（整份备份包也能吃，但只取记忆表）
+      // 瀵煎嚭璁板繂 = 鍙惈璁板繂鍏釜鍒嗗尯鐨?zip锛涘鍏ュ悆瀹冿紙鏁翠唤澶囦唤鍖呬篃鑳藉悆锛屼絾鍙彇璁板繂琛級
       const exportAll = async () => {
-        setBusy(true); setMsg('打包中…')
+          setBusy(true); setMsg('整理可读版…')
         try {
           const z = await call('GET', '/v1/agents/' + enc(aid) + '/export/memory')
           if (!z || !z.zip_base64) { setMsg('导出接口没接上（后端还没重载）'); return }
@@ -4592,11 +4656,11 @@ window.__ModuleLoader__.load({
               h('b', { className: 'dshc-vault-total' }, fmtBytes(totalShown)),
               h('span', { className: 'dshc-vault-cap' }, '总记忆 · ' + parts.length + ' 个分区'))),
 
-          // 六段彩带：每段宽度 = 这个分区占全部记忆的比例
+          // 鍏褰╁甫锛氭瘡娈靛搴?= 杩欎釜鍒嗗尯鍗犲叏閮ㄨ蹇嗙殑姣斾緥
           parts.length ? h('div', { className: 'dshc-vault-ribbon', 'aria-hidden': true },
             parts.map((x, i) => h('i', {
               key: x.key,
-              title: labelOf(x) + ' · ' + sizeText(x),
+              title: labelOf(x) + ' 路 ' + sizeText(x),
               'data-hi': hi === x.key ? '1' : '0',
               onMouseEnter: () => setHi(x.key),
               onMouseLeave: () => setHi((k) => (k === x.key ? '' : k)),
@@ -4626,14 +4690,14 @@ window.__ModuleLoader__.load({
                   h('div', { style: { flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-secondary, #333)' } },
                     h('div', { style: { width: bar(x) + '%', height: 8, borderRadius: 4, background: color(x) } })),
                   h('span', { className: 'dshc-mono', style: { width: 200, flex: 'none', textAlign: 'right', whiteSpace: 'nowrap' } },
-                    x.pct + '% · ' + sizeText(x))),
+                    x.pct + '% 路 ' + sizeText(x))),
                 h('div', { className: 'dshc-sub', style: { marginLeft: 104 } },
                   x.rows + ' / ' + (x.cap || '—') + ' 条' + (full(x) ? '（已满）' : '') + ' · ' + x.hint + ' · ≈' + tokensOf(x).toLocaleString('en-US') + ' token'))
               : h('div', { key: x.key, className: 'dshc-vault-row', ...rowHover(x.key), style: { '--i': i } },
                 h('span', { className: 'dshc-vault-key', style: { background: vaultTone(i) } }),
                 h('span', { className: 'dshc-vault-lab' }, labelOf(x)),
                 h('span', { className: 'dshc-vault-num dshc-mono' }, x.rows + ' ' + unitOf(x)),
-                h('span', { className: 'dshc-vault-sep' }, '·'),
+                h('span', { className: 'dshc-vault-sep' }, '路'),
                 h('span', { className: 'dshc-vault-kb dshc-mono' }, sizeText(x))))),
 
           tech ? h('div', { className: 'dshc-note', style: { marginTop: 10 } },
@@ -4648,8 +4712,8 @@ window.__ModuleLoader__.load({
             h('summary', null, '记忆增量'),
             delta ? h(VaultDelta, { aid }) : null),
 
-          // 三个键：导出记忆 / 导入记忆 / 打开文件夹
-          h('div', { className: 'dshc-vault-acts' },
+          // 涓変釜閿細瀵煎嚭璁板繂 / 瀵煎叆璁板繂 / 鎵撳紑鏂囦欢澶?''
+              h('div', { className: 'dshc-vault-acts' },
             h(Btn, { primary: true, disabled: busy, onClick: exportAll }, busy ? '导出中…' : '导出记忆'),
             h(Btn, { disabled: busy, onClick: () => { setMsg(''); setDlg('import') } }, '导入记忆'),
             h(Btn, { disabled: busy, onClick: openFolder }, '打开文件夹')),
@@ -4664,9 +4728,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 导入记忆：跟「导入意识」同一套面板 —— 左边规范（zip 整库恢复），右边随意（任意文本交给模型整理）。
-     * 只是落的是记忆：鱼格 / 情绪 / 驱力 / 提案都不动。
-     */
+     * 瀵煎叆璁板繂锛氳窡銆屽鍏ユ剰璇嗐€嶅悓涓€濂楅潰鏉?鈥斺€?宸﹁竟瑙勮寖锛坺ip 鏁村簱鎭㈠锛夛紝鍙宠竟闅忔剰锛堜换鎰忔枃鏈氦缁欐ā鍨嬫暣鐞嗭級銆?     * 鍙槸钀界殑鏄蹇嗭細楸兼牸 / 鎯呯华 / 椹卞姏 / 鎻愭閮戒笉鍔ㄣ€?     */
     function MemoryImportDialog({ aid, onClose, onImported }) {
       const [zipBusy, setZipBusy] = useState(false)
       const [zipMsg, setZipMsg] = useState('')
@@ -4697,8 +4759,8 @@ window.__ModuleLoader__.load({
         } catch (e) { setZipMsg(e.message || String(e)) } finally { setZipBusy(false) }
       }
 
-      // 拖 / 选一个文本文件进「随意导入」：先读成文本，再交给模型整理
-      const readTextFile = async (f) => {
+      // 鎷?/ 閫変竴涓枃鏈枃浠惰繘銆岄殢鎰忓鍏ャ€嶏細鍏堣鎴愭枃鏈紝鍐嶄氦缁欐ā鍨嬫暣鐞?''
+              const readTextFile = async (f) => {
         if (!f) return
         setFreeName(f.name); setFreeErr(''); setFreeRes(null)
         try { setText(String(await f.text()).slice(0, 20000)) } catch (e) { setFreeErr('读不出文本内容') }
@@ -4759,7 +4821,7 @@ window.__ModuleLoader__.load({
           '写入记忆 ' + freeRes.imported.memory + ' 条'
             + (freeRes.imported.duplicate ? ' · 已有 ' + freeRes.imported.duplicate + ' 条（跳过）' : '')
             + (freeRes.imported.skipped ? ' · 空条目 ' + freeRes.imported.skipped + ' 条' : '')
-            + (freeRes.summary ? ' · ' + freeRes.summary : ''))) : null
+            + (freeRes.summary ? ' 路 ' + freeRes.summary : ''))) : null
 
       const freePane = h('div', { style: paneStyle },
         paneTitle('随意导入'),
@@ -4817,8 +4879,29 @@ window.__ModuleLoader__.load({
       const ctx = d.context || {}
       const write = (ctx && ctx.write) || {}
       const pack = write.pack || {}
+      const scenes = Array.isArray(write.scenes) ? write.scenes : []
       const ax = ctx.axes || {}
       const short = { ei: '外', sn: '实', tf: '思', jp: '判', sensitivity: '敏' }
+      const pending = !!d.pending || d.source === 'none'
+      const sourceLabel = d.source === 'model' ? '模型写的'
+        : d.source === 'stub' ? '素材卡'
+          : d.source === 'rules' ? '模板拼的'
+            : (pending ? '还空着' : '')
+      const reasonZh = (why) => {
+        const w = String(why || '')
+        if (w === 'no_model') return '当时没有可用的写日记模型'
+        if (w === 'empty') return '模型回了空内容'
+        if (w.startsWith('gate:too_short')) return '写得太短'
+        if (w.startsWith('gate:too_long')) return '写得太长'
+        if (w.startsWith('gate:paragraphs')) return '段落数不对'
+        if (w.startsWith('gate:report')) return '写成了工作汇报'
+        if (w.startsWith('gate:enumerate')) return '写成了按话题列举'
+        if (w.startsWith('gate:cover_all')) return '把一天的事都过了一遍'
+        if (w.startsWith('gate:echo')) return '像在复读提示词'
+        if (w.startsWith('gate:')) return '没过质检'
+        if (w.startsWith('thrown:')) return '模型调用出错'
+        return '这次没写成'
+      }
       const packBits = []
       if (Number(pack.n_cluster) > 0) packBits.push('簇修 ' + pack.n_cluster)
       if (Number(pack.n_model) > 0) packBits.push('精修 ' + pack.n_model)
@@ -4826,25 +4909,37 @@ window.__ModuleLoader__.load({
       if (pack.prefer_cluster) packBits.push('忙天优先簇')
       if (pack.retry_of) packBits.push('缩包重试')
       if (Number(pack.skipped_low) > 0) packBits.push('跳过低分 ' + pack.skipped_low)
+      if (write.select) packBits.push(write.select === 'model' ? '模型选场' : '规则选场')
+      if (scenes.length) packBits.push('用了 ' + scenes.length + ' 段')
+      if (Number(pending ? d.attempts : 0) > 0) packBits.push('试过 ' + d.attempts + ' 次')
       const chips = [
         d.mood ? '心情 ' + d.mood : '',
         ctx.affect ? '情绪 ' + ctx.affect.label + ' ' + Number(ctx.affect.intensity).toFixed(2) : '',
-        write.mood_source === 'day' ? '心情按当日' : (write.mood_source === 'live' ? '心情按此刻' : ''),
+        (write.mood_source === 'day' || ctx.mood_source === 'day') ? '心情按当日' : ((write.mood_source === 'live' || ctx.mood_source === 'live') ? '心情按此刻' : ''),
         ctx.drive ? '驱力 ' + ctx.drive.band : '',
         Object.keys(ax).length ? '性格 ' + Object.entries(ax).map(([k, v]) => (short[k] || k) + Number(v).toFixed(2)).join(' ') : '',
         (ctx.values || []).length ? '看重 ' + ctx.values.map((v) => v.key).join('/') : '',
-        d.source === 'model' ? '模型写的' : '模板拼的',
+        sourceLabel,
         Number(d.late) ? '补写' : '',
         ...packBits,
       ].filter(Boolean)
       const doRewrite = async () => {
         if (rewriting) return
-        if (!window.confirm('按当前纪要重写 ' + day + ' 的日记？会覆盖这篇（版本号 +1）。')) return
+        const ask = pending
+          ? '现在就补写 ' + day + ' 的日记？'
+          : '按今天的素材重写 ' + day + ' 的日记？会覆盖这篇（版本号 +1）。'
+        if (!window.confirm(ask)) return
         setRewriting(true)
         setRewriteMsg('')
         try {
           const out = await call('POST', '/v1/agents/' + enc(aid) + '/diaries/rewrite', { day }, true)
-          setRewriteMsg(out && out.source === 'model' ? '已用模型重写（v' + out.version + '）' : '已用模板重写（v' + (out && out.version) + '）')
+          if (out && out.pending) {
+            setRewriteMsg('还是没写成（' + reasonZh(out.fail_reason) + '），已留在待补队列，模型回来会再试。')
+          } else if (out && out.source === 'model') {
+            setRewriteMsg('已用模型重写（v' + out.version + '）')
+          } else {
+            setRewriteMsg('已重写（v' + (out && out.version) + '，' + (out && out.source === 'stub' ? '素材卡' : '模板') + '）')
+          }
           reload()
         } catch (e) {
           setRewriteMsg(e.message || String(e))
@@ -4855,41 +4950,44 @@ window.__ModuleLoader__.load({
           h(Pill, null, day),
           chips.map((c, i) => h(Pill, { key: i }, c))),
         h('textarea', {
-          className: 'dshc-ta', readOnly: true, value: String(d.text || ''),
+          className: 'dshc-ta', readOnly: true, value: pending ? '' : String(d.text || ''),
           style: { width: '100%', minHeight: 260, lineHeight: 1.9, resize: 'vertical', background: 'transparent', fontSize: 13.5 },
         }),
+        pending
+          ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
+            '这天还没写成。' + (Number(d.attempts) > 0 ? '已经试过 ' + d.attempts + ' 次，' : '')
+              + (d.fail_reason ? '最近一次卡在：' + reasonZh(d.fail_reason) + '。' : '')
+              + '模型回来之后 30 分钟内会自动补，也可以现在手动试一次。')
+          : null,
+        d.source === 'stub'
+          ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
+            '这是素材卡，不是日记：只把那天的事列出来，没有假装写成第一人称。等模型回来会自动重写成日记。')
+          : null,
+        d.source === 'rules'
+          ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
+            '这是旧的模板篇（v1）：按纪要标题和事实拼出来的，不是模型写的。可以点下面「按今天的素材重写」换成 v2。')
+          : null,
         d.source === 'model'
           ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
-            '日记由模型写成；原料来自纪要'
-              + (Number(pack.n_cluster) ? '（含时段簇修）' : '')
-              + (Number(pack.n_model) ? '（含精修段）' : '')
-              + (Number(pack.n_rules) ? '（含规则要点）' : '')
-              + '。')
+            '模型写成：先挑 1–2 个场景，再拿当时原话写；不是把一天 20 条纪要整包喂进去。'
+              + (scenes.length ? '这篇用了：' + scenes.map((x) => x.title).join('；') : ''))
           : null,
-        d.source !== 'model'
-          ? h('div', { className: 'dshc-note', style: { marginTop: 6 } },
-            (() => {
-              const why = write.fail_reason
-              const map = {
-                no_model: '当时没有可用的写日记模型，先用材料拼了一篇（不编造）。',
-                empty: '模型回了空内容，先用材料拼了一篇（不编造）。',
-                echo: '模型像在复读提示词，已拒收，先用材料拼了一篇（不编造）。',
-                too_short: '模型写得太短，已拒收，先用材料拼了一篇（不编造）。',
-              }
-              if (why && map[why]) return map[why]
-              if (why && String(why).startsWith('thrown:')) return '模型调用出错，先用材料拼了一篇（不编造）。'
-              return '这次没用上模型正文，先用材料拼了一篇（不编造）。'
-            })())
+        scenes.length
+          ? h('div', { className: 'dshc-sub', style: { marginTop: 6, lineHeight: 1.8 } },
+            scenes.map((x, i) => h('div', { key: i },
+              '· ' + String(x.title || '')
+                + '（分 ' + Number(x.poignancy || 0).toFixed(1)
+                + (x.grounding === 'episode' ? '，没原话，用纪要' : x.grounding === 'fact' ? '，来自事实' : '，用原话') + '）')))
           : null,
         h('div', { style: { marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-          h(Btn, { disabled: rewriting, onClick: doRewrite }, rewriting ? '重写中…' : '按当前纪要重写'),
+          h(Btn, { disabled: rewriting, onClick: doRewrite }, rewriting ? '重写中…' : (pending ? '现在就补写' : '按今天的素材重写')),
           rewriteMsg ? h('span', { className: 'dshc-note' }, rewriteMsg) : null),
         extra
           ? h('div', { style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--dsw-alias-border-secondary, #333)' } }, extra)
           : null)
     }
 
-    /* ================================== 时间线 / 原话 / 导入 */
+/* ================================== 鏃堕棿绾?/ 鍘熻瘽 / 瀵煎叆 */
 
     const TEMP_COLOR = { hot: '#ff8a5c', warm: '#6cf', cold: '#8899aa', archived: '#555f6b' }
     // 档位一律用中文写：面板是给人看的，不让人读 hot / warm / cold
@@ -4899,8 +4997,8 @@ window.__ModuleLoader__.load({
     function Strength({ m }) {
       const heat = Math.max(0, Math.min(1, Number(m.heat) || 0))
       // temp_now 是「按现在的状态算的温度」，temp_state 是每天推进一次的存档值；
-      // 两者不一致时只在这里说明一句，不把两个数并排摆出来。
-      const now = m.temp_now || m.temp_state || 'warm'
+      // 涓よ€呬笉涓€鑷存椂鍙湪杩欓噷璇存槑涓€鍙ワ紝涓嶆妸涓や釜鏁板苟鎺掓憜鍑烘潵銆?''
+              const now = m.temp_now || m.temp_state || 'warm'
       const saved = m.temp_state || 'warm'
       const color = TEMP_COLOR[now] || '#6cf'
       const tempTip = '温度：' + (TEMP_LABEL[now] || now) +
@@ -4930,7 +5028,7 @@ window.__ModuleLoader__.load({
             : (s.around || []).map((x) => (x.role === 'user' ? '你：' : '我：') + String(x.text).slice(0, 160)).join('\n')) : null)
     }
 
-    /* 时间线：一天一行，点开才展开当天明细；默认只开最新一天。 */
+    /* 鏃堕棿绾匡細涓€澶╀竴琛岋紝鐐瑰紑鎵嶅睍寮€褰撳ぉ鏄庣粏锛涢粯璁ゅ彧寮€鏈€鏂颁竴澶┿€?*/
     const TL_WEEK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
     function tlDayLabel(day, today, yday) {
       if (day === today) return '今天'
@@ -4955,21 +5053,21 @@ window.__ModuleLoader__.load({
 
     function TimelineView({ aid }) {
       const [s, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/memory/timeline?days=5'), [aid])
-      // 时间线上的热度条同样按此刻算，开着页面就每 20 秒对一次
-      useLive(reload, 20000)
+      // 鏃堕棿绾夸笂鐨勭儹搴︽潯鍚屾牱鎸夋鍒荤畻锛屽紑鐫€椤甸潰灏辨瘡 20 绉掑涓€娆?''
+              useLive(reload, 20000)
       if (s.loading && !s.data) return h(Empty, null, '读取时间线…')
       if (s.error && !s.data) return h(LoadErr, { error: s.error, retry: reload })
       const d = s.data || {}
       const groups = d.groups || []
-      // 本地历日（不要 toISOString：UTC 会把中国凌晨标成昨天）
-      const _pad = (n) => String(n).padStart(2, '0')
+      // 鏈湴鍘嗘棩锛堜笉瑕?toISOString锛歎TC 浼氭妸涓浗鍑屾櫒鏍囨垚鏄ㄥぉ锛?''
+              const _pad = (n) => String(n).padStart(2, '0')
       const _local = (ms) => { const x = new Date(ms); return x.getFullYear() + '-' + _pad(x.getMonth() + 1) + '-' + _pad(x.getDate()) }
       const today = _local(Date.now())
       const yday = _local(Date.now() - 86400000)
       const filled = groups.filter((g) => g.count > 0).length
       return h(Card, null,
         h('div', { className: 'dshc-tl-meta' },
-          h('span', { className: 'dshc-sub' }, '近 5 天'),
+          h('summary', { className: 'dshc-fold' }, '提案目标（它在攒什么证据）'),
           h('span', { className: 'dshc-mono' }, (d.total || 0) + ' 条 · ' + filled + '/' + (d.days || groups.length || 5) + ' 天有记' +
             (d.at ? ' · 算于 ' + clockOf(d.at) : ''))),
         !(d.total) ? h(Empty, null, '这阵子还没记住什么。')
@@ -4983,7 +5081,7 @@ window.__ModuleLoader__.load({
                 h('em', null, tlWeekday(g.day))),
               h('span', {
                 className: 'dshc-tl-mix',
-                title: mx.map(([k, n]) => (TYPE_LABEL[k] || k) + ' ' + n).join(' · '),
+                title: mx.map(([k, n]) => (TYPE_LABEL[k] || k) + ' ' + n).join(' 路 '),
               }, mx.slice(0, 3).map(([k, n]) => h('i', { key: k, 'data-t': k, style: { flex: String(n) } }))),
               h('span', { className: 'dshc-tl-spacer' }),
               h('span', { className: 'dshc-tl-count' }, (g.count || items.length) + ' 条'),
@@ -5019,7 +5117,7 @@ window.__ModuleLoader__.load({
       },
     }
 
-    /** 一档人一个下拉：收起时只有人数和一句功能简述；刚记下的人在哪档，哪档自动展开。 */
+    /** 涓€妗ｄ汉涓€涓笅鎷夛細鏀惰捣鏃跺彧鏈変汉鏁板拰涓€鍙ュ姛鑳界畝杩帮紱鍒氳涓嬬殑浜哄湪鍝。锛屽摢妗ｈ嚜鍔ㄥ睍寮€銆?*/
     function RelGroup({ tier, items, aid, act, onChanged, flash }) {
       const [open, setOpen] = useState(false)
       const desc = REL_TIER_DESC[tier] || { short: '', long: '' }
@@ -5029,7 +5127,7 @@ window.__ModuleLoader__.load({
       }, [flashAt])
       return h('div', { className: 'dshc-relgroup' },
         h('div', { className: 'dshc-relgroup-h', onClick: () => setOpen((v) => !v) },
-          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '▸'),
+          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '鈻?'),
           h('b', null, REL_TIER_LABEL[tier] || tier),
           h('span', { className: 'n' }, items.length + ' 人'),
           h('div', { className: 'dshc-spacer' }),
@@ -5042,7 +5140,7 @@ window.__ModuleLoader__.load({
           }))) : null)
     }
 
-    /** 三轴走势：亲近 / 信任 / 依赖，0..1；数据来自账本重放，不另存表。 */
+    /** 涓夎酱璧板娍锛氫翰杩?/ 淇′换 / 渚濊禆锛?..1锛涙暟鎹潵鑷处鏈噸鏀撅紝涓嶅彟瀛樿〃銆?*/
     function AxisTrend({ data }) {
       const pts = (data && data.points) || []
       if (pts.length < 2) return h('div', { className: 'dshc-sub', style: { marginTop: 6 } }, '还没有能画成走势的变化：至少要有两次记账。')
@@ -5074,7 +5172,7 @@ window.__ModuleLoader__.load({
           line('c', '#7fd8ff'), line('t', '#ffd479'), line('d', '#b48bff')))
     }
 
-    /** 一个人一行：点开看卡、证据、他-他边；能把人放进关系图或归档。 */
+    /** 涓€涓汉涓€琛岋細鐐瑰紑鐪嬪崱銆佽瘉鎹€佷粬-浠栬竟锛涜兘鎶婁汉鏀捐繘鍏崇郴鍥炬垨褰掓。銆?*/
     function PersonRow({ aid, act, p, onChanged, flash }) {
       const [open, setOpen] = useState(false)
       const [det, reloadDet] = useAsync(
@@ -5088,9 +5186,9 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState('')
       const [askDel, setAskDel] = useState(false)
       const [err, setErr] = useState('')
-      // WebView 里的 window.confirm 可能被宿主静默掉（返回 false），所以用「点两次」代替弹窗。
-      // 确认态不再自动超时：4 秒一到按钮自己缩回去，看着就像「删不掉」。
-      async function run(kind) {
+      // WebView 閲岀殑 window.confirm 鍙兘琚涓婚潤榛樻帀锛堣繑鍥?false锛夛紝鎵€浠ョ敤銆岀偣涓ゆ銆嶄唬鏇垮脊绐椼€?''
+      // 纭鎬佷笉鍐嶈嚜鍔ㄨ秴鏃讹細4 绉掍竴鍒版寜閽嚜宸辩缉鍥炲幓锛岀湅鐫€灏卞儚銆屽垹涓嶆帀銆嶃€?''
+              async function run(kind) {
         setErr('')
         setBusy(kind)
         try {
@@ -5152,8 +5250,8 @@ window.__ModuleLoader__.load({
         err ? h('div', { className: 'dshc-err', style: { marginTop: 6 } }, err) : null)
     }
 
-    /** 手记一个人：名字 + 分层 + 一句话。分类是策略，人可以随时换层。 */
-    /** 手动添加关系：先填名字，选熟人 / 生人，再补一句话，记下。 */
+    /** 鎵嬭涓€涓汉锛氬悕瀛?+ 鍒嗗眰 + 涓€鍙ヨ瘽銆傚垎绫绘槸绛栫暐锛屼汉鍙互闅忔椂鎹㈠眰銆?*/
+    /** 鎵嬪姩娣诲姞鍏崇郴锛氬厛濉悕瀛楋紝閫夌啛浜?/ 鐢熶汉锛屽啀琛ヤ竴鍙ヨ瘽锛岃涓嬨€?*/
     function PersonEditor({ aid, act, persons, onAdded, onDone }) {
       const [tier, setTier] = useState('acquaintance')
       const [name, setName] = useState('')
@@ -5163,8 +5261,8 @@ window.__ModuleLoader__.load({
       const [err, setErr] = useState('')
       const [done, setDone] = useState(null)
       const nm = name.trim()
-      // 同名的人只会有一张卡：再加他 = 挪到这一层，先把话说在前头
-      const existing = nm ? (persons || []).find((p) => p.name === nm) : null
+      // 鍚屽悕鐨勪汉鍙細鏈変竴寮犲崱锛氬啀鍔犱粬 = 鎸埌杩欎竴灞傦紝鍏堟妸璇濊鍦ㄥ墠澶?''
+              const existing = nm ? (persons || []).find((p) => p.name === nm) : null
       async function add() {
         if (!nm) { setErr('先填名字：这人叫什么'); return }
         setErr('')
@@ -5180,7 +5278,7 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'dshc-relgroup', style: { marginTop: 4 } },
         h('div', { className: 'dshc-relgroup-h', onClick: () => setOpen((v) => !v) },
-          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '▸'),
+          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '鈻?'),
           h('b', null, '手动添加关系'),
           h('div', { className: 'dshc-spacer' }),
           h('span', { className: 'dshc-sub' }, open ? '收起' : '名字 + 类型 + 一句话')),
@@ -5217,7 +5315,7 @@ window.__ModuleLoader__.load({
           err ? h('div', { className: 'dshc-err' }, err) : null) : null)
     }
 
-    /** 没认出来的名字：挂到某个人卡上，或者忽略。 */
+    /** 娌¤鍑烘潵鐨勫悕瀛楋細鎸傚埌鏌愪釜浜哄崱涓婏紝鎴栬€呭拷鐣ャ€?*/
     function MentionRow({ aid, m, persons, onChanged }) {
       const [pid, setPid] = useState('')
       const [busy, setBusy] = useState('')
@@ -5250,10 +5348,17 @@ window.__ModuleLoader__.load({
         err ? h('div', { className: 'dshc-err' }, err) : null)
     }
 
+    /** 鍘屾伓搴?鈫?浜鸿瘽 + 鑹茶皟銆?.35 浠ヤ笅绠楀枩娆紝0.65 浠ヤ笂绠楄鍘岋紝涓棿鏄湅鎯呭喌銆?*/
+    function prefSense(av) {
+      const v = Math.max(0, Math.min(1, Number(av) || 0))
+      if (v <= 0.35) return { word: '鍠滄', tone: 'ok' }
+      if (v >= 0.65) return { word: '讨厌', tone: 'bad' }
+      return { word: '看情况', tone: undefined }
+    }
+
     /**
-     * 一行偏好。手写和自己长的是**同一种行**（标签 + 条形 + 厌恶度 + 来源），
-     * 唯一的区别是自己长出来的没有删除入口——服务端也会拒（409 LOCKED）。
-     */
+     * 涓€琛屽亸濂姐€傛墜鍐欏拰鑷繁闀跨殑鏄?*鍚屼竴绉嶈**锛堟爣绛?+ 鏉″舰 + 鍘屾伓搴?+ 鍠滄/璁ㄥ帉 + 鏉ユ簮锛夛紝
+     * 鍞竴鐨勫尯鍒槸鑷繁闀垮嚭鏉ョ殑娌℃湁鍒犻櫎鍏ュ彛鈥斺€旀湇鍔＄涔熶細鎷掞紙409 LOCKED锛夈€?     */
     function PrefRow({ aid, act, r, onDone }) {
       const [askDel, setAskDel] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -5265,9 +5370,11 @@ window.__ModuleLoader__.load({
           onDone()
         } catch { /* 服务端不让删就保持原样，绝不装作删掉了 */ } finally { setBusy(false) }
       }
+      const sense = prefSense(r.aversion)
       return h(Row, { label: r.tag },
-        h(Bar, { value: Number(r.aversion), tone: Number(r.aversion) > 0.7 ? 'bad' : undefined }),
+        h(Bar, { value: Number(r.aversion), tone: sense.tone }),
         h('span', { className: 'm dshc-mono' }, Number(r.aversion).toFixed(2)),
+        h(Pill, { tone: sense.tone, title: sense.word === '喜欢' ? '厌恶度低：它喜欢这个' : sense.word === '讨厌' ? '厌恶度高：它受不了这个' : '厌恶度居中：看情况' }, sense.word),
         h(Pill, { title: auto ? '它自己长出来的，删不掉' : '手写的，可以删' }, auto ? '自己长' : '手写'),
         auto ? null : h('button', {
           className: 'dshc-del' + (askDel ? ' dshc-del-ask' : ''),
@@ -5288,7 +5395,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false)
       async function add() {
         setErr(''); setOk('')
-        // 空着点「加偏好」以前是静默 return，看着就像按钮坏了；改成明说
+        // 绌虹潃鐐广€屽姞鍋忓ソ銆嶄互鍓嶆槸闈欓粯 return锛岀湅鐫€灏卞儚鎸夐挳鍧忎簡锛涙敼鎴愭槑璇?''
         if (!tag.trim()) { setErr('先写一个标签，再点加偏好。比如「香菜」。'); return }
         if (busy) return
         setBusy(true)
@@ -5306,7 +5413,12 @@ window.__ModuleLoader__.load({
             onKeyDown: (e) => { if (e.key === 'Enter') add() },
           }),
           h(CharCount, { value: tag, limit }),
-          h(Input, { style: { width: 84 }, value: av, onChange: (e) => setAv(e.target.value) }),
+          h(Input, {
+            style: { width: 84 }, value: av, placeholder: '0鈥?',
+            title: '它现在觉得你：',
+            onChange: (e) => setAv(e.target.value),
+          }),
+          h(Pill, { tone: prefSense(av).tone, title: '按你填的数字，这条会被记成「' + prefSense(av).word + '」' }, prefSense(av).word),
           h(Btn, { onClick: add, disabled: busy }, busy ? '加入中…' : '加偏好')),
         ok ? h('div', { className: 'dshc-note' }, ok) : null,
         err ? h('div', { className: 'dshc-err' }, err) : null)
@@ -5348,9 +5460,7 @@ window.__ModuleLoader__.load({
     /* ---------------------------------------------- 它觉得你：一条判断的对错 */
 
     /**
-     * 「猜得对吗」：对 → 记成命中；不对 → 先选你真有的那个情绪，再回写。
-     * compact 给最近事件列表用：平时只露两个小按钮，点「不对」才展开八类。
-     */
+     * 銆岀寽寰楀鍚椼€嶏細瀵?鈫?璁版垚鍛戒腑锛涗笉瀵?鈫?鍏堥€変綘鐪熸湁鐨勯偅涓儏缁紝鍐嶅洖鍐欍€?     * compact 缁欐渶杩戜簨浠跺垪琛ㄧ敤锛氬钩鏃跺彧闇蹭袱涓皬鎸夐挳锛岀偣銆屼笉瀵广€嶆墠灞曞紑鍏被銆?     */
     function ReadFeedback({ aid, item, act, onChange, compact }) {
       const [picking, setPicking] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -5386,7 +5496,7 @@ window.__ModuleLoader__.load({
       if (picking) {
         return h('div', { className: 'dshc-read' },
           h('div', { className: 'dshc-read-pick' },
-            h('div', { className: 'dshc-sub' }, '那你此刻其实是什么？'),
+                  h('div', { className: 'dshc-sub' }, '它自己此刻'),
             h('div', { className: 'dshc-form', style: { marginTop: 7 } },
               AFFECT_ORDER.map((k) => h(Btn, {
                 key: k, sm: true, primary: actual === k,
@@ -5415,7 +5525,7 @@ window.__ModuleLoader__.load({
     /* ============================================================= affect */
 
     /* ============================================================ 三观 */
-    // 页面只读 /sangguan/* 投影，不在前端重算任何闸门或计数；用户视图零术语，tech 视图才露符号与 id
+    // 椤甸潰鍙 /sangguan/* 鎶曞奖锛屼笉鍦ㄥ墠绔噸绠椾换浣曢椄闂ㄦ垨璁℃暟锛涚敤鎴疯鍥鹃浂鏈锛宼ech 瑙嗗浘鎵嶉湶绗﹀彿涓?id
 
     const SG_LAYER = { W: '世界观', L: '人生观', V: '价值观' }
     const SG_LEAD = { W: '它认定世界是这样的', L: '它觉得自己是来', V: '它此刻更看重' }
@@ -5425,10 +5535,10 @@ window.__ModuleLoader__.load({
       sublated: '已被更完整的看法吸收', demoted: '旧地图', withdrawn: '试过，没站住',
     }
     const SG_SIGMA = { struggle: '正在想', suspended: '先放着', coexist: '两样都要', sub_trial: '找到一个说法，正在试', resolved: '已有结论', sublated: '想通了' }
-    const SG_BRANCH = { RESOLVE: '分出了高下', SUB: '找了个合起来的说法', COEX: '两样都要了', SUSPEND: '先放下了' }
+    const SG_BRANCH = { RESOLVE: '分出了高下', SUB: '找了个合起来的说法', COEX: '决定两样都要', SUSPEND: '先放下了' }
     const SG_TURN = ['SUB_CONFIRM', 'ELEV_COMMIT', 'COEX', 'RESOLVE', 'CORE_ESTABLISH']
-    // 终态命题只进链浏览与史，不上主区
-    const SG_TERMINAL_OF = (s) => ['superseded', 'falsified', 'sublated', 'demoted', 'withdrawn'].includes(s)
+    // 缁堟€佸懡棰樺彧杩涢摼娴忚涓庡彶锛屼笉涓婁富鍖?''
+              const SG_TERMINAL_OF = (s) => ['superseded', 'falsified', 'sublated', 'demoted', 'withdrawn'].includes(s)
     const sgRank = (a, b) => (b.e - a.e) || (b.pi - a.pi) || String(b.id).localeCompare(String(a.id))
     const sgDay = (iso) => String(iso || '').slice(0, 10)
 
@@ -5444,7 +5554,7 @@ window.__ModuleLoader__.load({
         hollow ? h(Pill, null, '尚未立论') : null,
         st ? h(Pill, { tone: c.status === 'contested' ? 'warn' : undefined }, st) : null,
         hollow && onWithdraw ? h(Btn, { sm: true, onClick: (e) => { e.stopPropagation(); onWithdraw(c) } }, '撤回') : null,
-        tech ? h('span', { className: 'v dshc-mono' }, 'π ' + Number(c.pi).toFixed(2) + ' · n ' + c.n + ' · ' + c.kind + ' · ' + c.id) : null)
+        tech ? h('span', { className: 'v dshc-mono' }, '蟺 ' + Number(c.pi).toFixed(2) + ' 路 n ' + c.n + ' 路 ' + c.kind + ' 路 ' + c.id) : null)
     }
 
     /** 两极对峙卡：在争 / 先放着 / 试用中（待验证）/ 两样都要 + 代价 */
@@ -5462,11 +5572,11 @@ window.__ModuleLoader__.load({
         k.sigma === 'coexist' && k.loss ? h('div', { className: 'dshc-note' },
           '平时偏向「' + lean + '」' + (k.loss.cost ? '，付出的是' + k.loss.cost : '') + '。') : null,
         precedent !== undefined ? h('div', { className: 'dshc-note' }, precedent || '没有可参照的旧事。') : null,
-        tech ? h('div', { className: 'dshc-sub dshc-mono' }, k.id + ' · σ=' + k.sigma + ' · π⁺ ' + k.pos.pi.toFixed(2) + ' / π⁻ ' + k.neg.pi.toFixed(2)
+        tech ? h('div', { className: 'dshc-sub dshc-mono' }, k.id + ' 路 蟽=' + k.sigma + ' 路 蟺鈦?' + k.pos.pi.toFixed(2) + ' / 蟺鈦?' + k.neg.pi.toFixed(2)
           + (k.trial_until ? ' · 试用至 ' + sgDay(k.trial_until) : '') + ' · 审议 ' + (k.deliberations || 0) + ' 次') : null)
     }
 
-    /** 旧维度仪表（三观引擎之前的十维价值 / 八维世界 / 七维人生），只读 */
+    /** 鏃х淮搴︿华琛紙涓夎寮曟搸涔嬪墠鐨勫崄缁翠环鍊?/ 鍏淮涓栫晫 / 涓冪淮浜虹敓锛夛紝鍙 */
     function SgSideMeter({ vals, world, life }) {
       const lp = life || {}
       const lifeRows = Array.isArray(lp) ? lp : (lp.items || [])
@@ -5488,10 +5598,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 三个数：它有没有为哪句话真的付过账。
-     * 违背 / 兑现 / 改主意，全部取 /sangguan/scorecard 的服务端现算结果，前端只做显示，不重算。
-     * 没发生过就写 0，不写「暂无」——0 是实话，含糊不是。
-     */
+     * 涓変釜鏁帮細瀹冩湁娌℃湁涓哄摢鍙ヨ瘽鐪熺殑浠樿繃璐︺€?     * 杩濊儗 / 鍏戠幇 / 鏀逛富鎰忥紝鍏ㄩ儴鍙?/sangguan/scorecard 鐨勬湇鍔＄鐜扮畻缁撴灉锛屽墠绔彧鍋氭樉绀猴紝涓嶉噸绠椼€?     * 娌″彂鐢熻繃灏卞啓 0锛屼笉鍐欍€屾殏鏃犮€嶁€斺€? 鏄疄璇濓紝鍚硦涓嶆槸銆?     */
     function SgLedgerBar({ sc, tech }) {
       if (!sc) return null
       const v = sc.violated || {}
@@ -5521,6 +5628,124 @@ window.__ModuleLoader__.load({
             + '三个数都是 0 的时候，是它还没为自己的哪句话付过账，不是没记。')))
     }
 
+    /* ---- 涓夊垪鍒ゆ嵁 + 鑽夌鏀朵欢绠?---- */
+    const SG_LANE = {
+      W: { name: '世界观', judge: '能预测事、经得起撞', how: '它先猜世界怎样，再看后来对不对；猜错也算数。', empty: '还没碰到需要它解释世界的冲突' },
+      L: { name: '人生观', judge: '走过哪几章、花了多久', how: '不是它说想成为谁，是它把日子真的花在哪。', empty: '还没想清楚自己要来做什么' },
+      V: { name: '价值观', judge: '选了这边、放弃了什么', how: '不是词表，是冲突时它真让了哪一步。', empty: '这段时间没出现让它非选不可的取舍' },
+    }
+    const SG_IDX = { W: '01', L: '02', V: '03' }
+    const SG_GATE = [
+      ['g1', '有另一条路', '当时也可以不那么做'],
+      ['g2', '说了代价', '放弃了什么，要具体'],
+      ['g3', '能排除', '读得出「不会怎么做」'],
+      ['g4', '不是工作说明', '把项目、代码抽掉还成立'],
+      ['g5', '有生活作证', '自动要两条跨天；手写要一条真事 + 你认'],
+    ]
+
+    function SgGates({ gates }) {
+      return h('div', { className: 'dshc-gatebar' },
+        SG_GATE.map(([k, label, hint]) => h('span', {
+          key: k,
+          className: 'dshc-gate' + (gates && gates[k] ? ' on' : ''),
+          title: (gates && gates[k] ? '过了：' : '还差：') + hint,
+        }, label)))
+    }
+
+    /** 涓€鏉¤崏绋匡細姝ｆ枃 / 鍙︿竴鏉¤矾 / 浠ｄ环 / 杈圭晫 / 璇佹嵁 / 浜旈椄锛涙敼鍒板叏杩囨墠鑳藉叆搴撱€?*/
+    function SgDraftCard({ d, base, act, tech, onDone, setMsg }) {
+      const [edit, setEdit] = useState(false)
+      const [f, setF] = useState({
+        text: d.text, alt: d.alt || '', foregone: d.foregone || '', cost_to: d.cost_to || '',
+        exclusion: d.exclusion || '', counterexample: d.counterexample || '', vouch: d.vouch === true,
+      })
+      const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }))
+      const save = () => act(() => call('POST', base + '/drafts/' + enc(d.id) + '/patch', f, true))
+        .then(() => { setEdit(false); onDone() })
+        .catch((e) => setMsg(e.message || String(e)))
+      const commit = () => act(() => call('POST', base + '/drafts/' + enc(d.id) + '/commit', {}, true))
+        .then(() => { setMsg('入库了。这一条以后会出现在「你更看重」里。'); onDone() }).catch((e) => setMsg(e.message || String(e)))
+      const drop = () => act(() => call('POST', base + '/drafts/' + enc(d.id) + '/discard', {}, true))
+        .then(() => { setMsg('丢掉了。'); onDone() })
+        .catch((e) => setMsg(e.message || String(e)))
+      const pass = !!(d.gates && d.gates.pass)
+      return h('div', { className: 'dshc-pkt' + (pass ? '' : ' blocked') },
+        h('div', { className: 'dshc-pkt-t' },
+          h('span', null, d.source === 'manual' ? '手写' : '自动'),
+          h('span', null, d.kind || '其他'),
+          h('span', { className: 'st ' + (pass ? 'ok' : 'hold') }, pass ? '五闸全过' : '待补闸')),
+        edit
+          ? h('div', null,
+            h('div', { className: 'dshc-sub' }, '正文（6–120 字）'),
+            h('textarea', { className: 'dshc-ta', value: f.text, maxLength: 120, onChange: set('text'), style: { width: '100%', minHeight: 54 } }),
+            h('div', { className: 'dshc-sub' }, '当时另一条路'),
+            h('input', { className: 'dshc-in', value: f.alt, maxLength: 200, onChange: set('alt'), style: { width: '100%' } }),
+            h('div', { className: 'dshc-sub' }, '放弃了什么'),
+            h('input', { className: 'dshc-in', value: f.foregone, maxLength: 200, onChange: set('foregone'), style: { width: '100%' } }),
+            h('div', { className: 'dshc-sub' }, '所以这件事上不会怎么做'),
+            h('input', { className: 'dshc-in', value: f.exclusion, maxLength: 200, onChange: set('exclusion'), style: { width: '100%' } }),
+            d.source === 'manual' ? h('label', { style: { display: 'block', marginTop: 6, fontSize: 13 } },
+              h('input', { type: 'checkbox', checked: f.vouch, onChange: (e) => setF((x) => ({ ...x, vouch: e.target.checked })) }), ' 这条我认，愿意为它付代价') : null,
+            h('div', { style: { marginTop: 8 } },
+              h(Btn, { sm: true, onClick: save }, '存好'),
+              h(Btn, { sm: true, ghost: true, onClick: () => setEdit(false) }, '算了')))
+          : h('div', null,
+            h('div', { style: { fontSize: 14, fontWeight: 600, lineHeight: 1.55 } }, d.text),
+            (d.vouch || !pass) ? h('div', { style: { display: 'flex', gap: 4, flexWrap: 'wrap', margin: '4px 0' } },
+              d.vouch ? h(Pill, null, '你认过') : null,
+              pass ? null : h(Pill, { tone: 'warn' }, '还差几道')) : null,
+            d.alt ? h('div', { className: 'dshc-note' }, '另一条路：' + d.alt) : null,
+            d.foregone ? h('div', { className: 'dshc-note' }, '放弃了：' + d.foregone + (d.cost_to ? '（落在' + d.cost_to + '身上）' : '')) : null,
+            d.exclusion ? h('div', { className: 'dshc-note' }, '所以这件事上不会：' + d.exclusion) : null,
+            h('div', { style: { marginTop: 6 } }, h(SgGates, { gates: d.gates })),
+            (d.evidence || []).length ? h('div', { className: 'dshc-sub', style: { marginTop: 6 } },
+              (d.evidence || []).slice(0, 3).map((e, i) => h('div', { key: i }, '· ' + (e.at || '') + ' ' + String(e.quote || '').slice(0, 70)))) : null,
+            h('div', { style: { marginTop: 8 } },
+              h(Btn, { sm: true, onClick: () => setEdit(true) }, '改'),
+              h(Btn, { sm: true, disabled: !pass, onClick: commit }, '入库'),
+              h(Btn, { sm: true, ghost: true, onClick: drop }, '丢掉')),
+            tech ? h('div', { className: 'dshc-sub dshc-mono' }, d.id + ' · ' + d.source + ' · vouch=' + d.vouch + ' · batch=' + (d.batch_key || '-') + ' · gates=' + ['g1', 'g2', 'g3', 'g4', 'g5'].map((k) => (d.gates && d.gates[k] ? 1 : 0)).join('')) : null))
+    }
+
+    /** 手写一条：字段按五闸排，边写边知道还差什么。 */
+    function SgDraftNew({ base, act, onDone, setMsg }) {
+      const [f, setF] = useState({
+        text: '', alt: '', foregone: '', cost_to: '', exclusion: '', counterexample: '',
+        vouch: false, at: '', quote: '',
+      })
+      const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }))
+      const submit = () => act(() => call('POST', base + '/drafts', {
+        text: f.text, alt: f.alt, foregone: f.foregone, cost_to: f.cost_to,
+        exclusion: f.exclusion, counterexample: f.counterexample, vouch: f.vouch,
+        evidence: f.quote.trim() ? [{ at: f.at, quote: f.quote }] : [],
+      }, true)).then((r) => {
+        if (r && r.duplicate) setMsg('这条已经在箱子里了。')
+        else {
+          setMsg(r && r.draft && r.draft.gates.pass ? '存进去了，五闸全过。' : '存进箱了；还差的那几道，旁边写着缺什么。')
+          setF({ text: '', alt: '', foregone: '', cost_to: '', exclusion: '', counterexample: '', vouch: false, at: '', quote: '' })
+        }
+        onDone()
+      }).catch((e) => setMsg(e.message || String(e)))
+      return h('div', { className: 'dshc-term' },
+        h('div', { className: 'lbl' },
+          h('span', null, 'NEW ENTRY'),
+          h('span', { style: { marginLeft: 'auto', opacity: .8 } }, '手写')),
+        h('div', { className: 'dshc-sub' }, '写一条你自己的判断。要能说出「当时还有另一条路」和「为此放弃了什么」，不然只是一句口号。'),
+        h('textarea', { className: 'dshc-ta', value: f.text, maxLength: 120, placeholder: '那句话本身（6–120 字）', onChange: set('text'), style: { width: '100%', minHeight: 54, marginTop: 6 } }),
+        h('div', { className: 'dshc-sub', style: { marginTop: 6 } }, '当时另一条路'),
+        h('input', { className: 'dshc-in', value: f.alt, maxLength: 200, placeholder: '另一个也说得通的做法', onChange: set('alt'), style: { width: '100%' } }),
+        h('div', { className: 'dshc-sub', style: { marginTop: 6 } }, '为此放弃了什么'),
+        h('input', { className: 'dshc-in', value: f.foregone, maxLength: 200, placeholder: '时间 / 面子 / 省事 / 被喜欢……要具体', onChange: set('foregone'), style: { width: '100%' } }),
+        h('div', { className: 'dshc-sub', style: { marginTop: 6 } }, '所以这件事上不会怎么做'),
+        h('input', { className: 'dshc-in', value: f.exclusion, maxLength: 200, placeholder: '读得出来的那条界线', onChange: set('exclusion'), style: { width: '100%' } }),
+        h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 } },
+          h('input', { className: 'dshc-in', type: 'date', value: f.at, onChange: set('at'), style: { flex: '0 0 150px' } }),
+          h('input', { className: 'dshc-in', value: f.quote, maxLength: 200, placeholder: '那天的一句原话（证据）', onChange: set('quote'), style: { flex: '1 1 220px' } })),
+        h('label', { style: { display: 'block', marginTop: 8, fontSize: 13 } },
+          h('input', { type: 'checkbox', checked: f.vouch, onChange: (e) => setF((x) => ({ ...x, vouch: e.target.checked })) }), ' 这条我认，愿意为它付代价'),
+        h('div', { style: { marginTop: 8 } }, h(Btn, { sm: true, primary: true, onClick: submit }, '放进草稿箱')))
+    }
+
     function SangguanPage({ aid, view, act }) {
       const tech = view === 'tech'
       const base = '/v1/agents/' + enc(aid) + '/sangguan'
@@ -5536,7 +5761,11 @@ window.__ModuleLoader__.load({
       const [ep] = useAsync(get('/epochs'), [aid, tick, on])
       const [lv] = useAsync(get('/liveness'), [aid, tick, on])
       const [tl] = useAsync(get('/timeline?days=365'), [aid, tick, on])
-      const [sc] = useAsync(get('/scorecard?days=30'), [aid, tick, on])
+      const [ln] = useAsync(get('/lanes'), [aid, tick, on])
+      const [dr] = useAsync(get('/drafts'), [aid, tick, on])
+      const [recallQ, setRecallQ] = useState('')
+      const [recallR, setRecallR] = useState(null)
+      const [newOpen, setNewOpen] = useState(false)
       const [el] = useAsync(get('/elev'), [aid, tick, on])
       const [evBefore, setEvBefore] = useState(0)
       const [ev] = useAsync(() => (on && tech ? call('GET', base + '/events?limit=30' + (evBefore ? '&before=' + evBefore : '')) : null), [aid, tick, on, tech, evBefore])
@@ -5550,6 +5779,11 @@ window.__ModuleLoader__.load({
       const [turnLayer, setTurnLayer] = useState('all')
       const [turnN, setTurnN] = useState(30)
       const [msg, setMsg] = useState('')
+      /* 璧疯崏鏄悗鍙拌窇鐨勶細寮€鐫€杩欐潯椤甸潰灏遍殧鍑犵鐪嬩竴鐪硷紝璺戝畬鑷姩鍒峰嚭鏉?*/
+      const jobRunning = !!(st.data && st.data.drafts && st.data.drafts.job && st.data.drafts.job.status === 'running')
+      const jobLive = useRef(false)
+      jobLive.current = jobRunning
+      useLive(useCallback(() => { if (jobLive.current) bump() }, []), 4000)
 
       const side = h('details', { className: 'dshc-fold', style: { marginTop: 8 } },
         h('summary', null, '旧维度仪表（只读，仅供参照）'),
@@ -5576,8 +5810,8 @@ window.__ModuleLoader__.load({
       const onOpen = (id) => setOpen((o) => (o === id ? null : id))
       const live = (l) => (layers[l] || []).filter((c) => !SG_TERMINAL_OF(c.status))
       const cores = (l) => live(l).filter((c) => c.kind === SG_CORE[l] && c.status === 'active').sort(sgRank)
-      // 承诺（kind=commit）不算价值观：它是到点要兑现的一笔账，只在「预见与回流」里露
-      const belts = (l, kind) => live(l).filter((c) => c.kind !== SG_CORE[l] && c.kind !== 'commit' && (!kind || c.kind === kind)).sort(sgRank)
+      // 鎵胯锛坘ind=commit锛変笉绠椾环鍊艰锛氬畠鏄埌鐐硅鍏戠幇鐨勪竴绗旇处锛屽彧鍦ㄣ€岄瑙佷笌鍥炴祦銆嶉噷闇?''
+              const belts = (l, kind) => live(l).filter((c) => c.kind !== SG_CORE[l] && c.kind !== 'commit' && (!kind || c.kind === kind)).sort(sgRank)
       const kOf = (l, pred) => kappas.filter((k) => k.layer === l && (!pred || pred(k)))
       const cap = (arr) => (tech ? arr : arr.slice(0, 5))
 
@@ -5603,44 +5837,93 @@ window.__ModuleLoader__.load({
         return '上回类似的事「' + (p.q || p.pos) + '」，' + (SG_BRANCH[p.branch] || '做了决定') + '，' + (p.o > 0 ? '后来证明还行' : p.o < 0 ? '后来发现不太对' : '结果还没出来') + '。'
       }
 
-      // ---- 页头：每层一句 + 纪元戳 ----
+      // ---- 三列：每列一种判据，不再共用「像不像立场」这一把尺 ----
       const stamp = (l) => {
         const c = cuts.filter((x) => x.layer === l).pop()
         const n = (S.epoch && S.epoch[l]) || 0
-        return '第 ' + n + ' 季 · ' + (c ? '自 ' + sgDay(c.at) : '自启用起')
+        return '第 ' + n + ' 季 · ' + (c ? '鑷?' + sgDay(c.at) : '自启用起')
       }
       const established = (c) => !(c.origin === 'seed' && c.pi === 0 && c.n === 0)
-      // 空着就说清为什么空着。写「尚未立论」四个字容易让人以为是坏了，
-      // 其实多半只是这段时间没出现够分量的取舍 / 冲突。
-      const SG_EMPTY_WHY = {
-        W: '还没碰到需要它解释世界的冲突',
-        L: '还没想清楚自己要来做什么',
-        V: '这段时间没出现让它非选不可的取舍',
+      const stats = (ln.data && ln.data.stats) || {}
+      const laneOnOf = (l) => !!(S.lanes && S.lanes[l])
+      async function toggleLane(l, v) {
+        try {
+          await act(() => call('PUT', base + '/config', { lanes: { ...(S.lanes || {}), [l]: v } }, true))
+          setMsg(v ? SG_LAYER[l] + '这一列打开了。' : SG_LAYER[l] + '这一列关上了。')
+          bump()
+        } catch (e) { setMsg(e.message || String(e)) }
       }
-      const headLine = (l) => {
+      /* 銆屾€庝箞闀垮嚭鏉ョ殑銆嶅彧鎶ュ凡缁忓彂鐢熺殑鏁帮紝涓嶈閬撶悊锛涙病鏈夊氨璇存病鏈夈€?*/
+      const statLine = (l) => {
+        const st = stats[l] || {}
+        if (l === 'W') {
+          if (!st.claims) return '还没有能拿去检验的看法。'
+          const nu = st.nus || {}
+          return '认下 ' + st.claims + ' 条 · ' + (st.scenes || 0) + ' 个场景里都这样 · 预言 ' + (nu.settled || 0) + ' 次，对了 ' + (nu.hit || 0) + ' 次'
+        }
+        if (l === 'L') {
+          return st.claims ? ('近 30 天有 ' + (st.invest_days || 0) + ' 天在真的检验 · 写成 ' + st.claims + ' 章') : '还没有成章的经历。'
+        }
+        return '草稿 ' + (st.drafts || 0) + ' 条等你批 · 已经入库 ' + (st.committed || 0) + ' 条'
+      }
+      const col = (l) => {
         const cs = cores(l).filter(established)
-        const bs = belts(l).filter((c) => c.status === 'active' && established(c))
-        const pick = cs.length ? cs : bs
-        if (!pick.length) return h('div', { key: l },
-          h('div', { className: 'dshc-row' },
-            h('span', { className: 'l' }, SG_LAYER[l]),
-            h('span', { className: 'dshc-sub', style: { flex: 1 } }, '尚未立论'),
-            h('span', { className: 'v dshc-sub' }, stamp(l))),
-          h('div', { className: 'dshc-note', style: { marginLeft: 76 } }, SG_EMPTY_WHY[l]))
-        return h('div', { key: l },
-          h('div', { className: 'dshc-row' }, h('span', { className: 'l' }, SG_LAYER[l]),
-            h('span', { style: { flex: 1, fontWeight: 600, cursor: 'pointer' }, onClick: () => onOpen(pick[0].id) }, pick[0].text, cs.length ? null : h('span', { className: 'dshc-sub' }, '（还只是一种说法）')),
-            h('span', { className: 'v dshc-sub' }, stamp(l))),
-          tech ? pick.slice(1).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw })) : null)
+        const bs = belts(l).filter(established)
+        const ks = kOf(l).filter((k) => k.open)
+        const on = laneOnOf(l)
+        return h('section', { key: l, className: 'dshc-sgcol', 'data-l': l },
+          h('i', { className: 'dshc-scan' }),
+          h('div', { className: 'dshc-sghead' },
+            h('span', { className: 'dshc-sgidx' }, SG_IDX[l]),
+            h('h2', null, SG_LAYER[l]),
+            h('i', { className: 'dshc-sgdot' + (on ? ' on' : '') }),
+            h('span', { className: 'dshc-sgst' + (on ? ' on' : '') }, on ? 'ON' : 'IDLE'),
+            h('span', { className: 'dshc-sub', style: { marginLeft: 'auto' } }, stamp(l))),
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' } },
+            h(Pill, { tone: on ? undefined : 'warn' }, on ? '开着' : '还没开'),
+            h('span', { className: 'dshc-sub' }, '看的是：' + SG_LANE[l].judge)),
+          cs.length ? cs.map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true }))
+            : h('div', null,
+              h('div', { style: { fontSize: 14, fontWeight: 600 } }, '灏氭湭绔嬭'),
+              h('div', { className: 'dshc-sub' }, SG_LANE[l].empty),
+              h(SgSeed, { label: SG_LEAD[l], layer: l, base, act, done: bump })),
+          l === 'W' && bs.length ? h('div', null, cap(bs).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
+          l === 'L' && belts('L', 'role').length ? h('div', null,
+            h('div', { className: 'dshc-sub' }, '它在关系里的角色'),
+            cap(belts('L', 'role')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
+          l === 'V' && belts('V', 'norm').length ? h('div', null,
+            h('div', { className: 'dshc-sub' }, '平时怎么做'),
+            cap(belts('V', 'norm')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
+          l === 'V' && belts('V', 'ideal').length ? h('div', null,
+            h('div', { className: 'dshc-sub' }, '仰望什么'),
+            cap(belts('V', 'ideal')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
+          ks.length ? ks.slice(0, tech ? 3 : 1).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw, precedent: precedentLine(k) })) : null,
+          l === 'L' ? arc : null,
+          h('div', { className: 'dshc-note' }, statLine(l)),
+          h('div', { className: 'dshc-sub' }, SG_LANE[l].how),
+          on ? null : h('div', null, h(Btn, { sm: true, ghost: true, onClick: () => toggleLane(l, true) }, '打开这一列')),
+          tech ? h('div', { className: 'dshc-sub dshc-mono' }, 'lane=' + on + ' 路 claims=' + cs.length + ' 路 belts=' + bs.length + ' 路 kappas=' + ks.length) : null)
       }
-      const busy = kappas.filter((k) => k.sigma === 'struggle' || k.sigma === 'sub_trial')
-      const judgeBar = busy.length
-        ? h('div', { style: { marginTop: 10 } },
-          h(SgPair, { k: busy[0], tech, onOpen, onWithdraw, precedent: precedentLine(busy[0]) }),
-          busy.length > 1 ? h('div', { className: 'dshc-sub' }, '另有 ' + (busy.length - 1) + ' 件在想') : null)
-        : null
+      /* 鎷夸竴鍙ヨ瘽璇曞彫鍥烇細鐪嬪緱瑙佸畠杩欎竴浼氬効浼氭兂璧峰摢鏉★紝涔熺湅寰楄鍒殑娌¤濉炶繘鍘汇€?*/
+      async function tryRecall() {
+        const text = recallQ.trim()
+        if (!text) return
+        try {
+          const [rec, pv] = await Promise.all([
+            call('GET', base + '/recall?text=' + enc(text)),
+            call('GET', base + '/inject/preview?text=' + enc(text)),
+          ])
+          setRecallR({
+            text,
+            core: (rec && rec.core) || [],
+            picked: (rec && rec.picked) || [],
+            lines: (pv && pv.view && pv.view.lines) || [],
+            tokens: pv && pv.view ? pv.view.tokens : 0,
+          })
+        } catch (e) { setMsg(e.message || String(e)) }
+      }
 
-      // ---- 叙事弧 ----
+      // ---- 鍙欎簨寮?----
       const chapters = belts('L', 'chapter')
       const arc = h('div', null,
         summaries.length ? h('div', { style: { display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 } },
@@ -5649,18 +5932,63 @@ window.__ModuleLoader__.load({
           : null,
         chapters.length ? cap(chapters).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw })) : h('div', { className: 'dshc-sub' }, '还没有成章的经历。'))
 
-      // ---- 预见与回流 ----
+      // ---- 棰勮涓庡洖娴?----
       const preds = (pr.data && pr.data.predictions) || []
-      const predList = !preds.length ? h('div', { className: 'dshc-sub' }, '还没做过可以检验的预料。') : h('div', { className: 'dshc-list' },
-        cap(preds).map((p) => h('div', { key: p.id, className: 'dshc-row', style: { alignItems: 'baseline' } },
-          h('span', { style: { flex: 1 } }, '预计' + p.expect + '（把握 ' + Math.round(p.p * 10) + ' 成）',
-            h('span', { className: 'dshc-sub' }, ' → ' + (p.outcome === 'hit' ? '对了' : p.outcome === 'miss' ? '没对' : p.outcome === 'void' ? '作废' : p.overdue ? '到期了，还没看到结果' : '等着看（' + sgDay(p.due_at) + ' 前）'))),
-          p.outcome === 'pending' ? h('span', null,
-            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'nu', target_id: p.id, sign: 1 }, '记下了：这次预料对了。') }, '对'),
-            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'nu', target_id: p.id, sign: -1 }, '记下了：这次预料不对。') }, '不对')) : null,
-          tech ? h('span', { className: 'v dshc-mono' }, p.id) : null)))
+      /* 一条预见要说清三件事：等到哪天、结局是什么、凭什么这么判。分三列，不挤成一句。 */
+      const PRED_VOID = {
+        no_records: '没留下能查的记录，判不了',
+        no_evidence: '材料不够判，不算猜错',
+        no_ref: '引的记录对不上号，这次不算',
+        claim_retired: '依附的那句话已经收回，不是判错',
+        claim_merged: '并进了别的说法，不是判错',
+      }
+      /* 老账没写 why 的，靠命题正文「我答应…」认回承诺类，别把「没做到」写成「没对」 */
+      const isPledge = (p, promised) => promised || p.why === 'pledge_done' || p.why === 'pledge_miss'
+      const predTag = (p, promised) => {
+        if (p.outcome === 'hit') return isPledge(p, promised) ? '做到了' : '对了'
+        if (p.outcome === 'miss') return isPledge(p, promised) ? '没做到' : '没对'
+        if (p.outcome === 'void') return '作废'
+        return p.overdue ? '到期了' : '等着看'
+      }
+      const predNote = (p, promised) => {
+        if (p.outcome === 'void') return PRED_VOID[p.why] || '作废时没记原因'
+        if (p.outcome === 'hit') return isPledge(p, promised) ? '到期那晚看到了正面证据' : '到期那晚按记录判对了'
+        if (p.outcome === 'miss') return isPledge(p, promised) ? '到期那晚没看到做到的证据' : '到期那晚记录对不上'
+        if (p.overdue) return sgDay(p.due_at) + ' 就到期了，等夜里那一趟判'
+        return sgDay(p.due_at) + ' 那天夜里判'
+      }
+      const predRow = (p) => {
+        const promised = /^我答应/.test(p.claim || '')
+        const body = promised ? String(p.claim).replace(/^我答应[：:]?/, '') : p.expect
+        return h('div', { key: p.id, className: 'dshc-row', style: { alignItems: 'flex-start' } },
+          h('span', { className: 'dshc-sub', style: { flex: '0 0 auto', minWidth: 54 } }, predTag(p, promised)),
+          h('div', { style: { flex: 1 } },
+            h('div', null, (promised ? '答应过：' : '预计：') + body),
+            h('div', { className: 'dshc-sub' }, predNote(p, promised) + (promised ? '' : ' · 把握 ' + Math.round(p.p * 10) + ' 成'))),
+          p.outcome === 'pending' ? h('span', { style: { flex: '0 0 auto', whiteSpace: 'nowrap' } },
+            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'nu', target_id: p.id, sign: 1 }, '记下了：这条留作证据，到期那晚一起判。') }, '对'),
+            h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'nu', target_id: p.id, sign: -1 }, '记下了：这条留作证据，到期那晚一起判。') }, '不对')) : null,
+          tech ? h('span', { className: 'v dshc-mono' }, p.id + (p.why ? ' ' + p.why : '')) : null)
+      }
+      const predList = !preds.length ? h('div', { className: 'dshc-sub' }, '还没做过可以检验的预料。') : (() => {
+        const live = preds.filter((p) => p.outcome === 'pending')
+        const done = preds.filter((p) => p.outcome !== 'pending')
+        // 判了对错的排前面，作废的堆后面：作废是「没判成」，不该盖住真的结果
+        const settled = [...done.filter((p) => p.outcome !== 'void'), ...done.filter((p) => p.outcome === 'void')]
+        const take = (arr) => (tech ? arr : arr.slice(0, 8))
+        const head = (title, rows) => title + '（' + rows.length + '）' + (!tech && rows.length > 8 ? '，只列最近 8 条' : '')
+        return h('div', null,
+          live.length ? h('div', null,
+            h('div', { className: 'dshc-sub', style: { marginBottom: 4 } }, head('还在等', live)),
+            h('div', { className: 'dshc-list' }, take(live).map(predRow))) : null,
+          settled.length ? h('div', { style: { marginTop: live.length ? 10 : 0 } },
+            h('div', { className: 'dshc-sub', style: { marginBottom: 4 } }, head('已经判过', settled)),
+            h('div', { className: 'dshc-list' }, take(settled).map(predRow))) : null,
+          h('div', { className: 'dshc-note', style: { marginTop: 8 } },
+            '「对 / 不对」只是留一条证据，不当场改结果；到期那晚再看记录判。作废不算猜错，不进准确率。'))
+      })()
 
-      // ---- 它最近在想什么 ----
+      // ---- 瀹冩渶杩戝湪鎯充粈涔?----
       const answered = new Set(allEv.filter((e) => e.type === 'INQUIRY' && e.payload && e.payload.answer_of).map((e) => e.payload.answer_of))
       const asks = allEv.filter((e) => e.type === 'INQUIRY' && e.payload && e.payload.mode === 'ask' && e.payload.question && !answered.has(e.id)).slice(0, 3)
       const thinking = allEv.filter((e) => ['INQUIRY', 'KAPPA_OPEN', 'DELIBERATE', 'NU_RESOLVE'].includes(e.type) && !(e.payload && e.payload.answer_of)).slice(0, 5)
@@ -5669,7 +5997,7 @@ window.__ModuleLoader__.load({
         asks.map((e) => h(Card, { key: e.id, style: { marginBottom: 8 } },
           h('div', null, '它想问你：', h('b', null, e.payload.question)),
           e.payload.target_type === 'claim' ? h('div', { style: { marginTop: 6 } },
-            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: e.payload.target_id, sign: 1, inquiry_id: e.id }, '它听到了。') }, '是这样'),
+            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: e.payload.target_id, sign: 1, inquiry_id: e.id }, '对') }, '是这样'),
             h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'claim', target_id: e.payload.target_id, sign: -1, inquiry_id: e.id }, '它听到了。') }, '不是这样')) : null)),
         thinking.length ? h('div', { className: 'dshc-list' }, thinking.map((e) => h('div', { key: e.id, className: 'dshc-row' },
           h('span', { className: 'l' }, sgDay(e.at).slice(5)), h('span', { style: { flex: 1 } }, e.word + (e.about.length ? '：' + e.about.join('；') : ''))))) : h('div', { className: 'dshc-sub' }, '最近很安静。'),
@@ -5677,7 +6005,7 @@ window.__ModuleLoader__.load({
           + ' · 用户活跃 ' + (L.user_active ? '是' : '否') + ' · r_J ' + (L.r_J == null ? '—' : L.r_J) + ' · 降权命题 ' + (L.low_weight || 0)
           + '\n' + ['W', 'L', 'V'].map((l) => l + ' churn ' + ((L.layers && L.layers[l] && L.layers[l].churn.churn) == null ? '—' : Number(L.layers[l].churn.churn).toFixed(2)) + (L.layers && L.layers[l] && L.layers[l].dogmatic ? ' 教条' : '')).join(' · ')) : null)
 
-      // ---- 史：转折时间线 ----
+      // ---- 鍙诧細杞姌鏃堕棿绾?----
       const turns = allEv.filter((e) => SG_TURN.includes(e.type) && (turnLayer === 'all' || e.layer === turnLayer))
       const history = h('div', null,
         h(Seg, { items: [['all', '全部'], ['W', '世界观'], ['L', '人生观'], ['V', '价值观']], value: turnLayer, onChange: setTurnLayer }),
@@ -5691,32 +6019,32 @@ window.__ModuleLoader__.load({
           summaries.slice(1).map((s) => h('div', { key: s.id, className: 'dshc-row' }, h('span', { className: 'l' }, sgDay(s.at)), h('span', { style: { flex: 1 } }, h('b', null, s.chapter || ''), '　', s.at_the_time || '', s.hindsight ? '（回头看：' + s.hindsight + '）' : ''),
             tech ? h('span', { className: 'v dshc-mono' }, '#' + s.from_seq + '–' + s.to_seq) : null))) : null)
 
-      // ---- 选中命题：为什么 + 链 + 对 / 不对 ----
+      // ---- 閫変腑鍛介锛氫负浠€涔?+ 閾?+ 瀵?/ 涓嶅 ----
       const C = chain.data
       const drawer = open ? h(Card, { style: { marginTop: 8, borderColor: 'var(--accent)' } },
         chain.loading && !C ? h(Empty, null, '读取…') : chain.error ? h(LoadErr, { error: chain.error }) : C ? h('div', null,
           h('div', { style: { fontWeight: 600, marginBottom: 6 } }, C.claim.text, SG_STATUS[C.claim.status] ? h(Pill, null, SG_STATUS[C.claim.status]) : null),
           h('div', { className: 'dshc-note' }, why.data ? why.data.sentence : '…'),
           !SG_TERMINAL_OF(C.claim.status) ? h('div', { style: { margin: '6px 0' } },
-            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: 1 }, '记下了：你认同这一条。') }, '对'),
+            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: 1 }, '对') }, '瀵?'),
             h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: -1 }, '记下了：你觉得这一条不对。') }, '不对')) : null,
           C.ancestors.length || C.successors.length ? h('div', { className: 'dshc-list' },
             (C.ancestors.length > 12 ? [...C.ancestors.slice(0, 6), null, ...C.ancestors.slice(-6)] : C.ancestors).slice().reverse().map((a, i) => a
-              ? h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '之前'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))
+              ? h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '֮ǰ'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))
               : h('div', { key: 'gap' + i, className: 'dshc-sub' }, '…')),
             C.successors.map((a) => h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '之后'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))))
             : null,
-          tech ? h(Tech, null, C.claim.id + ' · ' + C.claim.layer + '/' + C.claim.kind + ' · π ' + C.claim.pi + ' · e ' + C.claim.e + ' · 纪元 ' + C.claim.epoch + '\n'
+          tech ? h(Tech, null, C.claim.id + ' 路 ' + C.claim.layer + '/' + C.claim.kind + ' 路 蟺 ' + C.claim.pi + ' 路 e ' + C.claim.e + ' 路 绾厓 ' + C.claim.epoch + '\n'
             + C.events.slice(-12).map((e) => '#' + e.seq + ' ' + sgDay(e.at) + ' ' + e.type + (e.precedent_ids && e.precedent_ids.length ? ' 先例 ' + e.precedent_ids.join(',') : '')).join('\n')) : null)
           : null,
         h('div', { style: { textAlign: 'right' } }, h('a', { href: '#', onClick: (e) => { e.preventDefault(); setOpen(null) } }, '收起'))) : null
 
-      // ---- tech：注入预览 / 体征 / 事件账 / 换代审批 ----
+      // ---- tech锛氭敞鍏ラ瑙?/ 浣撳緛 / 浜嬩欢璐?/ 鎹唬瀹℃壒 ----
       const props = (el.data && el.data.proposals) || []
       const evs = (ev.data && ev.data.events) || []
       const techBox = tech ? h('div', null,
         h(Sec, { title: '注入（' + (S.inject.mode === 'live' ? '已进入说话' : '影子期') + '）', desc: '影子期 ' + S.inject.shadow_days + ' / 7 天' + (S.inject.ready ? '，可以切到真注入' : '') },
-          h(Card, null, h(Tech, null, pv.data ? (pv.data.view.text || '（无链头，不注入）') + '\n— ' + pv.data.view.tokens + ' / ' + pv.data.view.budget + ' tokens · 变动 ' + pv.data.log.changes + ' 次' : '…'),
+          h(Card, null, h(Tech, null, pv.data ? (pv.data.view.text || '（无链头，不注入）') + '\n—— ' + pv.data.view.tokens + ' / ' + pv.data.view.budget + ' tokens · 变动 ' + pv.data.log.changes + ' 次' : '——'),
             h('div', { style: { marginTop: 6 } }, h(Btn, {
               sm: true, ghost: true,
               onClick: () => act(() => call('PUT', base + '/config', { inject: S.inject.mode === 'live' ? 'shadow' : 'live', force: !S.inject.ready }, true)).then(bump).catch((e) => setMsg(e.message || String(e))),
@@ -5730,48 +6058,85 @@ window.__ModuleLoader__.load({
               h('span', { className: 'l' }, name),
               h('span', { style: { flex: 1 } }, cur === 'engine' ? '已经在用新的' : (ready.ok ? '可以切' : '还差：' + (ready.reasons || []).join('、'))),
               cur === 'engine'
-                ? h(Btn, { sm: true, ghost: true, onClick: () => act(() => call('PUT', base + '/config', { replace: { ...S.config.replace, [layer]: 'meter' } }, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '退回旧表')
+                ? h(Btn, { sm: true, ghost: true, onClick: () => act(() => call('PUT', base + '/config', { replace: { ...S.config.replace, [layer]: 'meter' } }, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '退回旧版')
                 : h(Btn, { sm: true, disabled: !ready.ok, onClick: () => act(() => call('PUT', base + '/config', { replace: { ...S.config.replace, [layer]: 'engine' } }, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '切过去'))
           }))),
         h(Sec, { title: '体征与预算' }, h(Card, null, h(Tech, null,
           '账本 seq ' + S.seq + ' · 判定 ' + S.judge.calls + ' 次 / 失败 ' + S.judge.fails + (S.judge.degraded ? '（降级中）' : '') + ' · 待放置候选 ' + S.pending.candidates
-          + '\n' + Object.entries(S.budget.pools).map(([p, v]) => p + ' ' + v.used + '/' + v.cap).join(' · ') + ' · 月 tokens ' + S.budget.tokens.month + '/' + S.budget.tokens.cap
+          + '\n' + Object.entries(S.budget.pools).map(([p, v]) => p + ' ' + v.used + '/' + v.cap).join(' 路 ') + ' 路 鏈?tokens ' + S.budget.tokens.month + '/' + S.budget.tokens.cap
           + ((L.theta_changes || []).length ? '\n参数调整：' + L.theta_changes.map((t) => sgDay(t.at) + ' ' + t.key + '=' + t.value).join('；') : '')))),
         h(Sec, { title: '换代提案', desc: '旧核心持续受挫时提出；人生观 / 价值观必须你批。' },
           !props.length ? h(Empty, null, '没有待批的提案') : props.map((p) => h(Card, { key: p.id, style: { marginBottom: 8 } },
             h('div', null, SG_LAYER[p.layer], ' · 新核心：', h('b', null, p.new_core || '')),
             p.scope ? h('div', { className: 'dshc-note' }, '旧核心降为：仍适用于' + p.scope) : null,
             p.meta ? h('div', { className: 'dshc-sub' }, p.meta) : null,
-            h('div', { className: 'dshc-sub' }, '截止 ' + sgDay(p.due) + ' · ' + p.id),
+            h('div', { className: 'dshc-sub' }, '鎴 ' + sgDay(p.due) + ' 路 ' + p.id),
             h('div', null,
               h(Btn, { sm: true, primary: true, onClick: () => act(() => call('POST', base + '/elev/' + enc(p.id) + '/approve', {}, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '批准'),
               h(Btn, { sm: true, ghost: true, onClick: () => act(() => call('POST', base + '/elev/' + enc(p.id) + '/reject', {}, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '拒绝'))))),
         h(Sec, { title: '事件账', right: evBefore ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(0) }, '回到最新') : null },
           h(Card, null, ev.error ? h(LoadErr, { error: ev.error }) : h(Tech, null, evs.map((e) => '#' + e.seq + ' ' + e.at.slice(0, 16) + ' ' + e.type + (e.layer ? '(' + e.layer + ')' : '') + ' ' + e.actor + (e.about.length ? ' · ' + e.about.join('；') : '')).join('\n') || '（空）'),
-            ev.data && ev.data.next_before ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(ev.data.next_before) }, '更早') : null))) : null
+            ev.data && ev.data.next_before ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(ev.data.next_before) }, '鏇存棭') : null))) : null
+
+      // ---- 鑽夌绠?----
+      const drafts = (dr.data && dr.data.drafts) || []
+      const counts = (dr.data && dr.data.counts) || {}
+      const job = (S.drafts && S.drafts.job) || (dr.data && dr.data.job) || null
+      const draftBox = h('div', null,
+        h('div', { className: 'dshc-inbox-h' },
+          h('span', null, 'INBOX'),
+          h('span', { style: { color: 'var(--ink)' } }, '寰呮壒 ' + (counts.draft || drafts.length || 0)),
+          h('span', null, '鍏ュ簱 ' + (counts.committed || 0)),
+          h('span', null, '丢掉 ' + (counts.discarded || 0)),
+          h('span', { style: { marginLeft: 'auto' } }, jobRunning ? 'RUNNING' : 'IDLE')),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
+          h('div', { className: 'dshc-sub', style: { flex: '1 1 220px' } },
+            jobRunning ? '正在翻最近的取舍…'
+              : job && job.status === 'error' ? '上一轮没跑完：' + (job.error || '')
+                : job && job.status === 'done' ? '上一轮：新进 ' + (job.created || 0) + ' 条草稿。'
+                  : '还没起草过。可以先点一下，也可以自己写一条。'),
+          h(Btn, { sm: true, disabled: jobRunning, onClick: () => act(() => call('POST', base + '/drafts/generate', {}, true)).then(() => { setMsg('开始翻最近的取舍了。'); bump() }).catch((e) => setMsg(e.message || String(e))) }, '现在起草'),
+          h(Btn, { sm: true, ghost: true, onClick: () => setNewOpen((v) => !v) }, newOpen ? '收起手写' : '写一条')),
+        newOpen ? h(SgDraftNew, { base, act, onDone: bump, setMsg }) : null,
+        !drafts.length ? h(Empty, null, '这几天没有值得写成三观的事。') : drafts.map((d) => h(SgDraftCard, { key: d.id, d, base, act, tech, onDone: bump, setMsg })),
+        (counts.committed || counts.discarded) ? h('div', { className: 'dshc-note', style: { marginTop: 8 } }, '已经入库 ' + (counts.committed || 0) + ' 条 · 丢掉 ' + (counts.discarded || 0) + ' 条') : null)
+
+      // ---- 鎷夸竴鍙ヨ瘽璇曞彫鍥?----
+      const recallBox = h('div', { style: { marginTop: 2 } },
+        h('div', { className: 'dshc-radar' },
+          h('i', { className: 'dshc-ping' }),
+          h('span', { className: 'dshc-sub', style: { flex: '0 0 auto' } }, '拿一句话试试它会想起什么'),
+          h('input', { className: 'dshc-in', style: { flex: '1 1 220px' }, value: recallQ, maxLength: 80, placeholder: '比如：这次要不要先说难听的那句', onChange: (e) => setRecallQ(e.target.value) }),
+          h(Btn, { sm: true, disabled: !recallQ.trim(), onClick: tryRecall }, '试试')),
+        recallR ? h('div', { style: { marginTop: 6 } },
+          h('div', { className: 'dshc-sub' }, tech ? '这一刻会想起：' + (recallR.tokens || 0) + ' tokens）：' : '这一刻会想起：'),
+          recallR.lines.length
+            ? recallR.lines.map((l, i) => h('div', { key: i, className: 'dshc-recall-l' },
+              h('span', { className: 'n' }, String(i + 1).padStart(2, '0')), h('span', null, l)))
+            : h('div', { className: 'dshc-sub' }, '这一句没有勾到别的；常驻的三条会一直在。'),
+          tech ? h(Tech, null, 'core ' + (recallR.core || []).length + ' 路 picked ' + (recallR.picked || []).length
+            + ((recallR.picked || []).length ? '\n' + recallR.picked.map((x) => '  ' + x.id + ' score ' + x.score).join('\n') : '')) : null) : null)
 
       return h('div', null,
         msg ? h('div', { className: 'dshc-note', style: { marginBottom: 8 } }, msg) : null,
         h(Sec, { title: '三观', desc: S.inject.mode === 'live' ? '这些看法已经在影响它说话。' : '这些看法还在影子期：只记录，不影响它说话（' + S.inject.shadow_days + ' / 7 天）。' },
-          h(Card, null, h(SgLedgerBar, { sc: sc.data, tech }), ['W', 'L', 'V'].map(headLine), judgeBar), drawer),
-        h(Sec, { title: '世界观', desc: '它认定世界是怎样的，以及围着它的辅助说法。' },
-          h(Card, null,
-            cores('W').length ? cores('W').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '硬核', layer: 'W', base, act, done: bump }),
-            cap(belts('W')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))),
-          kOf('W').filter((k) => k.open).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw }))),
-        h(Sec, { title: '人生观', desc: SG_LEAD.L + '做什么的；走过哪几章。' },
-          h(Card, null,
-            cores('L').length ? cores('L').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '志向', layer: 'L', base, act, done: bump }),
-            arc,
-            belts('L', 'role').length ? h('div', { style: { marginTop: 8 } }, h('div', { className: 'dshc-sub' }, '它在关系里的角色'), cap(belts('L', 'role')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null),
-          kOf('L').filter((k) => k.open).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw }))),
-        h(Sec, { title: '价值观', desc: SG_LEAD.V + '什么；冲突时偏向哪边、付出什么。' },
-          h(Card, null,
-            cores('V').length ? cores('V').map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true })) : h(SgSeed, { label: '原则', layer: 'V', base, act, done: bump }),
-            belts('V', 'norm').length ? h('div', { style: { marginTop: 6 } }, h('div', { className: 'dshc-sub' }, '平时怎么做'), cap(belts('V', 'norm')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
-            belts('V', 'ideal').length ? h('div', { style: { marginTop: 6 } }, h('div', { className: 'dshc-sub' }, '仰望什么'), cap(belts('V', 'ideal')).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null),
-          kOf('V').filter((k) => k.open).map((k) => h(SgPair, { key: k.id, k, tech, onOpen, onWithdraw }))),
-        h(Sec, { title: '预见与回流', desc: '它用自己的看法做过的预料，以及后来怎样。你可以告诉它对不对。' }, h(Card, null, pr.error ? h(LoadErr, { error: pr.error }) : predList)),
+          h('div', { className: 'dshc-sgwrap' },
+            h('div', { className: 'dshc-sgbar' },
+              h('span', null, '鈼?'),
+              h('b', null, 'SANGGUAN'),
+              h('span', null, '三列判据'),
+              h('i', { className: 'ln' }),
+              h('span', { className: 'sig' }, ['W', 'L', 'V'].map((l) => h('i', {
+                key: l,
+                className: laneOnOf(l) ? 'on' : '',
+                style: { height: laneOnOf(l) ? 8 : 4 },
+              })))),
+            h('div', { className: 'dshc-sg3' }, ['W', 'L', 'V'].map(col)),
+            recallBox),
+          drawer),
+        h(Sec, { title: '草案筐', desc: dr.error ? '读取出错：' + dr.error : '只有你批过的，才会真的写进它的价值观；五问全过才能入库。' },
+          h(Card, null, draftBox)),
+        h(Sec, { title: '预见与回流', desc: '它用自己的看法做过的预料，以及后来怎样。对错在到期那晚按记录判；你点对 / 不对，是给它留一条证据。' }, h(Card, null, pr.error ? h(LoadErr, { error: pr.error }) : predList)),
         h(Sec, { title: '它最近在想什么' }, h(Card, null, liveBox)),
         h(Sec, { title: '史', desc: '它的看法在哪些时候转了弯。' }, h(Card, null, tl.error ? h(LoadErr, { error: tl.error }) : history)),
         techBox,
@@ -5783,7 +6148,7 @@ window.__ModuleLoader__.load({
       const [trange, setTrange] = useState(7)
       const [a, reloadA] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect'), [aid, tick])
       const [eps] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/episodes'), [aid, tick])
-      /* 走势只读库里的真样本：不铺假想曲线 */
+      /* 璧板娍鍙搴撻噷鐨勭湡鏍锋湰锛氫笉閾哄亣鎯虫洸绾?*/
       const [trend, reloadT] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/trend?days=' + trange), [aid, tick, trange])
       const [radar] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/affect/radar'), [aid, tick])
       const [cond, reloadC] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/condition'), [aid, tick])
@@ -5796,11 +6161,11 @@ window.__ModuleLoader__.load({
       const [epLimit, setEpLimit] = useState(1)
       const metricSlice = useMetricSlice(aid, 17, 25)
       /* 快情绪按分钟回落、慢情绪按小时走：页面开着就隔一会儿重取一次，
-         不然停在开页那一刻的快照上，看着就像「算法没更新」。 */
+         涓嶇劧鍋滃湪寮€椤甸偅涓€鍒荤殑蹇収涓婏紝鐪嬬潃灏卞儚銆岀畻娉曟病鏇存柊銆嶃€?*/
       useLive(() => { reloadA(); reloadT() }, 10000)
       const cur = a.data || {}
       const label = AFFECT_KEY[cur.primary_label] || cur.primary_label || '—'
-      /* 最新那条消息被判断成什么（还没被惯性压过的原始判断） */
+      /* 鏈€鏂伴偅鏉℃秷鎭鍒ゆ柇鎴愪粈涔堬紙杩樻病琚儻鎬у帇杩囩殑鍘熷鍒ゆ柇锛?*/
       const latestRaw = (() => {
         const e = (eps.data && eps.data[0]) || null
         if (!e) return ''
@@ -5840,14 +6205,14 @@ window.__ModuleLoader__.load({
         const mood = Number(cur.mood)
         return Number.isFinite(mood) ? (mood - 0.5) * 2 : 0
       })()
-      /* 越积极越活泼（亮、快、往上飘）；越消极越消沉（暗、慢、往下沉） */
+      /* 瓒婄Н鏋佽秺娲绘臣锛堜寒銆佸揩銆佸線涓婇锛夛紱瓒婃秷鏋佽秺娑堟矇锛堟殫銆佹參銆佸線涓嬫矇锛?*/
       const look = emoLook(tNow, cur.intensity)
 
       return h('div', null,
         h(LoadErr, { error: a.error || eps.error, retry: () => { reloadA(); setTick((t) => t + 1) } }),
-        /* 此刻 + 走势合成一张卡：上面是「现在什么状态」，下面是「它怎么走到这一步」 */
+        /* 姝ゅ埢 + 璧板娍鍚堟垚涓€寮犲崱锛氫笂闈㈡槸銆岀幇鍦ㄤ粈涔堢姸鎬併€嶏紝涓嬮潰鏄€屽畠鎬庝箞璧板埌杩欎竴姝ャ€?*/
         h(Sec, {
-          title: view === 'user' ? '情绪' : '主情绪（label / intensity / PAD）',
+        title: view === 'user' ? '它的变化' : '自动变更（C4 · 只读）',
           desc: h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 12px' } },
             h(TrendNow, { data: trend.data || null, raw: latestRaw, cur }),
             h('span', { style: { opacity: 0.5 } },
@@ -5906,7 +6271,7 @@ window.__ModuleLoader__.load({
                     shown.map((it) => h('span', { key: it[0], title: it[2] },
                       it[0] + ' ' + sg(Number(it[1])))))
                 })())),
-            /* PAD 是旧模型的说法，界面上不再摆：愉悦还喂着快情绪，活力只影响记忆权重，掌控没人读 */
+            /* PAD 鏄棫妯″瀷鐨勮娉曪紝鐣岄潰涓婁笉鍐嶆憜锛氭剦鎮﹁繕鍠傜潃蹇儏缁紝娲诲姏鍙奖鍝嶈蹇嗘潈閲嶏紝鎺屾帶娌′汉璇?*/
             h('div', { style: { height: 1, background: 'var(--line)', opacity: 0.6, margin: '14px 0 10px' } }),
             h('div', { className: 'dshc-form', style: { marginBottom: 8 } },
               [[1, '一天'], [7, '一周'], [30, '一月'], [365, '一年']].map(([d, t]) =>
@@ -5937,10 +6302,10 @@ window.__ModuleLoader__.load({
           const rows = AFFECT_ORDER.filter((k) => Number(dist[k]) > 0.004)
             .sort((x, y) => Number(dist[y]) - Number(dist[x]))
           return h(Sec, {
-            title: '它现在觉得你：',
+          title: '最近的情绪事件',
             desc: view === 'user'
-              ? '这是它读完你刚才那句话，觉得你此刻的情绪。猜错了就点「不对」：它会把你说的事实记下来，下一次先按这个读。'
-              : '模型 user_scores 的读数（按你的反馈校准后）。点「不对」写下实际情绪，会进 8×8 混淆矩阵，下一轮共情直接用。',
+          ? '它想改自己的提案先放这里。'
+          : 'C1–C3 必过影子（C1 40 轮 / C2·C3 20 轮）；批准才扣令牌并生效。',
           },
             h(Card, null,
               h('div', { className: 'dshc-readhead' },
@@ -5977,7 +6342,7 @@ window.__ModuleLoader__.load({
               '学到的分布拿去算共情 e_user，也写进下一轮提示词\n' +
               (st.confusions && st.confusions.length
                 ? '它学到的偏差：' + st.confusions.map((c) =>
-                  (AFFECT_KEY[c.guess] || c.guess) + '→' + (AFFECT_KEY[c.actual] || c.actual) + '×' + c.count).join(' / ')
+                  (AFFECT_KEY[c.guess] || c.guess) + '鈫?' + (AFFECT_KEY[c.actual] || c.actual) + '脳' + c.count).join(' / ')
                 : '它学到的偏差：还没有')) : null)
         })(),
 
@@ -6005,7 +6370,7 @@ window.__ModuleLoader__.load({
               res.edges && res.edges.fired && res.edges.fired.length
                 ? h(Row, { label: '关系边', value: res.edges.fired.join(', ') }) : null) : null)),
 
-        /* 事件闸门：on = 只有过闸的消息才成为一次情绪事件 */
+        /* 浜嬩欢闂搁棬锛歰n = 鍙湁杩囬椄鐨勬秷鎭墠鎴愪负涓€娆℃儏缁簨浠?*/
         h(Sec, {
           techOnly: true,
           title: (gates.data && gates.data.mode === 'on') ? '事件闸门' : '事件闸门（影子）',
@@ -6031,8 +6396,8 @@ window.__ModuleLoader__.load({
                       h(Pill, { tone: 'warn' }, '会成事件'),
                       h('div', { className: 't' }, String(it.cause || '（无原文）').slice(0, 42)),
                       h('div', { className: 'm dshc-mono' },
-                        'sig ' + Number(it.sig).toFixed(2) + ' · ' + (AFFECT_KEY[it.label] || it.label) +
-                        ' · ' + String(it.at || '').slice(5, 16)))))
+                        'sig ' + Number(it.sig).toFixed(2) + ' 路 ' + (AFFECT_KEY[it.label] || it.label) +
+                        ' 路 ' + String(it.at || '').slice(5, 16)))))
                   : null)
             }
             const stat = (k, v) => h('div', { style: { minWidth: 64 } },
@@ -6057,15 +6422,15 @@ window.__ModuleLoader__.load({
                   h(Pill, { tone: it.gate ? 'warn' : undefined }, it.gate ? (g.mode === 'on' ? '成事件' : '会成事件') : '不成事件'),
                   h('div', { className: 't' }, String(it.cause || '（无原文）').slice(0, 42)),
                   h('div', { className: 'm dshc-mono' },
-                    'sig ' + Number(it.sig).toFixed(2) + ' · ' + (AFFECT_KEY[it.label] || it.label) +
-                    ' · ' + String(it.at || '').slice(5, 16)))))
+                    'sig ' + Number(it.sig).toFixed(2) + ' 路 ' + (AFFECT_KEY[it.label] || it.label) +
+                    ' 路 ' + String(it.at || '').slice(5, 16)))))
             )
           })())),
 
-        /* 情绪历史（日历热力 + 双折线）已删：走势图已经把「这段时间怎么走的」说清楚了 */
+        /* 鎯呯华鍘嗗彶锛堟棩鍘嗙儹鍔?+ 鍙屾姌绾匡級宸插垹锛氳蛋鍔垮浘宸茬粡鎶娿€岃繖娈垫椂闂存€庝箞璧扮殑銆嶈娓呮浜?*/
         h(Sec, {
-          title: '最近的情绪事件',
-          desc: '只记过闸的那些：每一条记着触发它的那句话、它当时读到的你、它自己的情绪。哪条读错了，当场就能改。',
+          title: '同一性盲测',
+          desc: '5 句探针，检查称呼 / 禁用词 / 口头禅一致性；目标 ≥ 0.80。',
           right: h('select', {
             className: 'dshc-sel', style: { width: 92 },
             value: String(epLimit),
@@ -6093,7 +6458,7 @@ window.__ModuleLoader__.load({
                       Number(it.self.intensity || 0).toFixed(2) +
                       (it.self.phase === 'rise' ? ' ↑上升中' : '') +
                       (Number(it.self.renewals) > 0 ? ' · 续' + Number(it.self.renewals) : '') +
-                      ' · ' + String(it.at || '').slice(5, 16))),
+                      ' 路 ' + String(it.at || '').slice(5, 16))),
                   it.dist
                     ? h(ReadFeedback, { aid, item: it, act, compact: true, onChange: () => setTick((t) => t + 1) })
                     : h('div', { className: 'dshc-note' }, '这条老记录没留下它读你的分数。')))),
@@ -6127,7 +6492,7 @@ window.__ModuleLoader__.load({
             const pz = poison.data || {}
             const rows = [['贪', pz.greed, '依恋/探索缺口高于均值才涨'], ['嗔', pz.anger, '基线 + 刺激 + 过载'], ['痴', pz.delusion, '1 − 确定性']]
             return h('div', null,
-              rows.map(([k, v, why]) => h(Row, { key: k, label: k + ' · ' + why },
+              rows.map(([k, v, why]) => h(Row, { key: k, label: k + ' 路 ' + why },
                 h(Bar, { value: Number(v) || 0, tone: Number(v) > 0.6 ? 'warn' : undefined }),
                 h('span', { className: 'm dshc-mono' }, Number(v || 0).toFixed(2)))),
               h('div', { className: 'dshc-note' }, '初值 0.30 / 0.10 / 0.30（§5.2）　' + (pz.formula || '')))
@@ -6480,7 +6845,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 't' }, x.text || x.driver)))) : null,
           h('div', { className: 'dshc-list', style: { marginTop: 6 } }, (tg.data || []).map((x) => h('div', { key: x.id, className: 'dshc-item' },
             h(Pill, { on: Number(x.progress) >= Number(x.threshold) }, x.class),
-            h('div', { className: 't' }, x.label + ' · ' + Math.min(Number(x.progress), Number(x.threshold)) + '/' + x.threshold),
+            h('div', { className: 't' }, x.label + ' 路 ' + Math.min(Number(x.progress), Number(x.threshold)) + '/' + x.threshold),
             h('div', { className: 'm dshc-mono' }, '近 ' + x.windowDays + ' 天' + (x.lastDraftAt ? ' · 上次起草 ' + String(x.lastDraftAt).slice(5, 10) : ''))))) ),
 
         h(Sec, { title: '行动接口', desc: '四个开关；打开后我才可能真的动手。' },
@@ -6558,6 +6923,14 @@ window.__ModuleLoader__.load({
       'persona.axis.jp': '判断 / 知觉',
       'persona.axis.sensitivity': '敏感度',
       'persona.big5.agreeableness': '宜人性',
+      'mind.meter.enable': '水位提醒',
+      'mind.meter.ratio': '提醒水位',
+      'mind.meter.window': '上下文窗口',
+      'mind.review.enable': '欠债提醒',
+      'mind.review.hours': '多久算欠债',
+      'mind.review.min_turns': '欠多少条',
+      'mind.review.cooldown_hours': '提醒冷却',
+      'gate.guest.enable': '认人硬闸',
     }
     const SELF_NOTE = {
       shrink: '往中间收窄一点',
@@ -6642,13 +7015,13 @@ window.__ModuleLoader__.load({
         const dt = Number(after.trust) - Number(before.trust)
         return '亲近 ' + num3(before.closeness) + ' → ' + num3(after.closeness) +
           '（' + (dc >= 0 ? '+' : '') + num3(dc) + '）· 信任 ' +
-          num3(before.trust) + ' → ' + num3(after.trust) +
+          num3(before.trust) + ' 鈫?' + num3(after.trust) +
           '（' + (dt >= 0 ? '+' : '') + num3(dt) + '）'
       }
-      return shortVal(c.before) + ' → ' + shortVal(c.after)
+      return shortVal(c.before) + ' 鈫?' + shortVal(c.after)
     }
 
-    /** 自动变更按「改了同一类东西」归堆：关系、性格、清理、其它 */
+    /** 鑷姩鍙樻洿鎸夈€屾敼浜嗗悓涓€绫讳笢瑗裤€嶅綊鍫嗭細鍏崇郴銆佹€ф牸銆佹竻鐞嗐€佸叾瀹?*/
     function autoGroups(list) {
       const map = new Map()
       for (const c of list) {
@@ -6721,12 +7094,12 @@ window.__ModuleLoader__.load({
       return String(p.state || '—')
     }
 
-    /** 一句话说清改什么：把 A 从旧值换成新值 */
+    /** 涓€鍙ヨ瘽璇存竻鏀逛粈涔堬細鎶?A 浠庢棫鍊兼崲鎴愭柊鍊?*/
     function proposalHeadline(p) {
       return '把「' + fieldHuman(p.field || p.target) + '」从 ' + valText(p.before) + ' 换成 ' + valText(p.after)
     }
 
-    /** 一句话说清为什么 */
+    /** 涓€鍙ヨ瘽璇存竻涓轰粈涔?*/
     function proposalWhyLine(p) {
       const ev = proposalEvidence(p)
       if (ev && (ev.samples || ev.title)) {
@@ -6736,7 +7109,7 @@ window.__ModuleLoader__.load({
       return '缺口到了 ' + (p.deficit || '?') + '，它觉得这一项一直不太够用。'
     }
 
-    /** 草案把证据存在 gate_trace 里；正式提案的 gate_trace 是闸结果，没有证据正文 */
+    /** 鑽夋鎶婅瘉鎹瓨鍦?gate_trace 閲岋紱姝ｅ紡鎻愭鐨?gate_trace 鏄椄缁撴灉锛屾病鏈夎瘉鎹鏂?*/
     function proposalEvidence(p) {
       let arr = []
       try { arr = JSON.parse(p.gate_trace || '[]') } catch { arr = [] }
@@ -6796,7 +7169,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dshc-item dshc-prop', style: { flexDirection: 'column', alignItems: 'stretch', gap: 6 } },
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
           h(Pill, { tone: meta[1] }, meta[0]),
-          h(Pill, { on: true, title: selfClassNote(p.change_class) }, (p.change_class || '?') + ' · ' + (SELF_CLASS[p.change_class] || ['?'])[0]),
+          h(Pill, { on: true, title: selfClassNote(p.change_class) }, (p.change_class || '?') + ' 路 ' + (SELF_CLASS[p.change_class] || ['?'])[0]),
           h('span', { className: 'dshc-spacer' }),
           h('span', { className: 'dshc-sub dshc-mono' }, agoText(p.created_at))),
         h('div', { style: { fontSize: 14.5, fontWeight: 600, lineHeight: 1.5 } }, proposalHeadline(p)),
@@ -6832,7 +7205,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 't' }, fieldHuman(p.field || p.target)),
           h('span', { className: 'dshc-spacer' }),
           h('span', { className: 'm dshc-mono' }, dayText(p.created_at))),
-        h('div', { className: 'dshc-sub' }, proposalWhere(p) + ' · ' + changePreview(p)))
+        h('div', { className: 'dshc-sub' }, proposalWhere(p) + ' 路 ' + changePreview(p)))
     }
 
     function SelfAutoGroup({ g }) {
@@ -6854,7 +7227,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dshc-item', style: { flexDirection: 'column', alignItems: 'stretch', gap: 3 } },
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
           h('div', { className: 't', style: { flex: 1 } }, autoGroupText(g)),
-          h('span', { className: 'dshc-sub dshc-mono' }, '×' + items.length)),
+          h('span', { className: 'dshc-sub dshc-mono' }, '脳' + items.length)),
         h('details', null,
           h('summary', { style: { cursor: 'pointer', color: 'var(--muted)' } }, '依据和它是怎么算的'),
           h('div', { style: { marginTop: 6 } },
@@ -6934,7 +7307,7 @@ window.__ModuleLoader__.load({
               onClick: () => run(() => act(() => call('POST', '/v1/agents/' + enc(aid) + '/author/rollback', { change_id: c.id }, true))),
             }, '回滚')),
         h('div', { className: 'dshc-sub dshc-mono', style: { whiteSpace: 'normal' } },
-          authorVal(c.before) + ' → ' + authorVal(c.after)
+          authorVal(c.before) + ' 鈫?' + authorVal(c.after)
           + (c.observing_until && !rolled ? ' · 观察到 ' + String(c.observing_until).slice(5, 10) : '')),
         h('div', { className: 'dshc-sub', style: { opacity: .72 } }, agoText(c.applied_at)))
     }
@@ -7021,15 +7394,15 @@ window.__ModuleLoader__.load({
       const proposalSection = h(Sec, {
         title: '收件箱',
         desc: view === 'user'
-          ? '它想改自己的提案先放这里。'
-          : 'C1–C3 必过影子（C1 40 轮 / C2·C3 20 轮）；批准才扣令牌并生效。',
+          ? 'C4 自动调值，留痕可回滚。'
+          : '来源 auto / calibration；不进收件区，不占每天 1 次的变更名额。',
       }, h(Card, null, inboxHead, h('div', { className: 'dshc-inbox-box' }, pendingBody), finishedBlock))
 
       const autoSection = h(Sec, {
-        title: view === 'user' ? '它的变化' : '自动变更（C4 · 只读）',
+        title: view === 'user' ? '它攒了多少想法' : '想法与门槛（targets / drafts）',
         desc: view === 'user'
-          ? 'C4 自动调值，留痕可回滚。'
-          : '来源 auto / calibration；不进收件区，不占每天 1 次的变更名额。',
+          ? '攒够证据才会起草。'
+          : 'progress = 目标信号在窗口内的条数；threshold 到线才由 maybeDraft 起草；冷却内不重复。',
         right: h(Pill, null, auto.length + ' 次'),
       }, h(Card, null,
         chs.error ? h(LoadErr, { error: '变更读取失败：' + chs.error, retry: () => setTick((t) => t + 1) })
@@ -7047,10 +7420,10 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'dshc-list' }, draftNodes))
 
       const ideasSection = h(Sec, {
-        title: view === 'user' ? '它攒了多少想法' : '想法与门槛（targets / drafts）',
+        title: view === 'user' ? '它现在用的是哪个版本' : '算法版本与灰度',
         desc: view === 'user'
-          ? '攒够证据才会起草。'
-          : 'progress = 目标信号在窗口内的条数；threshold 到线才由 maybeDraft 起草；冷却内不重复。',
+              ? '这是它读完你刚才那句话，觉得你此刻的情绪。猜错了就点「不对」：它会把你说的事实记下来，下一次先按这个读。'
+              : '模型 user_scores 的读数（按你的反馈校准后）。点「不对」写下实际情绪，会进 8×8 混淆矩阵，下一轮共情直接用。',
         right: h(Pill, null, '观察中 ' + targets.length),
       }, h(Card, null,
         ideaList,
@@ -7071,7 +7444,7 @@ window.__ModuleLoader__.load({
             manual.slice(12).map((c) => h('div', { key: c.id, className: 'dshc-item' },
               h('span', { className: 'm dshc-mono' }, dayText(c.applied_at)),
               h('span', { className: 't' }, fieldHuman(c.field)),
-              h('span', { className: 'm dshc-mono' }, shortVal(c.before) + ' → ' + shortVal(c.after))))))
+              h('span', { className: 'm dshc-mono' }, shortVal(c.before) + ' 鈫?' + shortVal(c.after))))))
         : null
 
       const autoMore = auto.length
@@ -7214,7 +7587,7 @@ window.__ModuleLoader__.load({
           slots.map((s) => h(Btn, {
             key: s, primary: slot === s, onClick: () => { setSlot(s); setCanary(''); setRatio('0') },
           }, s))),
-        (binds.data || []).map((b) => h(Row, { key: b.name, label: b.name + ' · active' },
+        (binds.data || []).map((b) => h(Row, { key: b.name, label: b.name + ' 路 active' },
           h(Pill, { on: b.name === slot }, b.active + (b.canary ? ' / canary ' + b.canary + '@' + (b.ratio || 0) : '')))),
         h(Row, { label: slot + ' · 当前' }, h(Pill, { on: true }, bind.active)),
         h('div', { className: 'dshc-sub', style: { margin: '8px 0' } }, '已登记实现：'),
@@ -7223,21 +7596,21 @@ window.__ModuleLoader__.load({
             : registered.map((a) => h('div', { key: a.name + '@' + a.version, className: 'dshc-item' },
               h(Pill, { on: a.version === bind.active }, a.version === bind.active ? 'active' : '并存'),
               h('div', { className: 't' }, a.name + '@' + a.version),
-              h('div', { className: 'm dshc-mono' }, (a.metrics || []).slice(0, 3).join(' · '))))),
+              h('div', { className: 'm dshc-mono' }, (a.metrics || []).slice(0, 3).join(' 路 '))))),
         h('div', { className: 'dshc-form', style: { marginTop: 10 } },
           h('span', { className: 'dshc-sub' }, 'canary'),
           h('select', { className: 'dshc-in', value: canary, onChange: (e) => setCanary(e.target.value) },
             h('option', { value: '' }, '关闭'),
             registered.map((a) => h('option', { key: a.version, value: a.version }, a.version))),
           h('span', { className: 'dshc-sub' }, 'ratio'),
-          h(Input, { style: { width: 70 }, value: ratio, onChange: (e) => setRatio(e.target.value), placeholder: '0–1' }),
+          h(Input, { style: { width: 70 }, value: ratio, onChange: (e) => setRatio(e.target.value), placeholder: '0鈥?' }),
           h(Btn, { onClick: saveGray }, '保存灰度')),
         err ? h('div', { className: 'dshc-err' }, err) : null,
         msg ? h('div', { className: 'dshc-note' }, msg) : null)
       return bare ? body : h(Sec, {
         techOnly: true,
-        title: view === 'user' ? '它现在用的是哪个版本' : '算法版本与灰度',
-        desc: '六槽位并存；切 active 走 C3 提案；canary + ratio 可直改落库。各模块页也有「当前算法」摘要。',
+          title: view === 'user' ? '情绪' : '主情绪（label / intensity / PAD）',
+          desc: '只记过闸的那些：每一条记着触发它的那句话、它当时读到的你、它自己的情绪。哪条读错了，当场就能改。',
       }, body)
     }
 
@@ -7290,12 +7663,14 @@ window.__ModuleLoader__.load({
       const [hist] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/metrics/history?days=30&keys=sys.inject_latency,sys.inject_tokens,self.rollback_rate,drive.proactive_answer,affect.label_kappa,persona.identity_blind'), [aid, tick])
       const [gates, reloadGates] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/eval/hard-gates'), [aid, tick])
       const [cal] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/eval/calibration'), [aid, tick])
+      const [shadow] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/shadow?days=7'), [aid, tick])
       const [blind, setBlind] = useState(null)
       const [calMsg, setCalMsg] = useState('')
       const catalog = cat.data || []
       const values = vals.data || {}
       const sampled = Object.values(values).filter((v) => v && v.value != null).length
       const gateRows = (gates.data && gates.data.gates) || []
+      const shadowData = shadow.data || null
 
       function spark(pts) {
         if (!pts || pts.length < 2) return h('span', { className: 'dshc-sub' }, pts && pts.length ? '样本不足（' + pts.length + '）' : '还没有采样')
@@ -7314,7 +7689,7 @@ window.__ModuleLoader__.load({
 
       return h('div', null,
         h(Sec, {
-          title: '验收看板', desc: '跨模块汇总；★ 8 条硬门槛可实测；完整目录地基附录 E（52 条）。',
+            title: '三观', desc: '三观引擎未启用：下面是旧的维度仪表。打开后它会从对话里慢慢长出自己的看法，先观察 7 天再真正进入说话。',
           right: h('div', { className: 'dshc-form' },
             h(Btn, {
               onClick: async () => { await act(() => call('POST', '/v1/agents/' + enc(aid) + '/metrics/sample', {}, true)); setTick((t) => t + 1) },
@@ -7325,7 +7700,7 @@ window.__ModuleLoader__.load({
                 const r = await act(() => call('POST', '/v1/agents/' + enc(aid) + '/eval/identity-blind', {}, true))
                 setBlind(r); setTick((t) => t + 1)
               },
-            }, '跑盲测')),
+              }, '应用全部 C4 建议')),
         },
           h('div', { className: 'dshc-grid2' },
             h(Card, null, h(KV, {
@@ -7339,6 +7714,29 @@ window.__ModuleLoader__.load({
               value: values['sys.inject_latency'] && values['sys.inject_latency'].value != null ? values['sys.inject_latency'].value : '—',
               hint: 'ms',
             }), h('div', { className: 'dshc-sub' }, '目标 ≤ 80ms（SRE）')))),
+
+        h(Sec, { title: '世界观', desc: '它认定世界是怎样的，以及围着它的辅助说法。' },
+          h(Card, null,
+            !shadowData ? h('div', { className: 'dshc-sub' }, shadow.loading ? '读取中…' : '没有观测数据')
+              : h('div', null,
+                h(Row, {
+                    label: '得分',
+                  value: '记录 ' + shadowData.residue.recorded + ' / 提示 ' + shadowData.residue.shown + ' / 结算 ' + shadowData.residue.settled
+                    + '（冷 ' + shadowData.residue.by_dir.cold + ' 暖 ' + shadowData.residue.by_dir.warm + '）',
+                }),
+                h(Row, {
+          label: '意识',
+                  value: '记录 ' + (shadowData.residue.recording ? 'on' : 'off') + ' · 结算 ' + (shadowData.residue.settling ? 'on' : 'off'),
+                }),
+                h(Row, {
+          label: '意识体',
+                  value: '落账 ' + shadowData.mind.committed + ' / 丢弃 ' + shadowData.mind.dropped
+                    + (shadowData.mind.dropped_rate == null ? '' : ' · 丢弃率 ' + shadowData.mind.dropped_rate),
+                }),
+                h(Row, {
+                  label: '记忆',
+                  value: shadowData.memory.total + ' 条 · 低置信 ' + shadowData.memory.low_confidence,
+                })))),
 
         h(Sec, { title: view === 'user' ? '它这些地方还不行（' : '完整清单（' + ((cat.data && cat.data.items) || 0) + ' 条）', desc: '从当前代码自动提取的界面区块；加功能会自动变。' },
           h(Card, null,
@@ -7361,8 +7759,8 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'm dshc-mono' }, g.value == null ? '—' : String(g.value)))))),
 
         h(Sec, {
-          title: '同一性盲测',
-          desc: '5 句探针，检查称呼 / 禁用词 / 口头禅一致性；目标 ≥ 0.80。',
+            title: '其他',
+            desc: '不归页头标签的东西：外观、自动行为、额度、维护和说明；参数里没归到上面四组的也在这里。',
           right: h(Btn, { ghost: true, onClick: () => setTab && setTab('persona') }, '去写鱼格卡'),
         },
           h(Card, null,
@@ -7375,7 +7773,7 @@ window.__ModuleLoader__.load({
                     h(Btn, { primary: true, onClick: () => setTab && setTab('persona') }, '去写语气 / 称呼 / 鱼格卡')))
                 : h('div', null,
                   h(Row, {
-                    label: '得分',
+                    label: '寰楀垎',
                     value: Number(blind.value).toFixed(3) + ' · ' + (blind.pass ? '过' : '未过') + '（目标 ≥ ' + (blind.threshold || 0.8) + '）',
                   }),
                   h(Row, { label: '线索', value: BLIND_SIGNAL(blind.signals) }),
@@ -7389,7 +7787,7 @@ window.__ModuleLoader__.load({
             ((cal.data && cal.data.suggestions) || []).length === 0
               ? h('div', { className: 'dshc-sub' }, '暂无建议（状态已贴近默认或样本不足）。')
               : (cal.data.suggestions || []).map((s) => h(Row, { key: s.key, label: s.key },
-                h('span', { className: 'm dshc-mono' }, String(s.current) + ' → ' + String(s.suggested)),
+                h('span', { className: 'm dshc-mono' }, String(s.current) + ' 鈫?' + String(s.suggested)),
                 h('span', { className: 'dshc-sub' }, s.reason))),
             h('div', { className: 'dshc-form', style: { marginTop: 8 } },
               h(Btn, {
@@ -7401,7 +7799,7 @@ window.__ModuleLoader__.load({
                     setTick((t) => t + 1)
                   } catch (e) { setCalMsg(e.message) }
                 },
-              }, '应用全部 C4 建议')),
+          }, '重铺接下来的底色')),
             calMsg ? h('div', { className: 'dshc-note' }, calMsg) : null)),
 
         h(Sec, { title: view === 'user' ? '最近 30 天的变化' : '指标历史（30 天）', desc: '按天平均；没有采样就空着，不补假点。' },
@@ -7424,10 +7822,10 @@ window.__ModuleLoader__.load({
               const spec = SPEC[m.i] || ['—', '', false]
               const v = values[m.key] && values[m.key].value
               return h('div', { key: m.key, className: 'dshc-item' },
-                h(Pill, { tone: spec[2] ? 'bad' : undefined }, spec[2] ? '★' : '·'),
+                h(Pill, { tone: spec[2] ? 'bad' : undefined }, spec[2] ? '鈽?' : '路'),
                 h('div', { className: 't' },
                   h('div', null, m.label),
-                  h('div', { className: 'dshc-sub dshc-mono' }, m.key + (view === 'tech' ? ' · ' + spec[1] : ''))),
+                  h('div', { className: 'dshc-sub dshc-mono' }, m.key + (view === 'tech' ? ' 路 ' + spec[1] : ''))),
                 h('div', { className: 'm dshc-mono', style: { minWidth: 78, textAlign: 'right' } }, v == null ? '—' : String(v)),
                 h('div', { className: 'm', style: { minWidth: 84, textAlign: 'right' } }, spec[0]))
             }))))
@@ -7438,15 +7836,14 @@ window.__ModuleLoader__.load({
         view === 'tech' ? h(Tech, null, 'Recall@5 ≥ 0.70；nDCG@5 ≥ 0.75；误召回 ≤ 0.15\nκ ≥ 0.60；MAE ≤ 0.15；档位抖动 ≤ 1/天\n52 条指标见附录 E；★ = 发版硬门槛') : null,
         h(Sec, { title: view === 'user' ? '这些标准从哪学的' : '科研依据（只借测法，不借数值）' },
           h(Card, null, h('div', { className: 'dshc-sub' },
-            'LoCoMo / LongMemEval、CharacterEval / PersonaChat、GoEmotions / MELD / EmpatheticDialogues、' +
+            'LoCoMo / LongMemEval、CharacterEval / PersonaChat、GoEmotions / MELD / EmpatheticDialogues。' +
             'BEIR / nDCG、RAGAS、Landis & Koch κ、DORA / SRE、自我决定论。论文分数是在固定数据集上测的，直接当产品目标会失真。'))))
     }
 
     /* =========================================================== settings */
 
-    /* —— 设置页：按页头标签分组的「能改的参数」——
-       keys 与 src/kernel.js 的 PARAMS 对齐；没归组的一律落到最后的「其他」，
-       这样以后加参数也不会在界面上凭空消失。 */
+    /* 鈥斺€?璁剧疆椤碉細鎸夐〉澶存爣绛惧垎缁勭殑銆岃兘鏀圭殑鍙傛暟銆嶁€斺€?       keys 涓?src/kernel.js 鐨?PARAMS 瀵归綈锛涙病褰掔粍鐨勪竴寰嬭惤鍒版渶鍚庣殑銆屽叾浠栥€嶏紝
+       杩欐牱浠ュ悗鍔犲弬鏁颁篃涓嶄細鍦ㄧ晫闈笂鍑┖娑堝け銆?*/
     const PARAM_META = {
       'memory.decay.lambda': ['衰减速度', '旧事沉得多快；由记忆页那四个旋钮直管，这里只作兜底名。'],
       'memory.recall.floor': ['遗忘阈值', '沉到多低就不再提；由记忆页那四个旋钮直管。'],
@@ -7468,32 +7865,50 @@ window.__ModuleLoader__.load({
       'condition.coef': ['工况系数', '累 / 忙 / 状态差时，情绪和记忆被放大多少；2.5 是中性刻度。'],
       'guard.budget.c3': ['C3 令牌上限', 'C3 最多能攒几枚令牌（每 30 天回 1 枚）；只读。'],
       'persona.step_cap': ['单次步幅上限', '鱼格一次最多变多少；和学习速率取小（只读）。'],
+      'mind.meter.enable': ['水位提醒', '上下文快到上限时提一句「想留的现在记一下」；关 = 不提。'],
+      'mind.meter.ratio': ['提醒水位', '用到窗口的这个比例开始提醒（0.3–0.8）。到 0.8 原生压缩自己会动手，所以不会等到最后。'],
+      'mind.meter.window': ['上下文窗口', '宿主没告诉插件窗口大小时用这个数。「自动」= 只信宿主，拿不到就不提醒。'],
+      'mind.review.enable': ['欠债提醒', '上次夜间整理没跑成、又攒了没归档的对话时，提一句。'],
+      'mind.review.hours': ['多久算欠债', '距上次整理超过这么多小时才开始算（默认 20）。'],
+      'mind.review.min_turns': ['欠多少条', '上次整理之后又攒够这么多条原始对话才值得提（默认 20）。'],
+      'mind.review.cooldown_hours': ['提醒冷却', '同一句提醒最多隔这么多小时再说一次（默认 6）。'],
+      'gate.guest.enable': ['认人硬闸', '客人的会话里不许翻主人的记忆（memory_search 直接拒，群聊一律拒）；关 = 不拦，排查用。'],
     }
 
-    /** 记忆页卡片的四个旋钮：由 MemorySettingsCard 直管，分组里只用来「别重复列进其他」 */
+    /** 璁板繂椤靛崱鐗囩殑鍥涗釜鏃嬮挳锛氱敱 MemorySettingsCard 鐩寸锛屽垎缁勯噷鍙敤鏉ャ€屽埆閲嶅鍒楄繘鍏朵粬銆?*/
     const MEMORY_CARD_KEYS = new Set(['memory.decay.lambda', 'memory.recall.floor', 'memory.inject.budget', 'memory.auto'])
 
-    /** 页头标签 → 设置分组；keys 之外的参数自动进「其他」。 */
+    /** 椤靛ご鏍囩 鈫?璁剧疆鍒嗙粍锛沰eys 涔嬪鐨勫弬鏁拌嚜鍔ㄨ繘銆屽叾浠栥€嶃€?*/
     const PARAM_TAB_GROUPS = [
       {
         key: 'memory', tab: '记忆', title: '记忆设置',
         keys: ['memory.decay.lambda', 'memory.recall.floor', 'memory.inject.budget', 'memory.auto', 'memory.recall.weights.relation', 'memory.inject.pool', 'memory.decay.formula', 'memory.recall.formula', 'memory.retrieve.formula'],
       },
       {
-        key: 'persona', tab: '鱼格', title: '鱼格设置',
-        keys: ['persona.learn_rate', 'persona.axes.mode', 'persona.worldview.nightly', 'persona.lifeview.nightly'],
+        key: 'mind', tab: '心里', title: '心里的话',
+        desc: '上下文水位和复盘欠债：都只在「快来不及」时提一句，不触发就一个字都不占。',
+        keys: ['mind.meter.enable', 'mind.meter.ratio', 'mind.meter.window', 'mind.review.enable', 'mind.review.hours', 'mind.review.min_turns', 'mind.review.cooldown_hours'],
+      },
+      {
+        key: 'gate', tab: '认人', title: '认人硬闸',
+        desc: '客人的会话（陌生人私聊 / 群聊）里，memory_search 直接拒。主人判定跟 QQ 桥接同一套；网页/本机一律算主人。',
+        keys: ['gate.guest.enable'],
       },
       {
         key: 'affect', tab: '情绪', title: '情绪设置',
-        keys: ['affect.decay', 'affect.mapping', 'affect.dynamics.formula'],
+        keys: ['persona.learn_rate', 'persona.axes.mode', 'persona.worldview.nightly', 'persona.lifeview.nightly'],
       },
       {
         key: 'drive', tab: '驱力', title: '驱力设置',
+        keys: ['affect.decay', 'affect.mapping', 'affect.dynamics.formula'],
+      },
+      {
+        key: 'persona', tab: '鱼格', title: '鱼格设置',
         keys: ['drive.deficit.formula'],
       },
     ]
 
-    /** 长页面里的分组跳转：点一下落到对应那组 */
+    /** 闀块〉闈㈤噷鐨勫垎缁勮烦杞細鐐逛竴涓嬭惤鍒板搴旈偅缁?*/
     function SettingJump({ items }) {
       const [on, setOn] = useState('')
       const go = (key) => {
@@ -7504,7 +7919,7 @@ window.__ModuleLoader__.load({
         h('button', { key, type: 'button', 'data-on': on === key ? '1' : '0', onClick: () => go(key) }, label)))
     }
 
-    /** 一行可改参数：值 + 修改/提案 + 一句人话；tech 视图额外显示键名 */
+    /** 涓€琛屽彲鏀瑰弬鏁帮細鍊?+ 淇敼/鎻愭 + 涓€鍙ヤ汉璇濓紱tech 瑙嗗浘棰濆鏄剧ず閿悕 */
     function ParamRow({ p, view, draft, onDraft, onSave }) {
       const meta = PARAM_META[p.key] || []
       const label = meta[0] || p.key
@@ -7548,7 +7963,7 @@ window.__ModuleLoader__.load({
           note ? h('span', { style: { marginLeft: 8, color: note.ok ? 'var(--ok)' : 'var(--bad)' } }, note.text) : null))
     }
 
-    /** 「页头 · 记忆」这种小牌子，让分组和上方页签对得上 */
+    /** 銆岄〉澶?路 璁板繂銆嶈繖绉嶅皬鐗屽瓙锛岃鍒嗙粍鍜屼笂鏂归〉绛惧寰椾笂 */
     const TabMark = ({ tab }) => h(Pill, null, '页头 · ' + tab)
 
     /** 「其他」里的可收起区块：收起时只留一行摘要，点开才看控件 */
@@ -7566,7 +7981,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshc-fold-body' }, h(Card, null, children))))
     }
 
-    /** 四个设置组统一的旋钮规格：滑杆 / 三段按钮；中文名和说明从 PARAM_META 取 */
+    /** 鍥涗釜璁剧疆缁勭粺涓€鐨勬棆閽鏍硷細婊戞潌 / 涓夋鎸夐挳锛涗腑鏂囧悕鍜岃鏄庝粠 PARAM_META 鍙?*/
     const SETTING_KNOBS = {
       persona: [
         { key: 'persona.learn_rate', kind: 'range', min: 0.01, max: 0.2, step: 0.01, digits: 3, def: 0.05 },
@@ -7575,10 +7990,24 @@ window.__ModuleLoader__.load({
       affect: [
         { key: 'affect.decay', kind: 'range', min: 0, max: 1, step: 0.05, digits: 2, def: 0.4 },
       ],
-      // 驱力没有旋钮：五条基线由 deficit@v2 从经历里自己长（见 DriveBaselineCard）
-    }
+      // 心里的话：水位提醒 + 复盘欠债。全是 0/1 或区间量，一屏能放下。
+      mind: [
+        { key: 'mind.meter.enable', kind: 'choice', def: 'on', choices: [['off', '关'], ['on', '开']] },
+        { key: 'mind.meter.ratio', kind: 'range', min: 0.3, max: 0.8, step: 0.05, digits: 2, def: 0.6 },
+        { key: 'mind.meter.window', kind: 'choice', def: 0, choices: [[0, '自动'], [32000, '32k'], [64000, '64k'], [128000, '128k'], [200000, '200k']] },
+        { key: 'mind.review.enable', kind: 'choice', def: 'on', choices: [['off', '关'], ['on', '开']] },
+        { key: 'mind.review.hours', kind: 'range', min: 6, max: 72, step: 6, digits: 0, def: 20 },
+        { key: 'mind.review.min_turns', kind: 'range', min: 5, max: 100, step: 5, digits: 0, def: 20 },
+        { key: 'mind.review.cooldown_hours', kind: 'range', min: 0, max: 48, step: 1, digits: 0, def: 6 },
+      ],
+      // 认人硬闸：一个开关，默认开。关掉就退回「谁调都能翻」。
+      gate: [
+        { key: 'gate.guest.enable', kind: 'choice', def: 'on', choices: [['off', '关'], ['on', '开']] },
+      ],
+      // 椹卞姏娌℃湁鏃嬮挳锛氫簲鏉″熀绾跨敱 deficit@v2 浠庣粡鍘嗛噷鑷繁闀匡紙瑙?DriveBaselineCard锛?''
+              }
 
-    /** 和「记忆设置」同一套排版：一行一个旋钮，下面一句人话，底部一个保存 */
+    /** 鍜屻€岃蹇嗚缃€嶅悓涓€濂楁帓鐗堬細涓€琛屼竴涓棆閽紝涓嬮潰涓€鍙ヤ汉璇濓紝搴曢儴涓€涓繚瀛?*/
     function KnobCard({ aid, act, params, specs, onSaved }) {
       const [f, setF] = useState(null)
       const [msg, setMsg] = useState('')
@@ -7611,8 +8040,8 @@ window.__ModuleLoader__.load({
         const d = list.reduce((o, it) => { o[it.key] = it.def; return o }, {})
         write(d, '已恢复默认')
       }
-      // 说明区：左边固定的小标题、右边一句人话，和记忆设置保持一致
-      const hintRow = (k, t) => h('div', { style: { display: 'flex', gap: 10, alignItems: 'baseline' } },
+      // 璇存槑鍖猴細宸﹁竟鍥哄畾鐨勫皬鏍囬銆佸彸杈逛竴鍙ヤ汉璇濓紝鍜岃蹇嗚缃繚鎸佷竴鑷?''
+              const hintRow = (k, t) => h('div', { style: { display: 'flex', gap: 10, alignItems: 'baseline' } },
         h('span', {
           style: { flex: 'none', width: 72, fontSize: 11.5, letterSpacing: .3, color: 'var(--muted)', textAlign: 'right' },
         }, k),
@@ -7637,11 +8066,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 情绪设置：敏感度 + 情绪衰减，一张卡、一个保存。
-     * 两者都在调「情绪有多响、散多快」，之前拆成两张卡两个保存按钮，太碎。
-     * 敏感度写 persona.axis.sensitivity（manual，不再自己漂）；衰减写 agent_params。
-     * 数值预告的曲线由宿主 /persona/axes 给，前端只做一次线性换算，避免两边公式漂。
-     */
+     * 鎯呯华璁剧疆锛氭晱鎰熷害 + 鎯呯华琛板噺锛屼竴寮犲崱銆佷竴涓繚瀛樸€?     * 涓よ€呴兘鍦ㄨ皟銆屾儏缁湁澶氬搷銆佹暎澶氬揩銆嶏紝涔嬪墠鎷嗘垚涓ゅ紶鍗′袱涓繚瀛樻寜閽紝澶銆?     * 鏁忔劅搴﹀啓 persona.axis.sensitivity锛坢anual锛屼笉鍐嶈嚜宸辨紓锛夛紱琛板噺鍐?agent_params銆?     * 鏁板€奸鍛婄殑鏇茬嚎鐢卞涓?/persona/axes 缁欙紝鍓嶇鍙仛涓€娆＄嚎鎬ф崲绠楋紝閬垮厤涓よ竟鍏紡婕傘€?     */
     function AffectCard({ aid, act, params, onSaved }) {
       const [s, reloadAxis] = useAsync(async () => {
         const degradedFrom = (rows) => {
@@ -7659,8 +8084,8 @@ window.__ModuleLoader__.load({
           got = null
         }
         if (got && Array.isArray(got.axes) && got.curve) return got
-        // 老宿主：新接口可能 404，也可能被当成 /persona 返回整表；两种都退回旧读法，
-        // 滑杆和保存现在就能用，数值预告等热加载后再给
+        // 鑰佸涓伙細鏂版帴鍙ｅ彲鑳?404锛屼篃鍙兘琚綋鎴?/persona 杩斿洖鏁磋〃锛涗袱绉嶉兘閫€鍥炴棫璇绘硶锛?''
+              // 滑杆和保存现在就能用，数值预告等热加载后再给
         const rows = Array.isArray(got) ? got : await call('GET', '/v1/agents/' + enc(aid) + '/persona')
         return degradedFrom(rows)
       }, [aid])
@@ -7735,8 +8160,8 @@ window.__ModuleLoader__.load({
         } catch (e) { setErr(e.message || String(e)) } finally { setBusy(false) }
       }
 
-      // 说明区：左边固定的小标题、右边一句人话，和记忆设置保持一致
-      const hintRow = (k, t) => h('div', { style: { display: 'flex', gap: 10, alignItems: 'baseline' } },
+      // 璇存槑鍖猴細宸﹁竟鍥哄畾鐨勫皬鏍囬銆佸彸杈逛竴鍙ヤ汉璇濓紝鍜岃蹇嗚缃繚鎸佷竴鑷?''
+              const hintRow = (k, t) => h('div', { style: { display: 'flex', gap: 10, alignItems: 'baseline' } },
         h('span', {
           style: { flex: 'none', width: 72, fontSize: 11.5, letterSpacing: .3, color: 'var(--muted)', textAlign: 'right' },
         }, k),
@@ -7751,14 +8176,14 @@ window.__ModuleLoader__.load({
                 onChange: (e) => setF({ ...v, sens: Number(e.target.value) }), style: { width: 150 },
               }),
               h('span', { className: 'dshc-mono', style: { width: 92, textAlign: 'right' } },
-                Number(v.sens).toFixed(2) + ' · ' + wordOf(v.sens)),
+                Number(v.sens).toFixed(2) + ' 路 ' + wordOf(v.sens)),
               axis ? h(Pill, { on: axis.origin === 'manual' }, axis.origin === 'manual' ? '你定的' : '自己长的') : null),
             h('div', { className: 'dshc-sub', style: { margin: '-2px 0 2px 0', paddingLeft: 2 } },
               '0 钝感 · 0.5 平衡 · 1 敏感'),
             draft
               ? h('div', { style: { marginTop: 4 } },
                 h(Row, { label: '情绪摆幅' },
-                  h('span', { className: 'dshc-mono' }, '±' + draft.swing.toFixed(2)),
+                  h('span', { className: 'dshc-mono' }, '卤' + draft.swing.toFixed(2)),
                   now && Math.abs(v.sens - curS) > 1e-9
                     ? h('span', { className: 'dshc-sub' }, ' 现在 ±' + now.swing.toFixed(2) + '（' + signed(pct(draft.swing, now.swing)) + '）')
                     : h('span', { className: 'dshc-sub' }, ' 底色每段摆多少')),
@@ -7767,7 +8192,7 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'dshc-sub' },
                     (now && Math.abs(v.sens - curS) > 1e-9 ? ' 现在 ' + now.threshold.toFixed(2) + '；' : ' ') + '越低越容易被小事戳到')),
                 h(Row, { label: '恢复速度' },
-                  h('span', { className: 'dshc-mono' }, '×' + draft.halfLife.toFixed(2)),
+                  h('span', { className: 'dshc-mono' }, '脳' + draft.halfLife.toFixed(2)),
                   h('span', { className: 'dshc-sub' },
                     (now && Math.abs(v.sens - curS) > 1e-9 ? ' 现在 ×' + now.halfLife.toFixed(2) + '（' + signed(pct(draft.halfLife, now.halfLife)) + '）；' : ' ') + '越大越难散')))
               : null)
@@ -7783,8 +8208,8 @@ window.__ModuleLoader__.load({
         h('div', {
           style: { marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)', display: 'flex', flexDirection: 'column', gap: 7 },
         },
-          hintRow('敏感度', '同一件事在它心里有多响、多小的才算事、坏情绪多久散，都由这一个数决定；你挑的值不会再自己漂。'),
-          hintRow('情绪衰减', '说完一轮之后，情绪往平静回落多少；拖到 0 就是不回落。')),
+          hintRow('衰减速度', '只管「长期 · 抽屉」：调大，旧事沉得更快；调小，记得更久。'),
+          hintRow('注入预算', '越大，每轮带进对话的记忆越多；越小越省，先砍记忆。')),
         d && d.degraded
           ? h('div', { className: 'dshc-note' }, '宿主还是旧的：数值预告要等插件热加载后才出现。先把「意识」插件关再开（设置 → 插件），滑杆和保存现在就能用。')
           : null,
@@ -7798,7 +8223,7 @@ window.__ModuleLoader__.load({
             ghost: true, disabled: busy || !d || d.degraded || dirty,
             title: dirty ? '先保存，再按新幅度重铺' : '',
             onClick: rebuild,
-          }, '重铺接下来的底色')),
+            }, '跑盲测')),
         err ? h('div', { className: 'dshc-err' }, err) : null,
         msg ? h('div', { className: 'dshc-note' }, msg) : null,
         h('div', { className: 'dshc-note', style: { marginTop: 8 } },
@@ -7806,11 +8231,8 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 驱力设置：没有滑杆。
-     * 五条基线是它自己从经历里长出来的（deficit@v2）：习惯 = 最近过得怎么样，
-     * 基线 = 习惯 + 一点胃口；被怎么对待得久，就把什么当成正常。
-     * 这里只把长成什么样给你看，改不了——这正是「不是手调的」。
-     */
+     * 椹卞姏璁剧疆锛氭病鏈夋粦鏉嗐€?     * 浜旀潯鍩虹嚎鏄畠鑷繁浠庣粡鍘嗛噷闀垮嚭鏉ョ殑锛坉eficit@v2锛夛細涔犳儻 = 鏈€杩戣繃寰楁€庝箞鏍凤紝
+     * 鍩虹嚎 = 涔犳儻 + 涓€鐐硅儍鍙ｏ紱琚€庝箞瀵瑰緟寰椾箙锛屽氨鎶婁粈涔堝綋鎴愭甯搞€?     * 杩欓噷鍙妸闀挎垚浠€涔堟牱缁欎綘鐪嬶紝鏀逛笉浜嗏€斺€旇繖姝ｆ槸銆屼笉鏄墜璋冪殑銆嶃€?     */
     function DriveBaselineCard({ aid, act }) {
       const [s] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/drive'), [aid])
       const d = s.data || {}
@@ -7836,10 +8258,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * QQ 通道：她「在不在线」。
-     * 桥和 NapCat 分两层显示：桥没起 vs QQ 掉了，处理办法不一样。
-     * 顺带能改多轮历史和召回条数——这两个只影响 QQ 这边说话的手感。
-     */
+     * QQ 閫氶亾锛氬ス銆屽湪涓嶅湪绾裤€嶃€?     * 妗ュ拰 NapCat 鍒嗕袱灞傛樉绀猴細妗ユ病璧?vs QQ 鎺変簡锛屽鐞嗗姙娉曚笉涓€鏍枫€?     * 椤哄甫鑳芥敼澶氳疆鍘嗗彶鍜屽彫鍥炴潯鏁扳€斺€旇繖涓や釜鍙奖鍝?QQ 杩欒竟璇磋瘽鐨勬墜鎰熴€?     */
     function QQChannelCard({ act }) {
       const [s, reload] = useAsync(() => call('GET', '/v1/qq/health'), [])
       const [cfg, setCfg] = useAsync(() => call('GET', '/v1/qq/settings'), [])
@@ -7858,8 +8277,8 @@ window.__ModuleLoader__.load({
       const v = draft || { history_turns: c.history_turns == null ? 8 : c.history_turns, recall_items: c.recall_items == null ? 10 : c.recall_items }
       const t = (x) => (x ? String(x).replace('T', ' ').slice(5, 19) : '—')
       const state = s.loading && !s.data ? ['…', ''] : h0.ok ? ['在线', 'ok'] : bridge.reachable ? ['QQ 掉线', 'bad'] : ['桥没起', 'bad']
-      // 桥掉了不会有人来通知这个卡片，只能自己探：15 秒一次，页面切后台就停。
-      useLive(reload, 15000)
+      // 妗ユ帀浜嗕笉浼氭湁浜烘潵閫氱煡杩欎釜鍗＄墖锛屽彧鑳借嚜宸辨帰锛?5 绉掍竴娆★紝椤甸潰鍒囧悗鍙板氨鍋溿€?''
+              useLive(reload, 15000)
       async function save() {
         setNote(null)
         try {
@@ -7904,11 +8323,11 @@ window.__ModuleLoader__.load({
           h('span', { className: 'm dshc-sub' }, '现在：' + nameOf(conv.agent_id)),
           h(Btn, { ghost: true, sm: true, onClick: () => release(conv) }, '释放'))),
         h('div', { style: { marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-          h('span', { className: 'dshc-sub' }, '带几轮历史'),
+          h('span', { className: 'dshc-sub' }, '甯﹀嚑杞巻鍙?'),
           h(Input, { style: { width: 64 }, value: String(v.history_turns), onChange: (e) => setDraft({ ...v, history_turns: e.target.value }) }),
-          h('span', { className: 'dshc-sub' }, '轮 · 每轮召'),
+          h('span', { className: 'dshc-sub' }, '轮 · 每轮'),
           h(Input, { style: { width: 64 }, value: String(v.recall_items), onChange: (e) => setDraft({ ...v, recall_items: e.target.value }) }),
-          h('span', { className: 'dshc-sub' }, '条记忆'),
+          h('span', { className: 'dshc-sub' }, '鏉¤蹇?'),
           h(Btn, { sm: true, onClick: save }, '保存')),
         note ? h('div', { className: 'dshc-note', style: { marginTop: 6 } }, note) : null,
         h('div', { className: 'dshc-note', style: { marginTop: 6 } }, '历史越多越连贯，但也更慢；0 = 只靠记忆和日记接话。'))
@@ -7957,7 +8376,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dshc-note' }, '默认：C4 自动执行开、鱼格学习开、冷却 6 轮。长期不互动时鱼格会缓慢回到基线。'))
     }
 
-    /** 记忆设置：衰减速度 / 遗忘阈值 / 自动记忆开关 / 每轮注入预算（都落 agent_params，C4 直改留痕） */
+    /** 璁板繂璁剧疆锛氳“鍑忛€熷害 / 閬楀繕闃堝€?/ 鑷姩璁板繂寮€鍏?/ 姣忚疆娉ㄥ叆棰勭畻锛堥兘钀?agent_params锛孋4 鐩存敼鐣欑棔锛?*/
     function MemorySettingsCard({ aid, act, params, onSaved }) {
       const [f, setF] = useState(null)
       const [msg, setMsg] = useState('')
@@ -7975,14 +8394,14 @@ window.__ModuleLoader__.load({
         budget: Number(pick('memory.inject.budget', 800)),
       }
       const speedWord = (x) => (x <= 0.0125 ? '慢' : x <= 0.03 ? '标准' : x <= 0.05 ? '快' : '很快')
-      // 跟 decay 同一套公式：R(t) = 1/(1 + t/(9·S·k))，k = 0.02/λ。
-      // 按 S=1 的普通条目录反解「静止多少天后可提取性跌破阈值」——两个旋钮合起来就是这个效果。
-      const daysToForget = (lambda, floor) => {
+      // 璺?decay 鍚屼竴濂楀叕寮忥細R(t) = 1/(1 + t/(9路S路k))锛宬 = 0.02/位銆?''
+      // 鎸?S=1 鐨勬櫘閫氭潯鐩綍鍙嶈В銆岄潤姝㈠灏戝ぉ鍚庡彲鎻愬彇鎬ц穼鐮撮槇鍊笺€嶁€斺€斾袱涓棆閽悎璧锋潵灏辨槸杩欎釜鏁堟灉銆?''
+              const daysToForget = (lambda, floor) => {
         const l = Number(lambda), f = Number(floor)
         if (!(f > 0) || !(l > 0)) return null
         return Math.max(1, Math.round(9 * (0.02 / l) * (1 / f - 1)))
       }
-      // 出厂默认：衰减 0.02 · 不设遗忘门槛 · 自动记忆开 · 每轮注入 800 token
+      // 鍑哄巶榛樿锛氳“鍑?0.02 路 涓嶈閬楀繕闂ㄦ 路 鑷姩璁板繂寮€ 路 姣忚疆娉ㄥ叆 800 token
       const DEFAULTS = { lambda: 0.02, floor: 0, auto: true, budget: 800 }
       async function writeSettings(vals, word) {
         setBusy(true); setErr(''); setMsg('')
@@ -8019,7 +8438,7 @@ window.__ModuleLoader__.load({
             onChange: (e) => setF({ ...v, lambda: Number(e.target.value) }), style: { width: 150 },
           }),
           h('span', { className: 'dshc-mono', style: { width: 112, textAlign: 'right' } },
-            Number(v.lambda).toFixed(3) + ' · ' + speedWord(Number(v.lambda)))),
+            Number(v.lambda).toFixed(3) + ' 路 ' + speedWord(Number(v.lambda)))),
         h(Row, { label: '遗忘阈值' },
           h('input', {
             type: 'range', min: 0, max: 0.6, step: 0.05, value: v.floor,
@@ -8036,19 +8455,19 @@ window.__ModuleLoader__.load({
             onChange: (e) => setF({ ...v, budget: Number(e.target.value) }), style: { width: 150 },
           }),
           h('span', { className: 'dshc-mono', style: { width: 96, textAlign: 'right' } }, Math.round(Number(v.budget)) + ' token')),
-        // 说明区：四个旋钮各一句人话，短一点，分开站
-        h('div', {
+        // 璇存槑鍖猴細鍥涗釜鏃嬮挳鍚勪竴鍙ヤ汉璇濓紝鐭竴鐐癸紝鍒嗗紑绔?''
+              h('div', {
           style: {
             marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--line)',
             display: 'flex', flexDirection: 'column', gap: 7,
           },
         },
-          hintRow('衰减速度', '只管「长期 · 抽屉」：调大，旧事沉得更快；调小，记得更久。'),
+          hintRow('敏感度', '同一件事在它心里有多响、多小的才算事、坏情绪多久散，都由这一个数决定；你挑的值不会再自己漂。'),
           hintRow('遗忘阈值', Number(v.floor) > 0
             ? ('也管「长期 · 抽屉」：沉到 ' + Number(v.floor).toFixed(2) + ' 以下的，聊天里就不提了' + (days ? '（约 ' + days + ' 天到）' : '') + '。不删，列表里还在，调回来又能想起。')
             : '0 = 现在这样，旧事都还翻得出来。调高只会让旧事聊天里不提，不会删。'),
           hintRow('自动记忆', v.auto ? '开 = 聊完它自己记。' : '关 = 只记你手动塞的，聊天内容不自动变记忆。'),
-          hintRow('注入预算', '越大，每轮带进对话的记忆越多；越小越省，先砍记忆。')),
+          hintRow('情绪衰减', '说完一轮之后，情绪往平静回落多少；拖到 0 就是不回落。')),
         h('div', { style: { marginTop: 10, display: 'flex', gap: 8, alignItems: 'center' } },
           h(Btn, { primary: true, disabled: busy, onClick: save }, busy ? '保存中…' : '保存'),
           h(Btn, { ghost: true, disabled: busy, onClick: reset }, '恢复默认')),
@@ -8074,7 +8493,7 @@ window.__ModuleLoader__.load({
       const [drafts, setDrafts] = useState({})
       const [note, setNote] = useState('')
 
-      // 参数行内保存：布尔 / 字符串（枚举、公式版本）/ 数字分别送对类型
+      // 鍙傛暟琛屽唴淇濆瓨锛氬竷灏?/ 瀛楃涓诧紙鏋氫妇銆佸叕寮忕増鏈級/ 鏁板瓧鍒嗗埆閫佸绫诲瀷
       async function applyParam(p) {
         const key = p.key
         const raw = drafts[key] !== undefined ? drafts[key] : p.value
@@ -8105,8 +8524,8 @@ window.__ModuleLoader__.load({
         setErr('')
         try {
           await act(() => call('PUT', '/v1/agents/' + enc(aid) + '/budget', {
-            // 金额没接计价来源，先不写；保留数据库字段等以后有 token 单价再启用
-            token_limit: Number(drafts.token_limit ?? (budget.data || {}).token_limit) || 0,
+            // 閲戦娌℃帴璁′环鏉ユ簮锛屽厛涓嶅啓锛涗繚鐣欐暟鎹簱瀛楁绛変互鍚庢湁 token 鍗曚环鍐嶅惎鐢?''
+              token_limit: Number(drafts.token_limit ?? (budget.data || {}).token_limit) || 0,
             disturb_limit: Number(drafts.disturb_limit ?? (budget.data || {}).disturb_limit) || 0,
           }, true))
           setMsg('预算已保存'); reloadBudget(); setTick((t) => t + 1)
@@ -8127,7 +8546,7 @@ window.__ModuleLoader__.load({
         setActMsg('')
         try {
           const r = await act(() => call('POST', '/v1/agents/' + enc(aid) + '/actions', { port, payload }, true))
-          setActMsg(port + ' → ' + r.status + (r.note ? ' · ' + r.note : ''))
+          setActMsg(port + ' 鈫?' + r.status + (r.note ? ' 路 ' + r.note : ''))
           setTick((t) => t + 1)
         } catch (e) { setActMsg(e.message) }
       }
@@ -8159,8 +8578,8 @@ window.__ModuleLoader__.load({
       const visible = (p) => !!p && (view === 'tech' || p.level === 'C4')
       const grouped = new Set()
       PARAM_TAB_GROUPS.forEach((g) => g.keys.forEach((k) => grouped.add(k)))
-      // 没归到任何页头标签的参数，以及只读项，都进「其他」
-      const otherParams = ((params.data) || []).filter((p) => !grouped.has(p.key) && visible(p))
+      // 娌″綊鍒颁换浣曢〉澶存爣绛剧殑鍙傛暟锛屼互鍙婂彧璇婚」锛岄兘杩涖€屽叾浠栥€?''
+              const otherParams = ((params.data) || []).filter((p) => !grouped.has(p.key) && visible(p))
       const paramRows = (list) => list.map((p) => h(ParamRow, {
         key: p.key, p, view,
         draft: drafts[p.key],
@@ -8209,7 +8628,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshc-set-lead-d' },
             '记忆、鱼格、情绪、驱力各自一组：能改的参数就收在对应的那一组里。不归标签的（头像、自动行为、额度、维护、说明）统一放到最后「其他」。'),
           h(SettingJump, {
-            items: [['memory', '记忆'], ['persona', '鱼格'], ['affect', '情绪'], ['drive', '驱力'], ['other', '其他']],
+            items: [['memory', '记忆'], ['mind', '心里'], ['gate', '认人'], ['persona', '鱼格'], ['affect', '情绪'], ['drive', '驱力'], ['other', '其他']],
           })),
 
         tabGroups,
@@ -8217,7 +8636,7 @@ window.__ModuleLoader__.load({
         h('div', { id: 'dshc-set-other' },
           h(Sec, {
             title: '其他',
-            desc: '不归页头标签的东西：外观、自动行为、额度、维护和说明；参数里没归到上面四组的也在这里。',
+        desc: '六槽位并存；切 active 走 C3 提案；canary + ratio 可直改落库。各模块页也有「当前算法」摘要。',
             right: h(TabMark, { tab: '其他' }),
           },
             h(Card, { style: { padding: '2px 0 0' } },
@@ -8392,7 +8811,7 @@ window.__ModuleLoader__.load({
       bump() { for (const fn of [...this.listeners]) { try { fn() } catch { /* ignore */ } } },
     }
 
-    /** 对话标题旁的身份牌：按**这段对话**绑定的意识体显示，绑不上就是普通 DSH（不显示）。 */
+    /** 瀵硅瘽鏍囬鏃佺殑韬唤鐗岋細鎸?*杩欐瀵硅瘽**缁戝畾鐨勬剰璇嗕綋鏄剧ず锛岀粦涓嶄笂灏辨槸鏅€?DSH锛堜笉鏄剧ず锛夈€?*/
     function ChatPresence(props) {
       const sid = props && props.sessionId ? String(props.sessionId) : ''
       const [who, setWho] = useState(null)
@@ -8410,8 +8829,8 @@ window.__ModuleLoader__.load({
         }
         load()
         PRESENCE.listeners.add(load)
-        // 不轮询：只在窗口重新获得焦点 / 标签页切回来时补一次
-        const onFocus = () => load()
+        // 涓嶈疆璇細鍙湪绐楀彛閲嶆柊鑾峰緱鐒︾偣 / 鏍囩椤靛垏鍥炴潵鏃惰ˉ涓€娆?''
+              const onFocus = () => load()
         const onVisible = () => { if (document.visibilityState === 'visible') load() }
         window.addEventListener('focus', onFocus)
         document.addEventListener('visibilitychange', onVisible)
@@ -8443,10 +8862,9 @@ window.__ModuleLoader__.load({
     /* ============================================================== guard */
 
     /**
-     * 这一页以前崩一次就整个从设置导航里消失：DSH 的 slot 渲染器对出错的 entry
-     * 会直接停用（abdicate），页签就"没了"。在这里兜住，换成一张能看懂的卡片，
-     * 页签一直留在导航里，出错也能重试。
-     */
+     * 杩欎竴椤典互鍓嶅穿涓€娆″氨鏁翠釜浠庤缃鑸噷娑堝け锛欴SH 鐨?slot 娓叉煋鍣ㄥ鍑洪敊鐨?entry
+     * 浼氱洿鎺ュ仠鐢紙abdicate锛夛紝椤电灏?娌′簡"銆傚湪杩欓噷鍏滀綇锛屾崲鎴愪竴寮犺兘鐪嬫噦鐨勫崱鐗囷紝
+     * 椤电涓€鐩寸暀鍦ㄥ鑸噷锛屽嚭閿欎篃鑳介噸璇曘€?     */
     function rememberCrash(err, extra) {
       try {
         const text = String((err && (err.stack || err.message)) || err)
@@ -8465,7 +8883,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshc-hero-row' },
             h('div', { className: 'dshc-id' }, h(Orb, { size: 42 }),
               h('div', null,
-                h('h1', null, '意识'),
+                h('h1', null, '鎰忚瘑'),
                 h('div', { className: 'dshc-sub' }, '这一页刚才出错了。它还在，重试一下；还不行就把下面的错误发我。'))))),
         h('div', { style: { marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 } },
           h('div', {
@@ -8477,7 +8895,7 @@ window.__ModuleLoader__.load({
             h(Btn, { ghost: true, onClick: () => { try { navigator.clipboard.writeText(text) } catch { /* 剪贴板不可用 */ } } }, '复制错误'))))
     }
 
-    /* 没有 React.Component 的环境（测试里的假 React）只做透传，真浏览器里才拦 */
+    /* 娌℃湁 React.Component 鐨勭幆澧冿紙娴嬭瘯閲岀殑鍋?React锛夊彧鍋氶€忎紶锛岀湡娴忚鍣ㄩ噷鎵嶆嫤 */
     const BoundaryBase = (React.Component) || class { constructor(props) { this.props = props } }
     class SectionBoundary extends BoundaryBase {
       constructor(props) { super(props); this.state = { err: null } }
@@ -8492,10 +8910,7 @@ window.__ModuleLoader__.load({
     /* =========================================================== register */
 
     /**
-     * 前端热更新：每隔 12 秒问一次宿主的 client.js 指纹。
-     * 变了就自己刷新页面——改完插件不用再按 Ctrl+F5。
-     * 加 ?_r= 是为了连 HTML 一起重取，否则拿到的还是缓存里的旧包。
-     */
+     * 鍓嶇鐑洿鏂帮細姣忛殧 12 绉掗棶涓€娆″涓荤殑 client.js 鎸囩汗銆?     * 鍙樹簡灏辫嚜宸卞埛鏂伴〉闈⑩€斺€旀敼瀹屾彃浠朵笉鐢ㄥ啀鎸?Ctrl+F5銆?     * 鍔??_r= 鏄负浜嗚繛 HTML 涓€璧烽噸鍙栵紝鍚﹀垯鎷垮埌鐨勮繕鏄紦瀛橀噷鐨勬棫鍖呫€?     */
     function watchHotReload() {
       let seen = null
       let timer = 0

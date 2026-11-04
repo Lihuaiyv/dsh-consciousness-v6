@@ -30,12 +30,16 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   .run(aid, '标签恢复', 'daily', 'active', now())
 seedAffect(db, aid)
 
-/* 把别的力都摘掉：不游走、不攒负荷 */
+/* 把别的力都摘掉：不游走、不攒负荷、水位本身也不动（没有日节律/没有纹）。
+   水位一动，frac 的分子分母就不同步，剩多少全看这一小时里水涨了还是落了。 */
 setParam(db, aid, 'affect.walk.sd', { value: 0 })
 setParam(db, aid, 'affect.baseline.load.gain', { value: 0 })
+setParam(db, aid, 'affect.baseline.circadian', { value: 0 })
+setParam(db, aid, 'affect.baseline.rough', { value: 0 })
+setParam(db, aid, 'affect.baseline.cycle', { value: 0 })
 
 const T0 = Date.parse('2026-11-02T08:00:00.000Z')
-const COLS = ['baseline', 'slow', 'fast', 'total', 'slow_at', 'fast_at', 'base_off', 'base_off_at', 'walk', 'walk_at', 'circ_phase', 'circ_phase_at']
+const COLS = ['baseline', 'slow', 'fast', 'total', 'slow_at', 'fast_at', 'base_off', 'base_off_at', 'walk', 'walk_at', 'circ_phase', 'circ_phase_at', 'rec_label']
 
 applyEmotionV3(db, aid, { pleasure: 0, label: 'calm', at: T0 })
 const snapshot = db.prepare('SELECT * FROM affect_v3 WHERE agent_id=?').get(aid)
@@ -66,10 +70,12 @@ check('闷着（lost）比被凶（irritated）退得慢',
 /* 高兴那一类（curious，0.8）比平静那一类（calm，1.0）散得快 */
 check('高兴（curious）比平静（calm）退得快',
   curiousUp.frac < calmUp.frac - 0.01, { curious: +curiousUp.frac.toFixed(3), calm: +calmUp.frac.toFixed(3) })
-/* 用时倍数：lost = 1.4×1.3 = 1.82，irritated = 1.4×0.9 = 1.26 → 速率比 ≈ 1.26/1.82 ≈ 0.69 */
+/* 标签那层是「用时倍数」：lost = 1.3，irritated = 0.9。
+   两边都低于水位，正负那层（1/neg = 2）同时乘上去，比值里约掉了
+   → 速率比 ≈ 0.9 / 1.3 ≈ 0.69（对数意义下）。 */
 const rateRatio = Math.log(Math.max(1e-9, lost.frac)) / Math.log(Math.max(1e-9, irr.frac))
 check('lost : irritated 的快慢比 ≈ 0.69',
-  Math.abs(rateRatio - 1.26 / 1.82) < 0.12, { ratio: +rateRatio.toFixed(3), want: +(1.26 / 1.82).toFixed(3) })
+  Math.abs(rateRatio - 0.9 / 1.3) < 0.12, { ratio: +rateRatio.toFixed(3), want: +(0.9 / 1.3).toFixed(3) })
 
 /* 四个标签参数都设回 1：三种情绪一样快（只剩正负那层） */
 for (const k of ['affect.recover.deep', 'affect.recover.sharp', 'affect.recover.bright', 'affect.recover.soft']) {

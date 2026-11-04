@@ -90,12 +90,14 @@ function readState(db, aid) {
   const s = emptyState()
   const meta = db.prepare('SELECT last_seq FROM claim_proj_meta WHERE agent_id=?').get(aid)
   s.last_seq = meta ? meta.last_seq : 0
-  for (const r of db.prepare(`SELECT p.*, c.origin, c.pred_json, c.q_id FROM claim_proj_claim p
+  for (const r of db.prepare(`SELECT p.*, c.origin, c.pred_json, c.q_id, c.meta_json FROM claim_proj_claim p
     JOIN persona_claims c ON c.id=p.id WHERE p.agent_id=?`).all(aid)) {
+    let meta = null
+    try { meta = r.meta_json ? JSON.parse(r.meta_json) : null } catch { meta = null }
     s.claims[r.id] = {
       id: r.id, layer: r.layer, kind: r.kind, origin: r.origin, pred: JSON.parse(r.pred_json || '[]'), q_id: r.q_id,
       status: r.status, pi: r.pi, n: r.n, mentions: r.mentions, e: r.e, n_dep: r.n_dep, epoch: r.epoch, review: r.review,
-      born_seq: r.born_seq, last_ev_at: r.last_ev_at, last_seq: r.last_seq,
+      born_seq: r.born_seq, last_ev_at: r.last_ev_at, last_seq: r.last_seq, meta,
     }
   }
   for (const r of db.prepare('SELECT id, layer FROM claim_questions WHERE agent_id=?').all(aid)) s.questions[r.id] = { id: r.id, layer: r.layer }

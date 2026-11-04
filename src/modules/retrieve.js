@@ -212,7 +212,7 @@ export function searchFacts(db, aid, query, opt = {}) {
     try {
       const fts = terms.map((t) => '"' + t.replace(/"/g, '""') + '"').join(' OR ')
       const rows = db.prepare(`SELECT m.id, m.text, m.type, m.band, m.mark, m.created_at,
-          m.last_decay_at, m.stability, m.valence, m.heat${cardCols}${supCols}, bm25(memory_fts) AS rank
+          m.last_decay_at, m.stability, m.valence, m.heat, m.source, m.confidence${cardCols}${supCols}, bm25(memory_fts) AS rank
         FROM memory_fts JOIN memory_items m ON m.id=memory_fts.id
         WHERE memory_fts MATCH ? AND m.agent_id=? AND m.status='active'${supFilter}${coldFilter}
         ORDER BY rank LIMIT 50`).all(fts, aid)
@@ -227,9 +227,9 @@ export function searchFacts(db, aid, query, opt = {}) {
   for (const g of [...grams(q, 2)].slice(0, 8)) {
     const like = '%' + g + '%'
     const rows = byCard
-      ? db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,terms,fact_key${supOn ? ',invalid_at,superseded_by' : ''} FROM memory_items
+      ? db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,source,confidence,terms,fact_key${supOn ? ',invalid_at,superseded_by' : ''} FROM memory_items
         WHERE agent_id=? AND status='active'${supFilterBare} AND (text LIKE ? OR terms LIKE ?)${coldFilterBare} LIMIT 20`).all(aid, like, like)
-      : db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence${supOn ? ',invalid_at,superseded_by' : ''} FROM memory_items
+      : db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,source,confidence${supOn ? ',invalid_at,superseded_by' : ''} FROM memory_items
         WHERE agent_id=? AND status='active'${supFilterBare} AND text LIKE ?${coldFilterBare} LIMIT 20`).all(aid, like)
     for (const r of rows) if (!found.has(r.id)) found.set(r.id, { ...r, fts: 0 })
   }
@@ -278,7 +278,7 @@ export function searchByEntity(db, aid, query, opt = {}) {
   const seen = new Set()
   for (const e of ents) {
     try {
-      const rows = db.prepare(`SELECT m.id,m.text,m.type,m.band,m.mark,m.created_at,m.heat,m.last_decay_at,m.stability,m.valence${supCols} FROM memory_items m
+      const rows = db.prepare(`SELECT m.id,m.text,m.type,m.band,m.mark,m.created_at,m.heat,m.last_decay_at,m.stability,m.valence,m.source,m.confidence${supCols} FROM memory_items m
         WHERE m.agent_id=? AND m.entity_id=? AND m.status='active'${supFilter}${coldFilter}
         ORDER BY m.heat DESC, m.created_at DESC LIMIT 15`).all(aid, e.id)
       for (const r of rows) {
@@ -311,11 +311,11 @@ export function searchByTerms(db, aid, terms, opt = {}) {
     try {
       const like = '%' + term + '%'
       const rows = card
-        ? db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,terms,fact_key
+        ? db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,source,confidence,terms,fact_key
           FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
             AND (text LIKE ? OR terms LIKE ?)${coldFilter}
           ORDER BY heat DESC, created_at DESC LIMIT 15`).all(aid, like, like)
-        : db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence
+        : db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,source,confidence
           FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
             AND text LIKE ?${coldFilter}
           ORDER BY heat DESC, created_at DESC LIMIT 15`).all(aid, like)
@@ -369,7 +369,7 @@ export function loadVectors(db, aid) {
   if (hit && Date.now() - hit.at < VEC_TTL) return hit.list
   const list = []
   try {
-    const rows = db.prepare(`SELECT v.memory_id, v.vec, m.text, m.type
+    const rows = db.prepare(`SELECT v.memory_id, v.vec, m.text, m.type, m.source, m.confidence, m.created_at
       FROM memory_vec v JOIN memory_items m ON m.id=v.memory_id
       WHERE v.agent_id=? AND m.status='active' AND m.invalid_at IS NULL`).all(aid)
     for (const r of rows) {
@@ -379,7 +379,7 @@ export function loadVectors(db, aid) {
       for (let i = 0; i < v.length; i++) norm += v[i] * v[i]
       norm = Math.sqrt(norm) || 1
       for (let i = 0; i < v.length; i++) v[i] /= norm
-      list.push({ id: r.memory_id, text: String(r.text || ''), type: r.type, vec: v })
+      list.push({ id: r.memory_id, text: String(r.text || ''), type: r.type, source: r.source, confidence: r.confidence, created_at: r.created_at, vec: v })
     }
   } catch { /* 老库没有 memory_vec 就当归零 */ }
   VEC_CACHE.set(key, { at: Date.now(), list })
@@ -407,7 +407,7 @@ export function searchByVector(db, aid, queryVec, opt = {}) {
     const cos = dot / qn
     if (cos < 0.35) continue
     const e = Math.round(Math.min(0.95, Math.max(0, (cos - 0.25) / 0.65)) * 0.95 * 1e4) / 1e4
-    out.push({ partition: 'T1', id: row.id, via: 'vec', text: row.text, type: row.type, fts: 0, _vecE: e, cos: Math.round(cos * 1e4) / 1e4 })
+    out.push({ partition: 'T1', id: row.id, via: 'vec', text: row.text, type: row.type, source: row.source, confidence: row.confidence, created_at: row.created_at, fts: 0, _vecE: e, cos: Math.round(cos * 1e4) / 1e4 })
   }
   return out.sort((a, b) => b._vecE - a._vecE).slice(0, limit)
 }
@@ -437,7 +437,7 @@ export function expandByLinks(db, aid, items, opt = {}) {
     const ph = frontier.map(() => '?').join(',')
     let rows = []
     try {
-      rows = db.prepare(`SELECT DISTINCT m.id,m.text,m.type,m.band,m.mark,m.created_at,m.heat,m.last_decay_at,m.stability
+      rows = db.prepare(`SELECT DISTINCT m.id,m.text,m.type,m.band,m.mark,m.created_at,m.heat,m.last_decay_at,m.stability,m.source,m.confidence
         FROM memory_links l JOIN memory_items m ON m.id = l.to_id
         WHERE l.from_id IN (${ph}) AND m.agent_id=? AND m.status='active' AND m.invalid_at IS NULL${coldFilter}
         ORDER BY m.heat DESC LIMIT ?`).all(...frontier, aid, limit * 2)
@@ -559,7 +559,7 @@ export function importanceAnchors(db, aid, opt = {}) {
   // 候选池：名额的 3 倍（至少 4 条），够轮、又不至于把冷门货翻上来
   const pool = Math.max(limit, Math.min(12, limit * 3, limit + 6))
   try {
-    const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_hit_at,heat,last_decay_at,stability,valence,importance
+    const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_hit_at,heat,last_decay_at,stability,valence,importance,source,confidence
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
         AND importance>=? AND (mark='locked' OR type IN ('fact','conflict'))
       ORDER BY (mark='locked') DESC, importance DESC, heat DESC, created_at DESC LIMIT ?`)
@@ -578,10 +578,13 @@ export function freshFacts(db, aid, opt = {}) {
   const limit = Math.max(1, Math.min(5, Number(opt.limit) || 2))
   const hours = Math.max(1, Math.min(24 * 30, Number(opt.hours) || 24))
   const since = new Date(Date.now() - hours * 3600000).toISOString()
+  // 冷层不进「今天刚发生」：旁白闸判下来的第三人称转述也落冷层，
+  // 不挡的话它们会从这个后门重新回到注入里。
+  const cold = (opt.includeCold || !hasTempCol(db)) ? '' : " AND (temp_state IS NULL OR temp_state IN ('hot','warm'))"
   try {
-    return db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,importance
+    return db.prepare(`SELECT id,text,type,band,mark,created_at,heat,last_decay_at,stability,valence,importance,source,confidence
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=?
-        AND type<>'reflection'
+        AND type<>'reflection'${cold}
       ORDER BY created_at DESC LIMIT ?`)
       .all(aid, since, limit)
       .map((r) => ({ partition: 'T1', via: 'fresh', e: 0, ...r, text: String(r.text || '') }))
@@ -644,8 +647,14 @@ export function fuseRRF(per, weights, k = RRF_K) {
 export function rerank(items, opt = {}) {
   const heatW = Number.isFinite(Number(opt.heat)) ? Number(opt.heat) : 0.35
   const recW = Number.isFinite(Number(opt.recency)) ? Number(opt.recency) : 0.25
+  // 她自己的事：48 小时内算「还热」，不然刚写的也挤不过陈年旧事。
+  const selfBoost = Math.max(0, Math.min(1, Number(opt.selfFreshBoost == null ? 0.5 : opt.selfFreshBoost)))
   return (items || []).map((x) => {
-    const h = Math.max(0, Math.min(1, Number(x.heat || 0)))
+    let h = Math.max(0, Math.min(1, Number(x.heat || 0)))
+    if (selfBoost > 0 && String(x.source || '') === 'self') {
+      const t = Date.parse(x.created_at || '')
+      if (Number.isFinite(t) && Date.now() - t < 48 * 3600000) h = Math.max(h, selfBoost)
+    }
     const R = x.partition === 'T1' ? retrievability(x) : 1
     const mul = 1 + heatW * h + recW * (R - 0.5)
     return { ...x, _score: Math.round(x.rrf * mul * 1e6) / 1e6 }
@@ -713,6 +722,65 @@ function maxEvidence(scored) {
   return top
 }
 
+/**
+ * 她自己的事（P2）：召回结果里一条都没有时，硬补 1 条。
+ *
+ * 为什么必须硬补：用户条目 1200+ 条、自我条目几十条，同分竞争下自我条目永远挤不进前 6。
+ * 先按字面相关，再按新鲜；没有就给最近的，别给「三个月前的一条」。
+ */
+export function selfCandidates(db, aid, query, want = 1, opt = {}) {
+  const n = Math.max(1, Math.min(3, Number(want) || 1))
+  try {
+    const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_decay_at,stability,valence,importance,heat,source,confidence,fact_key
+      FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
+        AND source IN ('self','life')
+      ORDER BY created_at DESC LIMIT 24`).all(aid)
+    if (!rows.length) return []
+    const target = stripSceneWords(String(query || ''))
+    const isPattern = (r) => String(r.fact_key || '').startsWith('self.pattern.')
+    const scored = rows.map((r) => ({ ...r, e: evidenceOf(r, target) }))
+    // 模式排在流水账前面：那是「我是谁」的结论，不该跟「今天干了啥」抢同一次露脸。
+    scored.sort((a, b) => (Number(isPattern(b)) - Number(isPattern(a)))
+      || (Number(b.e) - Number(a.e))
+      || (Date.parse(b.created_at || '') - Date.parse(a.created_at || '')))
+    // 防祥林嫂：最近露太多次的先让开；一条都不剩时挑露得最少的兜底（不能一条不给）。
+    const shown = opt.selfShown instanceof Map ? opt.selfShown : null
+    const cap = Math.max(0, Math.min(10, Number(opt.selfRepeatMax) || 0))
+    let ranked = scored
+    if (shown && cap > 0) {
+      const under = scored.filter((r) => (shown.get(String(r.id)) || 0) < cap)
+      ranked = under.length
+        ? under
+        : [...scored].sort((a, b) => (shown.get(String(a.id)) || 0) - (shown.get(String(b.id)) || 0))
+    }
+    return ranked.slice(0, n).map((r) => ({ partition: 'T1', via: 'self', text: String(r.text || ''), ...r, fts: 0 }))
+  } catch { return [] }
+}
+
+/**
+ * 「我好像就是这样」的那一层（第二阶段 P1）：只取模式条目，按见过的次数和重要度排。
+ * 它不进证据门：模式是结论，本来就不会跟某一句查询字面重合。
+ */
+export function patternCandidates(db, aid, want = 1) {
+  const n = Math.max(1, Math.min(2, Number(want) || 1))
+  try {
+    return db.prepare(`SELECT id, text, type, confidence, importance, created_at, source, fact_key
+      FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
+        AND source='self' AND fact_key LIKE 'self.pattern.%'
+      ORDER BY importance DESC, created_at DESC LIMIT ?`).all(aid, n).map((r) => ({
+      partition: 'T1', via: 'pattern', text: String(r.text || ''), ...r, e: 0.55, rrf: 0.02,
+    }))
+  } catch { return [] }
+}
+
+/**
+ * 历史第三人称旁白（source='summary'）要不要进常规注入（P0）。
+ * 默认 off：那 789 条「用户正在…」不往提示里塞，但仍在库里，回看 / 深查照样翻得到。
+ * 开关在调用方读（index.js / api.js）；retrieve 不碰 agent_params，保持纯检索层。
+ */
+const dropSummary = (list) => (list || []).filter((x) => String(x.source || '') !== 'summary')
+
+
 function collect(db, aid, query, scene, opt = {}) {
   const w = SCENE_WEIGHTS[scene] || SCENE_WEIGHTS.S1
   const out = {}
@@ -738,6 +806,8 @@ function collect(db, aid, query, scene, opt = {}) {
     if (Array.isArray(opt.terms) && opt.terms.length) absorb(searchByTerms(db, aid, opt.terms, { includeCold }), '_termE')
     if (opt.queryVec) absorb(searchByVector(db, aid, opt.queryVec, { limit: 20 }), '_vecE')
     out.T1 = [...byId.values()]
+    // S1 不塞历史旁白：它们是「用户关心什么」的转述，不是「我记得的事」。
+    if (scene === 'S1' && !opt.summaryInjected) out.T1 = dropSummary(out.T1)
   }
   if (w.T2) out.T2 = searchEpisodes(db, aid, query)
   if (w.T3) out.T3 = searchDiaries(db, aid, query)
@@ -768,6 +838,7 @@ function collectAll(db, aid, query, scene, opt = {}) {
       strength: opt.linkStrength,
     }).filter((x) => !seen.has(x.id))
     if (extra.length) lists.T1 = lists.T1.concat(extra)
+    if (scene === 'S1' && !opt.summaryInjected) lists.T1 = dropSummary(lists.T1)
   }
   // 候选池：memory.inject.pool。不传就不动（测试/旧调用保持原样），传了才截断。
   // 截断前必须先按证据分排序：直接 slice 是按「通道插入顺序」砍的，向量/扩词补进来的
@@ -792,6 +863,33 @@ const PRONOUN_RE = /(那个|这个|它|他|她|上面|刚才|前面|那件|这�
 
 /** 「翻旧账」：这句查询本身在要很久以前的东西，原文层就别只翻最近 N 天。 */
 const OLD_ACCOUNT_RE = /(最早|最开始|一开始|最初|很久以前|好早|老早|以前那|当时|那天|当年|第一天|从头|历史)/
+
+/** 「我去翻翻」：这句在问记不记得，值得往深里翻一次。 */
+const DEEP_RE = /(记得|还记不记得|忘没忘|你忘了|以前|那时候|上次说|翻旧账|想不起来|不记得)/
+
+export function wantsDeep(query) {
+  return DEEP_RE.test(String(query || ''))
+}
+
+/**
+ * 深翻一次（第二阶段 P2）：常规注入一条都没有、或她在问「记不记得」时，
+ * 往纪要 / 日记 / 原文老账里翻一遍。结果带 via='deep'，注入时会被标注成「刚翻出来的」。
+ * 不在这里读参数：开关由调用方判断，这层只做检索。
+ */
+export function deepRecall(db, aid, q, opt = {}) {
+  const k = Math.max(1, Math.min(5, Number(opt.k) || 3))
+  try {
+    const r = retrieve(db, aid, q, {
+      scene: 'S3', k: Math.max(6, k + 3), noUpgrade: true, archiveDays: 0, keepAll: false,
+    })
+    // 优先翻纪要 / 日记 / 原文（T2/T3/T4），不够再用 T1 兜底：
+    // 冷掉的事实本身也在 T1，只翻非 T1 会把它漏掉。
+    const all = r.items || []
+    const pool = all.filter((x) => x.partition !== 'T1')
+    const rest = all.filter((x) => x.partition === 'T1')
+    return pool.concat(rest).slice(0, k).map((x) => ({ ...x, via: 'deep' }))
+  } catch { return [] }
+}
 
 export function oldAccountQuery(query) {
   return OLD_ACCOUNT_RE.test(String(query || ''))
@@ -831,6 +929,12 @@ export function retrieve(db, aid, query, opt = {}) {
     const extra = []
     if (na) extra.push(...importanceAnchors(db, aid, { limit: na + 1, floor: opt.anchorFloor }))
     if (nf) extra.push(...freshFacts(db, aid, { limit: nf + 1, hours: opt.freshHours }))
+    // 她自己的事：空话轮也该有一条「我自己的」，不然「没问你就想不起来」永远是空话。
+    const wantSelf0 = on ? Math.max(0, Math.min(2, Number(opt.selfQuota == null ? 1 : opt.selfQuota))) : 0
+    if (wantSelf0) extra.push(...selfCandidates(db, aid, '', wantSelf0 + 1, opt))
+    // 「我好像就是这样」：空话轮里也该有一句关于我是谁的话。
+    const wantPat0 = on ? Math.max(0, Math.min(1, Number(opt.patternQuota == null ? 1 : opt.patternQuota))) : 0
+    if (wantPat0) extra.push(...patternCandidates(db, aid, 1))
     return {
       scene, why: why.concat('空查询'), buffer,
       items: addQuotaItems([], extra, k),
@@ -903,7 +1007,7 @@ export function retrieve(db, aid, query, opt = {}) {
   const wantFresh = floatOn ? Math.max(0, Math.min(3, Number(opt.fresh == null ? 1 : opt.fresh))) : 0
   const relatedK = Math.max(1, k - wantAnchor - wantFresh)
   // 顺序：融合 → 忘掉该忘的 → 按「熟不熟」重排 → 挑不重复的 → 截 k。
-  items = mmrSelect(rerank(items), relatedK)
+  items = mmrSelect(rerank(items, { selfFreshBoost: opt.selfFreshBoost }), relatedK)
   // 相对门槛：只留跟最高分接近的。绝对门（GATE）只挡「完全无关」，
   // 挡不住「沾到一点边就全进来」——6 条凑满反而把真正相关的那条冲淡。
   // 实体点名（via=entity）例外：字面不重合也是真相关。
@@ -919,10 +1023,66 @@ export function retrieve(db, aid, query, opt = {}) {
   if (items.length > relatedK) items = items.slice(0, relatedK)
   // 补配额位：锚点与今日新近。它们不过证据门，所以放在相对门之后才不会被筛掉。
   if (floatOn && (wantAnchor || wantFresh)) {
-    const extra = []
+    let extra = []
     if (wantAnchor) extra.push(...importanceAnchors(db, aid, { limit: wantAnchor + 1, floor: opt.anchorFloor }))
     if (wantFresh) extra.push(...freshFacts(db, aid, { limit: wantFresh + 1, hours: opt.freshHours }))
+    // 遗忘阈值对配额位同样生效。配额是「补漏」，不是「把已经忘掉的重新捞回来」的后门：
+    // 阈值调到 0.8 时，一条 R 已经归零的旧记忆不该借 via='fresh' 回来。
+    if (floor > 0 && opt.decayVersion && registryHas('decay', opt.decayVersion)) {
+      extra = extra.filter((it) => {
+        if (it.partition !== 'T1') return true
+        try {
+          const R = Number(registryRun('decay', opt.decayVersion, {}, { row: it, scale: opt.decayScale }).R)
+          return !Number.isFinite(R) || R >= floor
+        } catch { return true }
+      })
+    }
     items = addQuotaItems(items, extra, k)
+  }
+  // 她自己的事（P2）：一条都没有时硬补 1 条（k>=8 时最多 2 条）。
+  // 不抢已有名额，只在「这次全是你的事」时补一条「我自己的」；紧预算（<4 条）不补。
+  const wantSelf = floatOn ? Math.max(0, Math.min(2, Number(opt.selfQuota == null ? 1 : opt.selfQuota))) : 0
+  if (wantSelf) {
+    const hasSelf = items.some((x) => x.source === 'self' || x.source === 'life')
+    const need = items.length >= 4 ? (k >= 8 ? Math.min(2, wantSelf) : Math.min(1, wantSelf)) : 0
+    if (!hasSelf && need > 0) {
+      const cap = Math.min(k + need, items.length + need)
+      items = addQuotaItems(items, selfCandidates(db, aid, qs, need + 1, opt), cap)
+    }
+  }
+  // 模式位（P1）：一句「我好像就是这样」单独留一格，不跟流水账抢名额。
+  const wantPattern = floatOn ? Math.max(0, Math.min(2, Number(opt.patternQuota == null ? 1 : opt.patternQuota))) : 0
+  if (wantPattern > 0) {
+    const hasPattern = items.some((x) => String(x.fact_key || '').startsWith('self.pattern.'))
+    if (!hasPattern) {
+      const pc = patternCandidates(db, aid, 1)
+      if (pc.length) items = addQuotaItems(items, pc, Math.min(k + 1, items.length + 1))
+    }
+  }
+  // 防「祥林嫂」兜底（第二阶段 P4）：配额位（锚点 / 新近 / 自己的 / 模式）带进来的自己 的事
+  // 也受同一个上限约束——不然刚写的事会被「新近」通道反复带进来，自我通道的过滤形同虚设。
+  // 只挡配额通道：字面 / 实体命中的那条是真相关，她在问这件事，就该出现。
+  const shownMap = opt.selfShown instanceof Map ? opt.selfShown : null
+  const repCap = Math.max(0, Math.min(10, Number(opt.selfRepeatMax) || 0))
+  if (shownMap && repCap > 0) {
+    const isMine = (x) => x.source === 'self' || x.source === 'life'
+    const isPat = (x) => String(x.fact_key || '').startsWith('self.pattern.')
+    const quotaVia = new Set(['anchor', 'fresh', 'self', 'pattern'])
+    const keep = (x) => !(quotaVia.has(String(x.via)) && isMine(x) && (shownMap.get(String(x.id)) || 0) >= repCap)
+    const next = items.filter(keep)
+    // 这一轮原本有自己的事、但全被挡住了：补回露得最少的一条（流水账可以换，模式不补）。
+    if (!next.some(isMine)) {
+      const blocked = items.filter((x) => isMine(x) && !isPat(x) && quotaVia.has(String(x.via))
+        && (shownMap.get(String(x.id)) || 0) >= repCap)
+      if (blocked.length) {
+        const least = [...blocked].sort((a, b) => (shownMap.get(String(a.id)) || 0) - (shownMap.get(String(b.id)) || 0))[0]
+        items = [...next, least]
+      } else {
+        items = next
+      }
+    } else {
+      items = next
+    }
   }
   return { scene, why, items, buffer, debug }
 }

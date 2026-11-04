@@ -9,9 +9,12 @@ const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x))
 /** 情绪标签 → PAD 锚点（修复 v1：PAD 必须跟着标签走，不能各自漂移） */
 export const PAD_PRIOR = {
   joy: { p: 0.7, a: 0.4, d: 0.4 },
-  peaceful: { p: 0.5, a: -0.3, d: 0.2 },
+  /* 2026-11-03：平静这一档原来给到 0.5，等于「挺平静」也带半格正分，
+     快情绪老贴在 0.3~0.7 不掉，「我是不是个镜子」那段自述就是被这个数带出来的。
+     往中性收：peaceful 0.5→0.25、calm 0.4→0.15。joy 那些不动，正负两端先分开看。 */
+  peaceful: { p: 0.25, a: -0.3, d: 0.2 },
   curious: { p: 0.3, a: 0.4, d: 0.1 },
-  calm: { p: 0.4, a: -0.2, d: 0.1 },
+  calm: { p: 0.15, a: -0.2, d: 0.1 },
   confused: { p: -0.2, a: 0.3, d: -0.3 },
   lost: { p: -0.3, a: 0.2, d: -0.4 },
   irritated: { p: -0.4, a: 0.5, d: 0.2 },

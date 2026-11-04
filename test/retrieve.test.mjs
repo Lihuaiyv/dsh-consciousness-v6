@@ -66,12 +66,12 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   const facts = searchFacts(db, aid, '咖啡')
   check('两字查询也能召回（LIKE 兜底）', facts.length >= 1 && /咖啡/.test(facts[0].text), facts.length)
 
-  const r1 = retrieve(db, aid, '咖啡', { k: 5 })
+  const r1 = retrieve(db, aid, '咖啡', { k: 5, float: false })
   check('S1 场景', r1.scene === 'S1', r1.scene)
   check('S1 只召回到咖啡那条', r1.items.length === 1 && /咖啡/.test(r1.items[0].text), r1.items.map((x) => x.text))
   check('S1 门是 0.35', r1.debug.gate === GATE.S1, r1.debug.gate)
 
-  const r2 = retrieve(db, aid, '量子色动力学的正则化', { k: 5 })
+  const r2 = retrieve(db, aid, '量子色动力学的正则化', { k: 5, float: false })
   check('完全无关 → 升级成 S3 且结果为空', r2.scene === 'S3' && r2.items.length === 0, { scene: r2.scene, n: r2.items.length })
   check('升级有理由', (r2.why || []).some((w) => /升级/.test(w)), r2.why)
 
@@ -121,7 +121,10 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   const forced = await api('GET', `/v1/agents/${aid}/retrieve?q=` + encodeURIComponent('咖啡') + '&scene=S3')
   check('可以强制场景', forced.scene === 'S3', forced.scene)
   const empty = await api('GET', `/v1/agents/${aid}/retrieve?q=`)
-  check('空查询不炸', empty.items.length === 0 && empty.buffer !== undefined, empty.scene)
+  // 空查询不炸；注入路径允许垫「锚点 / 新近」配额位，所以不要求 items 为空，
+  // 但要求进来的只能是配额项，不能是字面命中。
+  check('空查询不炸（配额项可以垫底）', Array.isArray(empty.items) && empty.buffer !== undefined
+    && empty.items.every((x) => x.via === 'anchor' || x.via === 'fresh'), { scene: empty.scene, n: empty.items.length, via: empty.items.map((x) => x.via) })
 }
 
 console.log(`\n通过 ${pass} / ${pass + fail}`)

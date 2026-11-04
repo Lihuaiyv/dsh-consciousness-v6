@@ -10,7 +10,13 @@ let fail = 0
 function check(name, ok, detail) {
   if (ok) { pass++; console.log('PASS', name) } else { fail++; console.log('FAIL', name, detail === undefined ? '' : JSON.stringify(detail).slice(0, 500)) }
 }
-const atDay = (h = 15) => new Date(2026, 10, 2, h, 0, 0).getTime()
+// 测试用「今天」而不是写死的 2026-11-02：life.done 的 created_at 走真实时钟，
+// 写死日期会在第二天变成「查的是昨天、事件记在今天」，整组用例无端变红。
+const atDay = (h = 15) => {
+  const d = new Date()
+  d.setHours(h, 0, 0, 0)
+  return d.getTime()
+}
 const browseOk = async () => ({ items: [{ title: '看海攻略', url: 'https://example.com/sea', snippet: '海边风大，要带外套。' }] })
 const modelOk = { chat: async () => '嗯，海边风大，得带件外套。' }
 const modelBad = { chat: async () => { throw new Error('no model') } }
@@ -19,11 +25,19 @@ function seedAgent(w) {
   w.db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(new Date(atDay(12) - 60000).toISOString(), w.aid)
 }
 
-// ---- 1. 夜间不生活
+/** 按实例改生活流参数：默认值已经开大（一天 4 次、夜里也能想），这些用例要的是老口径。 */
+function pin(w, key, value) {
+  w.db.prepare(`INSERT INTO agent_params(agent_id,key,value,updated_at) VALUES(?,?,?,?)
+    ON CONFLICT(agent_id,key) DO UPDATE SET value=excluded.value`)
+    .run(w.aid, key, JSON.stringify(value), new Date().toISOString())
+}
+
+// ---- 1. 夜间不生活（这一条测的是关掉「夜里想一想」时的老行为）
 {
   const w = makeWorld()
   try {
     seedAgent(w)
+    pin(w, 'life.night_think', 'off')
     const out = await lifeTick(w.db, w.aid, { at: atDay(3), browse: browseOk, model: modelOk })
     check('夜里 3 点不跑', out.ok === false && out.skipped === 'night', out)
   } finally { w.close() }
@@ -81,11 +95,12 @@ function seedAgent(w) {
   const w = makeWorld()
   try {
     seedAgent(w)
+    pin(w, 'life.per_day', 1) // 这条测的是「一天一次」的老口径；默认已经开大到 4
     await lifeTick(w.db, w.aid, { at: atDay(), browse: browseOk, model: modelOk })
     const second = await lifeTick(w.db, w.aid, { at: atDay() + 3600000, browse: browseOk, model: modelOk })
     check('同一天第二次跳过', second.ok === false && second.skipped === 'done_today', second)
     const next = await lifeTick(w.db, w.aid, { at: atDay() + 86400000, browse: browseOk, model: modelOk })
-    check('第二天没有被 done_today 挡（只是没新事）', next.ok === false && next.skipped === 'nothing', next)
+    check('第二天没有被 done_today 挡', next.skipped !== 'done_today', next)
     // 铺一件新在意的事，第二天就能真的再生活
     w.db.prepare(`INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,last_decay_at,status,created_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('mem_new_like', w.aid, 'appraisal', 'normal', '主人好奇潮汐是怎么涨落的。', 'manual', 0.5, 0.5, 1, 5, new Date(atDay()).toISOString(), 'active', new Date(atDay() + 86400000).toISOString())
@@ -119,14 +134,16 @@ function seedAgent(w) {
   } finally { w.close() }
 }
 
-// ---- 8. 7 天内同一条不反复选
+// ---- 8. 7 天内同一条最多续看一次
 {
   const w = makeWorld()
   try {
     seedAgent(w)
     await lifeTick(w.db, w.aid, { at: atDay(), browse: browseOk, model: modelOk })
     const out2 = await lifeTick(w.db, w.aid, { at: atDay() + 86400000, browse: browseOk, model: modelOk })
-    check('第二天没有新事 → nothing', out2.ok === false && out2.skipped === 'nothing', out2)
+    check('第二天可以续看一次', out2.ok === true && out2.kind === 'think', out2)
+    const out3 = await lifeTick(w.db, w.aid, { at: atDay() + 2 * 86400000, browse: browseOk, model: modelOk })
+    check('第三次 → nothing（同一条最多两次）', out3.ok === false && out3.skipped === 'nothing', out3)
   } finally { w.close() }
 }
 

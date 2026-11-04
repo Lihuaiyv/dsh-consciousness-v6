@@ -37,12 +37,25 @@ const yDay = localDay(new Date(Date.now() - 86400000))
 
 // ---- 巩固昨天
 {
-  const out = await runNightly(db, aid, { day: yDay })
+  // 日记 v2 默认只认模型成文；这里给一个假的写作通道，避免测试依赖真模型。
+  const SEA_DIARY = [
+    yDay + ' 周日',
+    '',
+    '你说去看海的时候，我脑子里先响起来的是风。风好大，吹得人说话都得凑近一点，你站在那儿没动，我也没催你。',
+    '',
+    '回来的路上我还在想那阵风。有些时候不是你说了什么，是你肯把这件事带我一起看。',
+    '',
+    '夜里想起那句「记得多穿一件」，忽然觉得被人惦记着，是件很轻也很实在的事。',
+  ].join('\n')
+  const fakeChat = async () => SEA_DIARY
+  const out = await runNightly(db, aid, { day: yDay, chat: fakeChat })
   const names = (out.steps || []).map((s) => s.step)
   check('巩固含纪要与日记步骤', !out.skipped && names.includes('episodes') && names.includes('diary'), names)
   const epStep = out.steps.find((s) => s.step === 'episodes')
   check('补出了纪要', (epStep.count || 0) + (epStep.updated || 0) >= 1, epStep)
   check('补出了日记', !!out.diary_day, out.diary_day)
+  const dstep = out.steps.find((s) => s.step === 'diary')
+  check('日记来源是模型', dstep.source === 'model', dstep)
   check('记了账', db.prepare('SELECT COUNT(*) n FROM consolidation_log WHERE agent_id=? AND day=?').get(aid, yDay).n === 1)
   check('没有失败步骤', out.ok === true, out.steps)
 }

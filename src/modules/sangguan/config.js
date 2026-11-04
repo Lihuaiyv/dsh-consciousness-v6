@@ -19,6 +19,7 @@ export const SANGGUAN_DEFAULTS = Object.freeze({
   enabled: false,
   inject: 'shadow',
   violate: 'shadow',
+  lanes: Object.freeze({ W: false, L: false, V: false }),
   model: Object.freeze({ light: null, heavy: null }),
   budget: BUDGET_DEFAULTS,
 })
@@ -58,6 +59,14 @@ function cleanReplace(src) {
   return out
 }
 
+/** 三列闸的开关，默认全关：关掉时行为与改造前逐字一致。 */
+function cleanLanes(src, base = SANGGUAN_DEFAULTS.lanes) {
+  const out = { ...base }
+  if (!src || typeof src !== 'object') return out
+  for (const k of ['W', 'L', 'V']) if (k in src) out[k] = src[k] === true
+  return out
+}
+
 export function sangguanConfig(db, aid) {
   let raw = {}
   try {
@@ -71,11 +80,17 @@ export function sangguanConfig(db, aid) {
     model: cleanModel(raw.model),
     budget: cleanBudget(raw.budget),
     replace: cleanReplace(raw.replace),
+    lanes: cleanLanes(raw.lanes),
   }
 }
 
 export function isEnabled(db, aid) {
   return sangguanConfig(db, aid).enabled === true
+}
+
+/** 某一列的闸是否打开（默认关）。 */
+export function laneOn(db, aid, lane) {
+  return sangguanConfig(db, aid).lanes[lane] === true
 }
 
 export function setSangguanConfig(db, aid, patch = {}) {
@@ -87,6 +102,7 @@ export function setSangguanConfig(db, aid, patch = {}) {
   if (patch.budget !== undefined) next.budget = cleanBudget(patch.budget, cur.budget)
   if (patch.model !== undefined) next.model = cleanModel(patch.model, cur.model)
   if (patch.replace !== undefined) next.replace = cleanReplace(patch.replace)
+  if (patch.lanes !== undefined) next.lanes = cleanLanes(patch.lanes, cur.lanes)
   setFlag(db, flagKey(aid), JSON.stringify(next))
   return next
 }

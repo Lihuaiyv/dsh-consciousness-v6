@@ -148,7 +148,7 @@ function createEntities(ctx) {
     const nc = {
       id: c.id, layer: c.layer, kind: c.kind, origin: c.origin, pred: [...(c.pred || [])], q_id: c.q_id || null,
       status, pi: 0, n: 0, mentions: 0, e: 0, n_dep: 0, epoch: s.epoch[c.layer], review: 0,
-      born_seq: ev.seq, last_ev_at: null, last_seq: ev.seq,
+      born_seq: ev.seq, last_ev_at: null, last_seq: ev.seq, meta: c.meta || null,
     }
     nc.e = eOf(nc)
     s.claims[c.id] = nc

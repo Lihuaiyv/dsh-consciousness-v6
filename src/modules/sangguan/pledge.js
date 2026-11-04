@@ -131,7 +131,7 @@ export function settleMiss(db, aid, nu, at) {
       type: 'EVIDENCE', actor: 'sys', at,
       payload: { evidence: [{ kind: 'check', target_type: 'nu', target_id: nu.id, sign: -1, weight: theta(s, 'w_check'), ref: 'pledge:' + nu.id }] },
     },
-    { type: 'NU_RESOLVE', actor: 'sys', at, payload: { nu_id: nu.id, outcome: 'miss', surprise: +Math.log(1 / (1 - (Number(nu.p) || 0.6))).toFixed(4) } },
+    { type: 'NU_RESOLVE', actor: 'sys', at, payload: { nu_id: nu.id, outcome: 'miss', why: 'pledge_miss', surprise: +Math.log(1 / (1 - (Number(nu.p) || 0.6))).toFixed(4) } },
   ], { nus: { [nu.id]: 'pending' } })
 }
 

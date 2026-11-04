@@ -9,6 +9,7 @@ import {
 import { ulid } from './ulid.js'
 import { SangguanError, ConflictError } from './errors.js'
 import { hasJob } from './events.js'
+import { normalizeMeta } from './meta.js'
 import { commitBatch } from './projection.js'
 
 export { SangguanError, ConflictError }
@@ -46,11 +47,14 @@ const ENTITY = {
     if (!Array.isArray(pred) || pred.length > 2) invalid('pred 至多两个前驱')
     const boundary = c.boundary == null ? [] : c.boundary
     if (!Array.isArray(boundary) || boundary.length > 12) invalid('边界至多 12 条')
+    const meta = normalizeMeta(c.meta)
+    if (meta == null) invalid('meta 必须是对象')
     return {
       layer: c.layer, kind: c.kind, text: text(c.text, '命题 text'), origin: c.origin,
       pred: pred.map((p) => str(p, 'pred')),
       boundary: boundary.map((b) => ({ text: text(b && b.text, '边界 text', 300), testable: !!(b && b.testable) })),
       q_id: optStr(c.q_id, 'q_id'),
+      meta: Object.keys(meta).length ? meta : null,
     }
   },
   questions(q, ev) {
@@ -73,7 +77,7 @@ const ENTITY = {
     }
   },
   evidence(x) {
-    if (!EVIDENCE_KINDS.includes(x.kind)) invalid('证据 kind 只收 act / verdict / check（I7）', { kind: x.kind })
+    if (!EVIDENCE_KINDS.includes(x.kind)) invalid('证据 kind 只收 act / verdict / check / invest（I7）', { kind: x.kind })
     if (x.target_type !== 'claim' && x.target_type !== 'nu') invalid('证据 target_type 只能是 claim / nu')
     if (x.sign !== 1 && x.sign !== -1) invalid('证据 sign 只能是 ±1')
     const w = Number(x.weight)
@@ -168,8 +172,8 @@ const ENTITY_TABLE = {
 function insertEntity(db, aid, slot, o, at) {
   switch (slot) {
     case 'claims':
-      db.prepare('INSERT INTO persona_claims(id,agent_id,layer,kind,text,boundary_json,pred_json,origin,q_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-        .run(o.id, aid, o.layer, o.kind, o.text, JSON.stringify(o.boundary), JSON.stringify(o.pred), o.origin, o.q_id, at)
+      db.prepare('INSERT INTO persona_claims(id,agent_id,layer,kind,text,boundary_json,pred_json,origin,q_id,created_at,meta_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(o.id, aid, o.layer, o.kind, o.text, JSON.stringify(o.boundary), JSON.stringify(o.pred), o.origin, o.q_id, at, js(o.meta))
       break
     case 'questions':
       db.prepare('INSERT INTO claim_questions(id,agent_id,layer,text,created_at) VALUES(?,?,?,?,?)')

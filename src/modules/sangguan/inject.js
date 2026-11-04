@@ -18,6 +18,8 @@ import { instructionLike } from './gates.js'
 import { resetSelfview } from '../selfview.js'
 import { pendingViolationLine } from './violate.js'
 import { pledgeMissLine } from './pledge.js'
+import { buildConstitution } from './constitution.js'
+import { recall, recallLines } from './recall.js'
 
 const DAY = 86400000
 export const INJECT_BUDGET = 160
@@ -200,6 +202,13 @@ function noteAskDelivered(db, aid, id, question) {
   saveAsk(db, aid, next)
 }
 
+/** 三列打开时的取法：核心三条常驻 + 按这一句召回 0–2 条（召回结果里的核心不重复渲染）。 */
+function buildLaneView(db, aid, query) {
+  const con = buildConstitution(db, aid)
+  const rec = recall(db, aid, query)
+  return { lines: [...con.lines, ...recallLines({ picked: rec.picked })], constitution: con, recall: rec }
+}
+
 /**
  * 注入视图：{ mode, layers:{W,L,V:{line,ids}}, extra[], lines[], text, tokens, sources }。
  * 预算按优先级装：三层 > 待问 > 第一条矛盾 > 摘要 > 第二条矛盾 > 先例；装不下的整行跳过。
@@ -208,12 +217,14 @@ export function injectView(db, aid, opt = {}) {
   const now = opt.now || new Date().toISOString()
   const budget = Number(opt.budget) > 0 ? Number(opt.budget) : INJECT_BUDGET
   const seq = lastSeq(db, aid)
-  const mode = sangguanConfig(db, aid).inject
+  const cfg = sangguanConfig(db, aid)
+  const mode = cfg.inject
+  const laneKey = Object.values(cfg.lanes || {}).map((x) => (x ? 1 : 0)).join('') + '|' + String(opt.query || '').slice(0, 40)
   const asked = askState(db, aid)
   const txEarly = claimTexts(db, aid)
   const pending = pendingChange(db, aid, txEarly)
   const said = saidOf(db, aid)
-  const ck = [seq, String(now).slice(0, 13), budget, mode, asked.id, asked.shown, asked.asked ? 1 : 0, said.reset || 0, said.said || 0, pending ? pending.seq : 0].join('|')
+  const ck = [seq, String(now).slice(0, 13), budget, mode, laneKey, asked.id, asked.shown, asked.asked ? 1 : 0, said.reset || 0, said.said || 0, pending ? pending.seq : 0].join('|')
   if (!CACHE.has(db)) CACHE.set(db, new Map())
   const hit = CACHE.get(db).get(aid)
   if (hit && hit.key === ck && opt.cache !== false) return hit.view
@@ -222,20 +233,37 @@ export function injectView(db, aid, opt = {}) {
   const evs = readEvents(db, aid, { types: ['COEX', 'DELIBERATE', 'SUMMARY_BUILD', 'INQUIRY'] }).filter((e) => e.at <= now)
   const w = viewWeights(db, aid, now)
   const layers = Object.fromEntries(LAYERS.map((l) => [l, layerLine(db, aid, l, w)]))
+  // 三列打开时：核心三条常驻 + 按这一句召回 0–2 条；不再每层取三条链头。
+  // 没有 query（比如后台预览）就退回旧取法，行为不变。
+  const lanesOn = Object.values(sangguanConfig(db, aid).lanes || {}).some(Boolean)
+  const laneView = lanesOn && opt.query ? buildLaneView(db, aid, opt.query) : null
   const ks = kappaLines(s, tx, evs)
   const vline = pendingViolationLine(db, aid, now)
   const pmiss = pledgeMissLine(db, aid, now)
-  const items = [
-    ...LAYERS.map((l) => ({ slot: 'layer', layer: l, line: layers[l].line, rank: 0 })),
-    pending ? { slot: 'changed', line: pending.line, rank: 0, seq: pending.seq } : null,
-    vline ? { slot: 'violate', line: vline.line, rank: 0, seq: vline.seq } : null,
-    pmiss ? { slot: 'pmiss', line: pmiss.line, rank: 0, seq: pmiss.seq } : null,
-    { slot: 'ask', ...askLine(db, aid, s, evs, now), rank: 3 },
-    { slot: 'kappa', ...ks[0], rank: 1 },
-    { slot: 'summary', ...summaryLine(evs), rank: 0 },
-    { slot: 'kappa', ...ks[1], rank: 1 },
-    { slot: 'precedent', ...precedentLine(db, aid, s, ks[0], evs, now), rank: 2 },
-  ].filter((x) => x && x.line)
+  const items = laneView
+    ? [
+      ...laneView.lines.map((line) => ({ slot: 'lane', line, rank: 0 })),
+      // 欠账与想问的话不是「三层链头」，三列模式下也得留着：它们管的是兑现，不是世界观。
+      pending ? { slot: 'changed', line: pending.line, rank: 0, seq: pending.seq } : null,
+      pmiss ? { slot: 'pmiss', line: pmiss.line, rank: 0, seq: pmiss.seq } : null,
+      vline ? { slot: 'violate', line: vline.line, rank: 0, seq: vline.seq } : null,
+      { slot: 'kappa', ...ks[0], rank: 1 },
+      { slot: 'ask', ...askLine(db, aid, s, evs, now), rank: 3 },
+      { slot: 'summary', ...summaryLine(evs), rank: 0 },
+      { slot: 'kappa', ...ks[1], rank: 2 },
+      { slot: 'precedent', ...precedentLine(db, aid, s, ks[0], evs, now), rank: 2 },
+    ].filter((x) => x && x.line)
+    : [
+      ...LAYERS.map((l) => ({ slot: 'layer', layer: l, line: layers[l].line, rank: 0 })),
+      pending ? { slot: 'changed', line: pending.line, rank: 0, seq: pending.seq } : null,
+      vline ? { slot: 'violate', line: vline.line, rank: 0, seq: vline.seq } : null,
+      pmiss ? { slot: 'pmiss', line: pmiss.line, rank: 0, seq: pmiss.seq } : null,
+      { slot: 'ask', ...askLine(db, aid, s, evs, now), rank: 3 },
+      { slot: 'kappa', ...ks[0], rank: 1 },
+      { slot: 'summary', ...summaryLine(evs), rank: 0 },
+      { slot: 'kappa', ...ks[1], rank: 1 },
+      { slot: 'precedent', ...precedentLine(db, aid, s, ks[0], evs, now), rank: 2 },
+    ].filter((x) => x && x.line)
   let used = 0
   const keep = new Set()
   for (const x of items) {
@@ -322,7 +350,7 @@ export function promptHook(db, aid, legacy, opt = {}) {
   const now = opt.now || new Date().toISOString()
   const mode = sangguanConfig(db, aid).inject
   let view
-  try { view = injectView(db, aid, { now, budget: opt.budget }) } catch { return legacy }
+  try { view = injectView(db, aid, { now, budget: opt.budget, query: opt.query }) } catch { return legacy }
   try { noteInject(db, aid, view, mode, now) } catch { /* 记录失败不影响注入 */ }
   if (mode !== 'live') return legacy
   if (view.sources.inquiry && !askClosed(askState(db, aid), view.sources.inquiry)) noteAskDelivered(db, aid, view.sources.inquiry, view.sources.ask_q)

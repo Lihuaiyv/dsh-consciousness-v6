@@ -136,11 +136,22 @@ export function packInjection(input = {}, opt = {}) {
   // 其余条目交给 decorate：调用方按 created_at 给「多久以前 + 记不记得清」（B1/B2）。
   // fade 再往里一层：按年龄把括号 / 数字 / 原话删掉（只删不改）。没有就按原文。
   const decorate = typeof opt.decorate === 'function' ? opt.decorate : null
+  // 配额位的来源徽章（不带年龄）：fresh 行原本固定写「今天刚发生」，
+  // 会把她自己刚写下的事也写成看不出是谁的。给了这个函数就拼在一起。
+  const provTag = typeof opt.provenanceTag === 'function' ? opt.provenanceTag : null
+  const freshTag = (it) => {
+    if (!provTag) return '（今天刚发生）'
+    let p = ''
+    try { p = String(provTag(it) || '') } catch { p = '' }
+    const inner = p.replace(/^（\s*|）$/g, '')
+    return inner ? '（' + inner + '，今天刚发生）' : '（今天刚发生）'
+  }
+
   const fade = typeof opt.fade === 'function' ? opt.fade : null
   for (const it of items) {
     const tag = it.stale ? '（已更新，旧说法）'
       : it.via === 'anchor' ? '（一直记着的）'
-        : it.via === 'fresh' ? '（今天刚发生）'
+        : it.via === 'fresh' ? freshTag(it)
           : decorate ? (decorate(it) || '') : ''
     // 先裁到一行，再往里删。
     // 顺序反了会「白糊」：记忆正文中位 120 字，oneLine 只留前 60 字，
@@ -186,5 +197,16 @@ export function packInjection(input = {}, opt = {}) {
     }
   }
 
-  return { text: lines.map((l) => l.text).join('\n'), tokens: total, lines, dropped }
+  const body = lines.map((l) => l.text)
+  // 深翻（P2）：这几条是刚翻旧账翻出来的，标注一下，免得她当成「一直记着」讲。
+  const deepLine = (opt.deepNote !== false && items.some((x) => x.via === 'deep'))
+    ? '（下面这几条是我刚翻旧账翻出来的，记不真切就说不真切，别硬说记得）'
+    : ''
+  if (deepLine) body.push(deepLine)
+  return {
+    text: body.join('\n'),
+    tokens: total + (deepLine ? estTokens(deepLine) : 0),
+    lines,
+    dropped,
+  }
 }

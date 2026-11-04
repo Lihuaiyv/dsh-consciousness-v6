@@ -9,7 +9,7 @@
 import { getFlag, setFlag, clearFlag } from '../../kernel.js'
 import { localDay } from '../../db.js'
 import { canEmbed, embedText } from '../vector.js'
-import { isEnabled } from './config.js'
+import { isEnabled, sangguanConfig } from './config.js'
 import { append, newId, readEvents, ConflictError } from './ledger.js'
 import { loadState, listHeads } from './projection.js'
 import { theta } from './fold.js'
@@ -81,12 +81,21 @@ export function pendingList(db, aid) {
 function j1Input(c, turns) {
   const s = loadState(c.db, c.aid)
   const text = claimTexts(c.db, c.aid)
+  // 三列打开时，W/L 不再从这一小段对话里抽：它们各自走夜巡归纳 / 周章 + 投入证据。
+  // 这里只是少给料、少给链头，模型仍可能硬写，落库前 placeCandidate 再拦一次。
+  const lanes = sangguanConfig(c.db, c.aid).lanes
+  const skip = ['W', 'L'].filter((l) => lanes[l])
   const heads = {}
-  for (const l of LAYERS) heads[l] = listHeads(c.db, c.aid, l).slice(0, HEADS_IN_J1).map((h) => ({ id: h.id, kind: h.kind, text: h.text }))
+  for (const l of LAYERS) {
+    if (skip.includes(l)) continue
+    heads[l] = listHeads(c.db, c.aid, l).slice(0, HEADS_IN_J1).map((h) => ({ id: h.id, kind: h.kind, text: h.text }))
+  }
   const nuText = Object.fromEntries(c.db.prepare('SELECT id, expect FROM claim_predictions WHERE agent_id=?').all(c.aid).map((r) => [r.id, r.expect]))
   return {
     turns: turns.map((t, i) => ({ i, role: t.role, text: t.text })),
     heads,
+    only_layers: LAYERS.filter((l) => !skip.includes(l)),
+    skip_layers: skip,
     predictions: Object.values(s.nus).filter((n) => n.outcome === 'pending').slice(0, HEADS_IN_J1).map((n) => ({ id: n.id, claim_id: n.claim_id, expect: nuText[n.id] })),
     coexist: Object.values(s.kappas).filter((k) => k.sigma === 'coexist').map((k) => ({ id: k.id, layer: k.layer, pos: text[k.pos_id], neg: text[k.neg_id] })),
     inquiries: openInquiries(c.db, c.aid),
@@ -191,13 +200,17 @@ const originOf = (x) => (LIVE_ORIGINS.includes(x.origin) ? x.origin : 'extract')
 
 const pickCandidate = (x) => ({
   layer: x.layer, kind: x.kind, text: String(x.text).trim(), boundary: x.boundary || [], q_hint: x.q_hint || null, nu: x.nu || [],
+  ...(x.meta && typeof x.meta === 'object' ? { meta: x.meta } : {}),
   ...(LIVE_ORIGINS.includes(x.origin) ? { origin: x.origin } : {}),
 })
 
 function claimEvents(c, x, type, extra = {}) {
   const at = c.at
   const id = newId('claims', at)
-  const claim = { id, layer: x.layer, kind: x.kind, text: x.text, origin: originOf(x), boundary: x.boundary, pred: extra.pred || [] }
+  const claim = {
+    id, layer: x.layer, kind: x.kind, text: x.text, origin: originOf(x), boundary: x.boundary, pred: extra.pred || [],
+    ...(x.meta && typeof x.meta === 'object' ? { meta: x.meta } : {}),
+  }
   const head = { type, layer: x.layer, actor: 'sys', at, refs: extra.refs || [], gate_report: extra.gate || null, payload: { claims: [claim], q_hint: x.q_hint || null, ...(extra.payload || {}) } }
   const tail = x.nu && x.nu.length
     ? [{ type: 'NU_REGISTER', actor: 'sys', at, payload: { nus: x.nu.map((n) => ({ claim_id: id, expect: n.expect, observe: n.observe, p: n.p, due_at: addDays(at, n.due_days) })) } }]
@@ -299,21 +312,12 @@ function decisive(s, c, verdicts, layer) {
 }
 
 async function placeCandidate(c, x, verdicts, rep, refs, opt = {}) {
+  // 三列打开时，W/L 的入口是夜巡归纳与周章（要跨场景、要投入证据），不再收对话里抽的候选。
+  const lanes = sangguanConfig(c.db, c.aid).lanes
+  if ((x.layer === 'W' && lanes.W) || (x.layer === 'L' && lanes.L)) return { skipped: 'lane' }
   const s = loadState(c.db, c.aid)
-  // 生长序（P4，默认关）：价值观一条活的都没有时，世界观不该先长出来。
-  // 图纸的生长序是 V 取舍 → PRESSURE → L → W；W 是被下层受挫逼出来的，不是开场就有的。
-  if (x && x.layer === 'W' && Number(theta(s, 'growth_order')) >= 1) {
-    const hasV = Object.values(s.claims).some((cc) => cc.layer === 'V' && !isTerminal(cc.status))
-    if (!hasV) {
-      const out = { cls: 'REJECT', report: { w: 'G0', judge: 'off', sim_mode: null, neighbors: [], reason: 'growth_order' } }
-      try {
-        return { cls: 'REJECT', w: 'G0', judge: 'off', reason: 'growth_order', ...writeClass(c, s, x, out, verdicts, refs, rep) }
-      } catch (e) {
-        rep.errors.push({ type: 'REJECT', code: e.code || 'ERROR', msg: String(e.message || e) })
-        return { cls: 'ERROR', w: 'G0', judge: 'off' }
-      }
-    }
-  }
+  // 生长序（P4）：只拦「W 立核心」，不拦 W 的保护带。核心那一侧在 core.js 的 coreLaneGate 里判。
+  // 旧版在这里直接拒收 W，会和 V 的空缺互相锁死（B1），已移除。
   let N = []
   let rel = null
   let judge = 'ok'
@@ -339,7 +343,11 @@ async function placeCandidate(c, x, verdicts, rep, refs, opt = {}) {
   }
   const out = judge === 'budget' || judge === 'judge_unavailable'
     ? { cls: 'PENDING', report: { w: 'PENDING', judge, sim_mode: simMode, neighbors: N.map((n) => ({ id: n.id, sim: +n.sim.toFixed(4) })), reason: judge } }
-    : classify(x, N, rel, { theta_dup: theta(s, 'theta_dup'), theta_dup_lex: theta(s, 'theta_dup_lex'), judge, sim_mode: simMode, decisive: (cc) => decisive(s, cc, verdicts, x.layer) })
+    : classify(x, N, rel, {
+      theta_dup: theta(s, 'theta_dup'), theta_dup_lex: theta(s, 'theta_dup_lex'), judge, sim_mode: simMode,
+      lanes: opt.lanes || sangguanConfig(c.db, c.aid).lanes,
+      decisive: (cc) => decisive(s, cc, verdicts, x.layer),
+    })
   const item = { cls: out.cls, w: out.report.w, judge, ...(out.report.reason ? { reason: out.report.reason } : {}) }
   if (out.cls === 'PENDING' && opt.noPending) return { ...item, skipped: true }
   try {
@@ -357,6 +365,8 @@ async function drainPending(c, rep) {
   if (!pend.length || judgeHealth(c.db, c.aid, Date.parse(c.at)).degraded) return
   for (const p of pend.slice(0, DRAIN_MAX)) {
     const r = await placeCandidate(c, p.candidate, new Set(p.verdicts), rep, [p.id], { noPending: true })
+    // 这一层已经改走三列入口：积压里的旧候选直接作废，不要卡住后面同层以外的积压
+    if (r.skipped === 'lane') { rep.pending.dropped = (rep.pending.dropped || 0) + 1; continue }
     if (r.skipped) break
     rep.pending.drained++
   }

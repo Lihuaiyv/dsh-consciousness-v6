@@ -16,7 +16,7 @@ let src = fs.readFileSync(file, 'utf8')
 // 只在测试时把内部组件暴露出来，不改生产代码
 src = src.replace(
   "    return {\n      inject: ['slots'],",
-  "    return {\n      __test: { Page, Detail, Roster, OverviewPage, CharacterCard, MemoryPage, PersonaPage, RelationPage, AffectPage, DrivePage, SelfPage, SettingsPage, MetricsPage, AlgoBindingsPanel, MemoryImportDialog, MemorySettingsCard, ParamRow, FoldBlock, SettingJump, KnobCard, DriveBaselineCard, SETTING_KNOBS, PARAM_TAB_GROUPS, PARAM_META, SelfProposalCard, SelfAutoGroup, SelfIdeaRow, SelfChangeRow, SelfFinishedRow },\n      inject: ['slots'],")
+  "    return {\n      __test: { Page, Detail, Roster, OverviewPage, CharacterCard, MemoryPage, PersonaPage, RelationPage, AffectPage, DrivePage, SelfPage, SettingsPage, MetricsPage, AlgoBindingsPanel, MemoryImportDialog, MemorySettingsCard, ParamRow, FoldBlock, SettingJump, KnobCard, DriveBaselineCard, SETTING_KNOBS, PARAM_TAB_GROUPS, PARAM_META, SelfProposalCard, SelfAutoGroup, SelfIdeaRow, SelfChangeRow, SelfFinishedRow, prefSense, PrefRow },\n      inject: ['slots'],")
 if (!src.includes('__test')) throw new Error('没找到可注入的返回点，client.js 结构变了')
 
 const errors = []
@@ -479,6 +479,60 @@ try {
 } catch (e) {
   errors.push('DriveBaselineCard 渲染失败: ' + (e && e.message))
   console.log('FAIL DriveBaselineCard')
+}
+
+/* ---- 偏好行：厌恶度得能一眼看出是「喜欢」还是「讨厌」 ---- */
+function findNode(node, pred) {
+  if (!node || typeof node !== 'object') return null
+  if (Array.isArray(node)) {
+    for (const c of node) { const hit = findNode(c, pred); if (hit) return hit }
+    return null
+  }
+  if (pred(node)) return node
+  if (typeof node.type === 'function') {
+    let out
+    try { out = node.type({ ...node.props, children: node.children }) } catch { return null }
+    return findNode(out, pred)
+  }
+  for (const c of node.children || []) { const hit = findNode(c, pred); if (hit) return hit }
+  return null
+}
+const prefWire = [
+  ['喜欢', 0.18, 'ok'],
+  ['看情况', 0.5, undefined],
+  ['讨厌', 0.86, 'bad'],
+]
+for (const [word, av, tone] of prefWire) {
+  try {
+    const tree = T.PrefRow({
+      aid: agent.id, act: async (fn) => fn(), onDone() {},
+      r: { id: 'prf_' + word, tag: '测试标签', aversion: av, origin: 'auto' },
+    })
+    walk(tree, 'PrefRow/' + word)
+    const t = renderTexts(tree).join('|')
+    const bad = []
+    if (!t.includes(word)) bad.push('缺「' + word + '」标签')
+    if (!t.includes(av.toFixed(2))) bad.push('缺数值 ' + av.toFixed(2))
+    const bar = findNode(tree, (n) => n.props && n.props.className === 'dshc-bar')
+    const gotTone = bar ? bar.props['data-tone'] : '(无)'
+    if (gotTone !== tone) bad.push('条形色调=' + String(gotTone) + '，应为 ' + String(tone))
+    if (bad.length) errors.push('PrefRow/' + word + '：' + bad.join('，'))
+    console.log((bad.length ? 'FAIL ' : 'ok   ') + 'PrefRow/' + word)
+  } catch (e) {
+    errors.push('PrefRow/' + word + ' 渲染失败: ' + (e && e.message))
+    console.log('FAIL PrefRow/' + word)
+  }
+}
+try {
+  const bad = []
+  if (T.prefSense(0.10).word !== '喜欢') bad.push('0.10 判成 ' + T.prefSense(0.10).word)
+  if (T.prefSense(0.99).word !== '讨厌') bad.push('0.99 判成 ' + T.prefSense(0.99).word)
+  if (T.prefSense(0.50).word !== '看情况') bad.push('0.50 判成 ' + T.prefSense(0.50).word)
+  if (bad.length) errors.push('prefSense 阈值：' + bad.join('，'))
+  console.log((bad.length ? 'FAIL ' : 'ok   ') + 'prefSense 阈值')
+} catch (e) {
+  errors.push('prefSense 不可用: ' + (e && e.message))
+  console.log('FAIL prefSense 阈值')
 }
 
 if (errors.length) {

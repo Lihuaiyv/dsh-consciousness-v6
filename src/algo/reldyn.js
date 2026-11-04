@@ -45,12 +45,14 @@ export const REL_DEFAULTS = {
 }
 
 /** 来源权重：工具调用 / 导入不能和面对面聊天同权 */
-export const SOURCE_WEIGHT = { chat: 1, ui: 1, tool: 0.4, import: 0.7, system: 0.2 }
+export const SOURCE_WEIGHT = { chat: 1, ui: 1, tool: 0.4, import: 0.7, system: 0.2, selfread: 0.35 }
 
 /** 事件类型对依赖轴的贡献比例（P1 近似） */
 export const DEP_BY_KIND = {
   help: 1, share: 1, repair: 0.5,
   praise: 0.4, critic: 0.4, boundary: 0.4, chat: 0.3,
+  // 她自己说话留下的余量：只轻轻碰依赖，不让「说了句冷的」变成「不需要你」。
+  self: 0.2,
 }
 
 /**

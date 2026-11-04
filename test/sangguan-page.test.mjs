@@ -13,6 +13,8 @@ process.env.DSH_HOME = home
 const { openDb } = await import('../src/db.js')
 const api = await import('../src/api.js')
 const { append, newId } = await import('../src/modules/sangguan/ledger.js')
+const { retireClaim } = await import('../src/modules/sangguan/retire.js')
+const { loadState } = await import('../src/modules/sangguan/projection.js')
 
 let pass = 0
 let fail = 0
@@ -87,12 +89,13 @@ sandbox.window.document = document
 sandbox.globalThis = sandbox
 const here = path.dirname(fileURLToPath(import.meta.url))
 let src = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8')
-src = src.replace("    return {\n      inject: ['slots'],", "    return {\n      __test: { SangguanPage },\n      inject: ['slots'],")
-if (!src.includes('__test: { SangguanPage }')) throw new Error('没找到注入点')
+src = src.replace("    return {\n      inject: ['slots'],", "    return {\n      __test: { SangguanPage, SimpleHome },\n      inject: ['slots'],")
+if (!src.includes('__test: { SangguanPage, SimpleHome }')) throw new Error('没找到注入点')
 vm.createContext(sandbox)
 vm.runInContext(src, sandbox, { filename: 'client.js' })
 const plugin = captured.factory((name) => { if (name === 'react') return React; throw new Error('未知依赖 ' + name) })
 const Page = plugin.__test.SangguanPage
+const Home = plugin.__test.SimpleHome
 
 function expand(node) {
   if (node == null || node === false) return null
@@ -107,13 +110,13 @@ function expand(node) {
   }
   return { ...node, children: node.children.map(expand) }
 }
-async function render(props, state) {
+async function render(props, state, Comp = Page) {
   slots = state.slots
   top = slots
   let tree = null
   for (let round = 0; round < 40; round++) {
     slots = state.slots; top = slots; cursor = 0; dirty = false; effects = []
-    tree = Page(props)
+    tree = Comp(props)
     const fx = effects
     for (const fn of fx) fn()
     await new Promise((r) => setTimeout(r, 15))
@@ -122,7 +125,7 @@ async function render(props, state) {
     if (!dirty && !fx.length) break
   }
   slots = state.slots; cursor = 0
-  return expand(Page(props))
+  return expand(Comp(props))
 }
 const textOf = (n) => (n == null ? '' : typeof n !== 'object' ? String(n) : Array.isArray(n) ? n.map(textOf).join('') : n.children.map(textOf).join(''))
 function find(n, pred, out = []) {
@@ -204,41 +207,77 @@ put(aid, [{ type: 'SUMMARY_BUILD', actor: 'judge', at: tick(), payload: { summar
   put(aid, [{ type: 'NU_RESOLVE', actor: 'judge', at: tick(), payload: { nu_id: nu, outcome: 'hit' } }])
 }
 
+// ---------- 作废细分：判不了 vs 连坐（不是判错） ----------
+{
+  // ① 判不了：到点一条记录都没有
+  const nuNoRec = put(aid, [{ type: 'NU_REGISTER', actor: 'sys', at: tick(), payload: { nus: [{ claim_id: wCore, expect: '这一条到点没留下记录', observe: '看看有没有记录', p: 0.6, due_at: new Date(clock + 86400000).toISOString() }] } }]).entities.nus[0]
+  put(aid, [{ type: 'NU_RESOLVE', actor: 'sys', at: tick(), payload: { nu_id: nuNoRec, outcome: 'void', why: 'no_records' } }])
+  // ② 连坐：命题被收回，挂在它下面的预见跟着 void
+  const retiredClaim = claim(aid, 'V', 'norm', '说话前先数三秒')
+  put(aid, [{ type: 'NU_REGISTER', actor: 'sys', at: tick(), payload: { nus: [{ claim_id: retiredClaim, expect: '这周能做到先数三秒', observe: '看有没有忍住', p: 0.5, due_at: new Date(clock + 5 * 86400000).toISOString() }] } }])
+  retireClaim(db, aid, retiredClaim, { at: tick(), reason: 'no_tradeoff' })
+}
+
 // ---------- 承诺不算价值观：页面上不该在价值观栏出现 ----------
 put(aid, [{ type: 'CLAIM_EXP', layer: 'V', actor: 'sys', at: tick(), payload: { claims: [{ layer: 'V', kind: 'commit', text: '我答应：明天把脚本补上', origin: 'extract' }] } }])
+
+// ---------- 草稿箱：一条五闸全过，一条还差 ----------
+const postDraft = async (body) => (await api.handle(db, {
+  method: 'POST', path: '/v1/agents/' + aid + '/sangguan/drafts', token: 'user',
+  body: { ...body, __idempotencyKey: 'd-' + Math.random() },
+})).body
+await postDraft({
+  text: '数据不对就从头再跑，哪怕你在催',
+  alt: '按趋势补个数先交差', foregone: '多花两天', exclusion: '不会拿一个大概对的数交差',
+  evidence: [{ at: '2026-11-01', quote: '你说「别糊弄，重跑」' }], vouch: true,
+})
+await postDraft({
+  text: '答应了的事就要做完，哪怕拖到很晚',
+  evidence: [{ at: '2026-11-02', quote: '你说过会等' }], vouch: false,
+})
 
 // ---------- F1–F5：用户视图 ----------
 calls = []
 const userState = { slots: [] }
 let tree = await render({ aid, view: 'user', act }, userState)
 let t = textOf(tree)
-check('页头：三层各一句 + 纪元戳', t.includes('世界大体可以被理解') && /第 \d+ 季/.test(t), t.slice(0, 400))
-check('页头：无核心的层标「还只是一种说法」或「尚未立论」（F-I5）', t.includes('还只是一种说法') || t.includes('尚未立论'))
-check('判断条：在争的矛盾 + 另有 n 件', t.includes('该先听还是先答') && t.includes('另有 1 件在想'), t.slice(0, 900))
-check('判断条：无先例时说「没有可参照的旧事」', t.includes('没有可参照的旧事'))
+check('三列：三层各一句 + 纪元戳', t.includes('世界大体可以被理解') && /第 \d+ 季/.test(t), t.slice(0, 400))
+check('三列：无核心的层标「尚未立论」（F-I5）', t.includes('尚未立论'))
+const sgrid = find(tree, (n) => n.props && n.props.className === 'dshc-sg3')
+check('三列：三列同排在一个格子里', sgrid.length === 1 && sgrid[0].children.length === 3, sgrid.length)
+check('三列：每列写自己的判据', t.includes('能预测事、经得起撞') && t.includes('走过哪几章、花了多久') && t.includes('选了这边、放弃了什么'))
+check('三列：在争的矛盾在各自的列里', t.includes('该先听还是先答') && t.includes('没有可参照的旧事'))
 const W = sectionOf(tree, '世界观')
 const V = sectionOf(tree, '价值观')
 const Lz = sectionOf(tree, '人生观')
-check('世界观区：硬核大字 + 保护带', W && textOf(W).includes('世界大体可以被理解') && textOf(W).includes('人多数时候愿意讲道理'))
-check('世界观区：在争标记', W && textOf(W).includes('在争'))
+check('世界观列：硬核大字 + 保护带', W && textOf(W).includes('世界大体可以被理解') && textOf(W).includes('人多数时候愿意讲道理'))
+check('世界观列：在争标记', W && textOf(W).includes('在争'))
 check('终态命题不进主区（F-I4）', W && !textOf(W).includes('已经被推翻的旧看法'))
-check('价值观区：取舍卡「两样都要」+ 偏向 + 代价', V && textOf(V).includes('两样都要') && textOf(V).includes('平时偏向「照顾对方的感受更要紧」') && textOf(V).includes('有时把话说得太软'), V && textOf(V))
-check('价值观区：没有第三栏合题', V && !textOf(V).includes('正在试的说法') && !textOf(V).includes('想通了'))
-check('承诺不算价值观：价值观区不出现「我答应」', V && !textOf(V).includes('我答应'), V && textOf(V))
-check('价值观区：规范 / 理想分两层', V && textOf(V).includes('平时怎么做') && textOf(V).includes('仰望什么'))
-check('人生观区：叙事弧（当时 / 回头看分两栏）+ 角色', Lz && textOf(Lz).includes('当时它这样讲') && textOf(Lz).includes('现在回头看') && textOf(Lz).includes('做一个耐心的倾听者'))
+check('价值观列：取舍卡「两样都要」+ 偏向 + 代价', V && textOf(V).includes('两样都要') && textOf(V).includes('平时偏向「照顾对方的感受更要紧」') && textOf(V).includes('有时把话说得太软'), V && textOf(V))
+check('价值观列：没有第三栏合题', V && !textOf(V).includes('正在试的说法') && !textOf(V).includes('想通了'))
+check('承诺不算价值观：价值观列不出现「我答应」', V && !textOf(V).includes('我答应'), V && textOf(V))
+check('价值观列：规范 / 理想分两层', V && textOf(V).includes('平时怎么做') && textOf(V).includes('仰望什么'))
+check('人生观列：叙事弧（当时 / 回头看分两栏）+ 角色', Lz && textOf(Lz).includes('当时它这样讲') && textOf(Lz).includes('现在回头看') && textOf(Lz).includes('做一个耐心的倾听者'))
 check('诚实：SUB_ACCEPT 无 CONFIRM → 「正在试」，不出现「想通了」（F-I3）', Lz && textOf(Lz).includes('正在试') && !t.includes('想通了'), Lz && textOf(Lz))
-check('预见：人话 + 把握几成 + 对 / 不对按钮', t.includes('预计下次争执他会讲理（把握 7 成）') && t.includes('等着看'))
+check('预见：三列（结局 / 正文 / 依据），把握几成，对 / 不对按钮', t.includes('预计：下次争执他会讲理') && t.includes('把握 7 成') && t.includes('等着看'))
+check('预见：分「还在等」和「已经判过」两段', t.includes('还在等（') && t.includes('已经判过（'), t.slice(0, 1200))
+check('预见：作废分两种，判不了说清「没留下能查的记录」', t.includes('没留下能查的记录，判不了'), t.slice(0, 1200))
+check('预见：作废分两种，连坐说清「依附的那句话已经收回，不是判错」', t.includes('依附的那句话已经收回，不是判错'), t.slice(0, 1200))
+check('预见：说清「对 / 不对」只是留证据、作废不进准确率', t.includes('只是留一条证据') && t.includes('作废不算猜错'), t.slice(0, 1200))
 check('它最近在想什么：提问可回答', t.includes('它想问你：你更喜欢先被听完吗') && t.includes('是这样'))
 check('史：转折时间线有「两样都要」「立为核心」', textOf(sectionOf(tree, '史')).includes('决定两样都要') && textOf(sectionOf(tree, '史')).includes('立为核心'))
 check('用户视图零术语：无 κ / π / ν / σ（F-I7）', !/[κπνσ]/.test(t), (t.match(/.{0,20}[κπνσ].{0,20}/g) || []).slice(0, 3))
 check('用户视图不露 id', !/\b(cl|k|nu|q)_[0-9A-Z]{6,}/.test(t))
 check('影子期说明', t.includes('影子期') && t.includes('/ 7 天'))
-check('三个数：违背 / 兑现 / 改主意 都在页头', t.includes('说过的没做到') && t.includes('答应的事兑现了') && t.includes('自己改了主意'), t.slice(0, 400))
-check('三个数：违背数真取自账本（1 次）', t.includes('说过的没做到1 次'), t.slice(0, 400))
-check('三个数：兑现率只按已结算算（1 件对 → 100%）', t.includes('答应的事兑现了100%') && t.includes('到期 1 件'), t.slice(0, 400))
-check('三个数：改主意是 0 就照实写 0', t.includes('自己改了主意0 次'), t.slice(0, 400))
-check('三个数：旁边有「怎么来的」折叠说明', t.includes('这三个数怎么来的') && t.includes('还没到期'), t.slice(0, 600))
+check('三个数已搬走：三观页不再出现「说过的没做到」', !t.includes('说过的没做到'))
+check('草稿箱：两条草稿都在', t.includes('数据不对就从头再跑') && t.includes('答应了的事就要做完'))
+check('草稿箱：五闸都用普通话写', t.includes('有另一条路') && t.includes('说了代价') && t.includes('能排除') && t.includes('不是工作说明') && t.includes('有生活作证'))
+check('草稿箱：缺闸的标「还差几道」，并写着还差什么', t.includes('还差几道')
+  && find(tree, (n) => n.props && typeof n.props.title === 'string' && n.props.title.startsWith('还差')).length >= 1)
+check('草稿箱：过了闸的才能点入库', (() => {
+  const bs = find(tree, (n) => n.type === 'button' && textOf(n) === '入库')
+  return bs.length === 2 && bs.some((b) => b.props.disabled === true) && bs.some((b) => !b.props.disabled)
+})(), find(tree, (n) => n.type === 'button' && textOf(n) === '入库').map((b) => !!b.props.disabled))
 check('页面只读 /sangguan/* 与旧仪表（F-I1）', calls.every((c) => /^GET .*\/(sangguan\/|values$|worldview$|lifeview$)/.test(c)), calls.filter((c) => !/\/(sangguan\/|values$|worldview$|lifeview$)/.test(c)))
 
 // ---------- 点开命题：为什么 + 链 + 对 / 不对（F-I6） ----------
@@ -258,6 +297,59 @@ check('页面只读 /sangguan/* 与旧仪表（F-I1）', calls.every((c) => /^GE
   const after = db.prepare("SELECT COUNT(*) n FROM claim_events WHERE agent_id=? AND type='EVIDENCE' AND actor='user'").get(aid).n
   check('点「对」：只产生一条用户证据（F-I2）', after === before + 1, { before, after })
   check('点「对」：提示已记下', textOf(tree).includes('记下了'))
+}
+
+// ---------- 草稿箱：点入库真的写账本 ----------
+{
+  const bs = find(tree, (n) => n.type === 'button' && textOf(n) === '入库' && !n.props.disabled)
+  check('草稿箱：有可点的入库按钮', bs.length === 1, bs.length)
+  await bs[0].props.onClick()
+  await settle()
+  tree = await render({ aid, view: 'user', act }, userState)
+  t = textOf(tree)
+  const row = db.prepare("SELECT text FROM persona_claims WHERE agent_id=? AND layer='V' AND kind='norm' AND origin='user' ORDER BY created_at DESC LIMIT 1").get(aid)
+  check('入库：写进 V 层 norm，正文对得上', row && row.text === '数据不对就从头再跑，哪怕你在催', row)
+  check('入库：箱子里那条关掉了，计数写清楚', t.includes('已经入库 1 条'), t.slice(0, 600))
+}
+
+// ---------- 三列开关：点一下真的开 ----------
+{
+  const Lsec = sectionOf(tree, '人生观')
+  const openBtn = find(Lsec, (n) => n.type === 'button' && textOf(n) === '打开这一列')[0]
+  check('三列：关着的列有「打开这一列」', !!openBtn)
+  await openBtn.props.onClick()
+  await settle()
+  tree = await render({ aid, view: 'user', act }, userState)
+  const L2 = sectionOf(tree, '人生观')
+  check('三列：点开后 L 列标「开着」', textOf(L2).includes('开着'))
+  const cfg = (await api.handle(db, { method: 'GET', path: '/v1/agents/' + aid + '/sangguan/config', token: 'viewer' })).body
+  check('三列：开关真的写进配置', cfg.config.lanes.L === true, cfg.config.lanes)
+}
+
+// ---------- 召回预览：一句话看出会想起什么 ----------
+{
+  const input = find(tree, (n) => n.type === 'input' && String((n.props && n.props.placeholder) || '').includes('这次要不要'))
+  check('召回：有试一句的输入框', input.length === 1)
+  input[0].props.onChange({ target: { value: '先听还是先答' } })
+  tree = await render({ aid, view: 'user', act }, userState)
+  const tryBtn = find(tree, (n) => n.type === 'button' && textOf(n) === '试试')[0]
+  check('召回：有「试试」按钮', !!tryBtn)
+  await tryBtn.props.onClick()
+  await settle()
+  tree = await render({ aid, view: 'user', act }, userState)
+  t = textOf(tree)
+  check('召回：显示会想起的那几行', t.includes('这一刻会想起') && t.includes('你看世界的方式：世界大体可以被理解'), t.slice(0, 900))
+}
+
+// ---------- 概览：三个数搬到「它靠不靠谱」 ----------
+{
+  const agent = { id: aid, name: '三观页', created_at: new Date(clock - 20 * 86400000).toISOString(), last_interaction_at: new Date(clock).toISOString() }
+  const homeProps = { aid, agent, ov: { memory_count: 2 }, act, close: () => {}, setTab: () => {}, setView: () => {}, running: true, setRunning: () => Promise.resolve() }
+  const ht = await render(homeProps, { slots: [] }, Home)
+  const hs = textOf(ht)
+  check('概览：靠不靠谱卡里出现三个数', hs.includes('说过的没做到') && hs.includes('答应的事兑现了') && hs.includes('自己改了主意'), hs.slice(0, 900))
+  check('概览：违背数真取自账本（1 次）', hs.includes('说过的没做到1 次'), hs.slice(0, 900))
+  check('概览：改主意是 0 就照实写 0', hs.includes('自己改了主意0 次'), hs.slice(0, 900))
 }
 
 // ---------- F6：tech 视图 ----------

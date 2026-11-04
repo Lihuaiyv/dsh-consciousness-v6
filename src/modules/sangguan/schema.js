@@ -81,6 +81,27 @@ CREATE TABLE IF NOT EXISTS claim_llm_cache(key TEXT PRIMARY KEY, template TEXT, 
 
 -- 整 agent 清除标记（拍板 2）：只在 purgeAgent 的同一事务里存在，删完即撤
 CREATE TABLE IF NOT EXISTS claim_purge(agent_id TEXT PRIMARY KEY);
+
+-- 草稿收件箱：还没进账本的取舍。草稿要能反复改到五闸全过，所以不套只增触发器；
+-- 入库那一刻才走 draft.js commitDraft 写账本。
+CREATE TABLE IF NOT EXISTS sangguan_drafts(
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  alt TEXT, foregone TEXT, cost_to TEXT,
+  exclusion TEXT, boundary_json TEXT, counterexample TEXT,
+  evidence_json TEXT NOT NULL,
+  cluster_json TEXT,
+  gates_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL,
+  vouch INTEGER NOT NULL DEFAULT 0,
+  batch_key TEXT,
+  claim_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_sgd_agent ON sangguan_drafts(agent_id, status, created_at);
 `
 
 function guards(t) {
@@ -106,4 +127,6 @@ export function ensureSangguanSchema(db) {
   }
   try { db.exec('ALTER TABLE claim_llm_cache ADD COLUMN agent_id TEXT') } catch { /* 已有 */ }
   db.exec('CREATE INDEX IF NOT EXISTS idx_claim_llm_cache_agent ON claim_llm_cache(agent_id)')
+  // 命题的扩展字段（场景 / 预期 / 投入 / 多说法 / 推导）。命题不可变，建时写一次，读时缺省补全。
+  try { db.exec('ALTER TABLE persona_claims ADD COLUMN meta_json TEXT') } catch { /* 已有 */ }
 }

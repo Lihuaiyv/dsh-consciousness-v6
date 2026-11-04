@@ -19,8 +19,27 @@ const CLOSE_RE = /(好了|搞定|弄好了|完成|做完了|用不上了|不用�
 /** 文本里自己带「已经完成」的，不挂开环（否则每次总结都会挂一条假待办）。 */
 const DONE_RE = /(已经|完成了|搞定了|解决了|做完了|做好的|完成了的)/
 
-/** 值得挂起来的信号。宁可漏，不要挂一堆假待办。 */
-const LOOP_RE = /(答应|说好|承诺|约定|提醒我|别忘|回头|过两天|下次|改天|还没|待办|剩下|收尾|最后一步|等会|一会儿|之后|再说|留到|回头再|下周|明天|后天|周末|下周[一二三四五六日天])/
+/**
+ * 值得挂起来的信号。宁可漏，不要挂一堆假待办。
+ *
+ * 2026-11-03 实测：44 条开环里 0 条 open，抽出来的尽是「模型版本更新之后你还在吗」这种。
+ * 病根是这里混进了纯虚词——`之后`、`再说`、`剩下`、`收尾`、`最后一步`——
+ * 「更新之后」也算待办信号，于是每句带「之后」的话都能钓上来一条。
+ * 现在把它们拆出去：单独出现不算，得和「真要做点什么」同时出现才算（见 SEQUEL_RE）。
+ */
+const LOOP_RE = /(答应|说好|承诺|约定|提醒我|别忘|回头|过两天|下次|改天|还没|待办|等会|一会儿|留到|回头再|下周|明天|后天|周末|下周[一二三四五六日天])/
+
+/** 虚词类的顺序词：单独不算事，得配上 INTENT_RE 才算「剩下的那件事」。 */
+const SEQUEL_RE = /(之后|再说|剩下|收尾|最后一步)/
+
+/**
+ * 问句不算待办。
+ *
+ * 「你觉得…你还在吗」「今晚你没开的话…你也会跑？」都不是在派活。
+ * 但「你明天能不能提醒我」是——所以有一个例外：句子里有明确的「请你为我去做」。
+ */
+const QUESTION_RE = /[？?]\s*$|(吗|呢)\s*[。！!…]*$|(是不是|有没有|要不要|能不能|可不可以|对不对)/
+const ASK_DO_RE = /(提醒我|帮我|请你|麻烦你|替我做|记得帮我|别忘)/
 
 /** 「什么都会」的泛句不算：没有指向的短句不挂。 */
 const VAGUE_RE = /^(好的|嗯|嗯嗯|行|可以|继续|然后呢|收到|ok)[。！!？?]*$/
@@ -109,7 +128,10 @@ function kindOf(text) {
 export function detectLoop(text, at = Date.now()) {
   const t = String(text || '').trim()
   if (t.length < 6 || VAGUE_RE.test(t)) return null
-  if (!LOOP_RE.test(t)) return null
+  // 问句不是派活。「…你还在吗」「…你也会跑？」都该在这里就断掉。
+  if (QUESTION_RE.test(t) && !ASK_DO_RE.test(t)) return null
+  const hasSignal = LOOP_RE.test(t) || (SEQUEL_RE.test(t) && INTENT_RE.test(t))
+  if (!hasSignal) return null
   if (DONE_RE.test(t)) return null
   // 状态汇报不是待办：说「进入收尾阶段」的人，没在给谁派活
   if (STATUS_RE.test(t) && !PERSON_RE.test(t)) return null
@@ -125,13 +147,27 @@ function norm(text) {
   return String(text || '').replace(/[\s\p{P}]/gu, '')
 }
 
-function overlapChars(a, b) {
-  const A = new Set(Array.from(norm(a)))
-  const B = new Set(Array.from(norm(b)))
-  if (!A.size || !B.size) return 0
-  let hit = 0
-  for (const c of A) if (B.has(c)) hit++
-  return hit / Math.min(A.size, B.size)
+/**
+ * 两句话「说的是不是同一件事」：最长公共**连续**子串有多长。
+ *
+ * 以前用字符集重合率（overlapChars，交集/较短那句），中文短句之间随便就过线：
+ * 「好了」和「记得提醒我交水电费」只靠「了」「我」两个字就够 0.35，于是一句随口的
+ * 「好了」能把不相干的待办全关掉——实测 44 条开环全被 user_done 关光就是这么来的。
+ * 连续子串要求「这几个字是连着一起来的」，判得动得多。
+ */
+function longestRun(a, b) {
+  const A = norm(a)
+  const B = norm(b)
+  if (!A || !B) return 0
+  let best = 0
+  for (let i = 0; i < A.length; i++) {
+    for (let j = 0; j < B.length; j++) {
+      let k = 0
+      while (i + k < A.length && j + k < B.length && A[i + k] === B[j + k]) k++
+      if (k > best) best = k
+    }
+  }
+  return best
 }
 
 function rowOf(db, aid, id) {
@@ -148,7 +184,7 @@ export function addLoop(db, aid, opt = {}) {
   const at = opt.at || Date.now()
   const open = db.prepare("SELECT * FROM open_loops WHERE agent_id=? AND state IN ('open','half_said')").all(aid)
   for (const r of open) {
-    if (norm(r.text) === norm(text) || overlapChars(r.text, text) >= 0.6) {
+    if (norm(r.text) === norm(text) || longestRun(r.text, text) >= 4) {
       if (opt.memory_id && !r.memory_id) {
         db.prepare('UPDATE open_loops SET memory_id=?, updated_at=? WHERE id=?').run(opt.memory_id, stamp(at), r.id)
       }
@@ -238,9 +274,10 @@ export function settleLoopsFromUser(db, aid, turns = [], opt = {}) {
     if (Number.isFinite(fired) && at - fired <= 2 * HOUR) ids.push(r.id)
   }
   if (!ids.length) {
-    // 没提过就关：只在用户这句话本身对上了那条开环时才关（「那个脚本我修好了」）。
+    // 没提过就关：只在用户这句话本身真的点到了那件事时才关（「那个脚本我修好了」）。
+    // 判据是连续 4 个字对得上，不是字符集重合——后者在中文短句里几乎恒真。
     const text = done.map((x) => x.text).join(' ')
-    for (const r of rows) if (overlapChars(r.text, text) >= 0.35) ids.push(r.id)
+    for (const r of rows) if (longestRun(r.text, text) >= 4) ids.push(r.id)
   }
   return closeLoops(db, aid, ids, 'user_done', at)
 }

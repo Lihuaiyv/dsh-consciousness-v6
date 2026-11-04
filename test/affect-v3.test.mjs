@@ -7,7 +7,8 @@ import { birthPeriod, planSegments, valueAtTime, valueAt, ampFor, pUp, nextSegme
   PERIOD_MIN_D, PERIOD_MAX_D, PERIOD_JITTER, SEG_MIN_H, EDGE } from '../src/algo/baseline.js'
 import { desensitize, decayedCount, stimulusKey, FLOOR, COUNT_CAP } from '../src/algo/desensitize.js'
 import { expressionFrom } from '../src/algo/expression.js'
-import { stepSlow, totalOf, fastOf, frameOf } from '../src/algo/emotion.js'
+import { PAD_PRIOR, affectDynV1 } from '../src/algo/affect_dyn.js'
+import { stepSlow, injectSlow, totalOf, fastOf, frameOf } from '../src/algo/emotion.js'
 
 let pass = 0
 let fail = 0
@@ -158,19 +159,34 @@ check('总情绪：不缩放慢情绪', totalOf(-0.5, 0) === -0.5, { t: totalOf(
 check('总情绪：封顶', totalOf(0.8, 1) === 1 && totalOf(-0.8, -1) === -1, { hi: totalOf(0.8, 1), lo: totalOf(-0.8, -1) })
 
 const sSteady = (() => {
-  let s = 0
-  for (let i = 0; i < 400; i++) s = stepSlow({ s, b: 0.3, p: 0.4, fHourly: -0.6 })
+  let s = -0.6
+  for (let i = 0; i < 400; i++) s = stepSlow({ s, b: 0.3, p: 0.4 })
   return s
 })()
-// α=0.09、β=0.11、ω=0.005 → s* = (0.09×(-0.6) + 0.11×0.3 + 0.005×0.4) / 0.205 ≈ -0.09
-// 水位是正的、快情绪是负的：结果仍然落在负那侧（刚才的事还算数），但不再被它独占
-check('慢情绪追的是快情绪，不是底色', sSteady < -0.05, { s: sSteady })
+// v4：平时只往水位回落。从 −0.6 出发、水位 0.3，400 小时后应该贴着水位
+// （标签先验 ω=0.005 只把它挪 0.003，不冒充底色）
+check('静默时慢情绪回到水位', Math.abs(sSteady - 0.3) < 0.01, { s: sSteady })
+
+// v4：事件冲击只按「比现状多出多少」推（advantage），不按事件本身多响
+{
+  const atNeutral = injectSlow({ s: 0, e: 0.6 })
+  const atHigh = injectSlow({ s: 0.55, e: 0.6 })
+  const atLow = injectSlow({ s: -0.2, e: 0.6 })
+  check('事件从 0 出发能推得动', atNeutral > 0.05, { s: atNeutral })
+  check('已经在高兴时同样的事推不动（A≈0）', Math.abs(atHigh - 0.55) < 0.01, { s: atHigh })
+  check('从低处被同一个好事拽起来更多', atLow - (-0.2) > atNeutral, { s: atLow })
+  check('冲击单调：事件越重推得越多', injectSlow({ s: 0, e: 0.9 }) > injectSlow({ s: 0, e: 0.3 }))
+  check('坏事件往下推', injectSlow({ s: 0, e: -0.6 }) < 0)
+  check('饱和：5 分钟里第 5 次推得少', injectSlow({ s: 0, e: 0.6, satN: 4 }) < injectSlow({ s: 0, e: 0.6 }))
+  check('冲击不越界', injectSlow({ s: 0.95, e: 1 }) <= 1 && injectSlow({ s: -0.95, e: -1 }) >= -1)
+  check('半衰期 4 小时：4 小时后差距减半', Math.abs(stepSlow({ s: 0.8, b: 0, dtHours: 4 }) - 0.4) < 0.03, { s: stepSlow({ s: 0.8, b: 0, dtHours: 4 }) })
+}
 
 {
   // 步长无关：一次走 6 小时 == 六次各走 1 小时（精确离散化该有的性质）
   let stepwise = 0
-  for (let i = 0; i < 6; i++) stepwise = stepSlow({ s: stepwise, b: 0.2, p: 0.4, fHourly: 0.8, dtHours: 1 })
-  const oneShot = stepSlow({ s: 0, b: 0.2, p: 0.4, fHourly: 0.8, dtHours: 6 })
+  for (let i = 0; i < 6; i++) stepwise = stepSlow({ s: stepwise, b: 0.2, p: 0.4, dtHours: 1 })
+  const oneShot = stepSlow({ s: 0, b: 0.2, p: 0.4, dtHours: 6 })
   check('6 个一小时 ≈ 一次六小时', Math.abs(stepwise - oneShot) < 0.01, { stepwise, oneShot })
 }
 
@@ -182,12 +198,12 @@ check('慢情绪追的是快情绪，不是底色', sSteady < -0.05, { s: sStead
 }
 
 {
-  // 底色现在真有拉力：同一条快情绪轨迹，水位高 / 低要能拉开慢情绪
+  // 水位真有拉力：同样的时长，水位高 / 低要能拉开慢情绪
   let hiSide = 0
   let loSide = 0
   for (let i = 0; i < 48; i++) {
-    hiSide = stepSlow({ s: hiSide, b: 0.8, p: 0, fHourly: 0.2, dtHours: 1 })
-    loSide = stepSlow({ s: loSide, b: -0.8, p: 0, fHourly: 0.2, dtHours: 1 })
+    hiSide = stepSlow({ s: hiSide, b: 0.8, p: 0, dtHours: 1 })
+    loSide = stepSlow({ s: loSide, b: -0.8, p: 0, dtHours: 1 })
   }
   check('底色的力气够：水位高低的慢情绪能拉开', Math.abs(hiSide - loSide) > 0.2, { hi: hiSide, lo: loSide })
 }
@@ -375,14 +391,32 @@ check('300 组随机输入全部合法', bad === 0, { bad })
   const avg = (x) => x / hours
   check('7 天联调不越界', badCount === 0, { badCount })
   check('慢情绪每小时跳不超过 0.2', maxJump <= 0.2 + 1e-9, { maxJump })
-  /* β 抬高之后，慢情绪是快情绪和水位的加权平均：两边都拉得动，谁也不独占。
-     所以要验的不是「站在快情绪那侧」，而是「落在两者之间、没被谁吃掉」。 */
+  /* v4 起慢情绪不再被快情绪拽：平时它只跟着水位走，快情绪那一路交给事件冲击。
+     所以要验的是「稳在水位边上」，而不是「落在快情绪和水位之间」。 */
   const sAvg = avg(sSum)
   const fAvg = avg(fSum)
   const bAvg = avg(bSum)
-  check('慢情绪落在快情绪和水位之间（两边都拉得动）',
-    (sAvg - bAvg) * (sAvg - fAvg) <= 0 && Math.abs(sAvg - bAvg) > 0.005,
+  check('慢情绪稳在水位边上（不再被快情绪拽跑）',
+    Math.abs(sAvg - bAvg) < 0.05,
     { s: +sAvg.toFixed(3), f: +fAvg.toFixed(3), b: +bAvg.toFixed(3) })
+}
+
+// ================= 锚点：平静不该自带半格正分 =================
+/* 2026-11-03：peaceful 原来 0.5、calm 原来 0.4，挺平静也带正分，快情绪老贴在 0.3~0.7 掉不下来。
+   往中性收了一档。这里钉住「平静落在中性偏一点点」，别再被谁改回去。 */
+{
+  const run = (label) => affectDynV1.run({}, {
+    mode: 'apply',
+    state: { pleasure: 0, arousal: 0, dominance: 0, intensity: 0.3, mood: 0.5, primary_label: label },
+    appraisal: { label, goal_congruence: 0, novelty: 0, certainty: 0.8, agency: 'other' },
+  })
+  const pe = run('peaceful')
+  const ca = run('calm')
+  check('peaceful 锚点收到 0.3 以下', PAD_PRIOR.peaceful.p <= 0.3, PAD_PRIOR.peaceful)
+  check('calm 锚点收到 0.2 以下', PAD_PRIOR.calm.p <= 0.2, PAD_PRIOR.calm)
+  check('平静仍是中性偏一点点正，不是打成负面', pe.pleasure > 0 && pe.pleasure <= 0.3, pe)
+  check('calm 比 peaceful 更中性', ca.pleasure < pe.pleasure, { calm: ca.pleasure, peaceful: pe.pleasure })
+  check('joy 没被一起改低', PAD_PRIOR.joy.p >= 0.6, PAD_PRIOR.joy)
 }
 
 console.log(`\n${pass} passed, ${fail} failed`)

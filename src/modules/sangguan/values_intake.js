@@ -5,6 +5,7 @@
  * 旧表的一次性迁移器已按 v1 清退计划删除；现在没有任何路径会写旧表。
  */
 import { setFlag, getFlag } from '../../kernel.js'
+import { laneOn } from './config.js'
 import { VALUE_DIMS, VALUE_INIT } from '../persona_dims.js'
 import { append, newId } from './ledger.js'
 import { loadState } from './projection.js'
@@ -112,6 +113,9 @@ const VALUE_LINE = {
  * 助手的话不算。同一条只试一次。
  */
 export async function ingestValues(db, aid, at, turn) {
+  // V 列打开时，价值观只走草稿箱：志向 / 关系 / 驱力缺口不再自动落成 V。
+  // 人自己写的那条（claimUserValue）保留，那是人手写，不是机器代笔。
+  if (laneOn(db, aid, 'V')) return { offered: 0, pressed: 0, skipped: 'lane' }
   const when = at || new Date().toISOString()
   const seen = readSeen(db, aid)
   const jobs = []

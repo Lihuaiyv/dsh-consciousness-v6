@@ -1,0 +1,122 @@
+[
+ {
+  "day": "2026-10-29",
+  "old": {
+   "source": "model",
+   "chars": 353,
+   "paragraphs": 4,
+   "enumWords": 0,
+   "reportWords": 0
+  },
+  "oldMaterial": 6914,
+  "oldEpisodes": 10,
+  "oldFacts": 12,
+  "oldRawTurns": 193,
+  "new": {
+   "scenes": 2,
+   "rawScenes": 2,
+   "material": 2512,
+   "chars": 152,
+   "paragraphs": 2,
+   "enumWords": 0,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-10-30",
+  "old": {
+   "source": "rules",
+   "chars": 221,
+   "paragraphs": 4,
+   "enumWords": 2,
+   "reportWords": 0
+  },
+  "oldMaterial": 6596,
+  "oldEpisodes": 20,
+  "oldFacts": 12,
+  "oldRawTurns": 749,
+  "new": {
+   "scenes": 2,
+   "rawScenes": 1,
+   "material": 493,
+   "chars": 135,
+   "paragraphs": 2,
+   "enumWords": 1,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-10-31",
+  "old": {
+   "source": "model",
+   "chars": 355,
+   "paragraphs": 5,
+   "enumWords": 0,
+   "reportWords": 0
+  },
+  "oldMaterial": 4610,
+  "oldEpisodes": 6,
+  "oldFacts": 12,
+  "oldRawTurns": 327,
+  "new": {
+   "scenes": 2,
+   "rawScenes": 2,
+   "material": 1383,
+   "chars": 123,
+   "paragraphs": 2,
+   "enumWords": 2,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-11-01",
+  "old": {
+   "source": "model",
+   "chars": 360,
+   "paragraphs": 4,
+   "enumWords": 0,
+   "reportWords": 1
+  },
+  "oldMaterial": 8518,
+  "oldEpisodes": 20,
+  "oldFacts": 12,
+  "oldRawTurns": 346,
+  "new": {
+   "scenes": 2,
+   "rawScenes": 2,
+   "material": 2866,
+   "chars": 138,
+   "paragraphs": 2,
+   "enumWords": 0,
+   "reportWords": 0,
+   "gate": true
+  }
+ },
+ {
+  "day": "2026-11-02",
+  "old": {
+   "source": "model",
+   "chars": 378,
+   "paragraphs": 5,
+   "enumWords": 0,
+   "reportWords": 1
+  },
+  "oldMaterial": 9457,
+  "oldEpisodes": 20,
+  "oldFacts": 12,
+  "oldRawTurns": 1020,
+  "new": {
+   "scenes": 2,
+   "rawScenes": 2,
+   "material": 3170,
+   "chars": 324,
+   "paragraphs": 4,
+   "enumWords": 0,
+   "reportWords": 0,
+   "gate": true
+  }
+ }
+]

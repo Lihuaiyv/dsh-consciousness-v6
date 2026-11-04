@@ -81,7 +81,8 @@ export const OWNERSHIP = {
   affect: {
     files: ['modules/affect.js'],
     // affect_events：P0 影子闸门，每条消息一行，只记录「会不会成为事件」
-    tables: ['affect_state', 'affect_episodes', 'affect_samples', 'affect_v3', 'affect_baseline', 'affect_user_read', 'affect_events'],
+    // affect_review / affect_trigger：事后复查 + 触发词学习，本来就是它自己的两张表，之前漏登记
+    tables: ['affect_state', 'affect_episodes', 'affect_samples', 'affect_v3', 'affect_baseline', 'affect_user_read', 'affect_events', 'affect_review', 'affect_trigger'],
   },
   drive: {
     files: ['modules/drive.js'],
@@ -97,7 +98,7 @@ export const OWNERSHIP = {
   },
   selfhood: {
     // 生活流 / 自我改写 / 反刍：只写自己的事件、记忆来源和 persona 白名单
-    files: ['modules/life.js', 'modules/self_author.js', 'modules/reappraise.js'],
+    files: ['modules/life.js', 'modules/self_memory.js', 'modules/self_pattern.js', 'modules/self_author.js', 'modules/reappraise.js', 'modules/self_repeat.js'],
     tables: [
       'events', 'memory_items', 'agent_params', 'persona', 'changes',
       'affect_samples', 'affect_state', 'conflicts', 'proactive',
@@ -175,7 +176,7 @@ export const OWNERSHIP = {
       'claim_events', 'persona_claims', 'claim_questions', 'claim_kappa', 'claim_predictions', 'claim_evidence',
       'claim_edges', 'claim_summaries',
       'claim_proj_claim', 'claim_proj_kappa', 'claim_proj_nu', 'claim_proj_edge', 'claim_proj_theta', 'claim_proj_meta',
-      'claim_llm_cache', 'claim_purge', 'flags', 'chat_turns',
+      'claim_llm_cache', 'claim_purge', 'sangguan_drafts', 'flags', 'chat_turns',
       // intake 只读：旧通道变成候选，不写这些表
       'memory_items', 'conflicts', 'diaries', 'rel_person', 'drive_state', 'action_log',
     ],

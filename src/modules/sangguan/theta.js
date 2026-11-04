@@ -5,7 +5,7 @@
 
 export const THETA = Object.freeze({
   alpha: [0.2, null], beta: [0.25, null],
-  w_act: [0.6, null], w_verdict: [1.0, null], w_check: [1.0, null],
+  w_act: [0.6, null], w_verdict: [1.0, null], w_check: [1.0, null], w_invest: [0.5, null],
   theta_dup: [0.9, null], theta_rel: [0.55, null],
   // 字面分与余弦不同量纲：近义改写大约 0.13 起，无关句样本不超过 0.07
   theta_dup_lex: [0.4, null], theta_rel_lex: [0.12, null],

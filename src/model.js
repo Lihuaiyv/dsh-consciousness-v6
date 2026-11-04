@@ -8,6 +8,31 @@ const RULES = {
   threat: ['危险', '删', '泄露', '密码', '越权'],
 }
 
+/**
+ * 抽取提示词（P1）。两份 LLM 适配器共用同一段，避免改一处漏一处。
+ *
+ * 为什么加 who：以前这段只要「事实 / 偏好 / 边界」，抽出来的主语永远是对方，
+ * 记忆库里 72% 是「用户正在…」。现在分两条道：user 走档案，self 走「我自己」。
+ * self 必须第一人称、最多 3 条、拿不准就丢——宁可少记，不要编归属。
+ */
+export const EXTRACT_SYS = '从对话抽取值得长期记住的东西。只输出 JSON 数组：'
+  + '[{"text":"","type":"fact|episode|appraisal","who":"user|self","mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。'
+  + 'who="user"：关于对方的事实 / 偏好 / 边界。text 用一句客观陈述，写清实体与属性；'
+  + 'key 是稳定的去重键（如「用户.咖啡.偏好」），同一件事换个说法必须给同一个 key，拿不准就给空；'
+  + 'terms 是 3~6 个「以后用户可能怎么问这件事」的词：同义词、别名、上位词、口语说法（例：咖啡 → 咖啡、美式、喝什么、饮品）。'
+  + 'who="self"：这一轮你自己（说话的意识体）做了什么、怎么想、为什么。'
+  + '必须用第一人称、以「我」开头，6~120 字，写具体的事；不要写对方的事，不要第三人称旁白（「用户正在…」「助手…」）；'
+  + '拿不准是谁做的就丢掉这条；每轮最多 3 条，没有就整条不给。'
+  + 'terms 只写词，不要句子，不要解释；没有就留空数组。'
+
+/** 抽取的用户消息：对话原文 + （可选）这一轮她自己做过的事。 */
+function extractUserContent(turns, opt = {}) {
+  const base = JSON.stringify(turns).slice(0, 6000)
+  const mat = typeof opt.selfMaterial === 'string' ? opt.selfMaterial.trim() : ''
+  if (!mat) return base
+  return base + '\n\n这一轮我自己做过的事（材料，只用来写 who="self"）：\n' + mat.slice(0, 800)
+}
+
 // 情绪不再「一句话定一个标签」：给 8 类打分，标签只是其中一种投影。
 const SIGNALS = {
   joy: ['喜欢', '谢谢', '开心', '太好了', '真棒', '棒', '终于', '骄傲', '爽', '满意', '不错', '夸', '嘿嘿', '笑', '顺利', '好听', '好看', '有意思', '没翻车', '一路绿灯'],
@@ -231,11 +256,21 @@ class OpenAIAdapter {
     const timer = setTimeout(() => ctrl.abort(), this.timeout)
     const headers = { 'Content-Type': 'application/json' }
     if (this.key) headers.Authorization = 'Bearer ' + this.key
+    // 统一成 OpenAI 认识的样子：content 可以是字符串或文本块数组；老写法 text 也接。
+    const norm = (Array.isArray(messages) ? messages : []).map((m) => {
+      const c = m && m.content
+      return {
+        role: (m && m.role) || 'user',
+        content: typeof c === 'string' ? c
+          : Array.isArray(c) ? c.map((b) => (b && b.type === 'text' ? b.text : '')).join('\n')
+            : String((m && m.text) ?? ''),
+      }
+    })
     try {
       const r = await fetch(this.url + '/chat/completions', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ model: this.model, messages, temperature, max_tokens: maxTokens, ...(json ? { response_format: { type: 'json_object' } } : {}) }),
+        body: JSON.stringify({ model: this.model, messages: norm, temperature, max_tokens: maxTokens, ...(json ? { response_format: { type: 'json_object' } } : {}) }),
         signal: ctrl.signal,
       })
       if (!r.ok) throw new Error('model http ' + r.status)
@@ -244,9 +279,7 @@ class OpenAIAdapter {
     } finally { clearTimeout(timer) }
   }
   async appraise(text, formula = 'v1', context = '') {
-    const user = context
-      ? '前几句：\n' + String(context).slice(0, 600) + '\n\n现在这句：' + String(text).slice(0, 2000)
-      : String(text).slice(0, 2000)
+    const user = contextForUser(context, text)
     /* P1：关切口径。旧口径原样保留，用参数 affect.appraise.formula 切 */
     if (String(formula) === 'concern') {
       const raw2 = await this.chat([
@@ -299,13 +332,10 @@ class OpenAIAdapter {
       return data.map((x) => x.embedding)
     } finally { clearTimeout(timer) }
   }
-  async extract(turns) {
+  async extract(turns, opt = {}) {
     const raw = await this.chat([
-      { role: 'system', content: '从对话抽取值得长期记住的事实/偏好/边界。只输出 JSON 数组：[{"text":"","type":"fact|episode|appraisal","mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。' +
-        'text 用一句客观陈述，写清实体与属性；key 是稳定的去重键（如「用户.咖啡.偏好」），同一件事换个说法必须给同一个 key，拿不准就给空；' +
-        'terms 是 3~6 个「以后用户可能怎么问这件事」的词：同义词、别名、上位词、口语说法（例：咖啡 → 咖啡、美式、喝什么、饮品）。' +
-        'terms 只写词，不要句子，不要解释；没有就留空数组。' },
-      { role: 'user', content: JSON.stringify(turns).slice(0, 6000) },
+      { role: 'system', content: EXTRACT_SYS },
+      { role: 'user', content: extractUserContent(turns, opt) },
     ], 700, true)
     const arr = parseJson(raw)
     if (!Array.isArray(arr)) throw new Error('not array')
@@ -392,6 +422,19 @@ export class ModelPort {
     if (typeof this.fallback?.chat === 'function') return this.fallback.chat(messages, maxTokens, json, temperature)
     throw new Error('模型 chat 不可用')
   }
+  /**
+   * 只走 primary，不走规则兜底：模型不在就抛。
+   * 给日记这种「必须真是模型写的」用——走 chat() 会安静地落到模板，
+   * 页面上根本看不出这篇是人话还是拼贴。
+   */
+  async chatPrimary(messages, maxTokens = 600, json = false, temperature = 0.2) {
+    if (!this.primary?.available()) throw new Error('模型不可用：没有可用的 primary 适配器')
+    if (Date.now() <= this.openUntil) throw new Error('模型熔断中：' + (this.lastError || '连续失败'))
+    const out = await this.primary.chat(messages, maxTokens, json, temperature)
+    this.failures = 0
+    this.servedBy = 'primary'
+    return out
+  }
   status() {
     return {
       primary: this.primary?.available() ? (Date.now() > this.openUntil ? 'ok' : 'circuit_open') : 'unavailable',
@@ -429,27 +472,57 @@ function normalizeScores(d) {
  * 依据见 v1新版本重要文档/7-情绪事件化-v1.md §1.3、§3.2。
  */
 const AP_PROMPT_CONCERN = `你是情绪评价器。先判断这句话属于哪一类，再给它在乎的程度与方向。
-kind（四选一）：
-- task：布置任务、问技术问题、给操作指令、补充细节、确认状态
+kind（五选一）：
+- task：布置任务、问技术问题、给操作指令、补充细节、确认状态（就事论事，语气中性）
+- directive：在使唤它、纠正它、催它、嫌它慢——"还是不对""又错了""重做""快点""怎么又…""这里再改一下"，语气里带着不满或催促
 - eval：评价它、抱怨它、夸它、谢它、担心它、想改变它；说它哪里不对/不够好/不像活的/没反应/不饿
 - relation：表达关系、亲近、信任、期待、失望（"我们""以后""你对我…"）
 - chat：对方说自己的事、闲聊、感叹
 polarity：-1 伤到它 / 0 无关 / 1 顺着它
-只输出 JSON：{"kind":"task|eval|relation|chat","polarity":0,"concern_relevance":0,"concern_congruence":0,"change":0,"novelty":0.2,"certainty":0.8,"agency":"self|other|world","none":true,"scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125},"user_label":"joy|peaceful|curious|calm|confused|lost|irritated|frustrated","user_scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125}}
+只输出 JSON：{"kind":"task|directive|eval|relation|chat","polarity":0,"concern_relevance":0,"concern_congruence":0,"change":0,"novelty":0.2,"certainty":0.8,"agency":"self|other|world","none":true,"why":"","target":"me|other|none","receive":"follow|hold|dampen","unsaid":"","scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125},"user_label":"joy|peaceful|curious|calm|confused|lost|irritated|frustrated","user_scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125}}
 规则：
 1. task / chat → none=true，concern_relevance ≤ 0.15，concern_congruence=0，scores 接近均匀。
-2. eval / relation → none=false，concern_relevance 0.5~0.9，concern_congruence 用 polarity 的方向和强度表示，scores 给明显分布。
-3. 如果给了前几句，结合语境判断：比如说了一句很短的话（「我真是服了」「算了」），要按它在上下文里是不是冲着它来的来分类。
-4. 拿不准 → 判 task 或 chat；不要为了给分而编情绪。
-5. change：和上一次同类状况比变了多少，0=没变，1=完全翻盘。
-6. certainty：你有多确定自己读懂了这句话的意图。
-7. agency：self=它自己做的，other=对方做的，world=外部情况。
-8. scores 八个键都必须有，0-1，和为 1；允许五个以上接近 0.125 的平坦分布。
-9. user_label / user_scores 只表示说话人自己的情绪，只供共情参考。`
+2. directive → none=false，concern_relevance 0.35~0.5，concern_congruence 用 polarity 表示（被催、被纠正是 -0.2~-0.5），scores 给一个偏负但不满格的分布（confused 或 frustrated 稍高）。
+3. eval / relation → none=false，concern_relevance 0.5~0.9，concern_congruence 用 polarity 的方向和强度表示，scores 给明显分布。
+4. task 和 directive 怎么分：只在交代做什么、语气平 = task；夹着"又/还是/怎么/快点/重来/第几遍"，或者在纠错 = directive。拿不准时看有没有「它没做好」这层意思——有就是 directive。
+5. 如果给了前几句，结合语境判断：比如说了一句很短的话（「我真是服了」「算了」），要按它在上下文里是不是冲着它来的来分类。
+6. 拿不准 → 判 task 或 chat；不要为了给分而编情绪。
+7. change：和上一次同类状况比变了多少，0=没变，1=完全翻盘。
+8. certainty：你有多确定自己读懂了这句话的意图。
+9. agency：self=它自己做的，other=对方做的，world=外部情况。
+10. scores 八个键都必须有，0-1，和为 1；允许五个以上接近 0.125 的平坦分布。
+11. user_label / user_scores 只表示说话人自己的情绪，只供共情参考。
+12. why：一句话，说清「是哪个词、或者前文哪一句」让你这么判。要能指回去，例如「『还是』加『不对』= 在纠错」或「前一句在夸小圈，这句是顺着逗」。拿不准就写「看不出」。
+13. target：这句冲谁。me=冲它、other=冲对方自己或第三方、none=说不清或没人。判 task 时 target 也给 none。
+14. receive：这一次它该怎么接对方的情绪。这是「它自己的判断」，不是固定规则：
+   - follow：正常感受，跟着对方的情绪走一点（大多数情况）
+   - hold：对方已经很沉，而它自己还站得住——先稳住，别跟着沉到底，这样才接得住对方
+   - dampen：两边都在气头上，接收打折，别互相点着
+   判断要看两件事：一是对方有多沉（user_scores 负得深不深），二是**它自己现在的状态**（提示里会给出它的慢/快情绪）。它自己已经很低的时候不要 hold——那样会变成硬撑。拿不准就用 follow。
+15. unsaid：如果这一刻**本来还有另一种更想说的说法**，用一句话写出来（≤30 字，口语，第一人称，像人会脱口而出那种）；
+   没有就留空串。别为了填而编——拿不准就空着。它不是回答，是咽回去的那半句。
+   挑人时优先写「被压着的那句」：想顶回去但没顶、想撒娇但收住了、想说破但绕开了。`
+
 
 /** 评价口径：v1（旧）或 concern（P1）。未知值一律回 v1。 */
 export function promptFor(formula) {
   return String(formula) === 'concern' ? AP_PROMPT_CONCERN : AP_PROMPT
+}
+
+/**
+ * 把「前几句」和「现在这句」拼成一条 user 消息。
+ *
+ * 截断要从**末尾**留：最新的前一句比最早的几句重要。
+ * 2026-11-03 发现的坑：原来是 slice(0, 600)，切掉的是尾巴；
+ * 而短句的上下文轮数刚从 3 提到 6（最坏 6×120=720 字），正好会被切掉最新的那两句——
+ * 也就是「你想怎么样？」前面那句真正能解释它的玩笑话。
+ */
+export function contextForUser(context, text) {
+  const c = String(context || '')
+  const t = String(text || '').slice(0, 2000)
+  if (!c.trim()) return t
+  const kept = c.length > 600 ? '…' + c.slice(-600) : c
+  return '前几句：\n' + kept + '\n\n现在这句：' + t
 }
 
 /**
@@ -474,12 +547,14 @@ export function finalizeAppraisal(d) {
   rel = Math.max(0, Math.min(1, rel))
   cong = Math.max(-1, Math.min(1, cong))
   /* 先分类再定量：让模型直接给 0–1 的「相关度」，它会一律往「任务」那边猜（实测永远 0.05–0.1）。
-     分成 task / eval / relation / chat 四类要准得多，相关度和方向由这张表落地。 */
-  const kind = ['task', 'eval', 'relation', 'chat'].includes(src.kind) ? src.kind : null
+     分成 task / directive / eval / relation / chat 五类要准得多，相关度和方向由这张表落地。
+     directive 是「在使唤它 / 在纠它 / 在催它」：不是纯交代做什么，而是「你没做好」——
+     原来这类全被归进 task（rel 0.10），一整天被催也不起一点情绪，那是漏的。 */
+  const kind = ['task', 'directive', 'eval', 'relation', 'chat'].includes(src.kind) ? src.kind : null
   const pol = Number(src.polarity)
   if (kind) {
-    const REL = { task: 0.1, chat: 0.2, eval: 0.65, relation: 0.55 }
-    const relevant = kind === 'eval' || kind === 'relation'
+    const REL = { task: 0.1, directive: 0.4, chat: 0.2, eval: 0.65, relation: 0.55 }
+    const relevant = kind === 'eval' || kind === 'relation' || kind === 'directive'
     none = !relevant
     rel = Math.max(rel, REL[kind])
     if (relevant) {
@@ -500,6 +575,18 @@ export function finalizeAppraisal(d) {
   }
   if (none) { rel = Math.min(rel, 0.15); cong = 0 }
   const change = Number(src.change)
+  /* why = 「为什么这么判」的一句话（要能指回某个词或前文某句）；
+     target = 「这句冲谁」。两个都要清：why 压平空白、截到 120 字；
+     target 只认三个值，模型没给就按 none 推断。 */
+  const why = String(src.why || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+  const target = ['me', 'other', 'none'].includes(src.target) ? src.target : (none ? 'none' : 'me')
+  /* receive = 这次它判断自己该怎么接对方的情绪（不是阈值算的，它自己选）。
+     follow 跟着走 / hold 稳住别沉到底 / dampen 两边都热时降温。没给就 auto（走老阈值）。 */
+  const receiveRaw = String(src.receive || '').toLowerCase().trim()
+  const receive = ['follow', 'hold', 'dampen'].includes(receiveRaw) ? receiveRaw : 'auto'
+  /* unsaid = 咽回去的那半句。这里不白名单化就会在上游丢光——
+     和 why / target 踩过同一个坑（那次 affect_events 里 1266 条 why 全是 null）。 */
+  const unsaid = String(src.unsaid || '').replace(/\s+/g, ' ').trim().slice(0, 120)
   return {
     ...src,
     scores,
@@ -510,6 +597,10 @@ export function finalizeAppraisal(d) {
     goal_congruence: Math.round(cong * 1000) / 1000,
     change: Number.isFinite(change) ? Math.max(0, Math.min(1, change)) : null,
     none,
+    why,
+    target,
+    receive,
+    unsaid,
     raw_name: unknown ? String(src.raw || src.name || '') : undefined,
     source: 'model',
   }
@@ -541,8 +632,9 @@ class HostLlmAdapter {
     const textOf = (c) => (typeof c === 'string' ? c
       : Array.isArray(c) ? c.map((b) => (b && b.type === 'text' ? b.text : '')).join('\n') : '')
     const list = Array.isArray(messages) ? messages : []
-    const sys = list.filter((m) => m.role === 'system').map((m) => textOf(m.content)).join('\n\n')
-    const body = list.filter((m) => m.role !== 'system').map((m) => textOf(m.content)).join('\n\n')
+    // 兼容两种写法：标准 {role,content} 与老代码的 {role,text}
+    const sys = list.filter((m) => m.role === 'system').map((m) => textOf(m.content ?? m.text)).join('\n\n')
+    const body = list.filter((m) => m.role !== 'system').map((m) => textOf(m.content ?? m.text)).join('\n\n')
     return this._chat(sys, body, maxTokens, temperature)
   }
   async route() {
@@ -597,9 +689,7 @@ class HostLlmAdapter {
     return out
   }
   async appraise(text, formula = 'v1', context = '') {
-    const user = context
-      ? '前几句：\n' + String(context).slice(0, 600) + '\n\n现在这句：' + String(text).slice(0, 2000)
-      : String(text).slice(0, 2000)
+    const user = contextForUser(context, text)
     if (String(formula) === 'concern') {
       const raw2 = await this._chat(promptFor('concern'), user, 2000, 0.2)
       return finalizeAppraisal(parseJson(raw2) || {})
@@ -634,11 +724,10 @@ class HostLlmAdapter {
     return this._chat(buildReplySystem({ ...ctx, historyInSystem: true }), String(ctx.text || '').slice(0, 2000), 400, 0.8)
   }
   /** 宿主模型也能抽事实：同一段对话，不该因为没配聊天模型就一条都不抽。 */
-  async extract(turns) {
+  async extract(turns, opt = {}) {
     const raw = await this.chat([
-      { role: 'system', content: '从对话抽取值得长期记住的事实/偏好/边界。只输出 JSON 数组：[{"text":"","type":"fact|episode|appraisal","mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。' +
-        'text 用一句客观陈述，写清实体与属性；key 是稳定的去重键（如「用户.咖啡.偏好」）；terms 是 3~6 个「以后用户可能怎么问这件事」的词。没有就留空数组。' },
-      { role: 'user', content: JSON.stringify(turns).slice(0, 6000) },
+      { role: 'system', content: EXTRACT_SYS },
+      { role: 'user', content: extractUserContent(turns, opt) },
     ], 700, true)
     const arr = parseJson(raw)
     if (!Array.isArray(arr)) throw new Error('not array')

@@ -1,0 +1,20 @@
+[
+ {
+  "day": "2026-11-02",
+  "candidates": 36,
+  "old": {
+   "source": "model",
+   "chars": 378,
+   "paragraphs": 5,
+   "enumWords": 0,
+   "reportWords": 1
+  },
+  "new": {
+   "source": "none",
+   "pending": true,
+   "fail_reason": "gate:report",
+   "scenes": 2,
+   "gate": null
+  }
+ }
+]

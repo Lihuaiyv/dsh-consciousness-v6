@@ -15,8 +15,29 @@ function headsOfCore(s, layer) {
   return Object.values(s.claims).filter((c) => c.layer === layer && isCoreKind(layer, c.kind) && !isTerminal(c.status) && !isHollowSeed(c))
 }
 
-export function coreCandidates(s, layer) {
-  const busy = new Set()
+/**
+ * 世界观能不能立核心（B1 修正）。
+ *
+ * 旧规则「V 一条活的都没有时，W 不许新增」会死锁：V 要真实取舍才长，工程对话里没有取舍，
+ * 于是 V 永远空、W 永远不进。改成只拦「立核心」，不拦保护带；并且给第二条出路——
+ * 它的预料被现实打脸过（≥2 次结算且至少 1 次 miss），也算有据可依。
+ */
+export function wCoreAllowed(s) {
+  const hasV = Object.values(s.claims).some((c) => c.layer === 'V' && !isTerminal(c.status))
+  if (hasV) return true
+  const wIds = new Set(Object.values(s.claims).filter((c) => c.layer === 'W').map((c) => c.id))
+  const settled = Object.values(s.nus).filter((n) => wIds.has(n.claim_id) && (n.outcome === 'hit' || n.outcome === 'miss'))
+  return settled.length >= 2 && settled.some((n) => n.outcome === 'miss')
+}
+
+/** 某层现在能不能立核心。返回 null 表示可以，否则是跳过原因。 */
+export function coreLaneGate(layer, s) {
+  if (layer !== 'W') return null
+  if (Number(theta(s, 'growth_order') || 0) < 1) return null
+  return wCoreAllowed(s) ? null : 'growth_order'
+}
+
+export function coreCandidates(s, layer) {  const busy = new Set()
   for (const k of Object.values(s.kappas)) if (SIGMA_OPEN.includes(k.sigma)) { busy.add(k.pos_id); busy.add(k.neg_id) }
   const nMin = Math.round(theta(s, 'n_min', layer))
   const piCore = theta(s, 'pi_core', layer)
@@ -33,6 +54,8 @@ export async function establishCores(db, aid, now, opt = {}) {
     const s = loadState(db, aid)
     const cores = headsOfCore(s, layer)
     if (cores.length >= theta(s, 'C_max', layer)) continue
+    const laneGate = coreLaneGate(layer, s)
+    if (laneGate) { skipped.push({ layer, reason: laneGate }); continue }
     const texts = Object.fromEntries(db.prepare('SELECT id, text FROM persona_claims WHERE agent_id=? AND layer=?').all(aid, layer).map((r) => [r.id, r.text]))
     for (const b of coreCandidates(s, layer)) {
       const input = { layer, candidate: { id: b.id, text: texts[b.id] || '' }, cores: cores.map((c) => ({ id: c.id, text: texts[c.id] || '' })) }

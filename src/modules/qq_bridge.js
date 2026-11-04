@@ -21,6 +21,7 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { moodLabelOf } from './affect.js'
+import { recordReplyResidue } from './self_residue.js'
 import { now } from '../db.js'
 
 export const QQ_SESSION_PREFIX = 'qq-'
@@ -369,7 +370,12 @@ export function attachQQIngest(opts = {}) {
     const n = Number(t)
     return Number.isFinite(n) && n > 0 ? new Date(n).toISOString() : now()
   }
-  const writeTurn = (db, aid, role, text, conv, at) => {
+  const writeTurn = (db, aid, role, text, conv, at, owner = false) => {
+    // QQ 通道没有当轮 expressionState 基准：用她在这个会话里自己的历史中位数。
+    // 先落余量再写当前这一行，避免拿自己刚说的话当自己的常态。
+    if (role === 'agent' && owner) {
+      try { recordReplyResidue(db, aid, text, { conv, at: Date.parse(at) || Date.now() }) } catch { /* 余量失败不影响落库 */ }
+    }
     const id = 'cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
     // 记下她说话时的情绪；QQ 这条路径以前也写 null，统计里一半是空的。
     db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
@@ -404,7 +410,7 @@ export function attachQQIngest(opts = {}) {
       if (!guard(mid ? 'in:' + mid : 'in:' + chatKey + ':' + text.slice(0, 60))) return
       const owner = isOwnerChatKey(chatKey, ownerList())
       const at = atOf(payload.at)
-      writeTurn(db, aid, 'user', text, conv, at)
+      writeTurn(db, aid, 'user', text, conv, at, owner)
       const hookOk = owner ? callOwnerHook({ db, aid, role: 'user', text, conversationId: conv, at, chatKey }) : true
       localEvent(db, aid, 'qq.bridge.inbound_saved', {
         chatKey, conversationId: conv, owner, chars: text.length, hookOk,
@@ -431,7 +437,7 @@ export function attachQQIngest(opts = {}) {
       if (!guard('out:' + chatKey + ':' + text.slice(0, 80) + ':' + Math.floor(Date.now() / 5000))) return
       const owner = isOwnerChatKey(chatKey, ownerList())
       const at = atOf(payload.at)
-      writeTurn(db, aid, 'agent', text, conv, at)
+      writeTurn(db, aid, 'agent', text, conv, at, owner)
       const hookOk = owner ? callOwnerHook({ db, aid, role: 'agent', text, conversationId: conv, at, chatKey }) : true
       localEvent(db, aid, 'qq.bridge.outbound_saved', {
         chatKey, conversationId: conv, owner, chars: text.length, hookOk,

@@ -19,6 +19,9 @@ import { writeNote } from './selfnote.js'
 import { growWorldview } from './worldview.js'
 import { growLifeview } from './lifeview.js'
 import { buildEpisode, buildDiary } from './archive.js'
+import { repairPending, repairOldDiaries } from './diary.js'
+import { writeSelfDay, writeSelfInsight } from './self_memory.js'
+import { writeSelfPattern } from './self_pattern.js'
 import { refreshHeat } from './tiers.js'
 import { tickTemps } from './temps.js'
 import { pruneRetrievalLog } from './retrieval_log.js'
@@ -121,12 +124,35 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ② 写这一天的日记（补写时 late=1：写的时候已经不是那一天了）
+  // 顺序：先补历史待补（昨天没写成的），再写今天，最后看有没有旧 rules/stub 篇可自愈。
   let diary = null
+  let repair = null
+  let rewriteOld = null
   const late = localDay(new Date()) === day ? 0 : 1
   try {
+    const ropts = {}
+    if (typeof opt.chat === 'function') ropts.chat = opt.chat
+    try { repair = await repairPending(db, aid, { ...ropts, limit: 1 }) } catch (e) { repair = { error: String(e && e.message) } }
     const has = db.prepare('SELECT 1 FROM diaries WHERE agent_id=? AND day=?').get(aid, day)
-    if (!has) diary = await buildDiary(db, aid, day, { summarize: opt.summarize || null, late })
-    push('diary', { ok: true, built: diary ? diary.day : null, skipped: !diary, late })
+    if (!has) {
+      const dopts = { summarize: opt.summarize || null, late }
+      // 只有调用方真的给了 chat 才写进 opt：没给时让 diary 自己去问全局模型。
+      if (typeof opt.chat === 'function') dopts.chat = opt.chat
+      diary = await buildDiary(db, aid, day, dopts)
+    }
+    try { rewriteOld = await repairOldDiaries(db, aid, ropts) } catch (e) { rewriteOld = { error: String(e && e.message) } }
+    push('diary', {
+      ok: true,
+      built: diary && diary.text ? diary.day : null,
+      skipped: !has && !diary,
+      late,
+      source: diary ? diary.source : (has ? 'existing' : null),
+      fail_reason: diary ? diary.fail_reason || null : null,
+      pending: !!(diary && diary.pending),
+      scenes: diary && Array.isArray(diary.scenes) ? diary.scenes.length : 0,
+      repair,
+      rewrite_old: rewriteOld,
+    })
   } catch (e) {
     push('diary', { ok: false, error: String(e && e.message) })
   }
@@ -175,6 +201,30 @@ export async function runNightly(db, aid, opt = {}) {
     }
   } catch (e) {
     push('memory_reflect', { ok: false, error: String(e && e.message) })
+  }
+
+  // ⑤c 她自己的记忆：当天有素材就写一条「今天我怎么过的」（第一人称，一天一条）。
+  try {
+    const sd = await writeSelfDay(db, aid, day, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
+    push('self_day', { ok: !!sd.ok, skipped: sd.skipped || null, id: sd.id || null })
+  } catch (e) {
+    push('self_day', { ok: false, error: String(e && e.message) })
+  }
+
+  // ⑤e 她自己的记忆：日子攒够了，再写一条「今晚想明白的一件事」（不是流水账）。
+  try {
+    const si = await writeSelfInsight(db, aid, day, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
+    push('self_insight', { ok: !!si.ok, skipped: si.skipped || null, id: si.id || null })
+  } catch (e) {
+    push('self_insight', { ok: false, error: String(e && e.message) })
+  }
+
+  // ⑤d 认自己：把最近反复出现的形状攒成「我好像就是这样」。
+  try {
+    const sp = await writeSelfPattern(db, aid, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
+    push('self_pattern', { ok: !!sp.ok, written: sp.written || 0, merged: sp.merged || 0, skipped: sp.skipped || null })
+  } catch (e) {
+    push('self_pattern', { ok: false, error: String(e && e.message) })
   }
 
   // ⑥ 叙事证据：v2 起并入 persona_scan（它自己也读日记，避免同一篇日记被算两遍）。
@@ -318,6 +368,15 @@ export async function runNightly(db, aid, opt = {}) {
       : { ok: true, skipped: rr.skipped })
   } catch (e) {
     push('reappraise', { ok: false, error: String(e && e.message).slice(0, 120) })
+  }
+
+  // ⑮ 关系余量结算：默认关；同方向攒够 3 条才小步动一次三轴。
+  try {
+    const { settleSelfResidue } = await import('./self_residue.js')
+    const sr = settleSelfResidue(db, aid, { at: Date.now() })
+    push('self_residue', { ok: true, ...sr })
+  } catch (e) {
+    push('self_residue', { ok: false, error: String(e && e.message).slice(0, 120) })
   }
 
   const ok = steps.every((s) => s.ok !== false)

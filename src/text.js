@@ -50,7 +50,26 @@ export function looksLikeRuntimeNoise(text) {
  * 真正的原话早就在更早的 raw_turns 里躺着，摘要只是二手复述。
  * 以前剥不干净，摘要就被当成「用户亲口说过的事实」存进原话层，再被抽成记忆。
  */
-const MACHINE_MESSAGE = /^\s*(?:This is an automatically generated checkpoint|Background (?:subagent|job)\b|<compacted-summary>)/i
+const MACHINE_MESSAGE = /^\s*(?:This is an automatically generated checkpoint|Background (?:subagent|job)\b|<compacted-summary>|<goal_(?:round|complete)>)/i
+
+/**
+ * 只接受一句话：去引号、取首行、压长度、拦技术噪音和框架词。
+ * 返回 null = 这句不能拿出去说（路径、凭据、代码块、SILENT 都算）。
+ *
+ * 原来住在 features.js 里（只给主动开口用）。挪到这里是因为「感受快照」也要回放原话——
+ * 回放原话和主动开口是同一个底线：不能把盘符、URL、token 当成人话念出来。
+ */
+export function cleanLine(raw) {
+  let s = String(raw || '').trim()
+  s = s.replace(/^```(?:text)?/i, '').replace(/```$/, '').trim()
+  if (!s || /^SILENT$/i.test(s)) return null
+  s = s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)[0] || ''
+  s = s.replace(/^["'「『]+|["'」』]+$/g, '').trim()
+  if (!s || /^[{[]/.test(s)) return null
+  if (s.length > 80) s = s.slice(0, 79) + '…'
+  if (/(https?:\/\/|\/v1\/|[A-Za-z]:\\|\.js\b|\.json\b|token|凭据|密码)/i.test(s)) return null
+  return s
+}
 
 /**
  * 从一条 user 消息里取出「人真正说的那句」。

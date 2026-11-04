@@ -56,7 +56,8 @@ export function computeEdgeBias(input = {}) {
 
   // E10：亲近度偏置只给正向事件（越近，好话越受用）。
   // 负向事件交给 ρ 去解释（C2），否则「亲密的人骂我」会既加又被扣，方向互相抵消。
-  if (ownerClose >= 0.5 && Number(appraisal.goal_congruence ?? 0) >= 0) {
+  // 已经判成「没碰到它」的消息（none）不加：那是任务话，不是好话。
+  if (ownerClose >= 0.5 && appraisal.none !== true && Number(appraisal.goal_congruence ?? 0) >= 0) {
     congruenceAdd += Number(edgeById(edges, 'E10')?.gain || 0) * (ownerClose - 0.3)
     fired.push('E10')
   }

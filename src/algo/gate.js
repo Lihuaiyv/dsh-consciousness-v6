@@ -110,8 +110,15 @@ export function socialFloorOf(text) {
   /* 情绪词：不是句式，是「人在气头上会说的话」。这类短句离开上下文本来就是
      对着对方说的（服了 / 无语 / 算了 / 离谱），模型单看会判成闲聊，这里补一道。 */
   const idiom = /(服了|无语|醉了|离谱|什么玩意|算了|行吧|呵呵|emmm|绷不住)/.test(t)
-  if (!directed && !agentState && !idiom) return null
+  /* 纠正 / 催促：这类话常常不点名，但已经在使唤它了（"还是不对""快点""又错了""重来"）。
+     directive 那一档的文本兜底——就算模型判成 task，也不至于一整天被催还一点不动。 */
+  const corrective = /(还是不对|又错|又不行|重来|重做|再改|快点|赶紧|怎么又|说了(几|第)|第[二三四五]遍|还没好|不对吧|别又)/.test(t)
+  if (!directed && !agentState && !idiom && !corrective) return null
   if (!directed && mine) return null
+  /* 只有「纠正 / 催促」、没有点名也没有情绪词：按 directive 那一档处理 */
+  if (corrective && !directed && !agentState && !idiom) {
+    return { rel: 0.4, cong: -0.3, change: 0.25, level: 'directive' }
+  }
   const strong = agentState || idiom || /(不活|没反应|太平|不像|不够|太差|笨|蠢|懒|慢|厉害|棒|喜欢|讨厌|烦|气|失望|谢谢|夸|饿|冷|暖|委屈|难受|开心|高兴|错|糟糕|活|不错|真好)/.test(t)
   const neg = idiom || /(不|没|太|差|笨|蠢|懒|慢|讨厌|烦|气|失望|错|糟糕)/.test(t)
   if (!strong) return { rel: 0.35, cong: 0, change: 0.1, level: 'addressed' }

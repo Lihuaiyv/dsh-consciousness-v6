@@ -96,20 +96,21 @@ export function patchAlgoBinding(db, aid, name, body, role) {
     ratio: body.ratio === undefined ? cur.ratio : body.ratio,
   })
 }
-import { looksLikeRuntimeNoise } from './text.js'
+import { looksLikeRuntimeNoise, cleanLine } from './text.js'
 import { createModel, composeRulesReply, appraiseRules } from './model.js'
 import { zipStore, unzipStore } from './zip.js'
 import {
   seedRelations, listRelations, upsertRelation, deleteRelation,
   listValues, setValue, listPreferences, addPreference, removePreference, listTaboos, addTaboo, seedState, LIMITS,
 } from './modules/persona.js'
-import { sampleAffect, affectHistory, affectTrend } from './modules/affect.js'
+import { sampleAffect, affectHistory, affectTrend, reviewStats, triggerStats, fallbackStats } from './modules/affect.js'
 import { softRecall, listActiveMemories, memoryStats } from './modules/memory.js'
 import { invalidateMemory } from './modules/timeline.js'
 import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
 import { entityForText } from './modules/entities.js'
 import { applyWrite } from './modules/gate.js'
+import { narrationOnly, selfTextOk } from './modules/memory_source.js'
 import { enrichOne, enrichPending, canEnrich } from './modules/enrich.js'
 import { judgeReflection, canJudge } from './modules/judge.js'
 import { detectLoop, addLoop, settleLoopsFromUser, expireLoops, pendingLoops, markLoopsFired } from './modules/loops.js'
@@ -186,7 +187,7 @@ function parseJsonLoose(raw) {
 export {
   seedRelations, listRelations, upsertRelation, deleteRelation,
   listValues, setValue, listPreferences, addPreference, removePreference, listTaboos, addTaboo,
-  sampleAffect, affectHistory, affectTrend, softRecall,
+  sampleAffect, affectHistory, affectTrend, softRecall, reviewStats, triggerStats, fallbackStats,
   getCondition, setCondition,
   setCooldown, listCooldowns, cooldownActive,
   budgetGet, budgetSet, budgetConsume,
@@ -371,6 +372,70 @@ export async function learnRelationsFromTurns(db, aid, turns) {
   return out
 }
 
+/** 今天已经写了多少条「我自己」——按本地日界算，和她的「今天」一致。 */
+export function selfCountToday(db, aid, at = Date.now()) {
+  try {
+    const d = new Date(at)
+    d.setHours(0, 0, 0, 0)
+    const since = d.toISOString()
+    return Number(db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND source='self' AND created_at>=?")
+      .get(aid, since).n || 0)
+  } catch { return 0 }
+}
+
+/**
+ * 一条抽出来的记忆落库（P0 / P1 共用）。
+ *
+ * 三件事在这里一次做完：
+ *   1) 旁白闸：主语是「用户 / 对方 / 助手」的转述句不丢，落冷层——它是真事实，
+ *      只是不该冒充「我记得的事」；S2/S3 深查仍捞得到，confidence 也压低。
+ *   2) 写入门控：新增 / 合并 / 冲突 / 丢弃 由 applyWrite 判，这条函数只管「怎么落」。
+ *   3) 合并进旧条时 addMemory 那条路没走，冷层要单独补一次。
+ */
+export function writeExtractedItem(db, aid, m, opt = {}) {
+  const text = String((m && m.text) || '').trim()
+  if (!text) return { action: 'drop', reason: 'empty' }
+  // ---- P1 她自己的车道 ----
+  if (String((m && m.who) || '') === 'self') {
+    if (String(getParam(db, aid, 'memory.write.self') || 'on') === 'off') return { action: 'drop', reason: 'self_off' }
+    // 闸门：必须第一人称、6~120 字、不是旁白、不是运行时噪音。
+    if (!selfTextOk(text)) {
+      try { event(db, aid, 'memory.self_rejected', { reason: 'gate', head: text.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
+      return { action: 'drop', reason: 'self_gate' }
+    }
+    // 每日上限：一天最多 self.per_day 条，防自恋式刷屏。
+    const cap = Math.max(1, Math.min(30, Number(getParam(db, aid, 'self.per_day')) || 8))
+    if (selfCountToday(db, aid) >= cap) {
+      try { event(db, aid, 'memory.self_rejected', { reason: 'per_day', cap }) } catch { /* 事件失败不影响写入 */ }
+      return { action: 'drop', reason: 'self_per_day' }
+    }
+    const row = addMemory(db, aid, {
+      text, type: 'episode', mark: (m && m.mark) || 'normal',
+      source: 'self', confidence: 0.75, importance: 0.45, turn_id: opt.turnId || null,
+    })
+    return { action: row && row.duplicate ? 'merge' : 'new', id: row && row.id, self: true }
+  }
+  const type = (m && m.type) || 'fact'
+  const seedFn = typeof opt.seed === 'function' ? opt.seed : (t, ty) => seedScores(t, ty, 0)
+  const ent = (() => { try { return entityForText(db, aid, text) } catch { return null } })()
+  const narr = narrationOnly(text)
+  const out = applyWrite(db, aid, {
+    text, entity_id: ent ? ent.id : null, key: (m && m.key) || '', terms: (m && m.terms) || [],
+  }, (cand) => addMemory(db, aid, {
+    text: cand.text, type, mark: (m && m.mark) || 'normal',
+    entity_id: cand.entity_id || null, source: 'extract', confidence: narr ? 0.5 : 0.7,
+    cold: narr, turn_id: opt.turnId || null, ...seedFn(cand.text, type),
+    fact_key: cand.key || '', terms: cand.terms || [],
+  }))
+  if (narr && out.id && out.action !== 'new') {
+    try {
+      db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=? AND (temp_state IS NULL OR temp_state<>'cold')")
+        .run(now(), out.id)
+    } catch { /* 老库没有温度列就算了 */ }
+  }
+  return out
+}
+
 export async function ingest(db, aid, body) {
   active(db, aid)
   const turns = Array.isArray(body.turns) ? body.turns : []
@@ -439,23 +504,30 @@ export async function ingest(db, aid, body) {
     }
   }
 
-  const extracted = await model.extract(turns)
+  // 她这一轮做过什么：assistant 的回话 + 工具痕迹，作为 who="self" 的材料。
+  // 没有材料就不传——没材料时模型只会写旁白，不如不写。
+  const selfMaterial = (() => {
+    const bits = []
+    for (const t of turns) {
+      if (!t) continue
+      const role = String(t.role || 'user')
+      const text = String(t.text || '').trim()
+      if (role === 'assistant' && text) bits.push('我回了：' + text.slice(0, 200))
+      const tools = Array.isArray(t.tools) ? t.tools : (Array.isArray(t.toolCalls) ? t.toolCalls : null)
+      for (const x of tools || []) {
+        const name = String((x && (x.name || x.tool || x.title)) || '').trim()
+        if (name) bits.push('我用过：' + name.slice(0, 60))
+      }
+    }
+    return bits.join('\n').slice(0, 800)
+  })()
+  const extracted = await model.extract(turns, { selfMaterial })
   const written = []
   const newPairs = [] // 这一轮真正新落库的条目：{text, id}，开环从它们里长
   const actions = { new: 0, merge: 0, conflict: 0, drop: 0 }
   for (const m of extracted) {
     try {
-      // P2 写入门控：抽出来的东西先判「新增 / 合并 / 冲突 / 丢弃」，再落库
-      const ent = (() => { try { return entityForText(db, aid, m.text || '') } catch { return null } })()
-      // 检索卡（P1）：key / terms 跟着候选一起过门控；合并时不重写旧条，术语留在旧条上。
-      const out = applyWrite(db, aid, {
-        text: String(m.text || ''), entity_id: ent ? ent.id : null,
-        key: m.key || '', terms: m.terms || [],
-      }, (cand) => addMemory(db, aid, {
-        text: cand.text, type: m.type || 'fact', mark: m.mark || 'normal',
-        entity_id: cand.entity_id || null, source: 'extract', turn_id: batchTurnId, ...seed(cand.text, m.type || 'fact'),
-        fact_key: cand.key || '', terms: cand.terms || [],
-      }))
+      const out = writeExtractedItem(db, aid, m, { turnId: batchTurnId, seed })
       actions[out.action] = (actions[out.action] || 0) + 1
       written.push(out)
       if (out.action === 'new' && out.id) newPairs.push({ text: String(m.text || ''), id: out.id })
@@ -526,7 +598,7 @@ export async function ingest(db, aid, body) {
         addMemory(db, aid, {
           text: summary, type: 'reflection', mark: 'normal',
           importance: imp, salience: seeded.salience,
-          cold, source: 'summary', turn_id: batchTurnId,
+          cold, source: 'summary', confidence: 0.6, turn_id: batchTurnId,
         })
       } catch { /* 忽略 */ }
     } else {
@@ -736,7 +808,32 @@ export async function appraiseWithEdges(db, aid, text) {
       event(db, aid, 'structure.edge_gap', { text: String(text).slice(0, 80), label: res.label })
     }
   } catch { /* 记号失败不影响评价 */ }
+  /* P3：把「咽回去的那半句」落一条冷库记录。影子期——只存、不回读。
+     存在 events 表（照 quote.moment），不建新表；payload 里带 affect 事件 id 方便对账。 */
+  try {
+    recordUnsaid(db, aid, {
+      text: res && res.appraisal ? res.appraisal.unsaid : '',
+      eventId: (res && res.id) || null,
+      cause: String(text || '').slice(0, 120),
+      at: Date.now(),
+    })
+  } catch { /* 落库失败不影响对话 */ }
   return res
+}
+
+/**
+ * 「咽回去的那半句」落库（P3，影子）。
+ * 只写一行 events；不写情绪、不写记忆、不进提示词——攒够样本再谈回读。
+ * @returns {boolean} 真的写了一条
+ */
+export function recordUnsaid(db, aid, { text = '', eventId = null, cause = '', at = Date.now() } = {}) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!s) return false
+  if (String(getParam(db, aid, 'affect.unsaid') || 'on') === 'off') return false
+  const payload = JSON.stringify({ text: s.slice(0, 120), event_id: eventId, cause: String(cause || '').slice(0, 120) })
+  db.prepare('INSERT INTO events VALUES(?,?,?,?,?)')
+    .run('evt_' + Math.random().toString(16).slice(2, 12), aid, 'unsaid.moment', payload, new Date(at).toISOString())
+  return true
 }
 
 export { runHardGates, runIdentityBlind, suggestCalibration, applyCalibration, getEdgeGraph }
@@ -1293,6 +1390,9 @@ export async function chatReply(db, aid, body) {
   const contextBlock = clampContextBlock(buildContextBlock(db, aid, {
     recall: canLearn ? pack.items : [],
     audience: canLearn ? 'owner' : 'stranger',
+    // 把这一句也交进去：网页那头是先看这句话再翻三观/记忆，QQ 这边以前只塞了预召回，
+    // 检索不知道对方在问什么，捞回来的常跟这句对不上。
+    text,
   }), promptBudget(db))
 
   let reply = ''
@@ -1678,18 +1778,9 @@ function withTimeout(p, ms) {
   ])
 }
 
-/** 只接受一句话：去引号、取首行、拦技术噪音和框架词 */
-function cleanLine(raw) {
-  let s = String(raw || '').trim()
-  s = s.replace(/^```(?:text)?/i, '').replace(/```$/, '').trim()
-  if (!s || /^SILENT$/i.test(s)) return null
-  s = s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean)[0] || ''
-  s = s.replace(/^["'「『]+|["'」』]+$/g, '').trim()
-  if (!s || /^[{[]/.test(s)) return null
-  if (s.length > 80) s = s.slice(0, 79) + '…'
-  if (/(https?:\/\/|\/v1\/|[A-Za-z]:\\|\.js\b|\.json\b|token|凭据|密码)/i.test(s)) return null
-  return s
-}
+/** 只接受一句话：去引号、取首行、拦技术噪音和框架词。
+ *  实现挪进 text.js（感受快照也要用同一把尺），这里只做转发。 */
+export { cleanLine }
 
 /** 内容门：一句话、不追问、不用提醒/播报腔。返回 { ok, detail }。 */
 export function contentCheck(s) {
@@ -2506,13 +2597,35 @@ export { getLearningPrefs, setLearningPrefs, LEARNING_DEFAULTS }
 export function clampInjection(lines, budget = 800) {
   const est = (t) => Math.ceil(String(t).length / 2)
   const cap = Math.max(40, Number(budget) || 800)
-  const parts = lines.slice()
+  // 行可以是字符串，也可以是 { text, key }。带 key 的行用于「先拼装、后落账」：
+  // 只有真的留在最终文本里的 key 才算说过；被整行丢掉、被削断的都不算。
+  const parts = []
+  const keys = []
+  const src = Array.isArray(lines) ? lines : []
+  for (let i = 0; i < src.length; i++) {
+    const l = src[i]
+    parts.push(typeof l === 'string' ? l : String((l && l.text) || ''))
+    keys.push(typeof l === 'string' ? '#' + i : String(l && l.key != null ? l.key : '#' + i))
+  }
   const dropped = []
+  const removed = new Set()
   const total = () => est(parts.join('\n'))
+  const dropAt = (idx, label) => {
+    if (idx < 0 || idx >= parts.length) return false
+    removed.add(keys[idx])
+    parts.splice(idx, 1)
+    keys.splice(idx, 1)
+    if (label) dropped.push(label)
+    return true
+  }
   // 丢的顺序 = 丢得起的顺序。改过一次（A2）：情绪原来排第 2，一挤就先没了。
   // 现在情绪根本不进丢弃名单——它只有两行，却是人格的锚：
   // 丢一条记忆伤准确度，丢情绪伤的是「她是谁」。真到极限，宁可削短别的行。
   const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('现在的情绪是') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
+  /* 感受快照：**要么整行，要么没有**。它比别的行更怕被剪——
+     剪掉尾巴就剩「（上一句落在我身上的样子：你说「…」，那一刻 慢 +0.1…」，
+     一半材料读起来比没有更糟：像一句没说完的自言自语。 */
+  const SNAPSHOT_TEST = (l) => l.startsWith('（上一句落在我身上') || /^（\d\d:\d\d 那会儿的读数/.test(String(l))
   const order = [
     ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
     ['examples', (l) => l.startsWith('## 我说话的样子')],
@@ -2526,29 +2639,42 @@ export function clampInjection(lines, budget = 800) {
     // 收尾念头和潜台词都比「自己想起的事」更可丢：丢了只是正常聊
     ['closing', (l) => l.startsWith('（你有点想收尾了')],
     ['subtext', (l) => l.startsWith('（心里其实')],
+    // 关系余量：比潜台词更可丢；丢了只是下一轮少一句「上一句有点硬」。
+    ['residue', (l) => l.startsWith('（上一句你说得') || l.startsWith('（上一句你比平时')],
     // 情绪的方向：一行，丢了只是少个「这两天」的层次，不影响这一轮聊下去
     ['trend', (l) => l.startsWith('（这两天')],
     ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
+    // 感受快照：比上面都晚丢（它是「刚才那一刻」的事实，不是装饰），
+    // 但预算真紧的时候还是让位——而且只允许整行丢，不许剪半句（见 SNAPSHOT_TEST）。
+    ['snapshot', (l) => SNAPSHOT_TEST(l)],
   ]
   for (const [name, test] of order) {
     if (total() <= cap) break
     const idx = parts.findIndex((l) => test(l))
-    if (idx >= 0) { parts.splice(idx, 1); dropped.push(name) }
+    if (idx >= 0) dropAt(idx, name)
   }
   // 段级丢完还超：先砍日记（叙事，隔天还能补），再砍记忆；记忆留 2 条兜底。
   const trimBlock = (test, label, keep = 1) => {
     const idx = parts.findIndex((l) => test(l))
     if (idx < 0) return false
     const sub = String(parts[idx]).split('\n')
-    if (sub.length <= 1) { parts.splice(idx, 1); dropped.push(label); return true }
+    if (sub.length <= 1) { dropAt(idx, label); return true }
     if (sub.length <= keep) return false
     let touched = false
     while (sub.length > keep && total() > cap) { sub.pop(); parts[idx] = sub.join('\n'); touched = true }
+    // 一段被砍过就不再是完整注入；带 key 的行（落账用）不能算说过。
+    if (touched && !removed.has(keys[idx])) removed.add(keys[idx])
     if (touched) dropped.push(label + '-lines')
     return touched
   }
   if (total() > cap) trimBlock((l) => l.startsWith('最近我自己写下的'), 'diary', 1)
   trimBlock((l) => l.startsWith('关于这句话，你能想起的事'), 'memory', 3)
+  /* 快照：要么完整，要么没有。在 shrink 之前就整行拿掉——
+     它是那种「剪一半就变味」的行（剩下「…那一刻 慢 +0.1…」，读起来像自言自语没说完）。 */
+  if (total() > cap) {
+    const si = parts.findIndex((l) => SNAPSHOT_TEST(l))
+    if (si >= 0) dropAt(si, 'snapshot-full')
+  }
   // 还超：不删情绪那一行，改削别的长行（关系数字、约束这类）。
   // 以前这里直接硬截，谁站得靠后就先烂；削长行等于把预算从「最占地方又不最要紧」的地方拿回来。
   // 第一轮只削非情绪行；真到极限才动情绪行，而且留 20 字底线——宁可说得短，不能没得说。
@@ -2557,6 +2683,7 @@ export function clampInjection(lines, budget = 800) {
       const list = parts
         .map((l, i) => ({ l, i }))
         .filter((x) => !x.l.startsWith('## ')
+          && !SNAPSHOT_TEST(x.l)
           && x.l.length > (allowAffect ? 20 : 16)
           && (allowAffect || !AFFECT_TEST(x.l)))
         .sort((a, b) => b.l.length - a.l.length)
@@ -2568,6 +2695,8 @@ export function clampInjection(lines, budget = 800) {
         const keep = Math.max(floor, cur.length - needChars)
         if (keep >= cur.length) continue
         parts[i] = cur.slice(0, keep).replace(/\s+$/, '') + '…'
+        // 削断了就不算完整说过：下一轮宁可重来，也别把半句记成落账。
+        if (!removed.has(keys[i])) removed.add(keys[i])
         const tag = allowAffect ? 'shrink-affect' : 'shrink'
         if (!dropped.includes(tag)) dropped.push(tag)
       }
@@ -2578,9 +2707,12 @@ export function clampInjection(lines, budget = 800) {
   let text = parts.join('\n')
   if (est(text) > cap) {
     text = text.slice(0, Math.max(0, cap * 2 - 1)).replace(/\s+$/, '') + '…'
+    // 硬截断后整段都不可信，所有带 key 的行都不落账。
+    for (const k of keys) removed.add(k)
     dropped.push('truncate')
   }
-  return { text, tokens: est(text), dropped }
+  const kept = new Set(keys.filter((k) => !removed.has(k)))
+  return { text, tokens: est(text), dropped, kept, removed }
 }
 
 // 当前分类法（前端与提案用）

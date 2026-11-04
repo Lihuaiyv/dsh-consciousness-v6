@@ -2365,13 +2365,26 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
 // 空闲心跳：候选浮现 → 取走记账 → 冷却 → 过期
 {
   const { addMemory } = await import('../src/modules/memory.js')
+  const { poolOf, poolCounts } = await import('../src/modules/pulse.js')
   const pa = 'agt_pulse_' + Math.random().toString(36).slice(2, 8)
   db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)').run(pa, '浮现', 'chat', 'active', now())
-  addMemory(db, pa, { text: '她记得主人喜欢在夜里听雨声。', type: 'fact' })
+  // 分池：只有「她自己的话 / 她经历的事」能当心里的念头
+  check('分池：自省进 inner', poolOf({ type: 'reflection', source: 'manual', text: '我把那件事想明白了一点。' }) === 'inner', null)
+  check('分池：自己的事件进 inner', poolOf({ type: 'episode', source: 'self' }) === 'inner', null)
+  check('分池：报告体降为档案', poolOf({ type: 'reflection', source: 'manual', text: '1. 用户要求全部实现。2. 用户偏好直接推进。' }) === 'profile', null)
+  check('分池：他的原话不冒充念头', poolOf({ type: 'episode', source: 'manual', text: '今天想聊关于孤独的事。' }) === 'echo', null)
+  check('分池：对话总结进 profile', poolOf({ type: 'reflection', source: 'summary' }) === 'profile', null)
+  check('分池：事实进 profile', poolOf({ type: 'fact', source: 'extract' }) === 'profile', null)
+  check('分池：流水账进 ledger', poolOf({ type: 'appraisal', source: 'extract' }) === 'ledger', null)
+  addMemory(db, pa, { text: '她把阳台那盆薄荷浇透了，土还是干的。', type: 'episode', source: 'self' })
+  addMemory(db, pa, { text: '用户仅询问助手能修改哪些内容，未透露个人事实。', type: 'reflection', source: 'summary' })
+  const pc = poolCounts(db, pa)
+  check('分池：两格各归各位', pc.inner === 1 && pc.profile === 1 && pc.ledger === 0, pc)
   const t1 = surfaceQueueTick(db, pa)
   check('心跳：第一次排出候选', t1.queued === 1, t1)
   const pend = pendingSurface(db, pa)
   check('心跳：候选带得出正文', !!pend && !!pend.text, pend)
+  check('心跳：浮上来的只能是 inner 池', !String(pend && pend.text).includes('未透露个人事实'), pend)
   const t2 = surfaceQueueTick(db, pa)
   check('心跳：同一轮不重复排', t2.queued === 0, t2)
   const taken = takeSurface(db, pa)
@@ -2381,8 +2394,10 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const t3 = surfaceQueueTick(db, pa)
   check('心跳：冷却期内不再浮同一条', t3.queued === 0, t3)
   db.prepare('UPDATE surfaced_items SET at=? WHERE agent_id=?').run(new Date(Date.now() - 10 * 86400000).toISOString(), pa)
-  const t4 = surfaceQueueTick(db, pa)
-  check('心跳：冷却期过后还能再浮', t4.queued === 1, t4)
+  const t3b = surfaceQueueTick(db, pa, { at: Date.now() + 30 * 60000 })
+  check('心跳：半小时内不补第二条', t3b.queued === 0, t3b)
+  const t4 = surfaceQueueTick(db, pa, { at: Date.now() + 2 * 3600000 })
+  check('心跳：冷却期过后、间隔到了才再浮', t4.queued === 1, t4)
   db.prepare("UPDATE surface_queue SET expires_at=? WHERE agent_id=? AND state='pending'").run(new Date(Date.now() - 1000).toISOString(), pa)
   const t5 = surfaceQueueTick(db, pa)
   check('心跳：过期候选作废', t5.expired >= 1, t5)
@@ -2390,6 +2405,17 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   db.prepare('DELETE FROM surfaced_items WHERE agent_id=?').run(pa)
   db.prepare('DELETE FROM memory_items WHERE agent_id=?').run(pa)
   db.prepare('DELETE FROM agents WHERE id=?').run(pa)
+}
+
+// 生活流 / 自述：不编具体经历（2026-11-03）
+{
+  const { looksFabricated } = await import('../src/modules/life.js')
+  check('生活流：编出来的动作认得出', looksFabricated('我把阳台那盆薄荷浇透了，土还是干的。') === true, null)
+  check('生活流：纯念头不算编造', looksFabricated('那件事我一直惦记着，可就是没动手去查。') === false, null)
+  const lifeSrc = fs.readFileSync(fileURLToPath(new URL('../src/modules/life.js', import.meta.url)), 'utf8')
+  check('生活流：想一想这条路禁止编场景', lifeSrc.includes('你没有真的去做这件事'), null)
+  const selfSrc = fs.readFileSync(fileURLToPath(new URL('../src/modules/self_memory.js', import.meta.url)), 'utf8')
+  check('自述：素材说想就别写成做了', selfSrc.includes('片段里说「想了」的'), null)
 }
 
 // 注入预算：情绪行不整行丢（A2）——挤的时候削别的、削它自己，但留得住

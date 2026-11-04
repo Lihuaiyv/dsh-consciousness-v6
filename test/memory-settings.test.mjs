@@ -59,7 +59,7 @@ try {
   const huge = ['## 意识体：X', '长'.repeat(1200), '关于这句话，你能想起的事：\n- ' + '记'.repeat(1600)]
   const hard = clampInjection(huge, 200)
   check('注入预算硬上限不超', hard.tokens <= 200, { tokens: hard.tokens, dropped: hard.dropped })
-  check('超预算会截断并留痕', hard.text.endsWith('…') && hard.dropped.includes('truncate'), hard.dropped)
+  check('超预算会削短并留痕', hard.text.includes('…') && (hard.dropped.includes('truncate') || hard.dropped.includes('shrink')), hard.dropped)
 
   // 准备一条旧记忆（10 天没动过，R≈0.47）
   const memText = '用户喜欢下雨天散步'

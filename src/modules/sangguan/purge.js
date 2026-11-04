@@ -8,7 +8,7 @@ import { dropInjectCache } from './inject.js'
 import { dropVecCache } from './fast.js'
 
 // 精确键；预算是前缀键（按日 / 周 / 月），用 substr 比较，不用 LIKE（id 里的 _ 是通配符）
-const FLAG_KEYS = (aid) => ['sangguan:' + aid, 'sangguan.judge:' + aid, 'sangguan.fast.buf:' + aid, 'sangguan.inject:' + aid, 'sangguan.ask:' + aid]
+const FLAG_KEYS = (aid) => ['sangguan:' + aid, 'sangguan.judge:' + aid, 'sangguan.fast.buf:' + aid, 'sangguan.inject:' + aid, 'sangguan.ask:' + aid, 'sangguan.draftjob:' + aid]
 const FLAG_PREFIX = (aid) => 'sangguan.budget:' + aid + ':'
 
 export function purgeAgent(db, aid) {
@@ -19,6 +19,8 @@ export function purgeAgent(db, aid) {
     for (const t of [...L0_TABLES, ...PROJ_TABLES]) {
       rows[t] = Number(db.prepare(`DELETE FROM ${t} WHERE agent_id=?`).run(aid).changes || 0)
     }
+    // 草稿收件箱不是账本，可以直接删；不清的话硬删 agent 会留下孤儿草稿
+    rows.sangguan_drafts = Number(db.prepare('DELETE FROM sangguan_drafts WHERE agent_id=?').run(aid).changes || 0)
     const keys = FLAG_KEYS(aid)
     const pre = FLAG_PREFIX(aid)
     rows.flags = Number(db.prepare(`DELETE FROM flags WHERE key IN (${keys.map(() => '?').join(',')}) OR substr(key,1,?)=?`)
@@ -33,6 +35,9 @@ export function purgeAgent(db, aid) {
 /** agents 表里已经没有、三观数据还在的 agent（上次清除失败留下的），逐个补清；单个失败不挡其余。 */
 export function purgeOrphans(db) {
   const ids = new Set(db.prepare('SELECT DISTINCT agent_id FROM claim_events WHERE agent_id NOT IN (SELECT id FROM agents)').all().map((r) => r.agent_id))
+  for (const r of db.prepare('SELECT DISTINCT agent_id FROM sangguan_drafts').all()) {
+    if (!db.prepare('SELECT 1 FROM agents WHERE id=?').get(r.agent_id)) ids.add(r.agent_id)
+  }
   for (const r of db.prepare("SELECT substr(key,10) aid FROM flags WHERE substr(key,1,9)='sangguan:'").all()) {
     if (!db.prepare('SELECT 1 FROM agents WHERE id=?').get(r.aid)) ids.add(r.aid)
   }

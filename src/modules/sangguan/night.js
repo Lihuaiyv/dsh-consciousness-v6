@@ -4,7 +4,7 @@
  * 幂等（I16 / P19）：sg:night:YYYY-MM-DD 已完成则直接返回；每周第一夜顺带跑慢环 sg:week:YYYY-Www（L5 / L2 / L10 / 升维）。
  * 开关关闭直接返回；失败由调用方吞掉，不影响记忆巩固。判定不可用（§12 降级）时暂停 SUB、立案、核心确立与升维。
  */
-import { isEnabled } from './config.js'
+import { isEnabled, sangguanConfig } from './config.js'
 import { settleTrials } from './trial.js'
 import { runNight } from './deliberate.js'
 import { judgeHealth } from './llm.js'
@@ -14,6 +14,8 @@ import { isoWeek } from './budget.js'
 import { loadState } from './projection.js'
 import { checkDue, conCheck, degenCheck, repairHurt, deriveCross, attributeCross, suspendStaleKappas } from './practice.js'
 import { establishCores } from './core.js'
+import { runLaneW, runLaneL } from './lanes.js'
+import { runDraftRound } from './draftrun.js'
 import { openCandidates } from './open.js'
 import { elevTimeouts, runElev } from './elev.js'
 import { outcomes } from './precedent.js'
@@ -82,6 +84,21 @@ export async function runMid(db, aid, now, opt = {}) {
     }
   }
   const settle = opt.settle === false ? { did: [] } : await trap(errors, 'settle', () => settleTrials(db, aid, now), { did: [] })
+  // 世界观：夜里批量归纳一周的经历；开关关着时直接返回，不算失败
+  const laneW = opt.lanes === false ? { skipped: 'off' } : await trap(errors, 'laneW', () => runLaneW(db, aid, now, opt), { skipped: 'error' })
+  const laneL = opt.lanes === false ? { skipped: 'off' } : await trap(errors, 'laneL', () => runLaneL(db, aid, now, opt), { skipped: 'error' })
+  // 价值观：每周起一轮草稿，只进收件箱、不写账本；入不入库由人定。
+  const draft = opt.draft === false || !sangguanConfig(db, aid).lanes.V ? { skipped: 'off' } : await trap(errors, 'draft', async () => {
+    const dkey = 'sg:draft:' + isoWeek(day)
+    if (opt.job !== false && hasJob(db, aid, dkey)) return { skipped: 'dup' }
+    const r = await runDraftRound(db, aid, { ...opt, at: now })
+    if (opt.job !== false) {
+      try {
+        append(db, aid, [{ type: 'JOB_DONE', actor: 'sys', at: now, job_key: dkey, payload: { lane: 'V', created: r.created, episodes: r.episodes, errors: r.errors.length } }])
+      } catch { /* 幂等键已存在：别人先跑完了 */ }
+    }
+    return r
+  }, { skipped: 'error' })
   const con = await trap(errors, 'con', () => conCheck(db, aid, now), { did: [] })
   const core = opt.core === false || degraded ? { did: [] } : await trap(errors, 'core', () => establishCores(db, aid, now, opt), { did: [] })
   const repair = opt.repair === false ? { did: [] } : await trap(errors, 'repair', () => repairHurt(db, aid, now, opt), { did: [] })
@@ -110,7 +127,7 @@ export async function runMid(db, aid, now, opt = {}) {
   const sum = opt.summary === false ? { did: [] } : await trap(errors, 'summary', () => buildSummary(db, aid, now, opt), { did: [] })
   const res = {
     status: n1.postponed ? 'budget' : 'done', degraded, job_key: key, errors,
-    n1, cross, settle: settle.did, con: con.did, core: core.did, repair: repair.did, degen: degen.did, stale: stale.did, elev: elev.did, open: open.did, night,
+    n1, cross, settle: settle.did, laneW, laneL, draft, con: con.did, core: core.did, repair: repair.did, degen: degen.did, stale: stale.did, elev: elev.did, open: open.did, night,
     inquiry: inq.did, abduce: abd.did, flip: flip.did, qi, move, week, summary: sum.did,
   }
   if (opt.job !== false) {

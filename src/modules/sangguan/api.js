@@ -25,10 +25,28 @@ import { brierOf } from './practice.js'
 import { scorecard, liveGate, recordBlind } from './score.js'
 import { reviseClaim } from './revision.js'
 import { confirmNu } from './pledge.js'
+import { createDraft, listDrafts, getDraft, patchDraft, markCommitted, markDiscarded, draftCounts } from './draftstore.js'
+import { startDraftRound, draftJob } from './draftrun.js'
+import { buildConstitution } from './constitution.js'
+import { recall } from './recall.js'
+import { investOf } from './lanes.js'
+import { metaOf } from './meta.js'
+import { commitDraft } from './draft.js'
 
 const nowIso = () => new Date().toISOString()
 const day = (now) => now.slice(0, 10)
 const EVENT_PAGE = 50
+
+/** 草稿相关错误映射到 HTTP；err() 自己会抛。 */
+function draftErr(fn) {
+  try { return fn() } catch (e) {
+    if (e instanceof SangguanError) {
+      const st = { INVALID: 400, NOT_FOUND: 404, TRANSITION: 409 }[e.code] || 400
+      err(st, e.code === 'INVALID' ? 'INVALID_ARGUMENT' : e.code, e.message, e.details)
+    }
+    err(400, 'INVALID_ARGUMENT', String((e && e.message) || e))
+  }
+}
 
 function texts(db, aid) {
   const claims = new Map(db.prepare('SELECT id, text FROM persona_claims WHERE agent_id=?').all(aid).map((r) => [r.id, r.text]))
@@ -39,7 +57,7 @@ function texts(db, aid) {
 /** 配置对外视图：端点 key 不出库，只给 has_key。 */
 function publicConfig(cfg) {
   const ep = (e) => (e ? { url: e.url, model: e.model || null, has_key: !!e.key } : null)
-  return { enabled: cfg.enabled, inject: cfg.inject, violate: cfg.violate, budget: cfg.budget, replace: cfg.replace, model: { light: ep(cfg.model.light), heavy: ep(cfg.model.heavy) } }
+  return { enabled: cfg.enabled, inject: cfg.inject, violate: cfg.violate, lanes: cfg.lanes, budget: cfg.budget, replace: cfg.replace, model: { light: ep(cfg.model.light), heavy: ep(cfg.model.heavy) } }
 }
 
 function claimView(c, tx, w) {
@@ -87,7 +105,7 @@ function idsOf(e) {
 function narrate(e, tx, s) {
   const p = e.payload || {}
   let word = WORD[e.type] || e.type
-  if (e.type === 'NU_RESOLVE') word = p.outcome === 'hit' ? '预料对了' : p.outcome === 'miss' ? '预料错了' : '预料作废'
+  if (e.type === 'NU_RESOLVE') word = p.outcome === 'hit' ? '预料对了' : p.outcome === 'miss' ? '预料错了' : '预料作废' + (p.why === 'claim_retired' || p.why === 'claim_merged' ? '（连坐，不是判错）' : '')
   if (e.type === 'INQUIRY' && p.answer_of) word = '得到了回答'
   if (e.type === 'EVIDENCE') word = (p.evidence || []).every((x) => x.sign > 0) ? '有事支持' : (p.evidence || []).every((x) => x.sign < 0) ? '有事相反' : '有事为证'
   const about = []
@@ -106,6 +124,33 @@ function eventView(e, tx, s) {
 }
 
 // ---------- 读 ----------
+/** 三列各自的证据读数：只报数，不判断；页面照着它写「怎么长出来的」。 */
+function laneStats(db, aid, now) {
+  const s = loadState(db, aid)
+  const active = (l) => Object.values(s.claims).filter((c) => c.layer === l && c.status === 'active' && !isTerminal(c.status))
+  const w = active('W')
+  const scenes = new Set()
+  for (const c of w) for (const x of (metaOf(c).scene || [])) scenes.add(String(x))
+  const wIds = new Set(w.map((c) => c.id))
+  const nus = Object.values(s.nus).filter((n) => wIds.has(n.claim_id))
+  const investment = investOf(db, aid, now, 30)
+  const drafts = draftCounts(db, aid)
+  return {
+    W: {
+      claims: w.length,
+      scenes: scenes.size,
+      nus: {
+        settled: nus.filter((n) => n.outcome === 'hit' || n.outcome === 'miss').length,
+        hit: nus.filter((n) => n.outcome === 'hit').length,
+        miss: nus.filter((n) => n.outcome === 'miss').length,
+        pending: nus.filter((n) => n.outcome === 'pending').length,
+      },
+    },
+    L: { claims: active('L').length, invest_days: investment.length },
+    V: { claims: active('V').length, drafts: drafts.pending, committed: drafts.committed },
+  }
+}
+
 function status(db, aid, now) {
   const cfg = sangguanConfig(db, aid)
   if (!cfg.enabled) return { enabled: false, config: publicConfig(cfg) }
@@ -120,6 +165,9 @@ function status(db, aid, now) {
   const night = readEvents(db, aid, { types: ['JOB_DONE'] }).filter((e) => String(e.job_key).startsWith('sg:night:')).pop()
   return {
     enabled: true, config: publicConfig(cfg), seq: lastSeq(db, aid), epoch: s.epoch,
+    lanes: cfg.lanes,
+    constitution: buildConstitution(db, aid),
+    drafts: { ...draftCounts(db, aid), job: draftJob(db, aid) },
     counts: { claims, kappas, nus },
     inject: { mode: cfg.inject, ...liveReady(db, aid) },
     replace_ready: Object.fromEntries(LAYERS.map((l) => [l, replaceReady(db, aid, l, now)])),
@@ -218,14 +266,37 @@ function precedents(db, aid, now) {
   }
 }
 
+/** 每条预见最后一次结算是怎么定的（NU_RESOLVE.payload.why）。老账没写 why，返回 null。 */
+function nuWhys(db, aid) {
+  const out = new Map()
+  try {
+    for (const r of db.prepare("SELECT payload_json FROM claim_events WHERE agent_id=? AND type='NU_RESOLVE' ORDER BY seq").all(aid)) {
+      try {
+        const p = JSON.parse(r.payload_json || '{}')
+        if (p && p.nu_id) out.set(p.nu_id, p.why || null)
+      } catch { /* 一行坏不影响别条 */ }
+    }
+  } catch { /* 老库没有这本账就都不给原因 */ }
+  return out
+}
+
 function predictions(db, aid, now) {
   const s = loadState(db, aid)
   const tx = texts(db, aid)
+  const whys = nuWhys(db, aid)
   const rows = db.prepare('SELECT id, claim_id, expect, observe, p, reg_at, due_at FROM claim_predictions WHERE agent_id=? ORDER BY reg_at DESC').all(aid)
   return {
     predictions: rows.map((r) => {
       const n = s.nus[r.id] || {}
-      return { ...r, claim: tx.claims.get(r.claim_id) || '', outcome: n.outcome || 'pending', resolved_at: n.resolved_at || null, overdue: (n.outcome || 'pending') === 'pending' && r.due_at < now }
+      const c = s.claims[r.claim_id]
+      const outcome = n.outcome || 'pending'
+      // 作废分两种：判不了（有记录但不够判）和连坐（依附的命题被收回/合并）。老账没 why 就按命题状态反推。
+      const why = outcome === 'void' && !whys.get(r.id) && c && c.status !== 'active' ? 'claim_retired' : (whys.get(r.id) || null)
+      return {
+        ...r, claim: tx.claims.get(r.claim_id) || '', claim_status: c ? c.status : null,
+        outcome, why, resolved_at: n.resolved_at || null,
+        overdue: outcome === 'pending' && r.due_at < now,
+      }
     }),
   }
 }
@@ -303,6 +374,7 @@ function putConfig(db, aid, body, role) {
   if (body.enabled !== undefined) patch.enabled = body.enabled === true
   if (body.budget !== undefined) patch.budget = body.budget
   if (body.model !== undefined) patch.model = body.model
+  if (body.lanes !== undefined) patch.lanes = body.lanes
   if (body.replace !== undefined) {
     const want = body.replace || {}
     const turning = ['W', 'L', 'V'].filter((k) => want[k] === 'engine' && sangguanConfig(db, aid).replace[k] !== 'engine')
@@ -406,9 +478,22 @@ export async function route(db, aid, method, sub, query, body = {}, role = 'user
       case 'epochs': return epochs(db, aid)
       case 'summaries': return { summaries: listSummaries(db, aid) }
       case 'liveness': case 'vitals': return liveness(db, aid, now)
-      case 'inject': if (b === 'preview') return { view: injectView(db, aid, { now, cache: false, mark: false }), log: injectLog(db, aid), ready: liveReady(db, aid) }; break
+      case 'inject': if (b === 'preview') return { view: injectView(db, aid, { now, cache: false, mark: false, query: query.get('text') || '' }), log: injectLog(db, aid), ready: liveReady(db, aid) }; break
       case 'elev': return { proposals: pendingElev(db, aid, now) }
       case 'candidates': return { candidates: pendingList(db, aid) }
+      case 'lanes': return { lanes: sangguanConfig(db, aid).lanes, stats: laneStats(db, aid, now) }
+      case 'recall': return recall(db, aid, query.get('text') || '', { limit: 2 })
+      case 'drafts':
+        if (b) {
+          const d = getDraft(db, aid, b)
+          if (!d) err(404, 'NOT_FOUND', '没有这条草稿')
+          return { draft: d }
+        }
+        return {
+          drafts: listDrafts(db, aid, { status: (query.get('status') || '').split(',').filter(Boolean), limit: Number(query.get('limit')) || 50 }),
+          counts: draftCounts(db, aid),
+          job: draftJob(db, aid),
+        }
       default: break
     }
     err(404, 'NOT_FOUND', '没有这个三观接口')
@@ -430,6 +515,33 @@ export async function route(db, aid, method, sub, query, body = {}, role = 'user
     }
     if (a === 'verdict') return postVerdict(db, aid, body, now)
     if (a === 'seed') return postSeed(db, aid, body, role, now)
+    if (a === 'drafts') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改草稿')
+      if (!b) {
+        return draftErr(() => {
+          const d = createDraft(db, aid, { ...body, source: 'manual' }, { at: now })
+          return { draft: d, duplicate: !!d.duplicate }
+        })
+      }
+      if (b === 'generate') {
+        const r = startDraftRound(db, aid, { at: now })
+        if (!r.started) err(409, 'ALREADY_RUNNING', '正在起草，等这一轮跑完', r.job)
+        return { started: true, job: r.job }
+      }
+      if (c === 'patch') return draftErr(() => ({ draft: patchDraft(db, aid, b, body, { at: now }) }))
+      if (c === 'commit') {
+        return draftErr(() => {
+          const d = getDraft(db, aid, b)
+          if (!d) throw new SangguanError('NOT_FOUND', '没有这条草稿')
+          // 已入库 / 已丢掉的不能再写一遍；不先拦，第二次会先落一条重复命题再报错
+          if (d.status !== 'draft' && d.status !== 'edited') throw new SangguanError('TRANSITION', '这条草稿已经结束了')
+          if (!(d.gates && d.gates.pass)) throw new SangguanError('TRANSITION', '五道闸还没过，不能入库', { gates: d.gates })
+          const cid = commitDraft(db, aid, d, { human: true, at: now })
+          return { ok: true, claim_id: cid, draft: markCommitted(db, aid, b, cid, { at: now }) }
+        })
+      }
+      if (c === 'discard') return draftErr(() => ({ draft: markDiscarded(db, aid, b, { at: now }) }))
+    }
     if (a === 'claims' && b && c === 'withdraw') return postWithdraw(db, aid, b, role, now)
     if (a === 'claims' && b && c === 'revise') {
       if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以改主意')

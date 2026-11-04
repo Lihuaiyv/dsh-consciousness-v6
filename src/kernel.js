@@ -92,9 +92,36 @@ export const PARAMS = {
   // 写入侧闸门：摘要的重要度交给模型判（on/off），低于 floor 的落库但进深查层。
   'memory.write.reflect_judge': ['C4', 'on'],
   'memory.write.reflect_floor': ['C4', 0.7],
-  // 每轮摘要要不要直接写进 T1 事实区（默认保留现状 on）。
+  // 每轮摘要要不要直接写进 T1 事实区（默认 off）。
   // 关掉后摘要只留在 T2 纪要里，记忆库不再被「用户关心什么」的旁白占位。
-  'memory.write.summary_to_t1': ['C4', 'on'],
+  // 2026-11-03 从 on 改成 off：实测 1792 条里 789 条是这种第三人称旁白，占 44%。
+  'memory.write.summary_to_t1': ['C4', 'off'],
+  // 已经写进库里的历史旁白要不要参与常规注入（默认 off）。
+  // 关掉只是不往提示里塞，数据仍在库里，深查 / 时间轴照样翻得到。
+  'memory.inject.user_summary': ['C4', 'off'],
+  // 她自己的事（P1）：off 时抽取只写对方的事，夜间也不写「今天我怎么过的」。
+  'memory.write.self': ['C4', 'on'],
+  // 防「祥林嫂」：同一件自己的事 N 小时内已经露过 max 次，这一轮就换一条；0 = 关。
+  'memory.self.repeat_hours': ['C4', 24],
+  'memory.self.repeat_max': ['C4', 2],
+  // 一天最多写几条「我自己」：防自恋式刷屏（每轮最多 3 条 + 生活流 + 夜间一条）。
+  'self.per_day': ['C4', 8],
+  // 夜间把当天自己的事合成一条「今天我怎么过的」；没素材就不写。
+  'memory.write.self.daily': ['C4', 'on'],
+  // 夜里再写一条「今晚想明白的一件事」：和流水账分开；当天自己的事少于 min_items 就不写。
+  'memory.write.self.insight': ['C4', 'on'],
+  'memory.self.insight.min_items': ['C4', 2],
+  // 认自己：把反复出现的模式攒成一句「我好像就是这样」；至少 min_days 个不同日期才写。
+  'memory.self.pattern': ['C4', 'on'],
+  'memory.pattern.min_days': ['C4', 3],
+  'memory.pattern.per_night': ['C4', 2],
+  'memory.pattern.window_days': ['C4', 30],
+  // 模式在每轮注入里单独占一格（0 = 关），免得它跟流水账抢同一个名额。
+  'memory.inject.pattern_quota': ['C4', 1],
+  // 深翻（「我去翻翻」）：问「记不记得」或常规注入为空时，往前翻一次旧账。
+  // 翻到的条目在注入里标成「刚翻出来的」，不冒充一直记着。k 是这一次最多带几条。
+  'memory.inject.deep': ['C4', 'on'],
+  'memory.deep.k': ['C4', 3],
   // 原文层分龄：深查时默认只翻最近 N 天的对话原文（0 = 不限）；
   // 查询里有「最早/一开始/很久以前」这类词时自动放开（retrieve.oldAccountQuery）。
   'memory.recall.archive.days': ['C4', 30],
@@ -109,9 +136,31 @@ export const PARAMS = {
   // 潜台词：心里想说但没说出口的一层（冲突 / 压火 / 低信任），24h 内最多一次。
   // off 时不注入；它只让语气偏一点，不要求说出来。
   'memory.inject.subtext': ['C4', 'on'],
+  // 先拼装、后落账：主动消息 / 开环 / 潜台词 / 自发浮现只有真的进了注入文本才记账。
+  // off 时逐字回旧版（取到即落账），方便对照与回滚。
+  'memory.inject.commit_after_pack': ['C4', 'on'],
+  // 记忆来源徽章：我自己看到的 / 从聊天里记下的 / 我自己想的；off 时只保留旧 life 徽章。
+  'memory.inject.provenance': ['C4', 'on'],
+  // 她自己的回话进关系账：先记「关系余量」并在下一轮只影响语气；off 时不记不注入。
+  'relation.selfresidue': ['C4', 'on'],
+  // 余量夜间结算到三轴：默认 off，先 shadow 观察一周；打开后每天最多结算一次。
+  'relation.selfresidue.settle': ['C4', 'off'],
   // 收尾：本地深夜 + 今天聊够了 + 对方没在提问时，给一句「想收尾」的念头。
   // off 时不注入；它只是材料，不替她决定说还是不说。
   'life.closing': ['C4', 'on'],
+  // 生活流（2026-11-03 开大）：每天几次 / 最小间隔 / 全局预算 / 夜里只「想一想」/ 分享冷却。
+  'life.per_day': ['C4', 4],
+  'life.min_gap_hours': ['C4', 1.5],
+  'life.global_per_day': ['C4', 24],
+  'life.night_think': ['C4', 'on'],
+  'life.share_gap_days': ['C4', 1.5],
+  'life.subject_pool': ['C4', 60],
+  'life.line_count': ['C4', 1],
+  // 每轮注入给她自己的事留几个硬名额（0 = 关）。用户条目一千多条，
+  // 不设名额的话她自己那几十条永远挤不进前 6。
+  'memory.inject.self_quota': ['C4', 1],
+  // 她自己的事在 48 小时内算「还热」（排序微调，0 = 关）。
+  'memory.inject.self_fresh': ['C4', 0.5],
   // 记忆的时间与清晰度标签：（3 天前）/（3 个月前，有点糊）。off 时与改造前逐字一致。
   'memory.inject.age': ['C4', 'on'],
   // 内容级模糊：30 天以上的旧事，括号 / 数字 / 引号原话会被删掉（只删不改）。
@@ -144,6 +193,29 @@ export const PARAMS = {
   'memory.float.loop.throttle': ['C4', 6],
   // 累计重要性到多少分，把这一窗的流水账压成一条反思。
   'memory.reflect.acc': ['C4', 5.0],
+  // ---- 日记 v2：选料 → 原话 → 两段式成文 ----
+  // 总开关。off = 回到 v1（当天纪要整包 + 模板兜底），用于对照与回滚。
+  'memory.diary.v2': ['C4', 'on'],
+  // 一篇日记写几个场景（1–3）。宁少勿多：写得透比写得全重要。
+  'memory.diary.scenes': ['C4', 2],
+  // 场景分下限（0–10）。低于它的不选；全低就只写 1 场，按「平常的一天」写。
+  'memory.diary.scene.min': ['C4', 3.0],
+  // auto = 候选≥6 且有模型时，多调一次小模型选场；off = 纯规则；失败自动回落规则。
+  'memory.diary.scene.model': ['C4', 'auto'],
+  'memory.diary.select.max_chars': ['C4', 1200],
+  // 每个场景抽多少原话（字符 / 轮数上限）。超了先砍均匀补的，保留头尾和情绪词。
+  'memory.diary.raw.per_scene': ['C4', 1800],
+  'memory.diary.raw.max_turns': ['C4', 12],
+  // 成文目标上限（字）。与宿主 diary maxTokens=900 对齐，超了在句号处截。
+  'memory.diary.max_chars': ['C4', 450],
+  // 写不成进待补队列；重试到上限才落素材卡（source='stub'），素材卡之后仍可被重写。
+  'memory.diary.retry.max_attempts': ['C4', 12],
+  'memory.diary.retry.interval_min': ['C4', 30],
+  'memory.diary.stub': ['C4', 'on'],
+  // 夜间自动重写旧 rules/stub 篇的回看天数。
+  'memory.diary.repair.days': ['C4', 7],
+  // day = 用当天最强情绪写；live = 用此刻。补写时 day 更不容易错位。
+  'memory.diary.mood': ['C4', 'day'],
   // 预取向量的等待上限（毫秒）：bge-m3 冷启动经常超过 150ms。
   'memory.retrieve.vector.wait': ['C4', 400],
   'memory.auto': ['C4', true],
@@ -165,6 +237,10 @@ export const PARAMS = {
   // 填了才认得出群号和陌生人：sessionId 里的 hash 是单向的，光凭主人号只能认主人自己。
   // 空 = 去桥接插件配置的工作目录找 qq-sessions.json，找不到就退化成只认主人。
   'qq.bridge.sessions_file': ['C4', ''],
+  // 认人硬闸：客人（陌生人私聊 / 群聊）的会话里 memory_search 直接拒。
+  // 主人判定跟 QQ 桥接同一套（qq.bridge.owner_qq + qq.owner）；网页/本机一律算主人。
+  // off = 完全不管，行为和没这层一样（排查用）。
+  'gate.guest.enable': ['C4', 'on'],
   // 概览「嘀咕」：聊完后专用一次模型调用，只给人看、不进 memory_items；关则跳过调用
   'ui.mutter.enabled': ['C4', true],
   'persona.step_cap': ['C0', 0.15],
@@ -176,6 +252,21 @@ export const PARAMS = {
   // MBTI（四轴）效应挡位：off = 完全不介入；shadow = 只算不用（只更新数字）；on = 影响情绪强度与表达（默认）
   'persona.axes.mode': ['C4', 'on'],
   'affect.decay': ['C4', 0.4],
+  // 感受快照：把「上一句的原话 + 当时算出来的数」带回提示词。off = 逐字回到没有它的时候。
+  'affect.inject.snapshot': ['C4', 'on'],
+  // 多旧就不带了：超过这个钟点（默认 12）算「上一回」，不再当「刚才那一刻」。
+  'affect.inject.snapshot.hours': ['C4', 12],
+  // 说话那一刻的感觉（feel 工具）：注入开关 / 两条闸。
+  // inject=off 就逐字回到没有这条通路的时候；min.gap 是两次记录之间最少隔几秒（防流水账）。
+  'affect.feel.inject': ['C4', 'on'],
+  'affect.feel.min.gap': ['C4', 12],
+  // 多旧就不带了：超过这个钟点（默认 2）算「上回」，不再冒充「我刚说完」。
+  'affect.feel.hours': ['C4', 2],
+  // 慢情绪能离水位多远（硬限幅）：0 = 不限。0.2 = 再高兴/再难受，也不许离开水位超过两格十分之一，
+  // 免得一串密集对话把它灌成一根柱子。
+  'affect.slow.band': ['C4', 0.2],
+  // 咽回去的那半句（P3）：影子期只落库、不回读。off = 不落库。
+  'affect.unsaid': ['C4', 'on'],
   'affect.mapping': ['C3', 'v1'],
   'affect.dynamics.formula': ['C3', 'v1'],
   // 关系动力学：v1 = 事件 → 三轴（9 号文档）；v0 = 关闭，不动关系
@@ -189,11 +280,57 @@ export const PARAMS = {
   // 快情绪回落：τ（分钟）+ 伸展指数。τ=20、shape=1.5 → 46 秒几乎不动，5 分钟剩 0.43，1 小时 0.03
   'affect.fast.tau': ['C4', 20],
   'affect.fast.shape': ['C4', 1.5],
-  // 慢情绪（真 EMA）：α = 追快情绪的速率，β = 回底色的速率。α+β 管「多久退掉」，α:β 管「谁更算数」。
-  // α=0.09、β=0.11 → λ=0.205，τ≈4.9h；稳态里快情绪四成半、水位五成半（水位拉得回来，大事也改得动她）。
-  // β 太小球会在刚才那一下上黏死；太大就只剩底色，没有余温。
-  'affect.slow.alpha': ['C4', 0.09],
-  'affect.slow.beta': ['C4', 0.11],
+  // 慢情绪（v4）：事件当场推一下，平时只往水位回落——不再追「这一小时快情绪的平均值」。
+  // 旧版（α=0.09 / β=0.11）把一次冲击摊成六十分之一，一整天只抖 0.03，图上看着是平的。
+  // η = 一次事件的推力：s += η·(这次快情绪 − s)，差最多到 2 → 一次最多推 0.24。
+  // β = 回水位的速率（每小时）。τ=4h → β=ln2/4≈0.173；4h 是血清素那条线的半衰期。
+  // 挤在一起的事件按次数打折：5 分钟窗口里第 n 次，冲击除以 1+0.3n（第 5 下没第 1 下响）。
+  'affect.slow.eta': ['C4', 0.12],
+  'affect.slow.beta': ['C4', 0.1733],
+  'affect.slow.sat.window': ['C4', 5],
+  'affect.slow.sat.k': ['C4', 0.3],
+  // 相处状态 duty：一整天只在被安排活，这件事本身要留痕，但它不是哪一句话的情绪。
+  // 每条 task/directive 加 add（0.01：我们一天几百条，加 0.1 五条就顶格、没有区分度），
+  // 按 tau 小时衰减，chat/relation 只保留 relief 成。超过 threshold 才开始压：
+  // 目标 = b − bias×(duty − threshold)，满格压 (1−0.4)×0.5 = 0.30。
+  'affect.duty.add': ['C4', 0.01],
+  'affect.duty.tau': ['C4', 1.5],
+  'affect.duty.threshold': ['C4', 0.4],
+  'affect.duty.relief': ['C4', 0.3],
+  'affect.duty.bias': ['C4', 0.5],
+  // 事后复查（影子）：判过的过几个钟头重判一遍，只记「变没变」，不改历史、不碰当下。
+  // 每天最多 4 条、每条至少隔 6 小时、两小时内不重复撞模型。0 = 整个关掉。
+  'affect.review.enabled': ['C4', 1],
+  // 共情怎么接（2026-11-03 加）。v1 = 老行为，只有同向跟着走；v2 = 三种接收方式：
+  //   同向 share  = 普通情况下被带动（κ 从 0.25 降到 0.15，别一拽就到底）
+  //   反向 hold   = 你沉到 -0.35 以下、我还在 -0.1 以上站得住时，把接收只留三成
+  //                 （不是清零——清零会变成冷漠，那是 2026-11-03 第一版踩过的坑）
+  //   衰减 dampen = 两边同号且都超过 0.5，接收打五折，免得互相点着
+  // 改回 v1 只需要把 mode 写成 v1，方程立刻回到老样子。
+  // 2026-11-03 晚：主人说 0.15 让共情占比掉太多（模拟里 −76%），调回 0.19。
+  'affect.empathy.mode': ['C4', 'v2'],
+  'affect.empathy.share': ['C4', 0.19],
+  'affect.empathy.hold': ['C4', 0.35],
+  'affect.empathy.dampen': ['C4', 0.5],
+  'affect.empathy.invert.below': ['C4', -0.35],
+  'affect.empathy.invert.stand': ['C4', -0.1],
+  // 自己沉下去的察觉（第三层，情绪调节）：
+  //   低于水位超过 drown.th 就算在沉，连续沉够 drown.hours 才认。
+  //   认了只做一件事：回水位快一点（beta × beta.mul）。不改判断、不伪造正向情绪。
+  //   为什么不一低就扶——一低就扶等于替她决定「你不该难受」。
+  'affect.regulate.enabled': ['C4', 1],
+  'affect.regulate.drown.th': ['C4', 0.15],
+  // 绝对低线：水位本身偏低时（比如 -0.32）「低于水位 0.15」几乎要摸到 -1 才成立，
+  // 根本触不到。所以再加一条：慢情绪本身就低过 -0.30 也算在沉。两条满足一条即可。
+  'affect.regulate.drown.abs': ['C4', 0.30],
+  'affect.regulate.drown.hours': ['C4', 3],
+  'affect.regulate.beta.mul': ['C4', 1.2],
+  // 触发词账本反哺：同一个词被复查证明判歪过 min.flips 次、且比例到 rate，
+  // 以后遇到它把关切度打个折（rel.mul=0.9）。只降一成，不是「判它没事」。
+  'affect.trigger.enabled': ['C4', 1],
+  'affect.trigger.min.flips': ['C4', 3],
+  'affect.trigger.rate': ['C4', 0.5],
+  'affect.trigger.rel.mul': ['C4', 0.9],
   // 恢复速度分正负：坏情绪退得快（neg=0.5 → 用时 ×0.5），好情绪留得久（pos=1.5 → 用时 ×1.5）。
   // 两个都给 1 就是「好坏一样快」。2026-11-02 之前是反的（neg 1.4 / pos 0.8）：那阵子一次被凶能压半天。
   // 读参数的下限放到 0.2，嫌不够短直接往下调，不用动代码。
@@ -268,6 +405,16 @@ export const PARAMS = {
   // P3 浏览入口：on = act_browse 抓完自动落 browse_items；off = 关上这条输入线
   'drive.browse.ingest': ['C3', 'on'],
   'guard.budget.c3': ['C0', 2],
+  // ---------- 心里的一句话（src/modules/mindstate.js）----------
+  // 上下文水位：到 ratio 就提一句「该记了」；window=0 表示不猜窗口，只用宿主给的 requestContext。
+  'mind.meter.enable': ['C4', 'on'],
+  'mind.meter.ratio': ['C4', 0.6],
+  'mind.meter.window': ['C4', 0],
+  // 复盘欠债：上次整理过了 hours 小时、之后又攒够 min_turns 条才提醒一次；同一句 cooldown 小时冷却。
+  'mind.review.enable': ['C4', 'on'],
+  'mind.review.hours': ['C4', 20],
+  'mind.review.min_turns': ['C4', 20],
+  'mind.review.cooldown_hours': ['C4', 6],
 }
 
 function parseStored(raw, fallback) {

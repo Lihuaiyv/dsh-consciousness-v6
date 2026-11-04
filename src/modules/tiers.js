@@ -72,6 +72,9 @@ export function bandOf(row, heat = heatOf(row)) {
   if (row.mark === 'locked') return 'short'
   const anchor = Date.parse(row.last_hit_at || row.created_at || '')
   const age = Number.isFinite(anchor) ? Math.max(0, (Date.now() - anchor) / DAY_MS) : 0
+  /* 结论是便利贴：三十天没人想起过的，直接降长期档——
+     它只是索引，别一直挡在原话前面。原话走自己的热度，不走这条。 */
+  if (String(row.type || '') === 'reflection' && Number(row.hits || 0) === 0 && age > 30) return 'long'
   // 档位是「优先级」，不是「价值」：最近两天的东西天然在短期，90 天没被碰过的落到长期。
   if (heat >= 0.52 || age <= 2) return 'short'
   if (heat >= 0.30 || age <= 60) return 'mid'

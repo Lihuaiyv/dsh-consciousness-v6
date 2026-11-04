@@ -43,6 +43,9 @@ db.prepare(`INSERT INTO rel_person(id,agent_id,name,tier,closeness,trust,depende
 addMemory(db, aid, { text: '主人今天在改情绪和记忆的接线。', type: 'fact' })
 addMemory(db, aid, { text: '主人喜欢先给结论再解释。', type: 'fact' })
 addMemory(db, aid, { text: '主人说过想去看海。', type: 'fact' })
+// 自发浮现只从 inner 池挑（episode 的 self/life、reflection 的 manual/reflect/consolidate）；
+// fact 是 profile 池，永远不会被心跳排进来——所以这里单独放一条自己的事。
+addMemory(db, aid, { text: '今天下午在阳台收衣服，风把夹子吹掉了一个。', type: 'episode', source: 'self' })
 
 // 排一条自发浮现
 surfaceQueueTick(db, aid)

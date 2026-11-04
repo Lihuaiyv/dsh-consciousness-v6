@@ -244,7 +244,9 @@ const T0 = Date.parse('2026-03-01T09:00:00+08:00')
     '关于这句话，你能想起的事（只引用相关的，不要编造）：\n- 用户喜欢喝美式咖啡\n- 用户养了一只叫团子的猫',
     '（你自己心里还挂着的事，可以自然提起，不用解释来源）：\n- 还挂着：答应明天修脚本，把记忆面板的图重画一遍，顺便把预算那块也统一下来，别让两套数打架（已经到期了）',
   ]
-  const mid = clampInjection(lines, 50)
+  // 预算 60 而不是 50：这一段的总量随开环那句改长而变大，50 会在丢完日记+记忆后
+  // 仍差 4 个 token，于是把开环也丢了——测的就不再是「先丢记忆」这条顺序。
+  const mid = clampInjection(lines, 60)
   check('P4 预算：先丢记忆块、留住开环', mid.dropped.includes('memory') && /还挂着/.test(mid.text), { dropped: mid.dropped, text: mid.text.slice(0, 60) })
   const tight = clampInjection(lines, 40)
   check('P4 预算：预算更紧才丢开环', tight.dropped.includes('loop') && /还挂着/.test(tight.text) === false, { dropped: tight.dropped })

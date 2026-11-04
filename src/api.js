@@ -13,6 +13,7 @@ import * as lv from './modules/lifeview.js'
 import { readViews, explainValues } from './modules/sangguan/bridge.js'
 import * as ps from './modules/poisons.js'
 import * as ar from './modules/archive.js'
+import * as diary from './modules/diary.js'
 import * as rt from './modules/retrieve.js'
 import * as pk from './modules/pack.js'
 import * as rl from './modules/retrieval_log.js'
@@ -40,6 +41,7 @@ import * as sg from './modules/sangguan/api.js'
 import * as bd from './modules/binding.js'
 import * as cv from './modules/conversations.js'
 import * as au from './modules/self_author.js'
+import * as res from './modules/self_residue.js'
 import { lifeTick, lifeLine } from './modules/life.js'
 import { model as kernelModel } from './kernel.js'
 import { unzipStore } from './zip.js'
@@ -560,6 +562,9 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'affect' && sub2 === 'guess') return c.userGuess(db, aid, { limit: Number(q(path, 'limit') || 8) })
     if (method === 'POST' && sub === 'affect' && sub2 === 'feedback') return c.recordUserFeedback(db, aid, body)
     if (method === 'GET' && sub === 'affect' && sub2 === 'events') return c.affectGateEvents(db, aid, { days: Number(q(path, 'days') || 3), limit: Number(q(path, 'limit') || 40) })
+    if (method === 'GET' && sub === 'affect' && sub2 === 'review') return f.reviewStats(db, aid, { days: Number(q(path, 'days') || 14) })
+    if (method === 'GET' && sub === 'affect' && sub2 === 'triggers') return f.triggerStats(db, aid, { days: Number(q(path, 'days') || 30), min: Number(q(path, 'min') || 2) })
+    if (method === 'GET' && sub === 'affect' && sub2 === 'fallback') return f.fallbackStats(db, aid, { days: Number(q(path, 'days') || 7) })
     if (method === 'GET' && sub === 'affect' && sub2 === 'episodes') return c.listEpisodes(db, aid)
     if (method === 'GET' && sub === 'affect') return c.getAffect(db, aid)
     if (method === 'POST' && sub === 'affect' && sub2 === 'appraise') return f.appraiseWithEdges(db, aid, body.text || '')
@@ -613,6 +618,9 @@ async function routes(db, method, path, body, role, bound) {
         floor: Number(getParam(db, aid, 'memory.recall.floor')) || 0,
         decayVersion: String(getParam(db, aid, 'memory.decay.formula') || 'v1'),
         decayScale: Math.max(0.1, Math.min(10, 0.02 / lambda)),
+        summaryInjected: String(getParam(db, aid, 'memory.inject.user_summary') || 'off') === 'on',
+        selfQuota: Number(getParam(db, aid, 'memory.inject.self_quota')) || 0,
+        selfFreshBoost: Number(getParam(db, aid, 'memory.inject.self_fresh')) || 0,
       })
       if (q(path, 'pack') === '1') out.packed = pk.packInjection({ buffer: out.buffer, items: out.items })
       return out
@@ -649,11 +657,34 @@ async function routes(db, method, path, body, role, bound) {
     }
     if (method === 'GET' && sub === 'sessions') return ar.listSessions(db, aid, Number(q(path, 'limit') || 50))
     if (method === 'GET' && sub === 'episodes') return ar.listEpisodes(db, aid, { day: q(path, 'day'), limit: Number(q(path, 'limit') || 30) })
-    if (method === 'GET' && sub === 'diaries' && sub2) return ar.getDiary(db, aid, sub2) || err(404, 'NOT_FOUND', '这一天没有日记')
+    if (method === 'GET' && sub === 'diaries' && sub2) {
+      const row = ar.getDiary(db, aid, sub2)
+      if (row) return row
+      // 没写成不是 404：把待补状态带回去，面板才能说「等模型回来补」。
+      const pend = diary.pendingForDay(db, aid, sub2)
+      if (pend) return { day: sub2, text: '', source: 'none', pending: true, attempts: Number(pend.attempts || 0), fail_reason: pend.last_error || null }
+      return err(404, 'NOT_FOUND', '这一天没有日记')
+    }
+    if (method === 'GET' && sub === 'diary' && sub2 === 'pending') return { items: diary.listPending(db, aid, { days: Number(q(path, 'days') || 30) }) }
+    if (method === 'POST' && sub === 'diaries' && sub2 === 'rewrite') {
+      const day = String(body.day || '').trim()
+      if (!day) return err(400, 'INVALID_ARGUMENT', '缺少 day')
+      let chat = null
+      try {
+        if (kernelModel.status().primary === 'ok') {
+          chat = (messages, opt = {}) => kernelModel.chatPrimary(messages, opt.maxTokens ?? 900, !!opt.json, opt.temperature ?? 0.8)
+        }
+      } catch { chat = null }
+      const out = await ar.buildDiary(db, aid, day, { force: true, chat })
+      if (!out) return err(404, 'NOT_FOUND', '这一天没有可用的日记材料')
+      return out
+    }
     if (method === 'GET' && sub === 'tiers') return tierStats(db, aid)
     if (method === 'POST' && sub === 'tiers' && sub2 === 'refresh') return refreshHeat(db, aid)
     if (method === 'GET' && sub === 'diary') return f.diary(db, aid, Number(q(path, 'days') || 7))
     if (method === 'GET' && sub === 'metrics' && sub2 === 'history') return f.metricsHistory(db, aid, Number(q(path, 'days') || 30), q(path, 'keys'))
+    // Shadow 观测：只读聚合；给页面 / curl / CLI 一个入口。
+    if (method === 'GET' && sub === 'shadow') return res.shadowReport(db, aid, { days: Number(q(path, 'days') || 7) })
     if (method === 'GET' && sub === 'drive') return c.getDrive(db, aid)
     if (method === 'POST' && sub === 'drive' && sub2 === 'evaluate') return c.evaluateDrive(db, aid)
     if (method === 'POST' && sub === 'drive' && sub2 === 'satisfy') {
@@ -778,6 +809,9 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'affect' && sub2 === 'history') return f.affectHistory(db, aid, Number(q(path, 'days') || 7))
     if (method === 'GET' && sub === 'affect' && sub2 === 'trend') return f.affectTrend(db, aid, Number(q(path, 'days') || 7))
     if (method === 'GET' && sub === 'affect' && sub2 === 'events') return c.affectGateEvents(db, aid, { days: Number(q(path, 'days') || 3), limit: Number(q(path, 'limit') || 40) })
+    if (method === 'GET' && sub === 'affect' && sub2 === 'review') return f.reviewStats(db, aid, { days: Number(q(path, 'days') || 14) })
+    if (method === 'GET' && sub === 'affect' && sub2 === 'triggers') return f.triggerStats(db, aid, { days: Number(q(path, 'days') || 30), min: Number(q(path, 'min') || 2) })
+    if (method === 'GET' && sub === 'affect' && sub2 === 'fallback') return f.fallbackStats(db, aid, { days: Number(q(path, 'days') || 7) })
     if (method === 'GET' && sub === 'condition') return f.getCondition(db, aid)
     if (method === 'PUT' && sub === 'condition') return f.setCondition(db, aid, body)
     if (method === 'GET' && sub === 'cooldowns') return f.listCooldowns(db, aid)

@@ -80,6 +80,7 @@ export function instructionLike(text) {
  */
 const STANCE_WORD = /(看重|在意|认[为定]|觉得|相信|应该|值得|宁可|宁愿|愿意|不肯|不[接愿]受|不[信服认]|讨厌|喜欢|更[想重看愿]|好过|胜过|不如)/
 const TECH_WORD = /(插件|代码|测试|脚本|接口|数据库|服务器|配置|部署|文件|日志|版本|线上|本机|微信|设置|功能|报错|端口|进程|依赖|仓库|分支|客户端|前端|后端|编译|打包|数据|图表|页面|需求|文档)/
+export { TECH_WORD }
 const PLAN_WORD = /(待办|排期|下一步|计划(?:先|要|是|中)|要做的是|得先做|需要先做|重构一下|发版|上线排)/
 
 /** 立场闸：返回拒收理由，合法返回 null。 */
@@ -109,6 +110,67 @@ export function fieldCheck(x) {
   return null
 }
 
+// ---------- 三列各自的闸（默认关；lane 打开后才生效） ----------
+// 世界观：判据是「预测力」——没有可检验预期就不是世界观，是感想。
+// 人生观：判据是「解释力 + 投入」——解释不了过去、也没有时间投进去，就只是愿望。
+// 价值观：判据是「排除 + 代价」——排除不了任何选项，就只是描述。
+const SELF_SUBJECT = /^(我|自己|咱|下次我|我会|我得|我想)/
+
+/** 这段预期是不是在说「我接下来会怎么做」。那种句子衡量的是价值观，不是世界。 */
+export const expectationAboutSelf = (t) => SELF_SUBJECT.test(String(t || '').trim())
+
+export function gateW(c, opt = {}) {
+  const m = (c && c.meta) || {}
+  if (!m.expectation || !String(m.expectation).trim()) return 'no_expectation'
+  if (!m.observe || !String(m.observe).trim()) return 'no_observe'
+  if (expectationAboutSelf(m.expectation)) return 'expectation_about_self'
+  const scene = Array.isArray(m.scene) ? m.scene.filter(Boolean) : []
+  if (scene.length < 3) return 'scene_too_few'
+  const tech = scene.filter((s) => TECH_WORD.test(String(s))).length
+  if (tech >= Math.ceil(scene.length * 2 / 3)) return 'engineering_scene'
+  return null
+}
+
+const DAY = 86400000
+
+/** 投入证据的跨度（天）。取不到合法时间就当作 0，宁可判不够。 */
+export function investSpanDays(list) {
+  const ts = (Array.isArray(list) ? list : [])
+    .map((x) => Date.parse((x && x.at) || ''))
+    .filter((n) => Number.isFinite(n))
+  if (ts.length < 2) return 0
+  return (Math.max(...ts) - Math.min(...ts)) / DAY
+}
+
+export function gateL(c, opt = {}) {
+  const m = (c && c.meta) || {}
+  if (!m.direction || !String(m.direction).trim()) return 'no_direction'
+  if (investSpanDays(m.investment) < 7) return 'no_investment'
+  return null
+}
+
+const TRADEOFF_WORD = /(放弃|宁可|宁愿|代价|不如|没敢|没有选|舍不?得)/
+
+export function gateV(c, opt = {}) {
+  const m = (c && c.meta) || {}
+  const t = String((c && c.text) || '')
+  if (!m.foregone && !TRADEOFF_WORD.test(t)) return 'no_tradeoff'
+  return null
+}
+
+/**
+ * 分派：先过公共的 W1 形式闸，再按 layer 过它自己那一列。
+ * lanes 全关（默认）时与旧 fieldCheck 逐字等价。
+ */
+export function laneCheck(x, lanes = {}) {
+  const base = fieldCheck(x)
+  if (base) return base
+  if (x.layer === 'W' && lanes.W) return gateW(x)
+  if (x.layer === 'L' && lanes.L) return gateL(x)
+  if (x.layer === 'V' && lanes.V) return gateV(x)
+  return null
+}
+
 /**
  * W1–W5，按序第一条命中即停（P11）。
  * N：邻居 [{ id, sim, status, kind, layer }]（已按 sim 降序）；rel：{ id → dup|contradict|compatible|unrelated }，判定不可用时为 null。
@@ -127,7 +189,7 @@ function dupBar(c, opt) {
 export function classify(x, N, rel, opt) {
   const near = N.map((c) => ({ id: c.id, sim: +c.sim.toFixed(4), mode: c.mode || null, rel: rel ? rel[c.id] || 'unrelated' : null }))
   const report = (w, extra = {}) => ({ w, judge: opt.judge, sim_mode: opt.sim_mode || null, neighbors: near, ...extra })
-  const reason = fieldCheck(x)
+  const reason = laneCheck(x, opt.lanes)
   if (reason) return { cls: 'REJECT', report: report('W1', { reason }) }
   if (!N.length) return { cls: 'EXP', report: report('W5') }
   if (opt.judge === 'degraded') {

@@ -14,8 +14,14 @@
 
 import crypto from 'node:crypto'
 import { now } from '../db.js'
-import { nid } from '../kernel.js'
+import { nid, getParam } from '../kernel.js'
 import { foldValueWeights } from './sangguan/vweights.js'
+import {
+  weekday, diaryContext, diaryTone, diaryOpening, normalizeDiaryText, isPromptEcho, bodyLength,
+  buildDiaryV2, diaryParams,
+} from './diary.js'
+
+export { weekday, diaryContext, diaryTone, normalizeDiaryText, isPromptEcho } from './diary.js'
 
 const DAY_MS = 86400000
 
@@ -435,68 +441,7 @@ export function sessionBridge(db, aid, opt = {}) {
 
 
 // ---------------------------------------------------------------- T3 日记
-
-function weekday(day) {
-  const t = Date.parse(day + 'T12:00:00Z')
-  if (!Number.isFinite(t)) return ''
-  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(t).getUTCDay()]
-}
-
-/**
- * 写一天的日记。
- * 有模型就用模型写（summarize 回调），没有就按纪要和事实拼，**不编细节**。
- * @returns {Promise<object>} 落库的那一行
- */
-/** 写日记那一刻，它是什么状态：性格五轴 / 价值观 / 情绪 / 驱力 / 关系。 */
-export function diaryContext(db, aid) {
-  const out = { axes: {}, values: [], affect: null, drive: null, relation: null }
-  try {
-    const persona = db.prepare('SELECT path,value FROM persona WHERE agent_id=?').all(aid)
-    for (const p of persona) {
-      if (p.path.startsWith('axis.')) out.axes[p.path.slice(5)] = Number(p.value)
-    }
-  } catch { /* 老库没有 persona */ }
-  try {
-    const folded = foldValueWeights(db, aid)
-    const w = (folded && folded.weights) || {}
-    out.values = Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([key, weight]) => ({ key, weight: Number(weight) }))
-  } catch { out.values = [] }
-  try {
-    const a = db.prepare('SELECT primary_label,intensity,mood FROM affect_state WHERE agent_id=?').get(aid)
-    if (a) out.affect = { label: a.primary_label, intensity: Number(a.intensity), mood: Number(a.mood) }
-  } catch { out.affect = null }
-  try {
-    const d = db.prepare('SELECT band FROM drive_state WHERE agent_id=?').get(aid)
-    if (d) out.drive = { band: d.band }
-  } catch { out.drive = null }
-  try {
-    const r = db.prepare('SELECT name,closeness FROM relations WHERE agent_id=? ORDER BY root DESC, closeness DESC LIMIT 1').get(aid)
-    if (r) out.relation = { name: r.name, closeness: Number(r.closeness) }
-  } catch { out.relation = null }
-  return out
-}
-
-/** 由状态推出「这一天的口吻」，模板与模型都用它。 */
-export function diaryTone(ctx = {}) {
-  const b = ctx.axes || {}
-  const parts = []
-  if (Number(b.sn) >= 0.6) parts.push('爱联想、会打比方')
-  if (Number(b.ei) >= 0.6) parts.push('语气外放一点')
-  if (Number(b.ei) < 0.4) parts.push('话少、克制')
-  if (Number(b.tf) < 0.4) parts.push('语气温和')
-  if (Number(b.sensitivity) >= 0.6) parts.push('情绪写得具体些')
-  if (ctx.affect && Number(ctx.affect.intensity) >= 0.6) parts.push('情绪偏浓')
-  if (ctx.drive && /D[01]/.test(String(ctx.drive.band))) parts.push('不铺开、收着写')
-  return parts.length ? parts.join('、') : '平实、不夸张'
-}
-
-function diaryOpening(ctx) {
-  const b = (ctx && ctx.axes) || {}
-  if (Number(b.ei) < 0.4) return '今天没什么特别想说的，还是记两句。'
-  if (Number(b.sensitivity) >= 0.6) return '今天心里有点乱，写下来会好受一点。'
-  if (Number(b.sn) >= 0.6) return '今天脑子里飘过不少东西，挑几件记下。'
-  return '今天过得还行，记几件。'
-}
+// v2 的选料/成文/待补在 ./diary.js；这里保留 v1（整包纪要 + 模板兜底）用于回滚对照。
 
 function sampleList(list, n) {
   const arr = Array.isArray(list) ? list : []
@@ -511,55 +456,18 @@ const AFFECT_ZH = {
   confused: '困惑', lost: '失落', irritated: '烦躁', frustrated: '挫败',
 }
 
-/** 模型偶尔会把提示词、JSON 材料整段抄回来；这种不算日记。 */
-export function isPromptEcho(text) {
-  const s = String(text || '').trim()
-  if (!s) return true
-  if (/^(system|user|assistant|developer)\s*[:：]/i.test(s)) return true
-  if (/"(episodes|conversation|day|summary)"\s*:/.test(s)) return true
-  if (/你在写这一天的日记|只写材料里出现|不要用 Markdown/.test(s)) return true
-  return false
-}
-
 /**
- * 把模型输出整理成「日期头 + 正文」。
- * 日期头统一由我们补，模型写没写都不影响；正文去掉 Markdown 痕迹。
+ * 写一天的日记（对外入口）。
+ * v2（默认）：挑 1–2 个场景、拿原话成文；写不成进待补，不落模板。
+ * v1：整包纪要 + 模板兜底。memory.diary.v2=off 或调用方明确要 v1 时走这条。
  */
-export function normalizeDiaryText(text, day) {
-  let t = String(text ?? '').trim()
-  if (!t) return ''
-  t = t.replace(/^```[a-zA-Z]*\s*/, '').replace(/```\s*$/, '').trim()
-  if (/^\{[\s\S]*\}$/.test(t)) {
-    try {
-      const o = JSON.parse(t)
-      const v = o.text ?? o.diary ?? o.content
-      if (typeof v === 'string') t = v.trim()
-    } catch { /* 不是 JSON，按正文处理 */ }
-  }
-  t = t.replace(/^(?:日记正文|日记|正文|标题)\s*[:：]\s*/, '')
-  const lines = t.split(/\r?\n/)
-  while (lines.length) {
-    const first = lines[0].trim()
-    if (!first) { lines.shift(); continue }
-    if (/^#{1,6}\s*/.test(first)) { lines.shift(); continue }
-    if (/^\d{4}\s*[年\-/.]\s*\d{1,2}/.test(first)) { lines.shift(); break }
-    break
-  }
-  const body = lines.join('\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^[*\-+]\s+/gm, '')
-    .trim()
-  if (!body) return ''
-  const d = String(day || '')
-  return (d ? `${d} ${weekday(d)}\n\n` : '') + body
-}
-
-function bodyLength(text) {
-  return String(text || '').replace(/^\d{4}-\d{2}-\d{2}[^\n]*\n+/, '').trim().length
-}
-
 export async function buildDiary(db, aid, day, opt = {}) {
+  const useV1 = opt.v1 === true || !diaryParams(db, aid).v2
+  if (useV1) return buildDiaryV1(db, aid, day, opt)
+  return buildDiaryV2(db, aid, day, opt)
+}
+
+export async function buildDiaryV1(db, aid, day, opt = {}) {
   const d = String(day || dayOf(now()))
   const eps = listEpisodes(db, aid, { day: d, limit: 20 })
   const facts = db.prepare(`SELECT id,text,type,importance FROM memory_items

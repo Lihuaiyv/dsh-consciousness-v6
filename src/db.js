@@ -242,7 +242,9 @@ CREATE TABLE IF NOT EXISTS episodes(
   start_at TEXT, end_at TEXT, turns INTEGER NOT NULL DEFAULT 0,
   title TEXT, summary TEXT, topics TEXT, mood TEXT, open_loops TEXT,
   importance REAL NOT NULL DEFAULT 0.5, hits INTEGER NOT NULL DEFAULT 0,
-  last_hit_at TEXT, source TEXT NOT NULL DEFAULT 'rules', created_at TEXT NOT NULL);
+  last_hit_at TEXT, source TEXT NOT NULL DEFAULT 'rules', created_at TEXT NOT NULL,
+  -- 日记 v2：这件事有多「扎心」（0–10）。选场用，算一次存下来；null = 没算过。
+  poignancy REAL);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ep_uniq ON episodes(agent_id, session_id, day);
 
 -- T3 日记层（温偏冷）：一天一篇，第一人称，可重建不覆盖。
@@ -255,6 +257,15 @@ CREATE TABLE IF NOT EXISTS diaries(
 CREATE UNIQUE INDEX IF NOT EXISTS idx_diary_day ON diaries(agent_id, day);
 -- 写这篇日记时的「它是什么状态」：人格 / 价值观 / 情绪 / 驱力 / 关系，用来解释口吻
 -- 旧库用 ALTER 补列（见 openDb）。
+
+-- 日记 v2 待补队列：模型没接上 / 成文没过质检的日子在这里排队。
+-- 「有 diaries 行」不再等于「这天写完了」；只有 source='model' 才是写完。
+CREATE TABLE IF NOT EXISTS diary_pending(
+  agent_id TEXT NOT NULL, day TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT, next_try_at TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  PRIMARY KEY(agent_id, day));
 
 -- T4 事实存根（append-only）：一条事实「最初生成时」的原样快照。
 -- memory_items 里那条会衰减、被推翻、被去重合并、被删；这里留底，回答「我当初记的是哪句话」。
@@ -583,6 +594,14 @@ export function openDb(file) {
     agent_id TEXT PRIMARY KEY, baseline REAL NOT NULL DEFAULT 0,
     slow REAL NOT NULL DEFAULT 0, fast REAL NOT NULL DEFAULT 0,
     total REAL NOT NULL DEFAULT 0, slow_at TEXT, fast_at TEXT);`)
+  /* 说话那一刻的感觉（第一人称，自己写的）。和 affect_events 是两回事：
+     事件表是「你这句话把我推到哪」，这张是「我开口的时候是什么样」——
+     以前只有前者，所以注入行永远慢半拍。 */
+  db.exec(`CREATE TABLE IF NOT EXISTS affect_feel(
+    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, at TEXT NOT NULL,
+    text TEXT NOT NULL, label TEXT, fast REAL, slow REAL, total REAL,
+    session_id TEXT, source TEXT NOT NULL DEFAULT 'tool');`)
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_feel_agent_at ON affect_feel(agent_id, at DESC)') } catch { /* 老库异常不影响启动 */ }
   // 快情绪的时间锚：两次评价隔了多久，快情绪就按这个间隔自己退（不是一句话直接归零）
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN fast_at TEXT') } catch { /* 已存在 */ }
   // 累积负荷：底色的第三层（日节律之外）。被慢情绪的持续偏离拖走一点，几天代谢回来。
@@ -596,6 +615,50 @@ export function openDb(file) {
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN circ_phase_at TEXT') } catch { /* 已存在 */ }
   // 这一段情绪是「哪一种」起的：恢复快慢按它算（被凶散得快、闷着拖得久）
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN rec_label TEXT') } catch { /* 已存在 */ }
+  // 相处状态：被使唤的累积（0~1）。一整天只在被安排活，这件事本身要留痕，
+  // 但它不进闸门、不推快情绪，只把慢情绪要回落的目标往下压一点。
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN duty REAL DEFAULT 0') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN duty_at TEXT') } catch { /* 已存在 */ }
+  // 沉下去多久了：慢情绪连续低于水位超过阈值的小时数。
+  // 攒够时间才触发调节——一低就扶等于替她决定她该不该难受。
+  try { db.exec('ALTER TABLE affect_v3 ADD COLUMN sink_h REAL DEFAULT 0') } catch { /* 已存在 */ }
+  // 评价的理由（为什么这么判）和靶子（这句冲谁）。给复查用：
+  // 判歪的那些，看 why 就知道是「没看到前文」还是「看到了判错」。
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN why TEXT') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN target TEXT') } catch { /* 已存在 */ }
+  // 「理由和标签打架」的标记。例：why 写着「语气平，没有催促」，
+  // 标签却是 frustrated——那不是从这句话读出来的，是从「你情绪偏低」那条兜底来的。
+  // 复查优先挑这些：它们是判歪率最高的一类。
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN why_flag TEXT') } catch { /* 已存在 */ }
+  // 共情拆账：读到你多少(e_user_read)、被带动多少(empathy_share)、剩下多少是我自己的(self_own)。
+  // 第一步只记录，不动任何数值——先把「我到底有多少情绪是从她那来的」量出来再谈改。
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN e_user_read REAL') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN empathy_share REAL') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN self_own REAL') } catch { /* 已存在 */ }
+  // 这一次是哪种接法：share（同向）/ hold（反向稳住）/ dampen（两边都高时打折）。
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN empathy_mode TEXT') } catch { /* 已存在 */ }
+  // 这一次模型自己判断该怎么接（follow/hold/dampen/auto）；跟实际用上的 empathy_mode 对账用。
+  try { db.exec('ALTER TABLE affect_events ADD COLUMN empathy_want TEXT') } catch { /* 已存在 */ }
+  // 事后复查（影子）：当时判完、过几个钟头换一个身份再看一遍。
+  // 只记「变了没」，不改历史行、不碰当下情绪——现在还是只记录不动手。
+  db.exec(`CREATE TABLE IF NOT EXISTS affect_review(
+    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+    event_id TEXT NOT NULL, text TEXT,
+    old_rel REAL, old_cong REAL, old_label TEXT, old_why TEXT,
+    new_rel REAL, new_cong REAL, new_label TEXT, new_why TEXT,
+    verdict TEXT NOT NULL DEFAULT 'same',
+    at TEXT NOT NULL, reviewed_at TEXT)`)
+  db.exec('CREATE INDEX IF NOT EXISTS idx_areview_agent ON affect_review(agent_id, at DESC)')
+  // 触发词账本：判歪的时候，是哪个词把方向带跑的。
+  // 词从 why 里抽（模型习惯把抓到的那个词用「」或『』括起来）。
+  // hits = 这词在复查里出现过几次，flips = 其中复查后翻面/量变的有几次。
+  // 只读统计、不改权重：先看哪些词总被误判，再谈要不要给它们加规矩。
+  db.exec(`CREATE TABLE IF NOT EXISTS affect_trigger(
+    agent_id TEXT NOT NULL, word TEXT NOT NULL,
+    hits INTEGER NOT NULL DEFAULT 0, flips INTEGER NOT NULL DEFAULT 0,
+    last_at TEXT, PRIMARY KEY(agent_id, word))`)
+  // 够格「以后遇到先慢一点」的词：flips 够多且比例够高才打戳，不按一次偶然。
+  try { db.exec('ALTER TABLE affect_trigger ADD COLUMN penalty INTEGER DEFAULT 0') } catch { /* 已存在 */ }
   // 底色段表：一行一段，不靠 tick 累积
   db.exec(`CREATE TABLE IF NOT EXISTS affect_baseline(
     agent_id TEXT NOT NULL, seg_no INTEGER NOT NULL,
@@ -686,6 +749,16 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, cr
   try { db.exec('ALTER TABLE diaries ADD COLUMN context TEXT') } catch { /* 已存在 */ }
   // 补写标记：写作时已经不是那一天了（关机 / 休眠错过 23:00，下次打开补的）
   try { db.exec('ALTER TABLE diaries ADD COLUMN late INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
+  // 日记 v2：场景分（0–10）+ 待补队列。老库补列/补表；只增不改，v2 关掉也不影响旧代码。
+  try { db.exec('ALTER TABLE episodes ADD COLUMN poignancy REAL') } catch { /* 已存在 */ }
+  try {
+    db.exec(`CREATE TABLE IF NOT EXISTS diary_pending(
+      agent_id TEXT NOT NULL, day TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT, next_try_at TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      PRIMARY KEY(agent_id, day))`)
+  } catch { /* 建表失败只影响待补 */ }
   // 主动开口的结局追踪：回答 / 被忽略 / 回答时间
   try { db.exec('ALTER TABLE proactive ADD COLUMN answered INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE proactive ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
