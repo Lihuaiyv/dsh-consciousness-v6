@@ -251,7 +251,13 @@ export function attachQQFeelProvider(opts = {}) {
       const db = typeof getDb === 'function' ? getDb() : null
       if (!db) return { sections: [] }
       const route = context.route || {}
-      const sessionId = String((context.agentCtx && context.agentCtx.agent && context.agentCtx.agent.id) || '')
+      // agentCtx 是 Cordis 的 scoped ctx：没 inject 的服务属性直接抛错
+      // （真机日志：cannot get property "agent" without inject），所以这里不能裸点。
+      let sessionId = ''
+      try {
+        const ag = context.agentCtx ? context.agentCtx.agent : null
+        sessionId = String((ag && ag.id) || '')
+      } catch { sessionId = '' }
       const aid = conversationAid(db, context.key) || aidOf(db, sessionId)
       if (!aid) return { sections: [] }
       // 参数直接按这条会话自己的意识体读，不再让外层按「当前激活人格」去猜。
