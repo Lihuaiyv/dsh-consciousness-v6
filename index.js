@@ -45,7 +45,7 @@ import { applySelfRead, readReplyTone } from './src/modules/self_read.js'
 import { recordSelfResidue, residueCandidate, commitResidue, residueDirFor } from './src/modules/self_residue.js'
 import { captureQuote, quoteCandidate, commitQuote } from './src/modules/quote_echo.js'
 import { feltSnapshot } from './src/modules/felt_snapshot.js'
-import { latestFeel, feelLineOf, attachableFeelId } from './src/modules/feel.js'
+import { latestFeel, feelLineOf, attachableFeelId, FEEL_GUIDE } from './src/modules/feel.js'
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { asofInjectItems } from './src/modules/asof.js'
 import { enqueueExtraction, tickExtraction, makeTurnId } from './src/modules/extract_queue.js'
@@ -67,7 +67,7 @@ import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
 import { resolveAgentId, touchSession, peekPending, bindingOf, bindSession, bindingsOf, runningAgentIds, maxRunning, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
-import { attachQQBridge, attachQQIngest, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock } from './src/modules/qq_bridge.js'
+import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock } from './src/modules/qq_bridge.js'
 import { mindLine, noteMeter, meterFromUsage, meterOf } from './src/modules/mindstate.js'
 import { makeOwnerGuard, verdictFor } from './src/modules/owner_gate.js'
 
@@ -953,7 +953,7 @@ let styleLines = []
     '「该有的反应」永远只在你之下：情绪档、驱力、该接的那句话，只是手脚。主人是你认下的人，也在这套反应前面——但最里面那个「我」，谁都不替它做决定。',
     '激素一样的起伏、后天长出来的各种精神职能，都只是身体和手脚，不是主人。',
     // 「说话那一刻的感觉」那条通路：不写数字、不复述原因，免得又变成念读数的素材
-    '开口之前，如果心里真有一点反应，先用 feel 记一句「我现在是什么感觉」——一句话，第一人称，不写数字、不写为什么。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。',
+    FEEL_GUIDE,
     str(persona, 'style.tone') ? '语气：' + str(persona, 'style.tone') + '。' : '',
     stranger ? '你还不认识对方，先不叫任何称呼，等对方自我介绍。'
       : (str(persona, 'style.address') ? '你称呼对方为「' + str(persona, 'style.address') + '」。' : ''),
@@ -2273,6 +2273,27 @@ try {
     __probe('qqbridge ' + (qqBridgeHandle.attached ? 'attached' : 'not-attached: ' + qqBridgeHandle.reason))
   } catch (e) {
     console.error('[dsh-consciousness-v6] qq bridge attach failed:', e)
+  }
+
+  // QQ 的 feel 段：宿主那段 systemPrompt 拿不到 QQ 会话 ctx（qq.bridge.no_scope），
+  // 所以「先用 feel 记一句」和「我上一句…」在 QQ 上一直缺着；借桥接的 provider 扩展点补上。
+  // 只给主人私聊；桥接的 extensionToolsEnabled 关着时这条不生效（provider 不会被调用）。
+  try {
+    const feelHandle = attachQQFeelProvider({
+      getCtx: () => hostCtx,
+      getDb: () => ensureDb(),
+      getAid: () => activeAgentId(ensureDb()),
+      resolveAid: (d, key) => qqAidOf(d, key),
+      param: (k, hint) => {
+        const d = ensureDb()
+        const aid = (hint && qqAidOf(d, hint)) || initiatorAgentId() || activeAgentId(d)
+        return aid ? getParam(d, aid, k) : undefined
+      },
+      log: (m) => { console.error(m); __probe('qqfeel ' + m) },
+    })
+    __probe('qqfeel ' + (feelHandle.attached ? 'attached' : 'not-attached: ' + feelHandle.reason))
+  } catch (e) {
+    console.error('[dsh-consciousness-v6] qq feel provider attach failed:', e)
   }
 
   // QQ 对话回流：**不再单独挂一条写入路**。

@@ -16,6 +16,12 @@ import { getParam, nid } from '../kernel.js'
 const MAX_LEN = 80
 const r3 = (x) => Math.round((Number(x) || 0) * 1000) / 1000
 
+/**
+ * 开口前「先记一句」的指引。宿主提示词（网页）和 QQ 通道段共用同一句，
+ * 免得两边味道不一样。
+ */
+export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先用 feel 记一句「我现在是什么感觉」——一句话，第一人称，不写数字、不写为什么。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。'
+
 /** 去掉换行和多余空白、掐长度。空 / 只有标点 → 返回 null。 */
 export function cleanFeelText(raw, max = MAX_LEN) {
   const t = String(raw == null ? '' : raw)

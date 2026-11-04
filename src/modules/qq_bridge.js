@@ -22,6 +22,8 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { moodLabelOf } from './affect.js'
 import { recordReplyResidue } from './self_residue.js'
+import { latestFeel, feelLineOf, FEEL_GUIDE } from './feel.js'
+import { getParam } from '../kernel.js'
 import { now } from '../db.js'
 
 export const QQ_SESSION_PREFIX = 'qq-'
@@ -178,6 +180,137 @@ export function qqChannelBlock(info = {}) {
     lines.push('- 对方是不认识你的人：别叫主人，别用只对主人的亲密语气，也别讲你和主人之间的事。')
   }
   return lines.join('\n')
+}
+
+// ---------------------------------------------------------------- 第 3.5 步 · feel 段
+
+/**
+ * QQ 上的 feel：工具早就在（宿主的工具表是全局的），但「先用 feel 记一句」和
+ * 「我上一句说出来之前，心里是这样…」这两行一直没进 QQ 的提示词——
+ * 宿主那段 systemPrompt 拿不到 QQ 会话的 ctx（事件里从 11-03 起一直记 qq.bridge.no_scope）。
+ *
+ * 不去修 scope（那条路撞过两次墙），改借桥接插件自己的扩展点：
+ * ctx.qqBridge.registerToolProvider(fn) → fn 返回 { sections }，桥接把它注册进该会话。
+ * 桥接那个开关默认关（extensionToolsEnabled），profile 里显式打开。
+ *
+ * 只给主人私聊：群聊和陌生人一律不出现——这是只对主人的材料。
+ * 只出材料，不写结论：一句指引 + 我上一句自己写下的那句 feel（窗口内才有）。
+ */
+export const QQ_FEEL_SECTION_NAME = 'dsh-consciousness-qq-feel'
+export const QQ_FEEL_SECTION_ORDER = 14
+
+export function buildQQFeelText(db, aid, { isOwner = false, at = Date.now(), hours = null } = {}) {
+  if (!isOwner || !db || !aid) return ''
+  let maxAgeMin = 120
+  try {
+    const h = Number(hours == null ? getParam(db, aid, 'affect.feel.hours') : hours)
+    if (Number.isFinite(h) && h > 0) maxAgeMin = Math.max(1, h) * 60
+  } catch { /* 参数读不到就用 2 小时 */ }
+  const parts = [FEEL_GUIDE]
+  try {
+    const row = latestFeel(db, aid, { at, maxAgeMin })
+    if (row) parts.push(feelLineOf(row))
+  } catch { /* 没有 feel 就只给指引，让它下一句开始写 */ }
+  return parts.join('\n')
+}
+
+/**
+ * 挂 feel provider。opts 与 attachQQBridge 同一套：
+ *   getCtx / getDb / getAid / param(k, hint) / resolveAid(db, sessionId) / log
+ */
+export function attachQQFeelProvider(opts = {}) {
+  const { getCtx, getDb, getAid, param, log, resolveAid } = opts
+  let ctx = null
+  try { ctx = typeof getCtx === 'function' ? getCtx() : null } catch { ctx = null }
+  if (!ctx) return { attached: false, reason: 'no getCtx' }
+
+  const aidOf = (db, sessionId) => {
+    try {
+      if (typeof resolveAid === 'function') {
+        const a = resolveAid(db, sessionId)
+        if (a) return a
+      }
+    } catch { /* 认不出就退回当前意识体 */ }
+    try { return typeof getAid === 'function' ? (getAid() || '') : '' } catch { return '' }
+  }
+
+  function provider(context = {}) {
+    try {
+      const db = typeof getDb === 'function' ? getDb() : null
+      if (!db) return { sections: [] }
+      const route = context.route || {}
+      const sessionId = String((context.agentCtx && context.agentCtx.agent && context.agentCtx.agent.id) || '')
+      const aid = aidOf(db, sessionId)
+      if (!aid) return { sections: [] }
+      const paramOf = (k) => (typeof param === 'function' ? param(k, sessionId) : undefined)
+      if (String(paramOf('qq.bridge.enable') ?? 'off') !== 'on') return { sections: [] }
+      if (String(paramOf('affect.feel.inject') ?? 'on') === 'off') return { sections: [] }
+      const isGroup = route.messageType === 'group'
+      const uid = String(route.targetId == null ? '' : route.targetId)
+      const owners = parseOwnerQq(paramOf('qq.bridge.owner_qq'))
+      const isOwner = !isGroup && uid !== '' && owners.includes(uid)
+      const text = buildQQFeelText(db, aid, { isOwner })
+      return { sections: text ? [{ name: QQ_FEEL_SECTION_NAME, order: QQ_FEEL_SECTION_ORDER, text }] : [] }
+    } catch (e) {
+      try { if (typeof log === 'function') log('[qq_bridge] feel provider 抛错: ' + (e && e.message ? e.message : e)) } catch { /* ignore */ }
+      return { sections: [] }
+    }
+  }
+
+  const apiOf = () => {
+    try { if (typeof ctx.get === 'function') { const a = ctx.get('qqBridge'); if (a) return a } } catch { /* ignore */ }
+    try { return ctx.qqBridge || null } catch { return null }
+  }
+  const PROVIDER_NAME = 'dsh-consciousness'
+  let dispose = null
+  let registered = false
+  let retryTimer = null
+  const registerWith = (api) => {
+    if (registered) return true
+    if (!api || typeof api.registerToolProvider !== 'function') return false
+    // 热重载会再走一遍 apply：已经挂过就不再挂第二个，否则同一条提示会被注入两遍。
+    try {
+      const names = typeof api.toolProviders === 'function' ? api.toolProviders() : null
+      if (Array.isArray(names) && names.includes(PROVIDER_NAME)) { registered = true; return true }
+    } catch { /* 诊断口不可用就照常注册 */ }
+    try {
+      const d = api.registerToolProvider(provider, { name: PROVIDER_NAME })
+      dispose = typeof d === 'function' ? d : null
+      registered = true
+    } catch (e) {
+      try { if (typeof log === 'function') log('[qq_bridge] 注册 feel provider 失败: ' + (e && e.message ? e.message : e)) } catch { /* ignore */ }
+    }
+    return registered
+  }
+  const ensure = () => registerWith(apiOf())
+  if (!ensure()) {
+    // qqBridge 是桥接插件 provide 出来的服务：Cordis 里要用 inject 才看得见，
+    // 它比我们晚加载时 inject 也会等到它起来（比轮询更准）。
+    if (typeof ctx.inject === 'function') {
+      try {
+        ctx.inject(['qqBridge'], (child) => {
+          const api = child && child.qqBridge
+          if (api) registerWith(api)
+        })
+      } catch { /* 退回轮询 */ }
+    }
+    // 兜底：每 500ms 试一次、共 20 秒——别等到第一条 QQ 消息才补上。
+    const retry = (left) => {
+      if (registered || left <= 0) return
+      retryTimer = setTimeout(() => { if (!ensure()) retry(left - 1) }, 500)
+      if (retryTimer && typeof retryTimer.unref === 'function') retryTimer.unref()
+    }
+    retry(40)
+    try { ctx.on('agent/created', () => { ensure() }) } catch { /* 挂不上也不影响主流程 */ }
+  }
+  return {
+    attached: registered,
+    reason: registered ? '' : 'qqBridge.registerToolProvider 还没就绪',
+    dispose: () => {
+      try { if (retryTimer) clearTimeout(retryTimer) } catch { /* ignore */ }
+      try { if (dispose) dispose() } catch { /* ignore */ }
+    },
+  }
 }
 
 /**
