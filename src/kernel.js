@@ -122,6 +122,10 @@ export const PARAMS = {
   // 翻到的条目在注入里标成「刚翻出来的」，不冒充一直记着。k 是这一次最多带几条。
   'memory.inject.deep': ['C4', 'on'],
   'memory.deep.k': ['C4', 3],
+  // 主动消息走 QQ（dsh-qq-onebot-bridge 的 ctx.qqBridge.sendText）。
+  // 先把开关和主人的 QQ 号配上；没配就退回宿主会话那条路。
+  'qq.push.enable': ['C4', 'off'],
+  'qq.push.target': ['C4', ''],
   // 原文层分龄：深查时默认只翻最近 N 天的对话原文（0 = 不限）；
   // 查询里有「最早/一开始/很久以前」这类词时自动放开（retrieve.oldAccountQuery）。
   'memory.recall.archive.days': ['C4', 30],
@@ -141,6 +145,8 @@ export const PARAMS = {
   'memory.inject.commit_after_pack': ['C4', 'on'],
   // 记忆来源徽章：我自己看到的 / 从聊天里记下的 / 我自己想的；off 时只保留旧 life 徽章。
   'memory.inject.provenance': ['C4', 'on'],
+  // 旧说法被挤出正桌时，注入末尾留一句「还有 N 条在账本里」；off 时完全不留痕。
+  'memory.inject.ejected_note': ['C4', 'on'],
   // 她自己的回话进关系账：先记「关系余量」并在下一轮只影响语气；off 时不记不注入。
   'relation.selfresidue': ['C4', 'on'],
   // 余量夜间结算到三轴：默认 off，先 shadow 观察一周；打开后每天最多结算一次。
@@ -171,6 +177,16 @@ export const PARAMS = {
   'memory.asof': ['C4', 'on'],
   'memory.asof.axis': ['C4', 'said'],
   'memory.asof.auto': ['C4', 'off'],
+  // 注入行护照（S1）：旧条带「哪天的、后来有没有更新」；off 时回到无护照。
+  'memory.passport': ['C4', 'on'],
+  // 弱标（同主题但不同 key、只标不挤）默认不进注入；on 时才显示「同主题后面还有一条说法」。
+  'memory.passport.weak': ['C4', 'off'],
+  // 非槽位旧条目（反思 / 情景 / 评价）超过三天时带一句「这是哪天的判断」；off 时不贴。
+  'memory.passport.statement': ['C4', 'on'],
+  // 旧条挤出（S3）：同主题已有更晚说法时，旧的说法不进正桌；off 时只标不挤。
+  'memory.stale.eject': ['C4', 'on'],
+  // 写侧分工（S4）：时间顺序明确的「没做完 → 做好了」走取代，不再开冲突卡；默认只观测。
+  'memory.write.stale_supersede': ['C4', 'off'],
   // 模糊最多用几档：1 只删括号 / 2 再删数字 / 3 再删引号原话。默认 3（到头）。
   'memory.fade.max_level': ['C4', 3],
   // 复习抵年龄：被想起过的旧事糊得慢一点（有效年龄 = 真实年龄 ÷ 复习系数，下限 50%）。

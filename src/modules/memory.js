@@ -48,11 +48,13 @@ function hasNeg(text) { return [...maskPositive(text)].some((c) => NEG.has(c)) }
 /**
  * 这一对记忆之间有没有冲突记录（不论开没开完）。
  * 开案前查一次：判过的别再弹，否则每抽到一个新说法就重新开一张同样的卡。
+ * opt.openOnly：只认还开着的案——低风险已结案的记录不该挡门控再开一张。
  */
-export function conflictPairExists(db, aid, aId, bId) {
+export function conflictPairExists(db, aid, aId, bId, opt = {}) {
   if (!aId || !bId) return false
   try {
-    return !!db.prepare(`SELECT 1 FROM conflicts WHERE agent_id=? AND
+    const extra = opt && opt.openOnly ? " AND state='open'" : ''
+    return !!db.prepare(`SELECT 1 FROM conflicts WHERE agent_id=?${extra} AND
       ((a_id=? AND b_id=?) OR (a_id=? AND b_id=?)) LIMIT 1`).get(aid, aId, bId, bId, aId)
   } catch { return false }
 }

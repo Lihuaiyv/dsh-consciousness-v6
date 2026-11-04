@@ -420,22 +420,39 @@ function safeJson(text, fallback) {
 /**
  * 会话开场续接：「上次你们聊到哪儿」。
  * 只取今天之前的纪要——同一天的事运行时上下文里本来就有，再说一遍是废话。
+ * 例外（opt.allowToday）：换会话 / 断线重连时，今天早些时候的事不在当前上下文里；
+ * 这时也带今天最近一条，但和现在至少隔 gapMin 分钟，免得同一场对话里自己重复自己。
  * 没有纪要就返回空串（宁可不提，也别编一句）。
  */
 export function sessionBridge(db, aid, opt = {}) {
   const at = opt.at || Date.now()
   const today = opt.today || dayOf(new Date(at).toISOString())
+  const gapMin = Math.max(10, Number(opt.gapMin) || 120)
   try {
-    const r = db.prepare(`SELECT day, title, summary, open_loops FROM episodes
-      WHERE agent_id=? AND day<? AND summary IS NOT NULL AND summary<>''
-      ORDER BY day DESC, end_at DESC LIMIT 1`).get(aid, String(today))
+    let sameDay = false
+    let r = null
+    if (opt.allowToday && !opt.today) {
+      const t = db.prepare(`SELECT day, title, summary, open_loops, end_at FROM episodes
+        WHERE agent_id=? AND day=? AND summary IS NOT NULL AND summary<>''
+        ORDER BY end_at DESC LIMIT 1`).get(aid, String(today))
+      if (t) {
+        const end = Date.parse(t.end_at)
+        if (!Number.isFinite(end) || (at - end) / 60000 >= gapMin) { r = t; sameDay = true }
+      }
+    }
+    if (!r) {
+      r = db.prepare(`SELECT day, title, summary, open_loops FROM episodes
+        WHERE agent_id=? AND day<? AND summary IS NOT NULL AND summary<>''
+        ORDER BY day DESC, end_at DESC LIMIT 1`).get(aid, String(today))
+    }
     if (!r) return ''
     const summary = String(r.summary).replace(/\s+/g, ' ').trim().slice(0, 70)
     if (!summary) return ''
     const loops = safeJson(r.open_loops, [])
       .map((x) => String(typeof x === 'string' ? x : (x && x.text) || '')).filter(Boolean)
     const tail = loops.length ? '；还没收尾的：' + loops.slice(0, 2).join('、').slice(0, 40) : ''
-    return '上次（' + r.day + '）你们聊到：' + summary + tail
+    const head = sameDay ? '今天早些时候（' + r.day + '）你们聊到：' : '上次（' + r.day + '）你们聊到：'
+    return head + summary + tail
   } catch { return '' }
 }
 

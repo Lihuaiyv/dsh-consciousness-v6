@@ -38,7 +38,7 @@ import { recentSelfIds, shownCounts, markShown } from './src/modules/self_repeat
 import { prefetchExpand, takeExpansion } from './src/modules/expand.js'
 import { prefetchEmbedding, takeEmbedding } from './src/modules/vector.js'
 import { backfillEntities } from './src/modules/entities.js'
-import { packInjection, oneLine } from './src/modules/pack.js'
+import { packInjection, oneLine, estTokens } from './src/modules/pack.js'
 import { loopLineFor, loopPrefixOf, markLoopsFired, expireLoops } from './src/modules/loops.js'
 import { recordSurfaced, markSurfacedUsed } from './src/modules/surfacing.js'
 import { surfaceQueueTick, pendingSurface, consumeSurface } from './src/modules/pulse.js'
@@ -49,6 +49,7 @@ import { feltSnapshot } from './src/modules/felt_snapshot.js'
 import { latestFeel, feelLineOf, attachableFeelId, FEEL_GUIDE } from './src/modules/feel.js'
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { asofInjectItems } from './src/modules/asof.js'
+import { passportLine, isStale } from './src/modules/passport.js'
 import { enqueueExtraction, tickExtraction, makeTurnId } from './src/modules/extract_queue.js'
 import { tickEscalation } from './src/modules/conflict.js'
 import { runNightly, dueDiaryDays, hasDiaryMaterial } from './src/modules/nightly.js'
@@ -68,7 +69,8 @@ import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
 import { resolveAgentId, touchSession, peekPending, bindingOf, bindSession, bindingsOf, runningAgentIds, maxRunning, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
-import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock } from './src/modules/qq_bridge.js'
+import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, parseChatKey, loadSessionMap, qqChannelBlock, conversationIdOf, chatKeyOfSessionId, qqSessionPrefix } from './src/modules/qq_bridge.js'
+import { findQQSessionsFile } from './src/modules/qq_watch.js'
 import { mindLine, noteMeter, meterFromUsage, meterOf } from './src/modules/mindstate.js'
 import { makeOwnerGuard, verdictFor } from './src/modules/owner_gate.js'
 
@@ -334,7 +336,8 @@ async function heartbeatDeep(aid) {
   try {
     const p = queueProactive(d, aid)
     const out = p && p.then ? await p : p
-    if (out) await maybePushProactive(d, aid, out)
+    // 无条件调：没有新排的也要看一眼积压里有没有该发的（拿到哪句由函数自己判断）。
+    await maybePushProactive(d, aid, out)
   } catch { /* 涓诲姩娑堟伅澶辫触璺宠繃 */ }
   // 她自己的生活：每天最多一次。只读浏览；端口/宿主 web 没开就只「想一想」。
   try {
@@ -455,7 +458,35 @@ const eff = useRehearsal ? rehearseAdjustedAge(real, it.hits, it.last_hit_at, at
       }
     }
   } catch { /* 鍙傛暟璇讳笉鍒板氨鎸夐粯璁わ紙寮€锛?*/ }
-  return packInjection({ items: items || [] }, packOpt)
+  // S1 护照 + S3 挤出：检索块里的旧条带「哪天的、后来有没有更新」；确认被取代的不进正桌
+  const passportOn = String(getParam(db, aid, 'memory.passport') || 'on') !== 'off'
+  const ejectOn = passportOn && String(getParam(db, aid, 'memory.stale.eject') || 'on') !== 'off'
+  const weakOn = String(getParam(db, aid, 'memory.passport.weak') || 'off') === 'on' ? 'on' : 'off'
+  // 阶段 C：非槽位旧条目（反思/情景/评价）带一句「这是哪天的判断」，不改内容。
+  const statementOn = String(getParam(db, aid, 'memory.passport.statement') || 'on') !== 'off'
+  const base = items || []
+  const kept = ejectOn
+    ? (() => {
+      const k = base.filter((it) => { try { return !isStale(db, aid, it) } catch { return true } })
+      return k.length ? k : base.slice(0, 1)
+    })()
+    : base
+  const withPassport = kept.map((it) => {
+    try {
+      const note = passportLine(db, aid, it, { on: passportOn, weak: weakOn, statement: statementOn ? 'on' : 'off' })
+      return note ? { ...it, text: String(it.text || '') + note } : it
+    } catch { return it }
+  })
+  const out = packInjection({ items: withPassport }, packOpt)
+  // 阶段 D：被挤出的旧说法不能「凭空消失」——末尾留一句「账本还在」，模型才知道可以翻。
+  // 不带内容，只报数；翻不翻由它自己决定。
+  const ejectedCount = Math.max(0, base.length - kept.length)
+  if (ejectedCount > 0 && String(getParam(db, aid, 'memory.inject.ejected_note') || 'on') !== 'off') {
+    const note = '（另外还有 ' + ejectedCount + ' 条旧说法收在账本里，要翻我就说「翻旧账」）'
+    out.text = (out.text ? out.text + '\n' : '') + note
+    out.tokens = Number(out.tokens || 0) + estTokens(note)
+  }
+  return out
 }
 
 /** 寮€鐜偅涓€琛岋細鍏崄绉掑唴澶嶇敤锛岄伩鍏嶅悓涓€娆＄郴缁熸彁绀鸿璋冨娆℃椂閲嶅璁拌处銆?*/
@@ -645,15 +676,23 @@ let mbtiLine = ''
   if (!rel.length) {
     rel = db.prepare('SELECT name, kind, closeness, trust, dependence FROM relations WHERE agent_id=? ORDER BY root DESC, closeness DESC LIMIT 5').all(aid)
   }
-  const mem = stranger ? [] : db.prepare("SELECT id, text, source, confidence, created_at FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY heat DESC, weight DESC, created_at DESC LIMIT 10").all(aid)
+  const mem = stranger ? [] : db.prepare("SELECT id, text, source, confidence, created_at, fact_key FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY heat DESC, weight DESC, created_at DESC LIMIT 10").all(aid)
   const dyn = recentRecall.get(aid)
   // 澶栭儴閫氶亾锛圦Q锛夎繖涓€杞嚜宸卞彫鍥炶繃浜嗭紝灏辩敤瀹冪殑缁撴灉锛屽埆璁╃綉椤甸偅杈圭暀涓嬬殑鏃у彫鍥為《涓婃潵
   const recallOverride = opts && Array.isArray(opts.recall) ? opts.recall : null
   // 外部通道（QQ）的召回结果是行对象时，和 DSH 主路径用同一套来源/时间标签。
   const provOn = String(getParam(db, aid, 'memory.inject.provenance') || 'on') !== 'off'
   const ageOnMem = String(getParam(db, aid, 'memory.inject.age') || 'on') !== 'off'
+  const passportOn = String(getParam(db, aid, 'memory.passport') || 'on') !== 'off'
+  const ejectOn = passportOn && String(getParam(db, aid, 'memory.stale.eject') || 'on') !== 'off'
+  const weakOn = String(getParam(db, aid, 'memory.passport.weak') || 'off') === 'on' ? 'on' : 'off'
+  const statementOn = String(getParam(db, aid, 'memory.passport.statement') || 'on') !== 'off'
+  // 外部通道（QQ）的召回结果也过同一套护照/挤出：只修网页路径等于漏了一个入口
+  const dynItems = recallOverride && ejectOn
+    ? recallOverride.filter((m) => { try { return !isStale(db, aid, m) } catch { return true } })
+    : recallOverride
   const dynText = recallOverride
-    ? [...new Set(recallOverride.map((m) => memoryTag(m, Date.now(), { provenance: provOn, age: ageOnMem }) + oneLine(m && m.text, 60)).filter(Boolean))].map((t) => '- ' + t).join('\n')
+    ? [...new Set((dynItems.length ? dynItems : recallOverride).map((m) => memoryTag(m, Date.now(), { provenance: provOn, age: ageOnMem }) + oneLine(m && m.text, 60) + passportLine(db, aid, m, { on: passportOn, weak: weakOn, statement: statementOn ? 'on' : 'off' })).filter(Boolean))].map((t) => '- ' + t).join('\n')
     : (dyn && Date.now() - dyn.at < 60000 ? dyn.text : '')
   // T3 鏃ヨ灞傦細鍙甫鏈€杩戜袱澶╋紝鍘嬫垚涓よ锛涘畠鏄彊浜嬶紝涓嶅崰鈥滅浉鍏宠蹇嗏€濈殑鍚嶉銆?
 let diaryLines = []
@@ -668,7 +707,7 @@ let diaryLines = []
   }
   // 浼氳瘽缁帴锛氶殧澶╁啀鏉ョ殑鏃跺€欙紝鍏堣涓€鍙ャ€屼笂娆″埌鍝効銆嶃€傚悓涓€澶╃殑浜嬩笂涓嬫枃閲屾湰鏉ュ氨鏈夛紝涓嶉噸澶嶃€?
 let bridgeText = ''
-  if (!stranger) { try { bridgeText = sessionBridge(db, aid) } catch { bridgeText = '' } }
+  if (!stranger) { try { bridgeText = sessionBridge(db, aid, { allowToday: true }) } catch { bridgeText = '' } }
 
   // 鑷繁娴笂鏉ワ細蹇冭烦鎺掔殑鍊欓€夛紝鏈€澶氬彇涓€鏉°€傚畠涓嶄竴瀹氳窡杩欎竴杞殑璇濇湁鍏斥€斺€?
 // 人本来就会说着说着想起别的事。先取，再拼记忆块，免得同一条占两个名额。
@@ -703,9 +742,16 @@ let bridgeText = ''
 
   // 璁板繂鍧楋細浼樺厛鐢ㄨ繖涓€杞湡鍙洖鐨勭粨鏋滐紱娌℃湁灏辩敤鐑害鍏滃簳锛屼絾鍙暀 4 鏉★紝姣忔潯鍘嬫垚涓€鍙ャ€?
 // 鍏滃簳鏃跺墧鎺夊垰娴笂鏉ョ殑閭ｆ潯锛岄伩鍏嶅悓涓€浠朵簨璇翠袱閬嶃€?
-const memFallback = mem.filter((m) => oneLine(m.text, 60) !== spontaneousText)
+const memFallbackAll = mem.filter((m) => oneLine(m.text, 60) !== spontaneousText)
+  // S3：被同主题新说法取代的旧条不进兜底块；全被剔除时保底留一条，别空手
+  const memFallback = ejectOn
+    ? (() => {
+      const k = memFallbackAll.filter((m) => { try { return !isStale(db, aid, m) } catch { return true } })
+      return k.length ? k : memFallbackAll.slice(0, 1)
+    })()
+    : memFallbackAll
   // 兜底记忆块也要贴来源：否则「我猜的」和「你亲口说的」在这里又长成同一句。
-  const memLineOf = (m) => '- ' + memoryTag(m, Date.now(), { provenance: provOn, age: ageOnMem }) + oneLine(m.text, 60)
+  const memLineOf = (m) => '- ' + memoryTag(m, Date.now(), { provenance: provOn, age: ageOnMem }) + oneLine(m.text, 60) + passportLine(db, aid, m, { on: passportOn, weak: weakOn })
 const memText = recallOverride
     ? dynText
     : (dynText || (memFallback.length ? memFallback.slice(0, 4).map(memLineOf).join('\n') : ''))
@@ -1296,20 +1342,64 @@ try { markSurfacedUsed(db, aid, reply) } catch { /* 瑙傛祴澶辫触涓嶅奖�
   __probe('reply-buffered len=' + reply.length)
 }
 
+/** 找桥接插件的会话映射表：实现搬到 src/modules/qq_watch.js（看板也要用同一份路径规则）。 */
+
 /**
- * 找桥接插件的会话映射表（qq-sessions.json）。
- * 桥接插件把它写在 config.cwd（默认就是 DSH 进程的工作目录）里，
- * 内容是 `{"u:123":"qq-xxxx-...", "g:456":"..."}`，靠它才认得出群号和陌生人。
- * 找不到就返回空串，qq_bridge 会退化成只认主人。
+ * QQ 会话重建后自动续绑。
+ *
+ * 桥接每次重启 / 断线都会换一个新的 sessionId（`qq-<hash>-<时间戳>` 后半段变了），
+ * 而绑定表里还挂着旧的那个——于是新会话在记忆链上是「陌生人」：不召回、不挂人格段。
+ * 这里按「这条聊天原本归谁」把新 id 接回去。只做续绑：已经有绑定的会话一律不动，
+ * 用户手动绑的结果不会被覆盖。
+ *
+ * 认人顺序：
+ *   1) qq-sessions.json 里有这条 key → chatKey → conversations 表（qq:p:<号> / qq:g:<号>）归谁；
+ *   2) 同一个 chatKey 的旧会话还绑着谁（conversations 没记时）；
+ *   3) 都认不出就返回 null，保持原样——绝不随便挑一个绑上去。
+ *
+ * 导出给测试用（test/qq-rebind.test.mjs）；业务里只由 attachQQBridge 的 autoBind 调。
+ *
+ * @param {object} db 库
+ * @param {string} sid 会话 id（`qq-<24hex>-<时间戳>`）
+ * @param {{sessionsFile?: string}} [opts] 测试可指定映射表路径
+ * @returns {string|null} 绑上的 agent id；没动手返回 null
  */
-function findQQSessionsFile() {
-  const candidates = []
-  try { candidates.push(path.join(process.cwd(), 'qq-sessions.json')) } catch { /* ignore */ }
-  try { candidates.push(path.join(path.dirname(DB_PATH), 'qq-sessions.json')) } catch { /* ignore */ }
-  for (const f of candidates) {
-    try { if (fs.existsSync(f)) return f } catch { /* ignore */ }
+export function autoBindQQSession(db, sid, opts = {}) {
+  const s = String(sid || '')
+  if (!db || !isQQSessionId(s)) return null
+  try { if (bindingOf(db, s)) return null } catch { /* 读不到绑定就当没绑 */ }
+  // ① 聊天映射表 → chatKey → conversations 表（qq:p:<号> / qq:g:<号>）里这条聊天归谁
+  let key = ''
+  try {
+    const file = opts && opts.sessionsFile ? String(opts.sessionsFile) : findQQSessionsFile()
+    key = chatKeyOfSessionId(s, loadSessionMap(file) || {})
+  } catch { key = '' }
+  if (key) {
+    const conv = conversationIdOf(key)
+    if (conv) {
+      try {
+        const row = db.prepare("SELECT agent_id FROM conversations WHERE conversation_id=? AND state='active'").get(conv)
+        if (row && row.agent_id) {
+          const r = bindSession(db, row.agent_id, s, { source: 'qq-rebind' })
+          if (r && r.ok) return r.agent_id
+        }
+      } catch { /* 继续走 ② */ }
+    }
   }
-  return ''
+  // ② 同一个 chatKey 的旧会话（前半段 hash 相同、只有时间戳后缀变了）还绑着谁。
+  // 不依赖映射表：桥接还没把 qq-sessions.json 写完、或群聊没记进 conversations 时，这里是最后一道。
+  // sessionId 形如 `qq-<24 位 hash>-<时间戳>`，前 27 个字符就是稳定的那段。
+  try {
+    const digest = s.slice(0, 27)
+    if (digest.length === 27) {
+      const old = db.prepare("SELECT agent_id FROM bindings WHERE session_id LIKE ? AND session_id<>? AND state='bound' ORDER BY bound_at DESC LIMIT 1").get(digest + '-%', s)
+      if (old && old.agent_id) {
+        const r = bindSession(db, old.agent_id, s, { source: 'qq-rebind' })
+        if (r && r.ok) return r.agent_id
+      }
+    }
+  } catch { /* 认不出就保持原样 */ }
+  return null
 }
 
 /** 一个 DSH sessionId 在 QQ 那边的身份（不是 QQ 会话返回 null）。 */
@@ -1343,6 +1433,31 @@ function qqAidOf(db, key) {
     return activeAgentId(db)
   }
   return sessionAgentId(db, k) || activeAgentId(db)
+}
+
+/**
+ * 会话 → 意识体，只认得出、不猜：
+ *   1) 绑定表里这条会话直接绑了谁；
+ *   2) QQ 会话：反查桥接的会话映射表，拿到 chatKey 再查 conversations。
+ * 认不出返回空串——工具那边会退回「当前发起人」，不会拿着别人家的库乱写。
+ */
+function agentOfSession(d, sid) {
+  const s = String(sid || '')
+  if (!s) return ''
+  try { const a = sessionAgentId(d, s); if (a) return a } catch { /* 继续 */ }
+  try {
+    if (isQQSessionId(s)) {
+      const map = loadSessionMap(findQQSessionsFile()) || {}
+      for (const [key, id] of Object.entries(map)) {
+        if (String(id) !== s) continue
+        const conv = conversationIdOf(key)
+        if (!conv) continue
+        const row = d.prepare("SELECT agent_id FROM conversations WHERE conversation_id=? AND state='active'").get(conv)
+        if (row && row.agent_id) return String(row.agent_id)
+      }
+    }
+  } catch { /* 认不出就空 */ }
+  return ''
 }
 
 /**
@@ -2186,6 +2301,8 @@ function hostSpec() {
     tools: createActionTools({
       getDb: () => ensureDb(),
       getAgentId: () => initiatorAgentId(),
+      // QQ 会话里没有「当前发起人」：按这条会话自己认人，别让 feel 写成 no_db。
+      getAgentIdForSession: (sid) => { try { return agentOfSession(ensureDb(), sid) } catch { return '' } },
       getWeb: () => optionalService('web'),
       getModel: () => model,
       // 第二道闸：工具执行前自己再判一次（守卫那层注册失败/降级时还拦得住）
@@ -2279,6 +2396,8 @@ try {
       getAid: () => activeAgentId(ensureDb()),
       // 按会话归属认人：绑了小汐就是小汐的，别拿网页那边当前激活的顶替。
       resolveAid: (d, key) => qqAidOf(d, key),
+      // 桥接重建 sessionId 时把新会话续绑回原来的意识体（否则记忆链断在新 id 上）。
+      autoBind: (d, sid) => autoBindQQSession(d, sid),
       param: (k, hint) => {
         const d = ensureDb()
         const aid = (hint && qqAidOf(d, hint)) || initiatorAgentId() || activeAgentId(d)

@@ -259,25 +259,24 @@ check('schema 到 13', Number(db.prepare('SELECT version FROM schema_meta').get(
     db.prepare('UPDATE bindings SET last_seen_at=? WHERE session_id=?')
       .run(new Date(Date.now() - seenAgoMs).toISOString(), sid)
   }
-  bindAt('sess-arch-old', 2 * day)      // 归档 + 凉透 → 不算、该松
-  bindAt('sess-arch-fresh', 10 * min)   // 归档但刚动过 → 宽限期内还算
+  bindAt('sess-arch-old', 2 * day)      // 归档很久 → 不算、该松
+  bindAt('sess-arch-fresh', 10 * min)   // 归档但刚动过 → 也不算、立刻松
   bindAt('sess-arch-live', 5 * min)     // 没归档 → 算
   const arch = new Set(['sess-arch-old', 'sess-arch-fresh'])
 
-  check('归档凉透的不算进角标', liveBindingCounts(db, Date.now(), { archived: arch }).get(E) === 2,
+  check('归档的不算进角标（刚归档的也不算）', liveBindingCounts(db, Date.now(), { archived: arch }).get(E) === 1,
     liveBindingCounts(db, Date.now(), { archived: arch }).get(E))
   check('裸 SQL 会多算（旧口径复现）',
     Number(db.prepare("SELECT COUNT(*) n FROM bindings WHERE agent_id=? AND state='bound'").get(E).n) === 3)
   check('在场状态跟角标同口径', runtimeStateOf(db, E) === 'bound')
 
   const swept = sweepBindings(db, { archived: arch, idleDays: 0 })
-  check('只松归档且凉透的那段', swept === 1, swept)
-  check('宽限期内归档的还留着', bindingsOf(db, E).length === 2, bindingsOf(db, E).map((r) => r.session_id))
-  const ar = db.prepare("SELECT released_by FROM bindings WHERE session_id='sess-arch-old'").get()
-  check('归档松绑留痕 released_by=archived', ar.released_by === 'archived', ar)
-  check('过了宽限期才松', sweepBindings(db, { archived: arch, idleDays: 0, at: Date.now() + 7 * 3600000 }) === 1)
-  check('正常人没被误松', bindingsOf(db, E).length === 1 && bindingsOf(db, E)[0].session_id === 'sess-arch-live',
+  check('归档的立即松，不等宽限', swept === 2, swept)
+  check('没归档的正常留着', bindingsOf(db, E).length === 1 && bindingsOf(db, E)[0].session_id === 'sess-arch-live',
     bindingsOf(db, E).map((r) => r.session_id))
+  const ar = db.prepare("SELECT released_by FROM bindings WHERE session_id='sess-arch-fresh'").get()
+  check('归档松绑留痕 released_by=archived', ar.released_by === 'archived', ar)
+  check('再扫一遍不会重复松', sweepBindings(db, { archived: arch, idleDays: 0 }) === 0)
   db.prepare("UPDATE bindings SET state='released' WHERE agent_id=?").run(E)
   check('全松完回 idle', runtimeStateOf(db, E) === 'idle', runtimeStateOf(db, E))
 }

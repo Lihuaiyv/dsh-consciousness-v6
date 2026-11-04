@@ -40,6 +40,7 @@ import * as act from './modules/actions/index.js'
 import * as br from './modules/browse.js'
 import * as sg from './modules/sangguan/api.js'
 import * as bd from './modules/binding.js'
+import * as qw from './modules/qq_watch.js'
 import * as cv from './modules/conversations.js'
 import * as au from './modules/self_author.js'
 import * as res from './modules/self_residue.js'
@@ -63,7 +64,7 @@ function scoped(bound, aid) {
 
 /**
  * 一个实例「真正挂着」几段对话。
- * 和 bindingsOf().length 的区别：已归档、且过了宽限期的会话不算 ——
+ * 和 bindingsOf().length 的区别：已归档的会话不算 ——
  * 界面上「接着 N 段对话」不该把主人归档掉的历史一直累进去。
  */
 function liveBound(db, aid) {
@@ -255,12 +256,18 @@ async function routes(db, method, path, body, role, bound) {
     return { conversation_id: id, released: cv.releaseConversation(db, id, 'user') }
   }
   if (method === 'GET' && path.split('?')[0] === '/v1/qq/health') {
-    const h = await cv.probeBridge()
+    // 桥现在是挂在宿主进程里的插件，不开端口：先问本地运行快照；
+    // 宿主刚重启、第一份心跳还没写下来时算「启动中」；最后才退回 HTTP 探测。
+    const h = qw.qqBridgeProbe() || qw.qqBridgeWarming() || await cv.probeBridge()
     let last = null
     try {
       last = db.prepare("SELECT conversation_id, handle, last_seen_at FROM conversations WHERE state='active' ORDER BY last_seen_at DESC LIMIT 1").get() || null
     } catch { last = null }
     return { ...h, last_conversation: last, owner: cv.ownerHandle(db), default_agent: cv.defaultAgentId(db) }
+  }
+  // QQ 接线：每段聊天现在挂在哪个会话上、断没断（只读）。
+  if (method === 'GET' && path.split('?')[0] === '/v1/qq/watch') {
+    return qw.qqWatchData(db)
   }
   if (method === 'GET' && path === '/v1/qq/settings') {
     return { owner: cv.ownerHandle(db), default_agent: cv.defaultAgentId(db), prompt_budget: cv.promptBudget(db), history_turns: cv.historyTurns(db), recall_items: cv.recallItems(db), conversations: cv.listConversations(db, null, 20) }
@@ -280,7 +287,7 @@ async function routes(db, method, path, body, role, bound) {
     const rows = db.prepare(sql).all().filter((a) => !bound || a.id === bound)
     // 多实例：每行带上「在场状态 / 挂着几段对话 / 要不要绑下一段新会话」
     const pending = bd.peekPending(db)
-    // 「挂着几段」按**还活着的**算：已归档、且过了宽限期的会话不算（角标不该把归档历史也累进去）。
+    // 「挂着几段」按**还活着的**算：已归档的会话不算（角标不该把归档历史也累进去）。
     // 裸 COUNT(*) 会把主人归档掉的旧对话全带上，所以走 binding.js 的统一口径。
     let counts = new Map()
     try { counts = bd.liveBindingCounts(db) } catch { /* 老库没有 bindings 列时保持 0 */ }
@@ -421,6 +428,10 @@ async function routes(db, method, path, body, role, bound) {
     const sm = path.split('?')[0].match(/^\/v1\/sessions\/([^/]+)\/agent$/)
     if (sm) {
       const sid = decodeURIComponent(sm[1])
+      // 归档 = 这段不要了：牌子立刻摘掉，不等心跳来松绑。
+      let arch = null
+      try { arch = bd.archivedSessionIds() } catch { arch = null }
+      if (arch && arch.has(sid)) return { session_id: sid, agent: null, state: 'archived' }
       const brow = bd.bindingOf(db, sid)
       if (!brow) return { session_id: sid, agent: null, state: 'unbound' }
       const a = db.prepare('SELECT id,name,avatar,status FROM agents WHERE id=?').get(brow.agent_id)
@@ -620,6 +631,8 @@ async function routes(db, method, path, body, role, bound) {
       db.prepare('UPDATE agents SET avatar=? WHERE id=?').run(v, aid)
       return { ok: true, bytes: v.length }
     }
+    // 阶段 E：记忆体检——挤出了多少、有多少条会带时间、key 分身份。只读。
+    if (method === 'GET' && sub === 'memory' && sub2 === 'health') return rl.memoryHealth(db, aid)
     if (method === 'GET' && sub === 'memory' && sub2 === 'timeline') return sd.timeline(db, aid, { days: Number(q(path, 'days') || 14) })
     // G1：单条记忆的版本时间线（Mem0 式 history）
     {

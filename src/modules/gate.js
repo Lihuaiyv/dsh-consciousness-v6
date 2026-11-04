@@ -16,7 +16,8 @@ import { attrConflict } from './contradict.js'
 import { buildSearchText, conflictPairExists } from './memory.js'
 import { hasNegation, isPositiveCompoundAt } from './negation.js'
 import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
-import { tx } from '../kernel.js'
+import { isStalePair } from './stale_pair.js'
+import { tx, getParam } from '../kernel.js'
 
 export const GATE = Object.freeze({
   MERGE: 0.92,
@@ -166,9 +167,9 @@ export function decideWrite(db, aid, cand = {}) {
   }
   if (best.score >= GATE.CONFLICT) {
     // 相近但没到合并线、极性也一样：可能是换了说法，也可能只是用词接近 → 新增
-    return { action: 'new', score: best.score, reason: '相近但不确定' }
+    return { action: 'new', score: best.score, target: best.row, reason: '相近但不确定' }
   }
-  return { action: 'new', score: best.score }
+  return { action: 'new', score: best.score, target: best.row }
 }
 
 /**
@@ -214,6 +215,35 @@ function commitUpdate(db, aid, target, cand, write) {
 export function applyWrite(db, aid, cand, write, opt = {}) {
   const d = decideWrite(db, aid, cand)
   if (d.action === 'drop') return { action: 'drop', reason: d.reason, score: d.score }
+
+  // S4：时间顺序明确的「没做完 → 做好了」——只在门控判「冲突 / 新增」时看；
+  // 合并、改写、删除走到各自的分支，别被取代逻辑抢走。
+  // 默认只观测（记事件）；开关打开后才真的取代。
+  try {
+    const canReplace = d.action === 'conflict' || d.action === 'new'
+    if (canReplace && d.target && isStalePair(d.target.text, cand.text)) {
+      const mode = String(getParam(db, aid, 'memory.write.stale_supersede') || 'off')
+      if (mode === 'on') {
+        const r = write(cand)
+        if (r && r.id) {
+          const at = new Date().toISOString()
+          invalidateMemory(db, aid, d.target.id, { at, reason: 'stale_supersede', causeId: r.id, actor: 'gate' })
+          db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
+            'memory.stale_superseded', JSON.stringify({ old: d.target.id, by: r.id, via: 'gate' }), at)
+          return { action: 'supersede', id: r.id, score: d.score, stale: true }
+        }
+      } else {
+        // 只观测：把类型和分带上，阶段 F 的回放要拿它当样本。
+        db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
+          'memory.stale_pair_seen', JSON.stringify({
+            old: d.target.id, via: 'gate',
+            targetType: d.target.type || null, score: d.score,
+            oldText: String(d.target.text || '').slice(0, 80), newText: String(cand.text || '').slice(0, 80),
+          }), new Date().toISOString())
+      }
+    }
+  } catch { /* 检测失败不拦写入 */ }
+
   if (d.action === 'merge') {
     try {
       db.prepare('UPDATE memory_items SET hits=hits+1, last_hit_at=?, weight=MIN(1, COALESCE(weight,0.5)+?), version=version+1 WHERE id=?')
@@ -237,7 +267,7 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
 
   // 这一对记忆之间已经开过案（开着的，或者你之前拍过板的）：别再开第二张卡。
   // 否则每抽到一个新说法就重新弹一张同样的冲突，判完还会再来。
-  if (r && r.id && conflictPairExists(db, aid, d.target.id, r.id)) {
+  if (r && r.id && conflictPairExists(db, aid, d.target.id, r.id, { openOnly: true })) {
     return { action: 'new', id: r.id, score: d.score, dedup: 'existing-conflict' }
   }
 

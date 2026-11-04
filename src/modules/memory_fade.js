@@ -112,12 +112,17 @@ const IMPORTANCE_GATE = {
  */
 const KEEP_TYPES = new Set(['value', 'boundary', 'taboo', 'promise', 'identity', 'conflict'])
 
+// S5：未完成状态不模糊——「还没做完」被删成「没做」会语义反转。
+import { hasPendingState } from './stale_pair.js'
+
 /**
  * 这条记忆要不要参与模糊。钉住的一律不动，豁免类型不动，类型不在门槛表里的不动。
+ * 带「还没 / 待 / 等…之后」的也不动：那是未完成状态，不是可糊的旧事。
  */
 export function shouldFade(item, days) {
   if (!item) return false
   if (String(item.mark || '') === 'locked') return false
+  if (hasPendingState(item.text)) return false
   const type = String(item.type || '')
   if (KEEP_TYPES.has(type)) return false
   const gate = IMPORTANCE_GATE[type]

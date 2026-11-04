@@ -33,10 +33,14 @@ seedTiers(db)
 
 const OLD = '主人当时说「这版先放着」，后来又说了别的。'
 const MID = '主人今天在改接线（那部分一直没弄完），说要先跑一遍。'
+// S5：带未完成状态的半旧记忆不模糊；普通半旧记忆照旧删括号
+const MID2 = '主人今天在接网线（线头有点乱），说要先跑一遍。'
 addMemory(db, aid, { text: OLD, type: 'fact' })
 addMemory(db, aid, { text: MID, type: 'fact' })
+addMemory(db, aid, { text: MID2, type: 'fact' })
 db.prepare("UPDATE memory_items SET created_at=?, importance=0.4 WHERE agent_id=? AND text=?").run(new Date(Date.now() - 200 * DAY).toISOString(), aid, OLD)
 db.prepare("UPDATE memory_items SET created_at=?, importance=0.4 WHERE agent_id=? AND text=?").run(new Date(Date.now() - 45 * DAY).toISOString(), aid, MID)
+db.prepare("UPDATE memory_items SET created_at=?, importance=0.4 WHERE agent_id=? AND text=?").run(new Date(Date.now() - 45 * DAY).toISOString(), aid, MID2)
 
 const rows = db.prepare('SELECT id,text,created_at,importance,type,mark FROM memory_items WHERE agent_id=? ORDER BY created_at').all(aid)
 const items = rows.map((r) => ({ partition: 'T1', ...r }))
@@ -44,7 +48,8 @@ const items = rows.map((r) => ({ partition: 'T1', ...r }))
 const out = packMemoryBlock(db, aid, items, 400)
 check('旧记忆的原话被删掉', !out.text.includes('这版先放着'), out.text)
 check('旧记忆的主干还在', out.text.includes('后来又说'), out.text)
-check('半旧记忆的括号被删掉', !out.text.includes('那部分一直没弄完'), out.text)
+check('带未完成状态的半旧记忆不模糊', out.text.includes('那部分一直没弄完'), out.text)
+check('普通半旧记忆的括号被删掉', !out.text.includes('线头有点乱'), out.text)
 check('半旧记忆的主干还在', out.text.includes('改接线'), out.text)
 check('照样带时间标签', /（\d+ 个月前/.test(out.text), out.text)
 

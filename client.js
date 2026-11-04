@@ -109,15 +109,15 @@ window.__ModuleLoader__.load({
 
     // 鍦板熀闄勫綍 E锛?2 鏉★紝椤哄簭涓?/v1/metrics/catalog 瀵归綈锛沨ard = 8 鏉″彂鐗堢‖闂ㄦ
     const SPEC = [
-      ['鈮?0.70', 'LoCoMo', true], ['鈮?0.75', 'BEIR', false], ['鈮?0.15', 'LoCoMo', true],
-      ['鈮?0.90', 'LongMemEval', false], ['鈮?0.65', 'LongMemEval', false],
+      ['≥0.70', 'LoCoMo', true], ['≥0.75', 'BEIR', false], ['≤0.15', 'LoCoMo', true],
+      ['≥0.90', 'LongMemEval', false], ['≥0.65', 'LongMemEval', false],
       ['≥ 0.85 / ≥ 0.90', '人工冲突对', false], ['≥ 0.60', 'RAGAS', false],
       ['≥ 0.80', '90 天留存', false], ['≤ 预算 90%', '注入统计', false],
-      ['鈮?0.80', 'CharacterEval', true], ['鈮?0.85', 'CharacterEval', false],
+      ['≥0.80', 'CharacterEval', true], ['≥0.85', 'CharacterEval', false],
       ['≥ 0.85', 'PersonaChat', false], ['≤ 0.10', '产品定义', true],
       ['= 0', '全量扫描', false], ['≥ 0.80', '重复场景', false],
       ['≤ 0.05', '字段占比', false], ['= 100%', '带来源', false],
-      ['鈮?0.60', 'Landis & Koch', true], ['鈮?0.15', 'GoEmotions / MELD', false],
+      ['≥0.60', 'Landis & Koch', true], ['≤0.15', 'GoEmotions / MELD', false],
       ['≥ 0.75', 'EmpatheticDialogs', false], ['≥ 0.75', '双时间常数', false],
       ['≥ 0.80 / ≥ 0.75', '人工标注', false], ['≥ 0.70', '人工 vs 系统', false],
       ['≤ 0.10', '长时不衰减', false], ['≤ 1 轮', '断流到告警', false],
@@ -130,7 +130,7 @@ window.__ModuleLoader__.load({
       ['≤ 5%', '指标下降', false], ['≤ 1 轮', 'SRE MTTR', false],
       ['= 100%', '变更留痕', false], ['= 100%', '抽样演练', false],
       ['= 100%', 'C1–C3 提案', true], ['= 100%', 'INV9', false],
-      ['= 100%', 'INV11', false], ['鈮?80ms', 'SRE p95', true],
+      ['= 100%', 'INV11', false], ['≤80ms', 'SRE p95', true],
       ['≥ 80%', '请求统计', false], ['= 100%', '故障注入', false],
       ['每季度通过', '恢复演练', false], ['通过', '新用户测试', false],
       ['通过', '可用性测试', false], ['≥ 4 / 5', '每周问卷', false],
@@ -346,7 +346,7 @@ window.__ModuleLoader__.load({
 .dshc-gate{display:inline-flex;align-items:center;gap:4px;padding:4px 6px 4px 5px;border-radius:5px;white-space:nowrap;
   font:10px/1 var(--mono);letter-spacing:.02em;color:var(--muted);
   border:1px solid color-mix(in srgb,var(--line2) 55%,transparent);background:color-mix(in srgb,var(--panel2) 40%,transparent)}
-.dshc-gate::before{content:'路';font-size:11px;line-height:1;opacity:.65}
+.dshc-gate::before{content:'·';font-size:11px;line-height:1;opacity:.65}
 .dshc-gate.on{color:color-mix(in srgb,var(--ok) 78%,var(--ink));
   border-color:color-mix(in srgb,var(--ok) 42%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent);
   box-shadow:inset 0 0 8px color-mix(in srgb,var(--ok) 12%,transparent)}
@@ -588,7 +588,7 @@ window.__ModuleLoader__.load({
   transition:width .45s cubic-bezier(.2,.8,.2,1)}
 .dshc-need .rim{position:absolute;top:-4px;bottom:-4px;width:1px;background:color-mix(in srgb,var(--ink) 42%,transparent);
   transform:translateX(-50%);transition:background .3s}
-/* 瓒婇タ瓒婄儹锛氱惀鐝€ 鈫?姗欑孩 鈫?绾?鈫?鍙戠儷 */
+/* 瓒婇タ瓒婄儹锛氱惀鐝€ →姗欑孩 →绾?→鍙戠儷 */
 .dshc-need .halo{position:absolute;top:50%;transform:translateY(-50%);height:26px;border-radius:13px;
   pointer-events:none;opacity:0;filter:blur(9px);
   background:radial-gradient(ellipse at 70% 50%,color-mix(in srgb,var(--bad) 70%,transparent),transparent 72%);
@@ -1059,7 +1059,7 @@ window.__ModuleLoader__.load({
       h('i'), h('i'), h('i'),
       h('b', { style: { width: Math.round(size * 0.52), height: Math.round(size * 0.52) } }))
 
-    /* ---------------- 鎯呯华 鈫?澶栬 ----------------
+    /* ---------------- 鎯呯华 →澶栬 ----------------
      * 一条连续的光谱，不是几档预设：
      *   绉瀬 = 寰€涓婇銆佸揩銆佷寒銆佽竟涓婂啋閲戣壊鏄熺偣锛堟椿娉硷級锛?     *   娑堟瀬 = 鍐风伆銆佹殫銆佹參鎱㈠線涓嬪潬銆佸洓鍛ㄥ帇涓€灞傛殫锛堟秷娌夛級锛?     *   0 闄勮繎 = 寰堟參鍦拌崱鐫€锛屼笉娲绘臣涔熶笉娌夈€?     * 寮哄害 ins 鍙斁澶?缂╁皬骞呭害锛屼笉鏀规柟鍚戙€?     */
     const EMO_COLD = [96, 108, 142]
@@ -1352,7 +1352,7 @@ window.__ModuleLoader__.load({
       const hasLine = pts.length >= 2
       /* 这段在屏幕上不到 8 像素宽（比如只有几天记录却看一年），就别画线了，画出来是根竖刺 */
       const drawLine = hasLine && visW >= 8
-      /* 绌烘。 鈫?鍥炶惤鏇茬嚎锛氭湇鍔＄绠楀ソ褰㈢姸锛岃繖閲屽彧璐熻矗鐢汇€?         sleep = 鐫＄潃/涓嶅湪锛堝帇娣★級锛宺est = 閱掔潃浣嗘柇浜嗗崄鍒嗛挓浠ヤ笂锛堟洿娣★級銆?*/
+      /* 绌烘。 →鍥炶惤鏇茬嚎锛氭湇鍔＄绠楀ソ褰㈢姸锛岃繖閲屽彧璐熻矗鐢汇€?         sleep = 鐫＄潃/涓嶅湪锛堝帇娣★級锛宺est = 閱掔潃浣嗘柇浜嗗崄鍒嗛挓浠ヤ笂锛堟洿娣★級銆?*/
       const sleeps = (data && data.sleep) || []
       const rests = (data && data.rest) || []
       const toRange = (s) => ({ aMs: Date.parse(s.from), bMs: Date.parse(s.to) })
@@ -1366,7 +1366,7 @@ window.__ModuleLoader__.load({
       const restRanges = rests.map(toRange).concat(awayItems.map(toRange)).filter(inRange)
       const modeAt = (ms) => (sleepRanges.some((g) => ms > g.aMs && ms < g.bMs) ? 'sleep'
         : (restRanges.some((g) => ms > g.aMs && ms < g.bMs) ? 'rest' : 'live'))
-      /* 姣忔绌烘。鎷兼垚銆岃捣鐐?鈫?鎺ㄦ紨鏇茬嚎 鈫?涓嬩竴涓湡璇绘暟銆嶄竴鏉＄偣鍒椼€?         涓荤嚎涔熻蛋杩欎唤鐐癸紝鎵€浠ユ贰鐨勯偅鎴拰浜殑閭ｆ埅鏄悓涓€鏍圭嚎锛屾帴缂濆涓嶄細涓€鏍瑰仠鍦ㄨ繖銆佷竴鏍逛粠鍒璧枫€?*/
+      /* 姣忔绌烘。鎷兼垚銆岃捣鐐?→鎺ㄦ紨鏇茬嚎 →涓嬩竴涓湡璇绘暟銆嶄竴鏉＄偣鍒椼€?         涓荤嚎涔熻蛋杩欎唤鐐癸紝鎵€浠ユ贰鐨勯偅鎴拰浜殑閭ｆ埅鏄悓涓€鏍圭嚎锛屾帴缂濆涓嶄細涓€鏍瑰仠鍦ㄨ繖銆佷竴鏍逛粠鍒璧枫€?*/
       const gapSeries = [...sleeps, ...rests].map((s) => {
         const list = [{ at: Date.parse(s.from), v: Number(s.s0) }]
         for (const p of s.curve || []) list.push({ at: Number(p.at), v: Number(p.s) })
@@ -1867,7 +1867,7 @@ window.__ModuleLoader__.load({
                 '缺口 ' + n.toFixed(2),
                 h('span', { className: 'num' }, ' · 胃口 ' + s.toFixed(2) + ' · 现在 ' + x.toFixed(2)))
               : h('span', null, needWord(n), h('span', { className: 'num' }, ' ' + n.toFixed(2)))),
-          h('span', { className: 'chev' }, isOpen ? '鈱?' : '鈱?'))
+          h('span', { className: 'chev' }, isOpen ? '⌃' : '⌄'))
         const detail = isOpen
           ? h('div', { key: k + '-d', className: 'dshc-need-detail' },
             // 鈶?涓€鍙ヨ瘽鍏堣缁撹锛氱幇鍦ㄤ粈涔堢姸鎬併€佸湪绗嚑浣嶃€佸涓嶅鏍煎紑鍙?''
@@ -2861,7 +2861,7 @@ window.__ModuleLoader__.load({
           h('a', {
             href: '#', className: 'dshc-back', title: '回到角色卡',
             onClick: (e) => { e.preventDefault(); setAid(null) },
-          }, '鈫?'),
+          }, '→'),
           h('span', { className: 'dshc-avw', 'data-off': running ? '0' : '1', title: agent.name },
             h(Avatar, { src: agent.avatar, size: 30 })),
           h('div', { style: { minWidth: 0 } },
@@ -2996,7 +2996,7 @@ window.__ModuleLoader__.load({
       out.push('记得你 ' + (o.memory_count || 0) + ' 件事')
       if (o.recent && o.recent.last_interaction) out.push('上次说话是' + ago(o.recent.last_interaction))
       if (o.inbox && o.inbox.todo) out.push('有 ' + o.inbox.todo + ' 件事等你点头')
-      return out.join(' 路 ')
+      return out.join(' · ')
     }
 
     function OverviewPage({ aid, tab, ov, setTab, setAid, agent, act, view, jump, reloadOv, reloadAgents, onToggleRunning, close }) {
@@ -3181,7 +3181,7 @@ window.__ModuleLoader__.load({
           const v = key && values && values[key] != null ? values[key].value : null
           const act = key && METRIC_ACTIONS[key]
           return h('div', { key: idx, className: 'dshc-item' },
-            h(Pill, { tone: hard ? 'bad' : undefined }, hard ? '鈽?' : '路'),
+            h(Pill, { tone: hard ? 'bad' : undefined }, hard ? '★' : '·'),
             h('div', { className: 't' },
               h('div', null, label),
               h('div', { className: 'dshc-sub dshc-mono' }, (key || '') + ' · 目标 ' + target + (view === 'tech' ? ' · ' + basis : ''))),
@@ -3588,7 +3588,7 @@ window.__ModuleLoader__.load({
             strokeWidth: 1, strokeDasharray: '2 7',
             style: { fill: 'none', stroke: 'var(--line)', animationDuration: (88 + i * 26) + 's' },
           })),
-          // 鎴?鈫?姣忎釜浜猴細浠庝腑蹇冭竟缂樺嚭鍙戯紝钀藉湪鑺傜偣杈圭紭
+          // 鎴?→姣忎釜浜猴細浠庝腑蹇冭竟缂樺嚭鍙戯紝钀藉湪鑺傜偣杈圭紭
           placed.map((n) => {
             const dx = n.x - cx, dy = n.y - cy
             const d = Math.hypot(dx, dy) || 1
@@ -3607,7 +3607,7 @@ window.__ModuleLoader__.load({
               },
             })
           }),
-          // 浜?鈫?浜猴細鍚戝寮撲竴鐐癸紝璋佸拰璋佹湁鍏崇郴涓€鐪肩湅鍑烘潵
+          // 浜?→浜猴細鍚戝寮撲竴鐐癸紝璋佸拰璋佹湁鍏崇郴涓€鐪肩湅鍑烘潵
           links.map((e) => {
             const a = byId.get(e.from), b = byId.get(e.other.id)
             const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2
@@ -3677,7 +3677,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dshc-rmap-info' }, cur
           ? [
             h('b', { key: 'n' }, cur.name),
-            h('span', { key: 't' }, (LABEL[cur.tier] || cur.tier) + ' 路 '),
+            h('span', { key: 't' }, (LABEL[cur.tier] || cur.tier) + ' · '),
             h('span', { key: 'm', className: 'm' },
               '亲近 ' + Number(cur.closeness || 0).toFixed(2)
               + ' · 信任 ' + Number(cur.trust || 0).toFixed(2)
@@ -3707,7 +3707,7 @@ window.__ModuleLoader__.load({
           const lean = gap < 0.02 ? null : (aw > bw ? A : B)
           return h('div', { key: a, className: 'dshc-ten' },
             h('span', { className: 'q' }, q),
-            h('span', { className: 'p dshc-mono' }, A.label + ' ' + aw.toFixed(2) + ' 鈫?' + B.label + ' ' + bw.toFixed(2)),
+            h('span', { className: 'p dshc-mono' }, A.label + ' ' + aw.toFixed(2) + ' →' + B.label + ' ' + bw.toFixed(2)),
             h('span', { className: 'l', 'data-on': lean ? '1' : '0' },
               lean ? (gap < 0.05 ? '略偏「' : '偏「') + lean.label + '」' : '还没偏向'))
         }))
@@ -3744,6 +3744,32 @@ window.__ModuleLoader__.load({
       { key: 'mid', label: '中期', hint: '还热着' },
       { key: 'long', label: '长期', hint: '抽屉里' },
     ]
+    /**
+     * 时态（记忆时态 v5）：哪些旧说法被收起来了、哪些旧判断会带上日期。
+     * 只读，数字来自 GET /v1/agents/:id/memory/health。
+     */
+    function TensePanel({ aid }) {
+      const [s, reload] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/memory/health'), [aid])
+      if (s.loading) return h('div', { className: 'dshc-sub' }, '读取时态…')
+      if (s.error) return h('div', { className: 'dshc-err' }, s.error)
+      const d = s.data || {}
+      const st = d.stale || {}
+      const k = d.keys || {}
+      const by = k.by_type || {}
+      const line = (txt, title) => h('div', { className: 'dshc-sub', title }, txt)
+      return h('div', null,
+        line('已作废 ' + (Number(st.superseded) || 0) + ' 条；其中 ' + (Number(st.ejected) || 0) + ' 条不再进正桌（召回不到，只能翻账本）。'),
+        line('旧反思 / 情景 / 评价里，' + (Number(st.statement_eligible) || 0) + ' 条超过三天，注入时会带一句「这是哪天的判断」。'),
+        line('真槽位 key（事实 / 评价）' + (Number(d.passport && d.passport.slot) || 0) + ' 条；带 key 的共 ' + (Number(k.with_key) || 0) + ' 条（其余是检索用，不参与判新旧）。'),
+        Object.keys(by).length
+          ? h('details', { className: 'dshc-fold' },
+            h('summary', null, '按类型的 key 分布'),
+            Object.entries(by).map(([t, v]) => h('div', { key: t, className: 'dshc-sub' },
+              (TYPE_LABEL[t] || t) + '：' + (Number(v.total) || 0) + ' 条，带 key ' + (Number(v.key) || 0) + ' 条')))
+          : null,
+        h('div', { style: { marginTop: 6 } }, h(Btn, { onClick: () => reload() }, '刷新')))
+    }
+
     function TopMemory({ aid, tick, row, act, onWrote }) {
       const [openN, setOpenN] = useState(0)
       const [msg, setMsg] = useState('')
@@ -3874,7 +3900,7 @@ window.__ModuleLoader__.load({
             Number.isFinite(sim) ? '字面相似 ' + (sim * 100).toFixed(0) + '%' : null,
             c.kind === 'polarity' ? '说法相反' : (c.kind || null),
             c.severity === 'high' ? '它自己有被卡住' : null,
-          ].filter(Boolean).join(' 路 ')
+          ].filter(Boolean).join(' · ')
           const side = (which, m, tip) => h('div', {
             key: which, className: 'dshc-item',
           },
@@ -4006,6 +4032,9 @@ window.__ModuleLoader__.load({
 
         h(Sec, { title: '时间线', desc: '最近 5 天它记住了什么，按天排；点开某天看细节。' },
           h(TimelineView, { aid })),
+
+        h(Sec, { title: '时态', desc: '它怎么区分「那时候」和「现在」：哪些旧说法被收起来了，哪些旧判断会带上日期。只读。' },
+          h(TensePanel, { aid })),
 
         h(Sec, { title: view === 'user' ? '它记得的事' : '记忆（FTS / decay / tiers）', desc: view === 'user' ? '最清楚的那些，按热度分档；点开某档看细节与原话。' : '列表 + 分层 + 索引；检索与衰减的细节在公式里。' },
           view === 'tech' ? h(Tech, null, 'recall = FTS5 trigram（≥3 字子串）；短问句（≤6 字）走 LIKE 兜底\nweight = w0·e^{-λ·days}（decay@v1，λ 默认 0.02）\n分层：T0 桌面 / T1 事实 / T2 纪要(L0规则·L1精修·L2簇修) / T3 日记 / T4 原文\n写入：extract · episode · consolidate · remember；改口默认 conflict（memory.write.flip_policy）\n习惯：habit.* 抬重要度 + S1 冷层窄穿透（memory.retrieve.habit_cold）\n观测：GET /memory-health · /retrieval-stats · /consolidation\n键：memory.inject.pool · memory.episode.distill* · memory.write.flip_policy · memory.retrieve.habit_cold · memory.diary.prefer_cluster') : null,
@@ -4612,7 +4641,7 @@ window.__ModuleLoader__.load({
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
     }
 
-    /** 瀛楄妭閲忕骇锛欱 鈫?KB 鈫?MB 鈫?GB 鈫?TB锛岃窡鎬婚噺娑ㄣ€?*/
+    /** 瀛楄妭閲忕骇锛欱 →KB →MB →GB →TB锛岃窡鎬婚噺娑ㄣ€?*/
     function fmtBytes(bytes) {
       const b = Number(bytes) || 0
       if (!(b > 0)) return '<0.1 KB'
@@ -4659,7 +4688,7 @@ window.__ModuleLoader__.load({
       }
       const area = d + 'L' + W + ' ' + H + ' L0 ' + H + ' Z'
 
-      // 璺ㄥ害 鈮?0 澶╂垨璺ㄥ勾 鈫?YYYY-MM锛涘惁鍒?MM-DD
+      // 璺ㄥ害 ≥0 澶╂垨璺ㄥ勾 →YYYY-MM锛涘惁鍒?MM-DD
       const spanDays = Math.max(0, n - 1)
       const y0 = String(rows[0].day || '').slice(0, 4)
       const y1 = String(rows[n - 1].day || '').slice(0, 4)
@@ -4834,7 +4863,7 @@ window.__ModuleLoader__.load({
           parts.length ? h('div', { className: 'dshc-vault-ribbon', 'aria-hidden': true },
             parts.map((x, i) => h('i', {
               key: x.key,
-              title: labelOf(x) + ' 路 ' + sizeText(x),
+              title: labelOf(x) + ' · ' + sizeText(x),
               'data-hi': hi === x.key ? '1' : '0',
               onMouseEnter: () => setHi(x.key),
               onMouseLeave: () => setHi((k) => (k === x.key ? '' : k)),
@@ -4864,14 +4893,14 @@ window.__ModuleLoader__.load({
                   h('div', { style: { flex: 1, height: 8, borderRadius: 4, background: 'var(--dsw-alias-border-secondary, #333)' } },
                     h('div', { style: { width: bar(x) + '%', height: 8, borderRadius: 4, background: color(x) } })),
                   h('span', { className: 'dshc-mono', style: { width: 200, flex: 'none', textAlign: 'right', whiteSpace: 'nowrap' } },
-                    x.pct + '% 路 ' + sizeText(x))),
+                    x.pct + '% · ' + sizeText(x))),
                 h('div', { className: 'dshc-sub', style: { marginLeft: 104 } },
                   x.rows + ' / ' + (x.cap || '—') + ' 条' + (full(x) ? '（已满）' : '') + ' · ' + x.hint + ' · ≈' + tokensOf(x).toLocaleString('en-US') + ' token'))
               : h('div', { key: x.key, className: 'dshc-vault-row', ...rowHover(x.key), style: { '--i': i } },
                 h('span', { className: 'dshc-vault-key', style: { background: vaultTone(i) } }),
                 h('span', { className: 'dshc-vault-lab' }, labelOf(x)),
                 h('span', { className: 'dshc-vault-num dshc-mono' }, x.rows + ' ' + unitOf(x)),
-                h('span', { className: 'dshc-vault-sep' }, '路'),
+                h('span', { className: 'dshc-vault-sep' }, '·'),
                 h('span', { className: 'dshc-vault-kb dshc-mono' }, sizeText(x))))),
 
           tech ? h('div', { className: 'dshc-note', style: { marginTop: 10 } },
@@ -4995,7 +5024,7 @@ window.__ModuleLoader__.load({
           '写入记忆 ' + freeRes.imported.memory + ' 条'
             + (freeRes.imported.duplicate ? ' · 已有 ' + freeRes.imported.duplicate + ' 条（跳过）' : '')
             + (freeRes.imported.skipped ? ' · 空条目 ' + freeRes.imported.skipped + ' 条' : '')
-            + (freeRes.summary ? ' 路 ' + freeRes.summary : ''))) : null
+            + (freeRes.summary ? ' · ' + freeRes.summary : ''))) : null
 
       const freePane = h('div', { style: paneStyle },
         paneTitle('随意导入'),
@@ -5255,7 +5284,7 @@ window.__ModuleLoader__.load({
                 h('em', null, tlWeekday(g.day))),
               h('span', {
                 className: 'dshc-tl-mix',
-                title: mx.map(([k, n]) => (TYPE_LABEL[k] || k) + ' ' + n).join(' 路 '),
+                title: mx.map(([k, n]) => (TYPE_LABEL[k] || k) + ' ' + n).join(' · '),
               }, mx.slice(0, 3).map(([k, n]) => h('i', { key: k, 'data-t': k, style: { flex: String(n) } }))),
               h('span', { className: 'dshc-tl-spacer' }),
               h('span', { className: 'dshc-tl-count' }, (g.count || items.length) + ' 条'),
@@ -5301,7 +5330,7 @@ window.__ModuleLoader__.load({
       }, [flashAt])
       return h('div', { className: 'dshc-relgroup' },
         h('div', { className: 'dshc-relgroup-h', onClick: () => setOpen((v) => !v) },
-          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '鈻?'),
+          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '▸'),
           h('b', null, REL_TIER_LABEL[tier] || tier),
           h('span', { className: 'n' }, items.length + ' 人'),
           h('div', { className: 'dshc-spacer' }),
@@ -5452,7 +5481,7 @@ window.__ModuleLoader__.load({
       }
       return h('div', { className: 'dshc-relgroup', style: { marginTop: 4 } },
         h('div', { className: 'dshc-relgroup-h', onClick: () => setOpen((v) => !v) },
-          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '鈻?'),
+          h('span', { className: 'caret', 'data-open': open ? '1' : '0' }, '▸'),
           h('b', null, '手动添加关系'),
           h('div', { className: 'dshc-spacer' }),
           h('span', { className: 'dshc-sub' }, open ? '收起' : '名字 + 类型 + 一句话')),
@@ -5522,10 +5551,10 @@ window.__ModuleLoader__.load({
         err ? h('div', { className: 'dshc-err' }, err) : null)
     }
 
-    /** 鍘屾伓搴?鈫?浜鸿瘽 + 鑹茶皟銆?.35 浠ヤ笅绠楀枩娆紝0.65 浠ヤ笂绠楄鍘岋紝涓棿鏄湅鎯呭喌銆?*/
+    /** 鍘屾伓搴?→浜鸿瘽 + 鑹茶皟銆?.35 浠ヤ笅绠楀枩娆紝0.65 浠ヤ笂绠楄鍘岋紝涓棿鏄湅鎯呭喌銆?*/
     function prefSense(av) {
       const v = Math.max(0, Math.min(1, Number(av) || 0))
-      if (v <= 0.35) return { word: '鍠滄', tone: 'ok' }
+      if (v <= 0.35) return { word: '喜欢', tone: 'ok' }
       if (v >= 0.65) return { word: '讨厌', tone: 'bad' }
       return { word: '看情况', tone: undefined }
     }
@@ -5588,7 +5617,7 @@ window.__ModuleLoader__.load({
           }),
           h(CharCount, { value: tag, limit }),
           h(Input, {
-            style: { width: 84 }, value: av, placeholder: '0鈥?',
+            style: { width: 84 }, value: av, placeholder: '0—',
             title: '它现在觉得你：',
             onChange: (e) => setAv(e.target.value),
           }),
@@ -5634,7 +5663,7 @@ window.__ModuleLoader__.load({
     /* ---------------------------------------------- 它觉得你：一条判断的对错 */
 
     /**
-     * 銆岀寽寰楀鍚椼€嶏細瀵?鈫?璁版垚鍛戒腑锛涗笉瀵?鈫?鍏堥€変綘鐪熸湁鐨勯偅涓儏缁紝鍐嶅洖鍐欍€?     * compact 缁欐渶杩戜簨浠跺垪琛ㄧ敤锛氬钩鏃跺彧闇蹭袱涓皬鎸夐挳锛岀偣銆屼笉瀵广€嶆墠灞曞紑鍏被銆?     */
+     * 銆岀寽寰楀鍚椼€嶏細瀵?→璁版垚鍛戒腑锛涗笉瀵?→鍏堥€変綘鐪熸湁鐨勯偅涓儏缁紝鍐嶅洖鍐欍€?     * compact 缁欐渶杩戜簨浠跺垪琛ㄧ敤锛氬钩鏃跺彧闇蹭袱涓皬鎸夐挳锛岀偣銆屼笉瀵广€嶆墠灞曞紑鍏被銆?     */
     function ReadFeedback({ aid, item, act, onChange, compact }) {
       const [picking, setPicking] = useState(false)
       const [busy, setBusy] = useState(false)
@@ -5728,7 +5757,7 @@ window.__ModuleLoader__.load({
         hollow ? h(Pill, null, '尚未立论') : null,
         st ? h(Pill, { tone: c.status === 'contested' ? 'warn' : undefined }, st) : null,
         hollow && onWithdraw ? h(Btn, { sm: true, onClick: (e) => { e.stopPropagation(); onWithdraw(c) } }, '撤回') : null,
-        tech ? h('span', { className: 'v dshc-mono' }, '蟺 ' + Number(c.pi).toFixed(2) + ' 路 n ' + c.n + ' 路 ' + c.kind + ' 路 ' + c.id) : null)
+        tech ? h('span', { className: 'v dshc-mono' }, 'π ' + Number(c.pi).toFixed(2) + ' · n ' + c.n + ' · ' + c.kind + ' · ' + c.id) : null)
     }
 
     /** 两极对峙卡：在争 / 先放着 / 试用中（待验证）/ 两样都要 + 代价 */
@@ -5746,7 +5775,7 @@ window.__ModuleLoader__.load({
         k.sigma === 'coexist' && k.loss ? h('div', { className: 'dshc-note' },
           '平时偏向「' + lean + '」' + (k.loss.cost ? '，付出的是' + k.loss.cost : '') + '。') : null,
         precedent !== undefined ? h('div', { className: 'dshc-note' }, precedent || '没有可参照的旧事。') : null,
-        tech ? h('div', { className: 'dshc-sub dshc-mono' }, k.id + ' 路 蟽=' + k.sigma + ' 路 蟺鈦?' + k.pos.pi.toFixed(2) + ' / 蟺鈦?' + k.neg.pi.toFixed(2)
+        tech ? h('div', { className: 'dshc-sub dshc-mono' }, k.id + ' · σ=' + k.sigma + ' · π⁺' + k.pos.pi.toFixed(2) + ' / π⁻' + k.neg.pi.toFixed(2)
           + (k.trial_until ? ' · 试用至 ' + sgDay(k.trial_until) : '') + ' · 审议 ' + (k.deliberations || 0) + ' 次') : null)
     }
 
@@ -6015,7 +6044,7 @@ window.__ModuleLoader__.load({
       const stamp = (l) => {
         const c = cuts.filter((x) => x.layer === l).pop()
         const n = (S.epoch && S.epoch[l]) || 0
-        return '第 ' + n + ' 季 · ' + (c ? '鑷?' + sgDay(c.at) : '自启用起')
+        return '第 ' + n + ' 季 · ' + (c ? '自' + sgDay(c.at) : '自启用起')
       }
       const established = (c) => !(c.origin === 'seed' && c.pi === 0 && c.n === 0)
       const stats = (ln.data && ln.data.stats) || {}
@@ -6058,7 +6087,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dshc-sub' }, '看的是：' + SG_LANE[l].judge)),
           cs.length ? cs.map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw, big: true }))
             : h('div', null,
-              h('div', { style: { fontSize: 14, fontWeight: 600 } }, '灏氭湭绔嬭'),
+              h('div', { style: { fontSize: 14, fontWeight: 600 } }, '尚未立论'),
               h('div', { className: 'dshc-sub' }, SG_LANE[l].empty),
               h(SgSeed, { label: SG_LEAD[l], layer: l, base, act, done: bump })),
           l === 'W' && bs.length ? h('div', null, cap(bs).map((c) => h(SgClaim, { key: c.id, c, tech, onOpen, onWithdraw }))) : null,
@@ -6076,7 +6105,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshc-note' }, statLine(l)),
           h('div', { className: 'dshc-sub' }, SG_LANE[l].how),
           on ? null : h('div', null, h(Btn, { sm: true, ghost: true, onClick: () => toggleLane(l, true) }, '打开这一列')),
-          tech ? h('div', { className: 'dshc-sub dshc-mono' }, 'lane=' + on + ' 路 claims=' + cs.length + ' 路 belts=' + bs.length + ' 路 kappas=' + ks.length) : null)
+          tech ? h('div', { className: 'dshc-sub dshc-mono' }, 'lane=' + on + ' · claims=' + cs.length + ' · belts=' + bs.length + ' · kappas=' + ks.length) : null)
       }
       /* 鎷夸竴鍙ヨ瘽璇曞彫鍥烇細鐪嬪緱瑙佸畠杩欎竴浼氬効浼氭兂璧峰摢鏉★紝涔熺湅寰楄鍒殑娌¤濉炶繘鍘汇€?*/
       async function tryRecall() {
@@ -6200,15 +6229,15 @@ window.__ModuleLoader__.load({
           h('div', { style: { fontWeight: 600, marginBottom: 6 } }, C.claim.text, SG_STATUS[C.claim.status] ? h(Pill, null, SG_STATUS[C.claim.status]) : null),
           h('div', { className: 'dshc-note' }, why.data ? why.data.sentence : '…'),
           !SG_TERMINAL_OF(C.claim.status) ? h('div', { style: { margin: '6px 0' } },
-            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: 1 }, '对') }, '瀵?'),
+            h(Btn, { sm: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: 1 }, '对') }, '对'),
             h(Btn, { sm: true, ghost: true, onClick: () => judge({ target_type: 'claim', target_id: C.claim.id, sign: -1 }, '记下了：你觉得这一条不对。') }, '不对')) : null,
           C.ancestors.length || C.successors.length ? h('div', { className: 'dshc-list' },
             (C.ancestors.length > 12 ? [...C.ancestors.slice(0, 6), null, ...C.ancestors.slice(-6)] : C.ancestors).slice().reverse().map((a, i) => a
-              ? h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '֮ǰ'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))
+              ? h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '之前'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))
               : h('div', { key: 'gap' + i, className: 'dshc-sub' }, '…')),
             C.successors.map((a) => h('div', { key: a.id, className: 'dshc-row', style: { cursor: 'pointer' }, onClick: () => setOpen(a.id) }, h('span', { className: 'l' }, '之后'), h('span', { style: { flex: 1 } }, a.text), h(Pill, null, SG_STATUS[a.status] || '在用'))))
             : null,
-          tech ? h(Tech, null, C.claim.id + ' 路 ' + C.claim.layer + '/' + C.claim.kind + ' 路 蟺 ' + C.claim.pi + ' 路 e ' + C.claim.e + ' 路 绾厓 ' + C.claim.epoch + '\n'
+          tech ? h(Tech, null, C.claim.id + ' · ' + C.claim.layer + '/' + C.claim.kind + ' · π ' + C.claim.pi + ' · e ' + C.claim.e + ' · 纪元 ' + C.claim.epoch + '\n'
             + C.events.slice(-12).map((e) => '#' + e.seq + ' ' + sgDay(e.at) + ' ' + e.type + (e.precedent_ids && e.precedent_ids.length ? ' 先例 ' + e.precedent_ids.join(',') : '')).join('\n')) : null)
           : null,
         h('div', { style: { textAlign: 'right' } }, h('a', { href: '#', onClick: (e) => { e.preventDefault(); setOpen(null) } }, '收起'))) : null
@@ -6237,20 +6266,20 @@ window.__ModuleLoader__.load({
           }))),
         h(Sec, { title: '体征与预算' }, h(Card, null, h(Tech, null,
           '账本 seq ' + S.seq + ' · 判定 ' + S.judge.calls + ' 次 / 失败 ' + S.judge.fails + (S.judge.degraded ? '（降级中）' : '') + ' · 待放置候选 ' + S.pending.candidates
-          + '\n' + Object.entries(S.budget.pools).map(([p, v]) => p + ' ' + v.used + '/' + v.cap).join(' 路 ') + ' 路 鏈?tokens ' + S.budget.tokens.month + '/' + S.budget.tokens.cap
+          + '\n' + Object.entries(S.budget.pools).map(([p, v]) => p + ' ' + v.used + '/' + v.cap).join(' · ') + ' · 月 tokens ' + S.budget.tokens.month + '/' + S.budget.tokens.cap
           + ((L.theta_changes || []).length ? '\n参数调整：' + L.theta_changes.map((t) => sgDay(t.at) + ' ' + t.key + '=' + t.value).join('；') : '')))),
         h(Sec, { title: '换代提案', desc: '旧核心持续受挫时提出；人生观 / 价值观必须你批。' },
           !props.length ? h(Empty, null, '没有待批的提案') : props.map((p) => h(Card, { key: p.id, style: { marginBottom: 8 } },
             h('div', null, SG_LAYER[p.layer], ' · 新核心：', h('b', null, p.new_core || '')),
             p.scope ? h('div', { className: 'dshc-note' }, '旧核心降为：仍适用于' + p.scope) : null,
             p.meta ? h('div', { className: 'dshc-sub' }, p.meta) : null,
-            h('div', { className: 'dshc-sub' }, '鎴 ' + sgDay(p.due) + ' 路 ' + p.id),
+            h('div', { className: 'dshc-sub' }, '截止 ' + sgDay(p.due) + ' · ' + p.id),
             h('div', null,
               h(Btn, { sm: true, primary: true, onClick: () => act(() => call('POST', base + '/elev/' + enc(p.id) + '/approve', {}, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '批准'),
               h(Btn, { sm: true, ghost: true, onClick: () => act(() => call('POST', base + '/elev/' + enc(p.id) + '/reject', {}, true)).then(bump).catch((e) => setMsg(e.message || String(e))) }, '拒绝'))))),
         h(Sec, { title: '事件账', right: evBefore ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(0) }, '回到最新') : null },
           h(Card, null, ev.error ? h(LoadErr, { error: ev.error }) : h(Tech, null, evs.map((e) => '#' + e.seq + ' ' + e.at.slice(0, 16) + ' ' + e.type + (e.layer ? '(' + e.layer + ')' : '') + ' ' + e.actor + (e.about.length ? ' · ' + e.about.join('；') : '')).join('\n') || '（空）'),
-            ev.data && ev.data.next_before ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(ev.data.next_before) }, '鏇存棭') : null))) : null
+            ev.data && ev.data.next_before ? h(Btn, { sm: true, ghost: true, onClick: () => setEvBefore(ev.data.next_before) }, '更早') : null))) : null
 
       // ---- 鑽夌绠?----
       const drafts = (dr.data && dr.data.drafts) || []
@@ -6259,8 +6288,8 @@ window.__ModuleLoader__.load({
       const draftBox = h('div', null,
         h('div', { className: 'dshc-inbox-h' },
           h('span', null, 'INBOX'),
-          h('span', { style: { color: 'var(--ink)' } }, '寰呮壒 ' + (counts.draft || drafts.length || 0)),
-          h('span', null, '鍏ュ簱 ' + (counts.committed || 0)),
+          h('span', { style: { color: 'var(--ink)' } }, '待批 ' + (counts.draft || drafts.length || 0)),
+          h('span', null, '入库 ' + (counts.committed || 0)),
           h('span', null, '丢掉 ' + (counts.discarded || 0)),
           h('span', { style: { marginLeft: 'auto' } }, jobRunning ? 'RUNNING' : 'IDLE')),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 } },
@@ -6288,7 +6317,7 @@ window.__ModuleLoader__.load({
             ? recallR.lines.map((l, i) => h('div', { key: i, className: 'dshc-recall-l' },
               h('span', { className: 'n' }, String(i + 1).padStart(2, '0')), h('span', null, l)))
             : h('div', { className: 'dshc-sub' }, '这一句没有勾到别的；常驻的三条会一直在。'),
-          tech ? h(Tech, null, 'core ' + (recallR.core || []).length + ' 路 picked ' + (recallR.picked || []).length
+          tech ? h(Tech, null, 'core ' + (recallR.core || []).length + ' · picked ' + (recallR.picked || []).length
             + ((recallR.picked || []).length ? '\n' + recallR.picked.map((x) => '  ' + x.id + ' score ' + x.score).join('\n') : '')) : null) : null)
 
       return h('div', null,
@@ -6296,7 +6325,7 @@ window.__ModuleLoader__.load({
         h(Sec, { title: '三观', desc: S.inject.mode === 'live' ? '这些看法已经在影响它说话。' : '这些看法还在影子期：只记录，不影响它说话（' + S.inject.shadow_days + ' / 7 天）。' },
           h('div', { className: 'dshc-sgwrap' },
             h('div', { className: 'dshc-sgbar' },
-              h('span', null, '鈼?'),
+              h('span', null, '◆'),
               h('b', null, 'SANGGUAN'),
               h('span', null, '三列判据'),
               h('i', { className: 'ln' }),
@@ -6516,7 +6545,7 @@ window.__ModuleLoader__.load({
               '学到的分布拿去算共情 e_user，也写进下一轮提示词\n' +
               (st.confusions && st.confusions.length
                 ? '它学到的偏差：' + st.confusions.map((c) =>
-                  (AFFECT_KEY[c.guess] || c.guess) + '鈫?' + (AFFECT_KEY[c.actual] || c.actual) + '脳' + c.count).join(' / ')
+                  (AFFECT_KEY[c.guess] || c.guess) + '→' + (AFFECT_KEY[c.actual] || c.actual) + '×' + c.count).join(' / ')
                 : '它学到的偏差：还没有')) : null)
         })(),
 
@@ -6570,8 +6599,8 @@ window.__ModuleLoader__.load({
                       h(Pill, { tone: 'warn' }, '会成事件'),
                       h('div', { className: 't' }, String(it.cause || '（无原文）').slice(0, 42)),
                       h('div', { className: 'm dshc-mono' },
-                        'sig ' + Number(it.sig).toFixed(2) + ' 路 ' + (AFFECT_KEY[it.label] || it.label) +
-                        ' 路 ' + String(it.at || '').slice(5, 16)))))
+                        'sig ' + Number(it.sig).toFixed(2) + ' · ' + (AFFECT_KEY[it.label] || it.label) +
+                        ' · ' + String(it.at || '').slice(5, 16)))))
                   : null)
             }
             const stat = (k, v) => h('div', { style: { minWidth: 64 } },
@@ -6596,8 +6625,8 @@ window.__ModuleLoader__.load({
                   h(Pill, { tone: it.gate ? 'warn' : undefined }, it.gate ? (g.mode === 'on' ? '成事件' : '会成事件') : '不成事件'),
                   h('div', { className: 't' }, String(it.cause || '（无原文）').slice(0, 42)),
                   h('div', { className: 'm dshc-mono' },
-                    'sig ' + Number(it.sig).toFixed(2) + ' 路 ' + (AFFECT_KEY[it.label] || it.label) +
-                    ' 路 ' + String(it.at || '').slice(5, 16)))))
+                    'sig ' + Number(it.sig).toFixed(2) + ' · ' + (AFFECT_KEY[it.label] || it.label) +
+                    ' · ' + String(it.at || '').slice(5, 16)))))
             )
           })())),
 
@@ -6632,7 +6661,7 @@ window.__ModuleLoader__.load({
                       Number(it.self.intensity || 0).toFixed(2) +
                       (it.self.phase === 'rise' ? ' ↑上升中' : '') +
                       (Number(it.self.renewals) > 0 ? ' · 续' + Number(it.self.renewals) : '') +
-                      ' 路 ' + String(it.at || '').slice(5, 16))),
+                      ' · ' + String(it.at || '').slice(5, 16))),
                   it.dist
                     ? h(ReadFeedback, { aid, item: it, act, compact: true, onChange: () => setTick((t) => t + 1) })
                     : h('div', { className: 'dshc-note' }, '这条老记录没留下它读你的分数。')))),
@@ -6666,7 +6695,7 @@ window.__ModuleLoader__.load({
             const pz = poison.data || {}
             const rows = [['贪', pz.greed, '依恋/探索缺口高于均值才涨'], ['嗔', pz.anger, '基线 + 刺激 + 过载'], ['痴', pz.delusion, '1 − 确定性']]
             return h('div', null,
-              rows.map(([k, v, why]) => h(Row, { key: k, label: k + ' 路 ' + why },
+              rows.map(([k, v, why]) => h(Row, { key: k, label: k + ' · ' + why },
                 h(Bar, { value: Number(v) || 0, tone: Number(v) > 0.6 ? 'warn' : undefined }),
                 h('span', { className: 'm dshc-mono' }, Number(v || 0).toFixed(2)))),
               h('div', { className: 'dshc-note' }, '初值 0.30 / 0.10 / 0.30（§5.2）　' + (pz.formula || '')))
@@ -7019,7 +7048,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 't' }, x.text || x.driver)))) : null,
           h('div', { className: 'dshc-list', style: { marginTop: 6 } }, (tg.data || []).map((x) => h('div', { key: x.id, className: 'dshc-item' },
             h(Pill, { on: Number(x.progress) >= Number(x.threshold) }, x.class),
-            h('div', { className: 't' }, x.label + ' 路 ' + Math.min(Number(x.progress), Number(x.threshold)) + '/' + x.threshold),
+            h('div', { className: 't' }, x.label + ' · ' + Math.min(Number(x.progress), Number(x.threshold)) + '/' + x.threshold),
             h('div', { className: 'm dshc-mono' }, '近 ' + x.windowDays + ' 天' + (x.lastDraftAt ? ' · 上次起草 ' + String(x.lastDraftAt).slice(5, 10) : ''))))) ),
 
         h(Sec, { title: '行动接口', desc: '四个开关；打开后我才可能真的动手。' },
@@ -7189,10 +7218,10 @@ window.__ModuleLoader__.load({
         const dt = Number(after.trust) - Number(before.trust)
         return '亲近 ' + num3(before.closeness) + ' → ' + num3(after.closeness) +
           '（' + (dc >= 0 ? '+' : '') + num3(dc) + '）· 信任 ' +
-          num3(before.trust) + ' 鈫?' + num3(after.trust) +
+          num3(before.trust) + ' →' + num3(after.trust) +
           '（' + (dt >= 0 ? '+' : '') + num3(dt) + '）'
       }
-      return shortVal(c.before) + ' 鈫?' + shortVal(c.after)
+      return shortVal(c.before) + ' →' + shortVal(c.after)
     }
 
     /** 鑷姩鍙樻洿鎸夈€屾敼浜嗗悓涓€绫讳笢瑗裤€嶅綊鍫嗭細鍏崇郴銆佹€ф牸銆佹竻鐞嗐€佸叾瀹?*/
@@ -7343,7 +7372,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dshc-item dshc-prop', style: { flexDirection: 'column', alignItems: 'stretch', gap: 6 } },
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' } },
           h(Pill, { tone: meta[1] }, meta[0]),
-          h(Pill, { on: true, title: selfClassNote(p.change_class) }, (p.change_class || '?') + ' 路 ' + (SELF_CLASS[p.change_class] || ['?'])[0]),
+          h(Pill, { on: true, title: selfClassNote(p.change_class) }, (p.change_class || '?') + ' · ' + (SELF_CLASS[p.change_class] || ['?'])[0]),
           h('span', { className: 'dshc-spacer' }),
           h('span', { className: 'dshc-sub dshc-mono' }, agoText(p.created_at))),
         h('div', { style: { fontSize: 14.5, fontWeight: 600, lineHeight: 1.5 } }, proposalHeadline(p)),
@@ -7379,7 +7408,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 't' }, fieldHuman(p.field || p.target)),
           h('span', { className: 'dshc-spacer' }),
           h('span', { className: 'm dshc-mono' }, dayText(p.created_at))),
-        h('div', { className: 'dshc-sub' }, proposalWhere(p) + ' 路 ' + changePreview(p)))
+        h('div', { className: 'dshc-sub' }, proposalWhere(p) + ' · ' + changePreview(p)))
     }
 
     function SelfAutoGroup({ g }) {
@@ -7401,7 +7430,7 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'dshc-item', style: { flexDirection: 'column', alignItems: 'stretch', gap: 3 } },
         h('div', { style: { display: 'flex', gap: 8, alignItems: 'baseline' } },
           h('div', { className: 't', style: { flex: 1 } }, autoGroupText(g)),
-          h('span', { className: 'dshc-sub dshc-mono' }, '脳' + items.length)),
+          h('span', { className: 'dshc-sub dshc-mono' }, '×' + items.length)),
         h('details', null,
           h('summary', { style: { cursor: 'pointer', color: 'var(--muted)' } }, '依据和它是怎么算的'),
           h('div', { style: { marginTop: 6 } },
@@ -7481,7 +7510,7 @@ window.__ModuleLoader__.load({
               onClick: () => run(() => act(() => call('POST', '/v1/agents/' + enc(aid) + '/author/rollback', { change_id: c.id }, true))),
             }, '回滚')),
         h('div', { className: 'dshc-sub dshc-mono', style: { whiteSpace: 'normal' } },
-          authorVal(c.before) + ' 鈫?' + authorVal(c.after)
+          authorVal(c.before) + ' →' + authorVal(c.after)
           + (c.observing_until && !rolled ? ' · 观察到 ' + String(c.observing_until).slice(5, 10) : '')),
         h('div', { className: 'dshc-sub', style: { opacity: .72 } }, agoText(c.applied_at)))
     }
@@ -7618,7 +7647,7 @@ window.__ModuleLoader__.load({
             manual.slice(12).map((c) => h('div', { key: c.id, className: 'dshc-item' },
               h('span', { className: 'm dshc-mono' }, dayText(c.applied_at)),
               h('span', { className: 't' }, fieldHuman(c.field)),
-              h('span', { className: 'm dshc-mono' }, shortVal(c.before) + ' 鈫?' + shortVal(c.after))))))
+              h('span', { className: 'm dshc-mono' }, shortVal(c.before) + ' →' + shortVal(c.after))))))
         : null
 
       const autoMore = auto.length
@@ -7761,7 +7790,7 @@ window.__ModuleLoader__.load({
           slots.map((s) => h(Btn, {
             key: s, primary: slot === s, onClick: () => { setSlot(s); setCanary(''); setRatio('0') },
           }, s))),
-        (binds.data || []).map((b) => h(Row, { key: b.name, label: b.name + ' 路 active' },
+        (binds.data || []).map((b) => h(Row, { key: b.name, label: b.name + ' · active' },
           h(Pill, { on: b.name === slot }, b.active + (b.canary ? ' / canary ' + b.canary + '@' + (b.ratio || 0) : '')))),
         h(Row, { label: slot + ' · 当前' }, h(Pill, { on: true }, bind.active)),
         h('div', { className: 'dshc-sub', style: { margin: '8px 0' } }, '已登记实现：'),
@@ -7770,14 +7799,14 @@ window.__ModuleLoader__.load({
             : registered.map((a) => h('div', { key: a.name + '@' + a.version, className: 'dshc-item' },
               h(Pill, { on: a.version === bind.active }, a.version === bind.active ? 'active' : '并存'),
               h('div', { className: 't' }, a.name + '@' + a.version),
-              h('div', { className: 'm dshc-mono' }, (a.metrics || []).slice(0, 3).join(' 路 '))))),
+              h('div', { className: 'm dshc-mono' }, (a.metrics || []).slice(0, 3).join(' · '))))),
         h('div', { className: 'dshc-form', style: { marginTop: 10 } },
           h('span', { className: 'dshc-sub' }, 'canary'),
           h('select', { className: 'dshc-in', value: canary, onChange: (e) => setCanary(e.target.value) },
             h('option', { value: '' }, '关闭'),
             registered.map((a) => h('option', { key: a.version, value: a.version }, a.version))),
           h('span', { className: 'dshc-sub' }, 'ratio'),
-          h(Input, { style: { width: 70 }, value: ratio, onChange: (e) => setRatio(e.target.value), placeholder: '0鈥?' }),
+          h(Input, { style: { width: 70 }, value: ratio, onChange: (e) => setRatio(e.target.value), placeholder: '0—' }),
           h(Btn, { onClick: saveGray }, '保存灰度')),
         err ? h('div', { className: 'dshc-err' }, err) : null,
         msg ? h('div', { className: 'dshc-note' }, msg) : null)
@@ -7947,7 +7976,7 @@ window.__ModuleLoader__.load({
                     h(Btn, { primary: true, onClick: () => setTab && setTab('persona') }, '去写语气 / 称呼 / 鱼格卡')))
                 : h('div', null,
                   h(Row, {
-                    label: '寰楀垎',
+                    label: '得分',
                     value: Number(blind.value).toFixed(3) + ' · ' + (blind.pass ? '过' : '未过') + '（目标 ≥ ' + (blind.threshold || 0.8) + '）',
                   }),
                   h(Row, { label: '线索', value: BLIND_SIGNAL(blind.signals) }),
@@ -7961,7 +7990,7 @@ window.__ModuleLoader__.load({
             ((cal.data && cal.data.suggestions) || []).length === 0
               ? h('div', { className: 'dshc-sub' }, '暂无建议（状态已贴近默认或样本不足）。')
               : (cal.data.suggestions || []).map((s) => h(Row, { key: s.key, label: s.key },
-                h('span', { className: 'm dshc-mono' }, String(s.current) + ' 鈫?' + String(s.suggested)),
+                h('span', { className: 'm dshc-mono' }, String(s.current) + ' →' + String(s.suggested)),
                 h('span', { className: 'dshc-sub' }, s.reason))),
             h('div', { className: 'dshc-form', style: { marginTop: 8 } },
               h(Btn, {
@@ -7996,10 +8025,10 @@ window.__ModuleLoader__.load({
               const spec = SPEC[m.i] || ['—', '', false]
               const v = values[m.key] && values[m.key].value
               return h('div', { key: m.key, className: 'dshc-item' },
-                h(Pill, { tone: spec[2] ? 'bad' : undefined }, spec[2] ? '鈽?' : '路'),
+                h(Pill, { tone: spec[2] ? 'bad' : undefined }, spec[2] ? '★' : '·'),
                 h('div', { className: 't' },
                   h('div', null, m.label),
-                  h('div', { className: 'dshc-sub dshc-mono' }, m.key + (view === 'tech' ? ' 路 ' + spec[1] : ''))),
+                  h('div', { className: 'dshc-sub dshc-mono' }, m.key + (view === 'tech' ? ' · ' + spec[1] : ''))),
                 h('div', { className: 'm dshc-mono', style: { minWidth: 78, textAlign: 'right' } }, v == null ? '—' : String(v)),
                 h('div', { className: 'm', style: { minWidth: 84, textAlign: 'right' } }, spec[0]))
             }))))
@@ -8052,7 +8081,7 @@ window.__ModuleLoader__.load({
     /** 璁板繂椤靛崱鐗囩殑鍥涗釜鏃嬮挳锛氱敱 MemorySettingsCard 鐩寸锛屽垎缁勯噷鍙敤鏉ャ€屽埆閲嶅鍒楄繘鍏朵粬銆?*/
     const MEMORY_CARD_KEYS = new Set(['memory.decay.lambda', 'memory.recall.floor', 'memory.inject.budget', 'memory.auto'])
 
-    /** 椤靛ご鏍囩 鈫?璁剧疆鍒嗙粍锛沰eys 涔嬪鐨勫弬鏁拌嚜鍔ㄨ繘銆屽叾浠栥€嶃€?*/
+    /** 椤靛ご鏍囩 →璁剧疆鍒嗙粍锛沰eys 涔嬪鐨勫弬鏁拌嚜鍔ㄨ繘銆屽叾浠栥€嶃€?*/
     const PARAM_TAB_GROUPS = [
       {
         key: 'memory', tab: '记忆', title: '记忆设置',
@@ -8350,7 +8379,7 @@ window.__ModuleLoader__.load({
                 onChange: (e) => setF({ ...v, sens: Number(e.target.value) }), style: { width: 150 },
               }),
               h('span', { className: 'dshc-mono', style: { width: 92, textAlign: 'right' } },
-                Number(v.sens).toFixed(2) + ' 路 ' + wordOf(v.sens)),
+                Number(v.sens).toFixed(2) + ' · ' + wordOf(v.sens)),
               axis ? h(Pill, { on: axis.origin === 'manual' }, axis.origin === 'manual' ? '你定的' : '自己长的') : null),
             h('div', { className: 'dshc-sub', style: { margin: '-2px 0 2px 0', paddingLeft: 2 } },
               '0 钝感 · 0.5 平衡 · 1 敏感'),
@@ -8366,7 +8395,7 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'dshc-sub' },
                     (now && Math.abs(v.sens - curS) > 1e-9 ? ' 现在 ' + now.threshold.toFixed(2) + '；' : ' ') + '越低越容易被小事戳到')),
                 h(Row, { label: '恢复速度' },
-                  h('span', { className: 'dshc-mono' }, '脳' + draft.halfLife.toFixed(2)),
+                  h('span', { className: 'dshc-mono' }, '×' + draft.halfLife.toFixed(2)),
                   h('span', { className: 'dshc-sub' },
                     (now && Math.abs(v.sens - curS) > 1e-9 ? ' 现在 ×' + now.halfLife.toFixed(2) + '（' + signed(pct(draft.halfLife, now.halfLife)) + '）；' : ' ') + '越大越难散')))
               : null)
@@ -8433,6 +8462,50 @@ window.__ModuleLoader__.load({
 
     /**
      * QQ 閫氶亾锛氬ス銆屽湪涓嶅湪绾裤€嶃€?     * 妗ュ拰 NapCat 鍒嗕袱灞傛樉绀猴細妗ユ病璧?vs QQ 鎺変簡锛屽鐞嗗姙娉曚笉涓€鏍枫€?     * 椤哄甫鑳芥敼澶氳疆鍘嗗彶鍜屽彫鍥炴潯鏁扳€斺€旇繖涓や釜鍙奖鍝?QQ 杩欒竟璇磋瘽鐨勬墜鎰熴€?     */
+    /**
+     * QQ 接线：每段聊天现在挂在哪个会话上、断没断。
+     * 数据来自只读接口 GET /v1/qq/watch；跟 QQ 通道同页展示，不另开页面。
+     * 布局刻意不走 dshc-row：那一行是「左标签 + 右值」，塞多个元素在窄屏会挤。
+     */
+    function QQWatchBlock() {
+      const [s, reload] = useAsync(() => call('GET', '/v1/qq/watch'), [])
+      useLive(reload, 15000)
+      const d = s.data || {}
+      const b = d.bridge || {}
+      const rows = Array.isArray(d.chatters) ? d.chatters : []
+      const t = (x) => (x ? String(x).replace('T', ' ').slice(5, 16) : '—')
+      const dot = (st) => (st === 'ok' ? 'var(--ok)' : st === 'idle' ? 'var(--warn)' : 'var(--bad)')
+      const err = s.error ? '读不到接线：' + (s.error.message || String(s.error)) : ''
+      // 桥可能是「进程内」的，也可能只是快照过期了：别把过期的在线当成在线。
+      const bstate = b.online !== true
+        ? ['桥没起', 'var(--bad)']
+        : (b.fresh === false ? ['桥静了', 'var(--warn)'] : ['桥在线', 'var(--ok)'])
+      return h('div', { style: { marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--line)' } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' } },
+          h('span', { style: { fontSize: 12.5, fontWeight: 600, color: 'var(--ink)' } }, '接线'),
+          h('span', { style: { fontSize: 11.5, color: bstate[1] } },
+            h('span', { style: { color: bstate[1], marginRight: 5 } }, '●'),
+            bstate[0]),
+          h('span', { className: 'dshc-sub', style: { flex: 1, minWidth: 80 } }, b.trace_at ? '最后活动 ' + t(b.trace_at) : ''),
+          h(Btn, { ghost: true, sm: true, onClick: reload }, '刷新')),
+        err ? h('div', { className: 'dshc-note', style: { color: 'var(--bad)' } }, err) : null,
+        rows.length === 0 && !s.loading ? h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '还没有 QQ 聊天记录。') : null,
+        rows.map((r) => h('div', { key: r.session_id || r.chat_key, style: { padding: '9px 0', borderBottom: '1px dashed var(--line)' } },
+          h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', minWidth: 0 } },
+            h('span', { style: { width: 7, height: 7, borderRadius: 99, background: dot(r.state), flex: '0 0 auto', transform: 'translateY(-1px)' } }),
+            h('span', { style: { fontSize: 13, color: 'var(--ink)', fontWeight: 500 } }, r.label || r.chat_key || '聊天'),
+            r.agent ? h('span', { className: 'dshc-sub', style: { fontSize: 11.5 } }, '· ' + r.agent) : null,
+            h('span', { style: { flex: 1 } }),
+            h('span', { className: 'dshc-sub', style: { fontSize: 11.5 } },
+              t(r.last_at) + (r.age_hours == null ? '' : ' · ' + r.age_hours + ' 小时前'))),
+          h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'baseline', marginTop: 3, paddingLeft: 15 } },
+            h('span', { className: 'dshc-mono', style: { fontSize: 11, color: 'var(--muted)' } }, r.short || String(r.session_id || '').slice(-8)),
+            r.source ? h('span', { className: 'dshc-sub', style: { fontSize: 11 } }, r.source) : null,
+            r.note ? h('span', { style: { fontSize: 11, color: r.state === 'down' ? 'var(--bad)' : 'var(--muted)' } }, r.note) : null))),
+        h('div', { className: 'dshc-note', style: { marginTop: 8 } },
+          '绿=现在通着；黄=绑着但很静，或换下来的旧会话；红=这段没绑上、记忆链断了。'))
+    }
+
     function QQChannelCard({ act }) {
       const [s, reload] = useAsync(() => call('GET', '/v1/qq/health'), [])
       const [cfg, setCfg] = useAsync(() => call('GET', '/v1/qq/settings'), [])
@@ -8443,6 +8516,7 @@ window.__ModuleLoader__.load({
       const h0 = s.data || {}
       const bridge = h0.bridge || {}
       const qq = h0.napcat || {}
+      const local = !!bridge.local
       const c = cfg.data || {}
       const agentList = Array.isArray(agents.data) ? agents.data : []
       // 只列还活着的会话：释放掉的那几条（联调时留下的）不该继续挂在页面上
@@ -8450,9 +8524,12 @@ window.__ModuleLoader__.load({
       const nameOf = (id) => (agentList.find((a) => a.id === id) || {}).name || id
       const v = draft || { history_turns: c.history_turns == null ? 8 : c.history_turns, recall_items: c.recall_items == null ? 10 : c.recall_items }
       const t = (x) => (x ? String(x).replace('T', ' ').slice(5, 19) : '—')
-      const state = s.loading && !s.data ? ['…', ''] : h0.ok ? ['在线', 'ok'] : bridge.reachable ? ['QQ 掉线', 'bad'] : ['桥没起', 'bad']
-      // 妗ユ帀浜嗕笉浼氭湁浜烘潵閫氱煡杩欎釜鍗＄墖锛屽彧鑳借嚜宸辨帰锛?5 绉掍竴娆★紝椤甸潰鍒囧悗鍙板氨鍋溿€?''
-              useLive(reload, 15000)
+      const warming = !!h0.warming
+      const state = s.loading && !s.data
+        ? ['…', '']
+        : h0.ok ? ['在线', 'ok'] : warming ? ['启动中', ''] : bridge.reachable ? ['QQ 掉线', 'bad'] : ['桥没起', 'bad']
+      // 桥掉线不会有人来通知这张卡片，只能自己探：15 秒一次，页面切后台就停。
+      useLive(reload, 15000)
       async function save() {
         setNote(null)
         try {
@@ -8480,11 +8557,20 @@ window.__ModuleLoader__.load({
       return h(Card, null,
         h(Row, { label: '状态' },
           h(Pill, { on: !!h0.ok, tone: state[1] === 'bad' ? 'bad' : undefined }, state[0]),
-          h('span', { className: 'm dshc-sub' }, h0.ok ? '桥和 QQ 都在' : bridge.reachable ? '桥活着，但 NapCat / QQ 没应答' : '桥没连上，先看网关有没有起来'),
+          h('span', { className: 'm dshc-sub' },
+            h0.ok
+              ? (local ? '桥就在宿主进程里，QQ 也登着' : '桥和 QQ 都在')
+              : warming
+                ? '宿主刚重启，桥还在起来（第一份心跳要等一会儿）'
+                : bridge.reachable
+                  ? '桥活着，但 NapCat / QQ 没应答' + (bridge.last_error ? '：' + bridge.last_error : '')
+                  : '桥没连上，先看网关有没有起来'),
           h(Btn, { ghost: true, sm: true, onClick: reload }, '重新检测')),
-        h(Row, { label: '机器人号' }, h('span', { className: 'v' }, qq.nickname ? qq.nickname + '（' + (qq.user_id || '') + '）' : (qq.error || '—'))),
-        h(Row, { label: '桥' }, h('span', { className: 'm dshc-mono' }, (bridge.url || '') + (bridge.uptime_sec != null ? ' · 已运行 ' + Math.floor(bridge.uptime_sec / 60) + ' 分钟' : ''))),
-        h(Row, { label: '最近收到' }, h('span', { className: 'v' }, t(bridge.last_inbound_at) + '（收 ' + (bridge.inbound == null ? '—' : bridge.inbound) + ' / 发 ' + (bridge.sent == null ? '—' : bridge.sent) + '）')),
+        h(Row, { label: '机器人号' }, h('span', { className: 'v' }, qq.nickname ? qq.nickname + '（' + (qq.user_id || '') + '）' : (qq.ok ? '在线（桥没上报号码）' : (qq.error || '—')))),
+        h(Row, { label: '桥' }, h('span', { className: 'm dshc-mono' }, (bridge.url || '—') + (bridge.uptime_sec != null ? ' · 已运行 ' + Math.floor(bridge.uptime_sec / 60) + ' 分钟' : ''))),
+        h(Row, { label: '最近收到' }, h('span', { className: 'v' }, t(bridge.last_inbound_at)
+          + (bridge.inbound == null && bridge.sent == null ? '' : '（收 ' + (bridge.inbound == null ? '—' : bridge.inbound) + ' / 发 ' + (bridge.sent == null ? '—' : bridge.sent) + '）')
+          + (bridge.sessions ? ' · 在线会话 ' + bridge.sessions : ''))),
         bridge.last_error ? h(Row, { label: '上次出错' }, h('span', { className: 'm' }, String(bridge.last_error).slice(0, 120))) : null,
         h('div', { className: 'dshc-sub', style: { marginTop: 12 } }, '谁在接：改一下，下一句生效；旧账留在原来那位名下。'),
         convList.length === 0 ? h('div', { className: 'dshc-sub' }, '还没有 QQ 会话。') : null,
@@ -8497,14 +8583,15 @@ window.__ModuleLoader__.load({
           h('span', { className: 'm dshc-sub' }, '现在：' + nameOf(conv.agent_id)),
           h(Btn, { ghost: true, sm: true, onClick: () => release(conv) }, '释放'))),
         h('div', { style: { marginTop: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-          h('span', { className: 'dshc-sub' }, '甯﹀嚑杞巻鍙?'),
+          h('span', { className: 'dshc-sub' }, '带几轮历史'),
           h(Input, { style: { width: 64 }, value: String(v.history_turns), onChange: (e) => setDraft({ ...v, history_turns: e.target.value }) }),
           h('span', { className: 'dshc-sub' }, '轮 · 每轮'),
           h(Input, { style: { width: 64 }, value: String(v.recall_items), onChange: (e) => setDraft({ ...v, recall_items: e.target.value }) }),
-          h('span', { className: 'dshc-sub' }, '鏉¤蹇?'),
+          h('span', { className: 'dshc-sub' }, '条记忆'),
           h(Btn, { sm: true, onClick: save }, '保存')),
         note ? h('div', { className: 'dshc-note', style: { marginTop: 6 } }, note) : null,
-        h('div', { className: 'dshc-note', style: { marginTop: 6 } }, '历史越多越连贯，但也更慢；0 = 只靠记忆和日记接话。'))
+        h('div', { className: 'dshc-note', style: { marginTop: 6 } }, '历史越多越连贯，但也更慢；0 = 只靠记忆和日记接话。'),
+        h(QQWatchBlock))
     }
 
     function ProactiveCard({ aid, act }) {
@@ -8575,7 +8662,7 @@ window.__ModuleLoader__.load({
         if (!(f > 0) || !(l > 0)) return null
         return Math.max(1, Math.round(9 * (0.02 / l) * (1 / f - 1)))
       }
-      // 鍑哄巶榛樿锛氳“鍑?0.02 路 涓嶈閬楀繕闂ㄦ 路 鑷姩璁板繂寮€ 路 姣忚疆娉ㄥ叆 800 token
+      // 鍑哄巶榛樿锛氳“鍑?0.02 · 涓嶈閬楀繕闂ㄦ · 鑷姩璁板繂寮€ · 姣忚疆娉ㄥ叆 800 token
       const DEFAULTS = { lambda: 0.02, floor: 0, auto: true, budget: 800 }
       async function writeSettings(vals, word) {
         setBusy(true); setErr(''); setMsg('')
@@ -8612,7 +8699,7 @@ window.__ModuleLoader__.load({
             onChange: (e) => setF({ ...v, lambda: Number(e.target.value) }), style: { width: 150 },
           }),
           h('span', { className: 'dshc-mono', style: { width: 112, textAlign: 'right' } },
-            Number(v.lambda).toFixed(3) + ' 路 ' + speedWord(Number(v.lambda)))),
+            Number(v.lambda).toFixed(3) + ' · ' + speedWord(Number(v.lambda)))),
         h(Row, { label: '遗忘阈值' },
           h('input', {
             type: 'range', min: 0, max: 0.6, step: 0.05, value: v.floor,
@@ -8720,7 +8807,7 @@ window.__ModuleLoader__.load({
         setActMsg('')
         try {
           const r = await act(() => call('POST', '/v1/agents/' + enc(aid) + '/actions', { port, payload }, true))
-          setActMsg(port + ' 鈫?' + r.status + (r.note ? ' 路 ' + r.note : ''))
+          setActMsg(port + ' →' + r.status + (r.note ? ' · ' + r.note : ''))
           setTick((t) => t + 1)
         } catch (e) { setActMsg(e.message) }
       }
@@ -9008,8 +9095,12 @@ window.__ModuleLoader__.load({
         const onVisible = () => { if (document.visibilityState === 'visible') load() }
         window.addEventListener('focus', onFocus)
         document.addEventListener('visibilitychange', onVisible)
+        // 归档 / 换绑发生在 DSH 那边，这里收不到事件：页面露着时每 15 秒补看一眼，
+        // 免得主人归档完，标题旁边那块牌子还挂着。
+        const timer = setInterval(() => { if (document.visibilityState === 'visible') load() }, 15000)
         return () => {
           alive = false
+          clearInterval(timer)
           PRESENCE.listeners.delete(load)
           window.removeEventListener('focus', onFocus)
           document.removeEventListener('visibilitychange', onVisible)
@@ -9057,7 +9148,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshc-hero-row' },
             h('div', { className: 'dshc-id' }, h(Orb, { size: 42 }),
               h('div', null,
-                h('h1', null, '鎰忚瘑'),
+                h('h1', null, '意识'),
                 h('div', { className: 'dshc-sub' }, '这一页刚才出错了。它还在，重试一下；还不行就把下面的错误发我。'))))),
         h('div', { style: { marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 } },
           h('div', {

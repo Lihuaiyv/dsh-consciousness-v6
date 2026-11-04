@@ -114,7 +114,7 @@ export const OWNERSHIP = {
     ],
   },
   ops: {
-    files: ['modules/ops.js', 'modules/chat.js', 'modules/edges.js'],
+    files: ['modules/ops.js', 'modules/chat.js', 'modules/edges.js', 'modules/qq_push.js'],
     // 编排层：只通过 ports 读外域；自身可写 chat/绑定/指标快照，以及 purge 时的级联清理
     tables: [
       'chat_turns', 'bindings', 'flags', 'metric_snapshots', 'metric_samples', 'condition_state',

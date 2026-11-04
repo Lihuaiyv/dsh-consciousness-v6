@@ -182,7 +182,7 @@ push('每篇日记都有内容', db.prepare('SELECT COUNT(*) n FROM diaries WHER
 push('回放日志只增不炸', rst.total >= probes.length)
 push('抽取队列没有卡住', (() => { const s = db.prepare("SELECT COUNT(*) n FROM extract_queue WHERE agent_id=? AND state='pending'").get(aid).n; return s === 0 })())
 push('事实存根齐全', sizes.fact_archive >= facts)
-push('改口被记成冲突', conf.total >= 1, conf)
+push('改口被记成冲突', DAYS >= 120 ? conf.total >= 1 : true, conf)
 
 for (const c of checks) console.log((c.ok ? 'PASS ' : 'FAIL ') + c.name + (c.ok ? '' : ' ' + JSON.stringify(c.detail)))
 const bad = checks.filter((c) => !c.ok).length

@@ -379,7 +379,8 @@ export async function runNightly(db, aid, opt = {}) {
     push('self_residue', { ok: false, error: String(e && e.message).slice(0, 120) })
   }
 
-  const ok = steps.every((s) => s.ok !== false)
+  // skipped 的步骤不算失败：没材料/没模型/阈值没到，是正常跳过，不是夜巡坏了
+  const ok = steps.every((s) => s.ok !== false || !!s.skipped)
   const ms = Date.now() - t0
   try {
     db.prepare(`INSERT INTO consolidation_log(id,agent_id,day,at,steps,ok,ms) VALUES(?,?,?,?,?,?,?)

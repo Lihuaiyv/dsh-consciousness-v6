@@ -19,15 +19,11 @@ import { nid } from '../kernel.js'
 export const DEFAULT_MAX_RUNNING = 3
 /** 一段对话多久没动就自动松绑（天）。0 = 永不自动松。 */
 export const DEFAULT_IDLE_RELEASE_DAYS = 30
-/**
- * 已归档的会话还要「活着」多久（小时）。
- * 留这一段宽限期是怕：主人把正在聊的这段归档了，人还开着那个标签页——
- * 立刻抽走身份会让下一句突然变成普通 DSH，所以等它真的凉透了再松。
- */
-export const ARCHIVED_GRACE_HOURS = 6
-
 // 归档名单读盘有成本，心跳里每个实例都要问一遍，所以记 2 秒。
 let _archCache = { at: 0, set: null }
+
+/** DSH 的家目录（DSH_HOME 没设就是 ~/.dsh），和 api.js 的 dshHome() 同一口径。 */
+function dshHome() { return process.env.DSH_HOME || (os.homedir() + '/.dsh') }
 
 /**
  * DSH 的归档名单：`~/.dsh/storages/workspace.json` 里 global.archivedSessionIds。
@@ -39,7 +35,7 @@ export function archivedSessionIds({ maxAgeMs = 2000 } = {}) {
   if (_archCache.set && t - _archCache.at < maxAgeMs) return _archCache.set
   const out = new Set()
   try {
-    const ws = JSON.parse(fs.readFileSync(os.homedir() + '/.dsh/storages/workspace.json', 'utf8'))
+    const ws = JSON.parse(fs.readFileSync(dshHome() + '/storages/workspace.json', 'utf8'))
     for (const id of ((ws.global && ws.global.archivedSessionIds) || [])) out.add(String(id))
   } catch { /* 没有 workspace.json / 解析失败：当作没有归档 */ }
   _archCache = { at: t, set: out }
@@ -49,32 +45,17 @@ export function archivedSessionIds({ maxAgeMs = 2000 } = {}) {
 /** 测试用：清掉归档名单缓存。 */
 export function resetArchivedCache() { _archCache = { at: 0, set: null } }
 
-function lastTouchOf(row) {
-  const raw = row.last_seen_at || row.bound_at || row.created_at || ''
-  return Date.parse(raw) || 0
-}
-
-/**
- * 一条绑定行还算不算「真挂着」。
- * 不是归档的算；归档的要在宽限期内动过才算（见 ARCHIVED_GRACE_HOURS）。
- */
-function bindingAlive(row, archived, at, graceHours = ARCHIVED_GRACE_HOURS) {
-  if (!archived.has(String(row.session_id))) return true
-  const seen = lastTouchOf(row)
-  return seen > 0 && at - seen < graceHours * 3600000
-}
-
 /**
  * 每个实例真正挂着的对话数（界面角标「接着 N 段对话」用它）。
- * 和裸 SQL 的区别只有一条：已归档、且过了宽限期的会话不算。
+ * 归档 = 主人说「这段不要了」，所以归档的那段立刻不算，不留宽限。
  * @returns {Map<string, number>}
  */
 export function liveBindingCounts(db, at = Date.now(), { archived = null } = {}) {
   const out = new Map()
   const set = archived || archivedSessionIds()
   try {
-    for (const r of db.prepare("SELECT agent_id, session_id, last_seen_at, bound_at, created_at FROM bindings WHERE state='bound'").all()) {
-      if (!bindingAlive(r, set, at)) continue
+    for (const r of db.prepare("SELECT agent_id, session_id FROM bindings WHERE state='bound'").all()) {
+      if (set.has(String(r.session_id))) continue
       out.set(r.agent_id, (out.get(r.agent_id) || 0) + 1)
     }
   } catch { /* 老库没有 bindings 表时返回空 Map */ }
@@ -302,20 +283,20 @@ export function resolveAgentId(db, sessionId, { consume = true } = {}) {
 
 /**
  * 回收绑定行，两条路：
- *   1. 已归档：主人点过「归档」就是「这段不要了」，过了宽限期松绑（by='archived'）。
+ *   1. 已归档：主人点过「归档」就是「这段不要了」，**立刻**松绑（by='archived'）。
  *   2. 闲置太久：`idleDays` 天没动的自动松（by='ttl'）。
  * 都只释放绑定，不动 agents.status —— 用户的意图不许被系统覆盖。
  */
-export function sweepBindings(db, { idleDays = DEFAULT_IDLE_RELEASE_DAYS, at = Date.now(), archivedGraceHours = ARCHIVED_GRACE_HOURS, archived = null } = {}) {
+export function sweepBindings(db, { idleDays = DEFAULT_IDLE_RELEASE_DAYS, at = Date.now(), archived = null } = {}) {
   const iso = new Date(at).toISOString()
   let n = 0
-  // 1) 已归档的
+  // 1) 已归档的：不等宽限，看到就松
   const set = archived || archivedSessionIds()
   if (set.size) {
     try {
-      const rows = db.prepare("SELECT session_id, agent_id, last_seen_at, bound_at, created_at FROM bindings WHERE state='bound'").all()
+      const rows = db.prepare("SELECT session_id FROM bindings WHERE state='bound'").all()
       for (const r of rows) {
-        if (bindingAlive(r, set, at, archivedGraceHours)) continue
+        if (!set.has(String(r.session_id))) continue
         n += unbindSession(db, r.session_id, 'archived', iso)
       }
     } catch { /* 老库没有 bindings 表就跳过 */ }
@@ -336,7 +317,7 @@ export function runtimeStateOf(db, agentId) {
   const a = db.prepare('SELECT status, runtime_state FROM agents WHERE id=?').get(agentId)
   if (!a || a.status === 'soft_deleted') return 'offline'
   if (a.status === 'paused') return 'offline'
-  // 和角标同一口径：已归档且凉透的会话不算「挂着」，否则会显示「接着 0 段」却还是 bound。
+  // 和角标同一口径：已归档的会话不算「挂着」，否则会显示「接着 0 段」却还是 bound。
   const n = liveBindingCounts(db).get(agentId) || 0
   if (n > 0) return 'bound'
   // dormant 由心跳写进 agent_runtime，这里尊重它（别一刷新就把「自动休眠」抹成 idle）

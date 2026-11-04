@@ -74,6 +74,84 @@ try {
 
 const pct = (n, d) => d ? (n * 100 / d).toFixed(1) + '%' : '0%'
 
+/** 写入通道体检：每天真写进来几条、被哪道闸挡了多少、挡掉的像不像「真事」。
+ *  只读。数据全在本地库：memory_items + events（memory.self_rejected / memory.self.shown）。 */
+function gateReport(db, aid, name, limit) {
+  const day = (col) => `substr(${col},1,10)`
+  const since = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10)
+  console.log('\n--- 写入通道（近 14 天）---')
+  try {
+    const perDay = db.prepare(`SELECT ${day('created_at')} d, source, count(*) n
+      FROM memory_items WHERE agent_id=? AND deleted_at IS NULL AND source IN ('self','life') AND created_at >= ?
+      GROUP BY d, source ORDER BY d DESC`).all(aid, since)
+    if (!perDay.length) console.log('  这 14 天一条自我记忆都没写进来。')
+    const byDay = new Map()
+    for (const r of perDay) {
+      if (!byDay.has(r.d)) byDay.set(r.d, {})
+      byDay.get(r.d)[r.source] = r.n
+    }
+    for (const [d, m] of byDay) console.log('  ' + d + '  self ' + (m.self || 0) + '  life ' + (m.life || 0))
+  } catch (e) { console.log('  （读自我记忆失败：' + e.message + '）') }
+
+  let rej = []
+  try {
+    rej = db.prepare(`SELECT created_at, payload FROM events WHERE agent_id=? AND type='memory.self_rejected' ORDER BY created_at DESC`).all(aid)
+  } catch { /* 老库没有 events 也行 */ }
+  if (rej.length) {
+    const reason = new Map()
+    const recent = new Map()
+    const gateWhy = new Map()
+    const cutoff = new Date(Date.now() - 7 * 86400000).toISOString()
+    for (const r of rej) {
+      let p = {}
+      try { p = JSON.parse(r.payload || '{}') } catch { p = {} }
+      const k = p.reason || 'unknown'
+      reason.set(k, (reason.get(k) || 0) + 1)
+      if (String(r.created_at) >= cutoff) recent.set(k, (recent.get(k) || 0) + 1)
+      if (k === 'gate') {
+        const w = p.why || '未记录'
+        gateWhy.set(w, (gateWhy.get(w) || 0) + 1)
+      }
+    }
+    console.log('  被闸门挡下（全部）：' + [...reason].map(([k, v]) => k + ' ' + v).join('，'))
+    console.log('  被闸门挡下（近 7 天）：' + [...recent].map(([k, v]) => k + ' ' + v).join('，'))
+    if (gateWhy.size) console.log('  内容闸原因：' + [...gateWhy].map(([k, v]) => k + ' ' + v).join('，'))
+    const heads = []
+    for (const r of rej) {
+      let p = {}
+      try { p = JSON.parse(r.payload || '{}') } catch { continue }
+      if ((p.reason || '') === 'per_day' && p.head) heads.push(p.head)
+      if (heads.length >= limit) break
+    }
+    if (heads.length) {
+      console.log('  -- 因「一天上限」被挡掉的头部（看是流水账还是真事）--')
+      for (const h of heads) console.log('   · ' + String(h).replace(/\s+/g, ' ').slice(0, 60))
+    }
+    const g = []
+    for (const r of rej) {
+      let p = {}
+      try { p = JSON.parse(r.payload || '{}') } catch { continue }
+      if ((p.reason || '') === 'gate' && p.head) g.push(p.head)
+      if (g.length >= Math.min(limit, 6)) break
+    }
+    if (g.length) {
+      console.log('  -- 因内容闸被挡掉的头部 --')
+      for (const h of g) console.log('   · ' + String(h).replace(/\s+/g, ' ').slice(0, 60))
+    }
+  } else {
+    console.log('  没有被挡记录（memory.self_rejected 为空）。')
+  }
+
+  try {
+    const shown = db.prepare(`SELECT ${day('created_at')} d, count(*) n FROM events
+      WHERE agent_id=? AND type='memory.self.shown' AND created_at >= ?
+      GROUP BY d ORDER BY d DESC`).all(aid, since)
+    if (shown.length) console.log('  注入露出（memory.self.shown，近 14 天）：' + shown.map((r) => r.d + ' ' + r.n).join('，'))
+    else console.log('  注入露出（memory.self.shown）：近 14 天 0 次。')
+  } catch { /* 忽略 */ }
+  console.log('  注：天数按 created_at 的 UTC 日期切，跨零点前后会差一天。')
+}
+
 let applied = 0
 for (const [aid, list] of byAgent) {
   const name = names.get(aid) || aid
@@ -111,6 +189,8 @@ for (const [aid, list] of byAgent) {
       for (const r of self.slice(0, limit)) console.log('   · ' + String(r.text).replace(/\s+/g, ' ').slice(0, 60))
     }
   }
+
+  if (!apply) gateReport(db, aid, name, limit)
 
   if (apply && narrator.length) {
     const upd = db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=? AND (temp_state IS NULL OR temp_state<>'cold')")

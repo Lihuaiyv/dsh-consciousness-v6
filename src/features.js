@@ -401,13 +401,20 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
     if (String(getParam(db, aid, 'memory.write.self') || 'on') === 'off') return { action: 'drop', reason: 'self_off' }
     // 闸门：必须第一人称、6~120 字、不是旁白、不是运行时噪音。
     if (!selfTextOk(text)) {
-      try { event(db, aid, 'memory.self_rejected', { reason: 'gate', head: text.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
+      // 记下为什么被挡：只靠 reason:'gate' 分不出是「太长」还是「不像我」，
+      // 而这两种要改的地方完全不同（前者改阈值，后者改抽取提示词）。
+      const why = (text.length < 6 || text.length > 120) ? 'len'
+        : narrationOnly(text) ? 'narration'
+          : (/^(User|Assistant|user|assistant)\s*[:：]/.test(text) || /^\s*[\[{<]/.test(text) || /出错了|failed|Traceback|Error:/i.test(text)) ? 'noise'
+            : 'head'
+      try { event(db, aid, 'memory.self_rejected', { reason: 'gate', why, len: text.length, head: text.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
       return { action: 'drop', reason: 'self_gate' }
     }
     // 每日上限：一天最多 self.per_day 条，防自恋式刷屏。
     const cap = Math.max(1, Math.min(30, Number(getParam(db, aid, 'self.per_day')) || 8))
     if (selfCountToday(db, aid) >= cap) {
-      try { event(db, aid, 'memory.self_rejected', { reason: 'per_day', cap }) } catch { /* 事件失败不影响写入 */ }
+      // 带上头部：不然「被上限挡掉的是流水账还是真事」永远答不上来（体检脚本要用）。
+      try { event(db, aid, 'memory.self_rejected', { reason: 'per_day', cap, len: text.length, head: text.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
       return { action: 'drop', reason: 'self_per_day' }
     }
     const row = addMemory(db, aid, {
@@ -570,14 +577,15 @@ export async function ingest(db, aid, body) {
   let relate = []
   try { relate = await learnRelationsFromTurns(db, aid, turns) } catch { relate = [] }
 
-  const rawSummary = String((await model.summarize(turns)) || '').slice(0, 600)
+  // 摘要要不要进 T1（事实区）。默认 off（见 kernel.js）：关掉后摘要不落库。
+  // 为什么要有这个开关：每轮一条「用户事实 / 用户偏好」的第三人称旁白，
+  // 久了会把记忆库占满（线上 72% 是它），于是「我记住的」全是「用户关心什么」。
+  // 关掉时连这次 summarize 调用也不发——否则每轮白叫一次模型，结果直接扔掉。
+  const summaryToT1 = String(getParam(db, aid, 'memory.write.summary_to_t1') || 'off') !== 'off'
+  const rawSummary = summaryToT1 ? String((await model.summarize(turns)) || '').slice(0, 600) : ''
   const summary = looksLikeRuntimeNoise(rawSummary) ? '' : rawSummary
   const transcriptShaped = /^\s*(user|assistant)\s*[:：]/i.test(summary) || (summary.match(/\n\s*(user|assistant)\s*[:：]/gi) || []).length >= 1
   let reflectGate = null
-  // 摘要要不要进 T1（事实区）。默认 on 保持现状；关掉后摘要只留在 T2 纪要里。
-  // 为什么要有这个开关：每轮一条「用户事实 / 用户偏好」的第三人称旁白，
-  // 久了会把记忆库占满（线上 72% 是它），于是「我记住的」全是「用户关心什么」。
-  const summaryToT1 = String(getParam(db, aid, 'memory.write.summary_to_t1') || 'on') !== 'off'
   if (summaryToT1 && summary && !transcriptShaped && summary.length <= 200) {
     // 写入侧闸门（P4）：重要度不再只看关键词，先让模型判一句。
     // 关键词分 ≥0.9 的（明显是边界/禁忌/承诺）不浪费一次调用；其余问模型。

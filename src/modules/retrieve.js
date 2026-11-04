@@ -472,6 +472,8 @@ export function searchEpisodes(db, aid, query) {
     partition: 'T2', id: r.id,
     text: [r.day, r.title, r.summary].filter(Boolean).join(' · ').slice(0, 400),
     day: r.day,
+    // 阶段 C：带上 created_at，memoryTag 才能贴「多久以前」；没有它，纪要进注入就是无时间的。
+    created_at: r.day ? r.day + 'T00:00:00.000Z' : null,
   }))
 }
 
@@ -485,7 +487,13 @@ export function searchDiaries(db, aid, query, days = 60) {
       ORDER BY day DESC LIMIT 10`).all(aid, since, `%${g}%`)
     for (const r of rows) if (!found.has(r.id)) found.set(r.id, r)
   }
-  return [...found.values()].map((r) => ({ partition: 'T3', id: r.id, text: String(r.text || '').slice(0, 600), day: r.day }))
+  return [...found.values()].map((r) => ({
+    partition: 'T3', id: r.id,
+    // 阶段 C：日记正文本身不带日期，注入时会被当成「现在的事」；把 day 拼在前头。
+    text: (r.day ? r.day + ' · ' : '') + String(r.text || '').slice(0, 600),
+    day: r.day,
+    created_at: r.day ? r.day + 'T00:00:00.000Z' : null,
+  }))
 }
 
 /**

@@ -274,9 +274,17 @@ function toolGate(name) {
 /**
  * 建四个模型工具。web/model 延迟取：工具注册时宿主服务可能还没挂好。
  */
-export function createActionTools({ getDb, getAgentId, getWeb, getModel, gateSearch, log } = {}) {
+export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getModel, gateSearch, log } = {}) {
   const db = () => getDb()
   const aid = () => getAgentId()
+  // 按这条会话自己找意识体：QQ 会话里「当前发起人」是空的，只靠 aid() 会拿到 no_db。
+  const aidOfSession = (exec) => {
+    try {
+      const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : ''
+      if (sid && typeof getAgentIdForSession === 'function') return getAgentIdForSession(sid) || ''
+    } catch { /* 认不出就退回旧路 */ }
+    return ''
+  }
   const web = () => { try { return getWeb() } catch { return null } }
   const model = () => { try { return getModel() } catch { return null } }
 
@@ -498,7 +506,8 @@ export function createActionTools({ getDb, getAgentId, getWeb, getModel, gateSea
       presentCall: (args) => ({ card: 'generic', title: '感觉 · ' + String((args && args.text) || '').slice(0, 24), kind: 'other', rawInput: args }),
       async execute(args, exec) {
         const d = db()
-        const a = aid()
+        // 先按这条会话自己认人；认不出才退回「当前发起人」。
+        const a = aidOfSession(exec) || aid()
         if (!d || !a) return { ok: false, skipped: 'no_db' }
         const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : null
         return recordFeel(d, a, { text: args && args.text, sessionId: sid, source: 'tool' })

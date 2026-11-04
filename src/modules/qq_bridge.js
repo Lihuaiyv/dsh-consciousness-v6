@@ -362,7 +362,7 @@ export function attachQQFeelProvider(opts = {}) {
  *   log       (msg) => void
  */
 export function attachQQBridge(opts = {}) {
-  const { getCtx, getDb, getAid, param, log, resolveAid } = opts
+  const { getCtx, getDb, getAid, param, log, resolveAid, autoBind } = opts
   if (typeof getCtx !== 'function') return { attached: false, reason: 'no getCtx' }
   let ctx = null
   try { ctx = getCtx() } catch { ctx = null }
@@ -385,7 +385,19 @@ export function attachQQBridge(opts = {}) {
       const sessionId = String((agent && agent.id) || (payload && payload.sessionId) || '')
       if (!isQQSessionId(sessionId)) return
       // 按这段 QQ 会话自己的归属取 agent；没绑才退回「当前意识体」。
-      const aid = typeof resolveAid === 'function' ? resolveAid(db, sessionId) : (typeof getAid === 'function' ? getAid() : '')
+      let aid = typeof resolveAid === 'function' ? resolveAid(db, sessionId) : (typeof getAid === 'function' ? getAid() : '')
+      // 桥接重启 / 断线会换一个新的 sessionId，绑定还挂在旧 id 上——
+      // 那条链上就没有记忆、也没有人格段。这里先把新 id 接回「这条聊天原本归谁」，
+      // 已经绑过的会话 autoBind 会直接返回 null，不会动用户手动绑的结果。
+      if (typeof autoBind === 'function') {
+        try {
+          const rebound = autoBind(db, sessionId)
+          if (rebound) {
+            aid = rebound
+            localEvent(db, rebound, 'qq.bridge.rebound', { sessionId })
+          }
+        } catch { /* 续绑失败不影响主流程，保持原样 */ }
+      }
       if (!aid) return
       const paramOf = (k) => (typeof param === 'function' ? param(k, sessionId) : undefined)
       const enabled = String(paramOf('qq.bridge.enable') ?? 'off')

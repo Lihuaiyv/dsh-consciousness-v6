@@ -121,5 +121,45 @@ export function memoryHealth(db, aid) {
   try { conflicts_open = Number(db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=? AND state='open'").get(aid).n || 0) } catch { /* 忽略 */ }
   let retrieval = null
   try { retrieval = retrievalStats(db, aid, 7) } catch { /* 忽略 */ }
-  return { memory: mem, conflicts_open, timeline_drift, retrieval }
+  // S7：护照/过时观测——回链覆盖、被取代数、近期三类事件
+  let passport = { derived: 0 }
+  try {
+    passport.derived = Number(db.prepare(`SELECT COUNT(*) n FROM memory_items m
+      JOIN fact_archive f ON f.agent_id=m.agent_id AND f.memory_id=m.id
+      WHERE m.agent_id=? AND m.status='active' AND m.invalid_at IS NULL
+        AND f.payload LIKE '%episode_id%'`).get(aid).n || 0)
+  } catch { /* 老库没有存根 */ }
+  let stale = { superseded: 0, pair_seen_7d: 0, reflect_merged_7d: 0, ejected: 0, statement_eligible: 0 }
+  try {
+    stale.superseded = Number(db.prepare('SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND invalid_at IS NOT NULL').get(aid).n || 0)
+    const since = new Date(Date.now() - 7 * 86400000).toISOString()
+    stale.pair_seen_7d = Number(db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='memory.stale_pair_seen' AND created_at>=?").get(aid, since).n || 0)
+    stale.reflect_merged_7d = Number(db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='memory.reflect_merged' AND created_at>=?").get(aid, since).n || 0)
+    // 阶段 E：让「挤出了多少、有多少条会带时间」在面板上看得见。
+    // ejected：已作废、S1 不会再召回的（与 isStale 的 invalid 分支同义）。
+    stale.ejected = Number(db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NOT NULL").get(aid).n || 0)
+    // statement_eligible：非槽位 + 超过三天 → 注入时会带「这是哪天的判断」。
+    const cutoff = new Date(Date.now() - 3 * 86400000).toISOString()
+    stale.statement_eligible = Number(db.prepare(`SELECT COUNT(*) n FROM memory_items
+      WHERE agent_id=? AND status='active' AND invalid_at IS NULL
+        AND type NOT IN ('fact','appraisal') AND created_at < ?`).get(aid, cutoff).n || 0)
+  } catch { /* 忽略 */ }
+  // 阶段 A：key 分身份——哪些 key 只是检索用，哪些能参与「值变了」的时态判定。
+  // 只看 type：reflection / episode 上的 key 是摘要句编号，不承载槽位语义。
+  const keys = { by_type: {}, total: 0, with_key: 0, slot: 0 }
+  try {
+    const rows = db.prepare(`SELECT type, COUNT(*) n,
+        SUM(CASE WHEN fact_key IS NOT NULL AND fact_key<>'' THEN 1 ELSE 0 END) k
+      FROM memory_items WHERE agent_id=? AND status='active' GROUP BY type`).all(aid)
+    for (const r of rows) {
+      const t = String(r.type || '(null)')
+      const n = Number(r.n || 0)
+      const k = Number(r.k || 0)
+      keys.by_type[t] = { total: n, key: k }
+      keys.total += n
+      keys.with_key += k
+      if (t === 'fact' || t === 'appraisal') keys.slot += k
+    }
+  } catch { /* 老库没有 fact_key */ }
+  return { memory: mem, conflicts_open, timeline_drift, retrieval, passport: { ...passport, slot: keys.slot }, stale, keys }
 }
