@@ -730,6 +730,9 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, cr
     // 情绪效价（-1 难受 ~ +1 舒服）：出生那一刻它自己的心情。
     // 召回时拿它和当前心情做「同向加成」——心情好更容易想起好事（mood-congruent recall）。
     ['valence', 'REAL NOT NULL DEFAULT 0'],
+    // 出生那一刻自己写下的 feel（affect_feel.id）。只挂 id，不复制正文：
+    // 查记忆时顺着这里能翻到当时那句话，feel 本身仍然是独立的一条。
+    ['feel_id', 'TEXT'],
   ]) {
     try { db.exec(`ALTER TABLE memory_items ADD COLUMN ${col} ${spec}`) } catch { /* 已存在 */ }
   }

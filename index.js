@@ -45,7 +45,7 @@ import { applySelfRead, readReplyTone } from './src/modules/self_read.js'
 import { recordSelfResidue, residueCandidate, commitResidue, residueDirFor } from './src/modules/self_residue.js'
 import { captureQuote, quoteCandidate, commitQuote } from './src/modules/quote_echo.js'
 import { feltSnapshot } from './src/modules/felt_snapshot.js'
-import { latestFeel, feelLineOf } from './src/modules/feel.js'
+import { latestFeel, feelLineOf, attachableFeelId } from './src/modules/feel.js'
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { asofInjectItems } from './src/modules/asof.js'
 import { enqueueExtraction, tickExtraction, makeTurnId } from './src/modules/extract_queue.js'
@@ -61,11 +61,11 @@ import { model } from './src/kernel.js'
 import * as R from './src/modules/relations.js'
 import { enqueueRelationRead, tickRelationRead } from './src/modules/relations_extract.js'
 import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/affect.js'
-import { addMemory } from './src/modules/memory.js'
+import { addMemory, setFeelProvider } from './src/modules/memory.js'
 import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
-import { resolveAgentId, touchSession, peekPending, bindingsOf, runningAgentIds, maxRunning, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
+import { resolveAgentId, touchSession, peekPending, bindingOf, bindSession, bindingsOf, runningAgentIds, maxRunning, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
 import { attachQQBridge, attachQQIngest, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock } from './src/modules/qq_bridge.js'
 import { mindLine, noteMeter, meterFromUsage, meterOf } from './src/modules/mindstate.js'
@@ -80,6 +80,10 @@ const API_PATH = '/dsh-consciousness/api'
 const PING_PATH = '/dsh-consciousness/ping'
 const DB_PATH = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'app.db')
 const LOCK_PATH = path.join(path.dirname(DB_PATH), 'app.lock')
+
+// 装配：记忆出生时挂 feel 的取数口。memory 模块不直接读 affect_feel（INV10），
+// 由这里把「最近一条、窗口内才算」的口交出去。
+setFeelProvider(attachableFeelId)
 
 // 瀹夸富涓婁笅鏂囧拰鏈€杩戣鍒扮殑浼氳瘽锛氫富鍔ㄥ彂娑堟伅瑕佺敤 sessionController.prompt 鎺ㄨ繘鍘汇€?
 let hostCtx = null
@@ -1313,13 +1317,31 @@ function qqContextOf(sessionId) {
     const sid = String(sessionId || '')
     if (!isQQSessionId(sid)) return null
     const d = ensureDb()
-    const aid = activeAgentId(d)
+    // 配置按「这段会话绑的是谁」读；没绑定才退回当前激活的那只。
+    const aid = sessionAgentId(d, sid) || activeAgentId(d)
     if (!aid) return null
     if (String(getParam(d, aid, 'qq.bridge.enable') || 'off') !== 'on') return null
     const owners = parseOwnerQq(getParam(d, aid, 'qq.bridge.owner_qq') || '')
     const file = getParam(d, aid, 'qq.bridge.sessions_file') || findQQSessionsFile()
     return resolveQQContext(sid, { owners, sessionMap: loadSessionMap(file) })
   } catch { return null }
+}
+
+/**
+ * 一个 QQ 会话键（qq-xxx 桥接会话 / qq:p: 旧通道会话）现在归谁。
+ * 显式绑定优先，其次 conversations 表，最后才是当前激活的那只（只用于记账退路）。
+ */
+function qqAidOf(db, key) {
+  const k = String(key || '')
+  if (!k) return activeAgentId(db)
+  if (k.startsWith('qq:')) {
+    try {
+      const c = db.prepare('SELECT agent_id, state FROM conversations WHERE conversation_id=?').get(k)
+      if (c && c.state === 'active' && c.agent_id) return c.agent_id
+    } catch { /* 空 */ }
+    return activeAgentId(db)
+  }
+  return sessionAgentId(db, k) || activeAgentId(db)
 }
 
 /**
@@ -1346,6 +1368,69 @@ function activeAgentId(db) {
     const r = db.prepare("SELECT id FROM agents WHERE status='active' ORDER BY COALESCE(last_interaction_at, created_at) DESC LIMIT 1").get()
     return r ? r.id : null
   } catch { return null }
+}
+
+/** 宿主在组装提示词时给的 initiator 就是会话 id（probe-session-ok 验过）。 */
+function currentSessionId() {
+  try {
+    const agents = optionalService('agents')
+    if (!agents || typeof agents.currentInitiator !== 'function') return ''
+    const who = agents.currentInitiator()
+    return who && who.id ? String(who.id) : ''
+  } catch { return '' }
+}
+
+/**
+ * 一段会话现在归谁（只读，不写库；落绑定由 sessionEvent 的 pinSessionAgent 做）。
+ * 已绑定的按绑定走；绑定的人被暂停就返回 null（binding.js 的硬规则：暂停 = 不注入，但绑定保留）。
+ * 还没绑定的：待绑定（最近唤醒）优先，其次才退回「当前激活的那只」。
+ * QQ 会话只有显式绑定才认人——没绑的不自动认，交给桥接自己带。
+ */
+function sessionAgentId(db, sid) {
+  const id = String(sid || '').trim()
+  if (!id) return activeAgentId(db)
+  try {
+    const row = bindingOf(db, id)
+    if (row) {
+      const a = db.prepare('SELECT status FROM agents WHERE id=?').get(row.agent_id)
+      if (!a || a.status === 'soft_deleted') return null
+      if (a.status === 'paused') return null
+      return row.agent_id
+    }
+  } catch { /* 解析失败走退路 */ }
+  // qq- 开头的是 QQ 桥接的会话：没手动绑过就返回 null，不自动钉、不跟着全局激活漂。
+  if (id.startsWith('qq-')) return null
+  try {
+    const pending = peekPending(db)
+    if (pending) {
+      const a = db.prepare('SELECT id,status FROM agents WHERE id=?').get(pending)
+      if (a && a.status !== 'paused' && a.status !== 'soft_deleted') return a.id
+    }
+  } catch { /* 解析失败走退路 */ }
+  return activeAgentId(db)
+}
+
+/**
+ * 会话首次开口：把「最近唤醒的那个人」正式落成绑定（source=auto）。
+ * 之后这段对话就钉住了，再唤醒别人也不会跟着漂——这正是「新会话归新唤醒的那只」。
+ * 已经绑过的一律不动；绑定的人被暂停时返回 null，不拆绑定。
+ */
+function pinSessionAgent(db, sid) {
+  const id = String(sid || '').trim()
+  if (!id) return activeAgentId(db)
+  if (id.startsWith('qq-') || id === 'legacy') return null
+  try {
+    if (bindingOf(db, id)) return resolveAgentId(db, id) || null
+  } catch { /* 读不到就当没绑 */ }
+  try {
+    const got = resolveAgentId(db, id)
+    if (got) return got
+  } catch { /* 继续走自动钉 */ }
+  try {
+    const act = activeAgentId(db)
+    if (act && bindSession(db, act, id, { source: 'auto' }).ok) return act
+  } catch { /* 钉不上就退回当前激活，至少不串到别人 */ }
+  return activeAgentId(db)
 }
 
 /** 鎵€鏈夈€岀敤鎴峰厑璁告椿鐫€銆嶇殑瀹炰緥锛氬悗鍙?worker 瑕侀亶鍘嗗畠浠紝涓嶈兘鍙収椤炬渶杩戦偅涓€?*/
@@ -1391,8 +1476,11 @@ function initiatorAgentId() {
     if (svc && typeof svc.currentInitiator === 'function') {
       const a = svc.currentInitiator()
       if (a && a.id) {
-        const aid = resolveAgentId(d, String(a.id))
-        if (aid) return aid
+        const sid = String(a.id)
+        // QQ 会话：只认显式绑定，没绑就不认人——别把网页那边激活的人借过来用。
+        if (sid.startsWith('qq-')) return sessionAgentId(d, sid) || null
+        const viaSession = sessionAgentId(d, sid)
+        if (viaSession) return viaSession
       }
     }
   } catch { /* 瀹夸富娌¤繖涓湇鍔℃椂璧伴€€璺?*/ }
@@ -1662,7 +1750,7 @@ function noteSessionMeter(payload, readTokens) {
   if (!session || !session.id) return
   lastMeterAt = t0
   const d = ensureDb()
-  const aid = activeAgentId(d)
+  const aid = sessionAgentId(d, String(session.id)) || activeAgentId(d)
   let window = 0
   try {
     const rc = typeof session.requestContext === 'function' ? session.requestContext() : null
@@ -1719,7 +1807,9 @@ function hostSpec() {
           // 不去 agent scope 另挂 section——真机验过 this 不是会话 ctx，挂不上；
           // 用 currentInitiator 认当前会话，一处就够，也不会给网页会话多加东西。
           const qq = currentQQContext()
-          const id = activeAgentId(d)
+          // 人格跟会话走：这段对话绑的是谁，提示词就是谁；没绑定的才退回当前激活。
+          const sid = currentSessionId()
+          const id = sid ? sessionAgentId(d, sid) : activeAgentId(d)
           // 感受快照带主人原话：QQ 上只给主人。这里不传 audience（那会连带改日记/开环/主动句，
           // 是另一件事），只把「快照」这一行按 isOwner 关掉。
           const snapOpt = qq && qq.isQQ && qq.isOwner === false ? 'off' : 'on'
@@ -1751,7 +1841,9 @@ function hostSpec() {
     preStep: async (payload, next) => {
       try {
         const d = ensureDb()
-        const aid = activeAgentId(d)
+        const sid = payload && payload.agent && payload.agent.session && payload.agent.session.id
+          ? String(payload.agent.session.id) : ''
+        const aid = sid ? sessionAgentId(d, sid) : activeAgentId(d)
         if (aid) {
           const msgs = (payload && payload.messages) || []
           let q = ''
@@ -1945,7 +2037,10 @@ function hostSpec() {
     sessionEvent: (session, event) => {
       __probe('event:' + (event && event.type))
       try {
-        const id = activeAgentId(db())
+        const sid = session && session.id ? String(session.id) : ''
+        // 第一次见到这段对话就把它钉到「最近唤醒的那个人」；之后只认绑定。
+        // QQ 会话不会被自动钉（pinSessionAgent 对 qq- 返回 null），但手动绑过的照样记账——别让这段对话没有账。
+        const id = sid ? (pinSessionAgent(db(), sid) || sessionAgentId(db(), sid)) : activeAgentId(db())
         if (id) {
           // 收到用户消息就先让模型改写/扩词、算查询向量：等 pre-step 跑到时，结果大概率已经回来了。
           // 这里只预取、不阻塞；失败静默，pre-step 会退回纯词法。
@@ -2070,13 +2165,13 @@ function hostSpec() {
     // 端口没开时工具仍在，执行时返回「接口未开启」，模型知道有这回事但动不了手。
     tools: createActionTools({
       getDb: () => ensureDb(),
-      getAgentId: () => activeAgentId(ensureDb()),
+      getAgentId: () => initiatorAgentId(),
       getWeb: () => optionalService('web'),
       getModel: () => model,
       // 第二道闸：工具执行前自己再判一次（守卫那层注册失败/降级时还拦得住）
       gateSearch: (sessionId) => verdictFor({
         db: ensureDb(),
-        aid: activeAgentId(ensureDb()) || '',
+        aid: initiatorAgentId() || '',
         sessionId,
         param: gateParam(),
         findSessionsFile: () => findQQSessionsFile(),
@@ -2089,7 +2184,7 @@ function hostSpec() {
     toolGuards: [
       makeOwnerGuard({
         getDb: () => ensureDb(),
-        getAid: () => activeAgentId(ensureDb()),
+        getAid: () => initiatorAgentId(),
         param: gateParam(),
         findSessionsFile: () => findQQSessionsFile(),
       }),
@@ -2097,11 +2192,11 @@ function hostSpec() {
   }
 }
 
-/** 闸读参数的地方：跟 QQ 桥接一样按「当前 agent」取，取不到就返回 undefined（走各自的默认）。 */
+/** 闸读参数的地方：跟 QQ 桥接一样按「当前会话认的人」取，取不到就返回 undefined（走各自的默认）。 */
 function gateParam() {
   return (k) => {
     const d = ensureDb()
-    const aid = activeAgentId(d)
+    const aid = initiatorAgentId() || activeAgentId(d)
     if (!aid) return undefined
     if (k === 'qq.bridge.sessions_file') return getParam(d, aid, k) || findQQSessionsFile()
     return getParam(d, aid, k)
@@ -2162,9 +2257,11 @@ try {
       getCtx: () => hostCtx,
       getDb: () => ensureDb(),
       getAid: () => activeAgentId(ensureDb()),
-      param: (k) => {
+      // 按会话归属认人：绑了小汐就是小汐的，别拿网页那边当前激活的顶替。
+      resolveAid: (d, key) => qqAidOf(d, key),
+      param: (k, hint) => {
         const d = ensureDb()
-        const aid = activeAgentId(d)
+        const aid = (hint && qqAidOf(d, hint)) || initiatorAgentId() || activeAgentId(d)
         const v = aid ? getParam(d, aid, k) : undefined
         // 会话映射表没配就自己找一下：桥接插件把它写在它的工作目录里。
         // 找不到也不要紧——qq_bridge 会退化成只认主人，群聊/陌生人就当认不出。

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 let src = fs.readFileSync(path.join(here, '..', 'client.js'), 'utf8')
+src = src.replace(/\r\n/g, '\n')  // 文件是 CRLF，断言按 LF 写
 src = src.replace(
   "    return {\n      inject: ['slots'],",
   "    return {\n      __test: { PersonMap },\n      inject: ['slots'],")

@@ -189,7 +189,7 @@ export function qqChannelBlock(info = {}) {
  *   log       (msg) => void
  */
 export function attachQQBridge(opts = {}) {
-  const { getCtx, getDb, getAid, param, log } = opts
+  const { getCtx, getDb, getAid, param, log, resolveAid } = opts
   if (typeof getCtx !== 'function') return { attached: false, reason: 'no getCtx' }
   let ctx = null
   try { ctx = getCtx() } catch { ctx = null }
@@ -206,16 +206,17 @@ export function attachQQBridge(opts = {}) {
   // 渠道段要注册进那个 scope（不是插件根 scope），否则 web 也会看到「你在 QQ 上」。
   function handle(payload) {
     try {
-      const paramOf = (k) => (typeof param === 'function' ? param(k) : undefined)
       const db = typeof getDb === 'function' ? getDb() : null
       if (!db) return
-      const aid = typeof getAid === 'function' ? getAid() : ''
-      if (!aid) return
-      const enabled = String(paramOf('qq.bridge.enable') ?? 'off')
-      if (enabled !== 'on') return
       const agent = payload && payload.agent ? payload.agent : null
       const sessionId = String((agent && agent.id) || (payload && payload.sessionId) || '')
       if (!isQQSessionId(sessionId)) return
+      // 按这段 QQ 会话自己的归属取 agent；没绑才退回「当前意识体」。
+      const aid = typeof resolveAid === 'function' ? resolveAid(db, sessionId) : (typeof getAid === 'function' ? getAid() : '')
+      if (!aid) return
+      const paramOf = (k) => (typeof param === 'function' ? param(k, sessionId) : undefined)
+      const enabled = String(paramOf('qq.bridge.enable') ?? 'off')
+      if (enabled !== 'on') return
       const owners = parseOwnerQq(paramOf('qq.bridge.owner_qq'))
       // 有了这张反查表才认得出群号和陌生人；读不到就退化成只认主人
       const sessionMap = loadSessionMap(paramOf('qq.bridge.sessions_file'))

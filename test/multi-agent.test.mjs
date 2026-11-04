@@ -14,6 +14,7 @@ import {
   bindSession, unbindSession, unbindAgent, bindingOf, bindingsOf, resolveAgentId,
   setPending, peekPending, clearPending, touchSession, sweepBindings, runtimeStateOf, refreshAll,
   maxRunning, setMaxRunning, setDefaultAgent, runningAgentIds, bindableAgent, migrateLegacyBindings,
+  liveBindingCounts, resetArchivedCache,
 } from '../src/modules/binding.js'
 
 let pass = 0
@@ -245,6 +246,40 @@ check('schema 到 13', Number(db.prepare('SELECT version FROM schema_meta').get(
   check('迁移只跑一次', m2.migrated === 0 && m2.skipped === 'done', m2)
   d3.close()
   fs.rmSync(dir2, { recursive: true, force: true })
+}
+
+// ---- 归档会话不算「接着 N 段对话」----
+// 角标以前是裸 COUNT(*)，主人归档掉的旧对话会一直累进去（小汐显示 7，实际只有 1 段还在用）。
+{
+  resetArchivedCache()
+  const E = mkAgent('agt_arch')
+  const day = 86400000, min = 60000
+  function bindAt(sid, seenAgoMs) {
+    bindSession(db, E, sid, { source: 'manual', at: new Date(Date.now() - seenAgoMs).toISOString() })
+    db.prepare('UPDATE bindings SET last_seen_at=? WHERE session_id=?')
+      .run(new Date(Date.now() - seenAgoMs).toISOString(), sid)
+  }
+  bindAt('sess-arch-old', 2 * day)      // 归档 + 凉透 → 不算、该松
+  bindAt('sess-arch-fresh', 10 * min)   // 归档但刚动过 → 宽限期内还算
+  bindAt('sess-arch-live', 5 * min)     // 没归档 → 算
+  const arch = new Set(['sess-arch-old', 'sess-arch-fresh'])
+
+  check('归档凉透的不算进角标', liveBindingCounts(db, Date.now(), { archived: arch }).get(E) === 2,
+    liveBindingCounts(db, Date.now(), { archived: arch }).get(E))
+  check('裸 SQL 会多算（旧口径复现）',
+    Number(db.prepare("SELECT COUNT(*) n FROM bindings WHERE agent_id=? AND state='bound'").get(E).n) === 3)
+  check('在场状态跟角标同口径', runtimeStateOf(db, E) === 'bound')
+
+  const swept = sweepBindings(db, { archived: arch, idleDays: 0 })
+  check('只松归档且凉透的那段', swept === 1, swept)
+  check('宽限期内归档的还留着', bindingsOf(db, E).length === 2, bindingsOf(db, E).map((r) => r.session_id))
+  const ar = db.prepare("SELECT released_by FROM bindings WHERE session_id='sess-arch-old'").get()
+  check('归档松绑留痕 released_by=archived', ar.released_by === 'archived', ar)
+  check('过了宽限期才松', sweepBindings(db, { archived: arch, idleDays: 0, at: Date.now() + 7 * 3600000 }) === 1)
+  check('正常人没被误松', bindingsOf(db, E).length === 1 && bindingsOf(db, E)[0].session_id === 'sess-arch-live',
+    bindingsOf(db, E).map((r) => r.session_id))
+  db.prepare("UPDATE bindings SET state='released' WHERE agent_id=?").run(E)
+  check('全松完回 idle', runtimeStateOf(db, E) === 'idle', runtimeStateOf(db, E))
 }
 
 db.close()

@@ -90,6 +90,51 @@ export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480 } = {}) {
   } catch { return null }
 }
 
+/** 最近 N 条「我说话时的感觉」（界面「我最近怎么感觉」用）。只读，不改任何状态。 */
+export function listFeels(db, aid, { limit = 20 } = {}) {
+  const n = Math.max(1, Math.min(100, Number(limit) || 20))
+  try {
+    return db.prepare('SELECT id,at,text,label,fast,slow,total,session_id,source FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT ?').all(aid, n)
+      .map((r) => ({ ...r, text: String(r.text || '') }))
+  } catch { return [] }
+}
+
+/** 单条 feel；找不到返回 null。 */
+export function getFeel(db, aid, id) {
+  try {
+    const r = db.prepare('SELECT id,at,text,label,fast,slow,total,session_id,source FROM affect_feel WHERE agent_id=? AND id=?').get(aid, String(id || ''))
+    return r ? { ...r, text: String(r.text || '') } : null
+  } catch { return null }
+}
+
+/**
+ * 给记忆挂 feel 用的取数口：最近一条、窗口内才算（feel.attach.window，默认 30 分钟）。
+ * memory.js 通过 setFeelProvider 注入它——记忆模块不直接读 affect_feel（INV10）。
+ */
+export function attachableFeelId(db, aid) {
+  try {
+    const min = Math.max(1, Number(getParam(db, aid, 'feel.attach.window')) || 30)
+    const f = db.prepare('SELECT id, at FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
+    if (!f || !f.at) return null
+    const age = Date.now() - Date.parse(f.at)
+    return Number.isFinite(age) && age >= 0 && age <= min * 60000 ? String(f.id) : null
+  } catch { return null }
+}
+
+/** 按 id 批量取 feel（给记忆列表一次挂满，不 N+1）。返回 Map<id, feel>。 */
+export function feelsByIds(db, ids) {
+  const list = [...new Set((Array.isArray(ids) ? ids : []).filter(Boolean))]
+  const map = new Map()
+  if (!list.length) return map
+  try {
+    const ph = list.map(() => '?').join(',')
+    for (const f of db.prepare(`SELECT id,at,text,label,fast,slow FROM affect_feel WHERE id IN (${ph})`).all(...list)) {
+      map.set(f.id, { id: f.id, at: f.at, text: String(f.text || ''), label: f.label || null, fast: f.fast, slow: f.slow })
+    }
+  } catch { /* 老库没有这张表就当作没有 */ }
+  return map
+}
+
 /**
  * 渲染成注入用的那一行。只给材料，不给结论：
  * 不写「所以你现在应该…」，让它自己决定这句话要不要影响语气。

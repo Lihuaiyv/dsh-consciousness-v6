@@ -9,9 +9,10 @@
  */
 
 import { nowRow } from './tiers.js'
+import { feelsByIds } from './feel.js'
 
 /** 现算热度需要的列：缺 hits / last_hit_at / salience / mark，算出来的热度就是错的。 */
-const HEAT_COLS = `id,text,type,importance,weight,heat,band,temp_state,created_at,source_turn_id,mark,hits,last_hit_at,salience`
+const HEAT_COLS = `id,text,type,importance,weight,heat,band,temp_state,created_at,source_turn_id,mark,hits,last_hit_at,salience,feel_id`
 
 function dayOf(iso) { return String(iso || '').slice(0, 10) }
 
@@ -26,12 +27,13 @@ export function timeline(db, aid, opt = {}) {
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=?
       ORDER BY created_at DESC LIMIT 400`).all(aid, since)
   } catch { rows = [] }
+  const feelMap = feelsByIds(db, rows.map((r) => r.feel_id))
   const byDay = new Map()
   for (const r of rows) {
     const m = nowRow(r, at)
     const d = dayOf(m.created_at)
     const arr = byDay.get(d) || []
-    arr.push(m)
+    arr.push({ ...m, feel: r.feel_id ? (feelMap.get(r.feel_id) || null) : null })
     byDay.set(d, arr)
   }
   const out = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([day, items]) => ({ day, count: items.length, items }))
@@ -70,6 +72,11 @@ export function topMemory(db, aid, opt = {}) {
     .map((r) => nowRow(r, at))
     .sort((a, b) => (b.heat - a.heat) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
     .slice(0, limit)
-  return { limit, at: new Date(at).toISOString(), total: rows.length, items }
+  // 查记忆时旁边带着出生那一刻的 feel（一次批量查；没有就 null）
+  const feelMap = feelsByIds(db, items.map((r) => r.feel_id))
+  return {
+    limit, at: new Date(at).toISOString(), total: rows.length,
+    items: items.map((r) => ({ ...r, feel: r.feel_id ? (feelMap.get(r.feel_id) || null) : null })),
+  }
 }
 

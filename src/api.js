@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import * as c from './core.js'
 import * as f from './features.js'
+import * as fl from './modules/feel.js'
 import { agent, ApiError, err, tx, getParam } from './core.js'
 import { now } from './db.js'
 import * as th from './modules/thoughts.js'
@@ -58,6 +59,75 @@ function roleOf(token) {
 
 function scoped(bound, aid) {
   if (bound && bound !== aid) err(404, 'NOT_FOUND', 'agent 不存在')
+}
+
+/**
+ * 一个实例「真正挂着」几段对话。
+ * 和 bindingsOf().length 的区别：已归档、且过了宽限期的会话不算 ——
+ * 界面上「接着 N 段对话」不该把主人归档掉的历史一直累进去。
+ */
+function liveBound(db, aid) {
+  try { return bd.liveBindingCounts(db).get(aid) || 0 } catch { return 0 }
+}
+
+/** DSH 的家目录（插件库也在它下面）；DSH_HOME 没设就是 ~/.dsh。 */
+function dshHome() { return process.env.DSH_HOME || (os.homedir() + '/.dsh') }
+
+/**
+ * 侧边栏的分支（workspace）目录：顺序、标题、每段会话归哪个分支。
+ * 顺序照 global.workspaceIds——和侧边栏里从上到下一致；不在任何分支里的算「未分组」。
+ */
+function readWorkspaceIndex() {
+  const out = { groups: [], order: new Map(), bySession: new Map(), archived: new Set() }
+  try {
+    const ws = JSON.parse(fs.readFileSync(dshHome() + '/storages/workspace.json', 'utf8'))
+    for (const id of ((ws.global && ws.global.archivedSessionIds) || [])) out.archived.add(String(id))
+    const tabs = (ws.tables && ws.tables.workspaces) || {}
+    const ids = Array.isArray(ws.global && ws.global.workspaceIds)
+      ? ws.global.workspaceIds.map(String)
+      : Object.keys(tabs)
+    let seq = 0
+    for (const id of ids) {
+      const w = tabs[id]
+      if (!w) continue
+      const title = String(w.title || '').trim() || '未命名分支'
+      out.groups.push({ key: id, title, path: String(w.path || '') })
+      out.order.set(id, seq++)
+      for (const sid of (w.sessionIds || [])) out.bySession.set(String(sid), id)
+    }
+    // workspaceIds 里没列、但表里有的分支，接在最后，别丢
+    for (const id of Object.keys(tabs)) {
+      if (out.order.has(id)) continue
+      const w = tabs[id] || {}
+      const title = String(w.title || '').trim() || '未命名分支'
+      out.groups.push({ key: id, title, path: String(w.path || '') })
+      out.order.set(id, seq++)
+      for (const sid of (w.sessionIds || [])) out.bySession.set(String(sid), id)
+    }
+  } catch { /* 没有 workspace.json：全算未分组 */ }
+  return out
+}
+
+// 会话标题放在 session_projcache 里，读盘按 mtime 记缓存——20 秒轮询不必反复解析同一个文件。
+const _titleCache = new Map()
+/**
+ * 会话标题：用 DSH 侧边栏显示的那一个（projcache 的 rows.title），
+ * 拿不到就退回空串，让调用方用第一句原文兜底。
+ */
+function sidebarTitle(sid) {
+  const id = String(sid || '')
+  if (!id) return ''
+  const file = dshHome() + '/storages/session_projcache/sessions/' + id + '.json'
+  try {
+    const st = fs.statSync(file)
+    const hit = _titleCache.get(id)
+    if (hit && hit.mtime === st.mtimeMs) return hit.title
+    const j = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const raw = j && j.record && j.record.rows && j.record.rows.title && j.record.rows.title.val
+    const title = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : ''
+    _titleCache.set(id, { mtime: st.mtimeMs, title })
+    return title
+  } catch { return '' }
 }
 
 // 按资源 id 反查归属：绑定到某个 agent 的调用方不能碰别人的资源
@@ -210,12 +280,10 @@ async function routes(db, method, path, body, role, bound) {
     const rows = db.prepare(sql).all().filter((a) => !bound || a.id === bound)
     // 多实例：每行带上「在场状态 / 挂着几段对话 / 要不要绑下一段新会话」
     const pending = bd.peekPending(db)
-    const counts = new Map()
-    try {
-      for (const r of db.prepare("SELECT agent_id, COUNT(*) n FROM bindings WHERE state='bound' GROUP BY agent_id").all()) {
-        counts.set(r.agent_id, Number(r.n))
-      }
-    } catch { /* 老库没有 bindings 列时保持 0 */ }
+    // 「挂着几段」按**还活着的**算：已归档、且过了宽限期的会话不算（角标不该把归档历史也累进去）。
+    // 裸 COUNT(*) 会把主人归档掉的旧对话全带上，所以走 binding.js 的统一口径。
+    let counts = new Map()
+    try { counts = bd.liveBindingCounts(db) } catch { /* 老库没有 bindings 列时保持 0 */ }
     return rows.map((a) => {
       let runtime_state = a.runtime_state || 'idle'
       try { runtime_state = bd.runtimeStateOf(db, a.id) } catch { /* 老库 */ }
@@ -226,6 +294,8 @@ async function routes(db, method, path, body, role, bound) {
         runtime_state,
         bound_sessions: counts.get(a.id) || 0,
         pending_bind: pending === a.id,
+        // 角色卡排序用：最近一次被唤醒；老库没这个标记就退回上次互动时间
+        woken_at: (() => { try { return bd.wokenAt(db, a.id) || a.last_interaction_at || null } catch { return a.last_interaction_at || null } })(),
       }
     })
   }
@@ -236,6 +306,115 @@ async function routes(db, method, path, body, role, bound) {
     const out = bd.setMaxRunning(db, n)
     try { bd.refreshAll(db) } catch { /* 状态下次刷新会补 */ }
     return { max_running: out }
+  }
+  // 会话清单：给角色卡页「对话归属」用。
+  // 「未归档」按 DSH 自己的定义来——workspace.json 里 archivedSessionIds 之外、
+  // 还挂在某个 workspace 下的会话；已归档的不列。QQ 不走 DSH workspace，单独并进来。
+  if (method === 'GET' && path.split('?')[0] === '/v1/sessions') {
+    const onlyUnbound = q(path, 'unbound') === '1'
+    const limit = Math.max(1, Math.min(200, Number(q(path, 'limit') || 60) || 60))
+    // 1) DSH 的未归档会话：分支目录 - 归档名单
+    //    分支顺序照侧边栏；不在任何分支里的（含 QQ）算「未分组」。
+    const UNGROUPED = '未分组'
+    const wsIndex = readWorkspaceIndex()
+    const archived = wsIndex.archived
+    const groupBy = new Map() // sid -> { title, key, order }
+    {
+      const byKey = new Map(wsIndex.groups.map((g) => [g.key, g]))
+      for (const [sid, key] of wsIndex.bySession) {
+        const g = byKey.get(key)
+        if (!g) continue
+        groupBy.set(sid, { title: g.title, key: g.key, order: wsIndex.order.get(key) ?? 999 })
+      }
+    }
+    const groupOf = (sid) => groupBy.get(String(sid)) || { title: UNGROUPED, key: '', order: 9999 }
+    // 2) 原文库索引：轮数、最后活跃
+    const raw = new Map()
+    try {
+      for (const r of db.prepare(`SELECT session_id, MAX(created_at) AS last_at, COUNT(*) AS turns
+        FROM raw_turns WHERE session_id IS NOT NULL AND session_id<>'' AND session_id<>'legacy'
+        GROUP BY session_id`).all()) {
+        raw.set(String(r.session_id), { last_at: r.last_at, turns: Number(r.turns || 0) })
+      }
+    } catch { /* 空库 */ }
+    // 3) 候选：未归档的 DSH 会话 + 原文库里见过的 QQ 会话
+    const cands = []
+    for (const [sid, group] of groupBy) {
+      if (archived.has(sid)) continue
+      const r = raw.get(sid)
+      // 没留下原文的老会话，插件说不出它是什么，列出来也只是空壳，不占地方。
+      if (!r) continue
+      cands.push({ sid, group, last_at: r.last_at, turns: r.turns })
+    }
+    // QQ 不走 DSH 侧边栏，也没有归档名单。只列桥接当前接管的会话，
+    // 以及最近 24 小时还有消息的；旧通道停用后的残影不再占地方。
+    const qqLive = new Set()
+    try {
+      const map = JSON.parse(fs.readFileSync(dshHome() + '/qq-bridge/qq-sessions.json', 'utf8'))
+      for (const k of Object.keys(map)) qqLive.add(String(map[k]))
+    } catch { /* 桥接没装就当没有 */ }
+    const qqCutoff = new Date(Date.now() - 86400000).toISOString()
+    for (const [sid, r] of raw) {
+      if (!sid.startsWith('qq') || groupBy.has(sid)) continue
+      if (!qqLive.has(sid) && String(r.last_at || '') < qqCutoff) continue
+      cands.push({ sid, group: null, last_at: r.last_at, turns: r.turns })
+    }
+    cands.sort((a, b) => String(b.last_at || '').localeCompare(String(a.last_at || '')))
+    const items = []
+    for (const cand of cands) {
+      const sid = cand.sid
+      let ownerId = null
+      let inferred = false
+      if (sid.startsWith('qq:')) {
+        try {
+          const conv = db.prepare('SELECT agent_id, state FROM conversations WHERE conversation_id=?').get(sid)
+          if (conv && conv.state === 'active') ownerId = conv.agent_id
+        } catch { /* 空 */ }
+      } else {
+        try {
+          const brow = bd.bindingOf(db, sid)
+          if (brow) ownerId = brow.agent_id
+        } catch { /* 空 */ }
+      }
+      // 没有显式绑定：认这段会话最后是谁在说话。老会话其实都有人，
+      // 不兜这一层它们全会被算成「未归档」。
+      if (!ownerId) {
+        try {
+          const last = db.prepare('SELECT agent_id FROM raw_turns WHERE session_id=? AND agent_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1').get(sid)
+          if (last && last.agent_id) { ownerId = last.agent_id; inferred = true }
+        } catch { /* 老库没有 agent_id 列就走空 */ }
+      }
+      if (onlyUnbound && ownerId) continue
+      let arow = null
+      if (ownerId) {
+        try { arow = db.prepare('SELECT id,name FROM agents WHERE id=?').get(ownerId) } catch { arow = null }
+      }
+      // 标题两套：DSH 侧边栏那个（跟外面一致）优先；没有就退回第一句原文。
+      let firstText = ''
+      try {
+        const t = db.prepare("SELECT text FROM raw_turns WHERE session_id=? AND role='user' AND text IS NOT NULL AND text<>'' ORDER BY created_at LIMIT 1").get(sid)
+        firstText = String((t && t.text) || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+      } catch { /* 空 */ }
+      const group = cand.group || groupOf(sid)
+      items.push({
+        session_id: sid,
+        // 侧边栏标题优先：模块里看到的和左边那一栏必须是同一句
+        title: sidebarTitle(sid) || firstText || '（这段没留下原文）',
+        first_text: firstText,
+        workspace: group.title,
+        workspace_key: group.key || '',
+        group_order: group.order,
+        last_at: cand.last_at,
+        turns: cand.turns,
+        bound: !!ownerId,
+        inferred,
+        agent_id: ownerId || null,
+        agent_name: arow ? arow.name : null,
+        channel: sid.startsWith('qq') ? 'qq' : 'web',
+      })
+      if (items.length >= limit) break
+    }
+    return { items, count: items.length }
   }
   // 这段对话现在归谁：头牌（对话标题旁的身份牌）按会话查，不再全局找一个 active
   {
@@ -270,11 +449,12 @@ async function routes(db, method, path, body, role, bound) {
         return {
           id: a.id, name: a.name, status: a.status,
           runtime_state: bd.runtimeStateOf(db, a.id),
-          bound_sessions: bd.bindingsOf(db, a.id).length,
+          bound_sessions: liveBound(db, a.id),
+          woken_at: (() => { try { return bd.wokenAt(db, a.id) || a.last_interaction_at || null } catch { return a.last_interaction_at || null } })(),
           last_seen_at: a.last_seen_at, last_heartbeat_at: a.last_heartbeat_at,
           heartbeat: h ? { next_at: h.next_at, last_at: h.last_at, last_ms: h.last_ms, failures: h.failures, mode: h.mode } : null,
         }
-      }),
+      }).sort((x, y) => String(y.woken_at || '').localeCompare(String(x.woken_at || ''))),
     }
   }
   if (method === 'POST' && path === '/v1/agents') {
@@ -465,6 +645,14 @@ async function routes(db, method, path, body, role, bound) {
       return jg.judgeSample(db, aid, { limit: Number(q(path, 'limit') || 30), floor: Number(q(path, 'floor') || 0.7) })
     }
     if (method === 'GET' && sub === 'memory') return c.listMemory(db, aid, q(path, 'include_deleted') === '1')
+    // 「我最近怎么感觉」：feel 历史（只读）。/:id 取单条；查记忆时顺着 memory.feel 也能翻到。
+    if (method === 'GET' && sub === 'feel') {
+      if (sub2) {
+        const one = fl.getFeel(db, aid, decodeURIComponent(sub2))
+        return one || err(404, 'NOT_FOUND', '这条感觉找不到了')
+      }
+      return { items: fl.listFeels(db, aid, { limit: Number(q(path, 'limit') || 20) }) }
+    }
     // 存量分级：把判得低的自省打成冷层（只动温度，不删不改内容）。dry_run=1 只统计。
     if (method === 'POST' && sub === 'memory' && sub2 === 'demote') {
       const dryRun = body.dryRun === true || body.dry_run === true || String(body.dry_run || '') === '1'
@@ -841,12 +1029,12 @@ async function routes(db, method, path, body, role, bound) {
       // 只改用户意图；绑定保留（唤醒后接着用原来那几段对话）
       db.prepare("UPDATE agents SET status='paused' WHERE id=?").run(aid)
       try { bd.refreshRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
-      return { id: aid, status: 'paused', runtime_state: 'offline', bound_sessions: bd.bindingsOf(db, aid).length }
+      return { id: aid, status: 'paused', runtime_state: 'offline', bound_sessions: liveBound(db, aid) }
     }
     if (method === 'POST' && sub === 'resume') {
       db.prepare("UPDATE agents SET status='active' WHERE id=?").run(aid)
       try { bd.refreshRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
-      return { id: aid, status: 'active', runtime_state: bd.runtimeStateOf(db, aid), bound_sessions: bd.bindingsOf(db, aid).length }
+      return { id: aid, status: 'active', runtime_state: bd.runtimeStateOf(db, aid), bound_sessions: liveBound(db, aid) }
     }
     // /export 与 /export/full 同为全量；旧「仅记忆」schema_version 1 仍可导入
     if (method === 'GET' && sub === 'export') return f.exportFull(db, aid)

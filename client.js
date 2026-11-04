@@ -1,8 +1,13 @@
 /**
- * dsh-consciousness-v6 路 Client 鍗? *
- * 缁撴瀯锛堝搴?3 鍙锋枃妗?v10 鐨勪俊鎭灦鏋勶級锛? *   鈶?鎰忚瘑鍒楄〃锛氳鑹插崱锛堝鍚?/ 鐘舵€佺幆 / 鎬荤姸鎬?/ 闇€瑕佷綘澶勭悊 / 涓婃浜掑姩 / 涓€閿鍑猴級
- *   鈶?鎰忚瘑璇︽儏锛氶〉澶达紙瀹炰緥鍒囨崲 / 妯″紡 / 瑙嗗浘 / 鏀朵欢鍖?/ 淇濆瓨鐘舵€侊級+ 8 涓〉绛? *   鈶?鏀朵欢鍖猴細寰呭姙銆佸彉鏇翠袱涓苟鎺掑叆鍙ｏ紝鍚勮嚜寮€鎶藉眽锛岃鏁版案涓嶅悎骞? *
- * 瀵硅瘽涓嶅湪杩欓噷锛氭剰璇嗕綋涓€鏃﹀惎鐢紝鎵€鏈?DSH 浼氳瘽閮芥槸瀹冿紱鍏虫帀鎵嶆仮澶嶅師鏍凤紙瀹夸富鍗婅礋璐ｆ敞鍏ワ級銆? */
+ * dsh-consciousness-v6 · Client 半
+ *
+ * 结构（对应 3 号文档 v10 的信息架构）：
+ *   ① 意识列表：角色卡（姓名 / 状态环 / 总状态 / 需要你处理 / 上次互动 / 一键导出）
+ *   ② 意识详情：页头（实例切换 / 模式 / 视图 / 收件区 / 保存状态）+ 8 个页签
+ *   ③ 收件区：待办、变更两个并排入口，各自开抽屉，计数永不合并
+ *
+ * 对话不在这里：意识体一旦启用，所有 DSH 会话都是它；关掉才恢复原样（宿主半负责注入）。
+ */
 window.__ModuleLoader__.load({
   id: 'dsh-consciousness-v6',
   factory(require) {
@@ -53,7 +58,7 @@ window.__ModuleLoader__.load({
     const AFFECT_ORDER = ['joy', 'peaceful', 'curious', 'calm', 'confused', 'lost', 'irritated', 'frustrated']
     const AXES = [
       ['ei', 'E/I', '外向', '内向'],
-      ['sn', 'S/N', '实感', '直觉'],
+      ['sn', 'S/N', '直觉', '实感'],
       ['tf', 'T/F', '思考', '情感'],
       ['jp', 'J/P', '判断', '知觉'],
       ['sensitivity', '敏感', '敏感', '钝感'],
@@ -158,7 +163,7 @@ window.__ModuleLoader__.load({
 .dshc-fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;
   color:var(--muted);font-size:11.5px;padding:3px 0;transition:color .15s}
 .dshc-fold>summary::-webkit-details-marker{display:none}
-.dshc-fold>summary::before{content:'鈻?';font-size:10px;opacity:.65;transition:transform .15s}
+.dshc-fold>summary::before{content:'▸';font-size:10px;opacity:.65;transition:transform .15s}
 .dshc-fold[open]>summary::before{transform:rotate(90deg)}
 .dshc-fold>summary:hover{color:var(--ink)}
 .dshc-fold[open]>summary{margin-bottom:6px;color:var(--ink)}
@@ -345,7 +350,7 @@ window.__ModuleLoader__.load({
 .dshc-gate.on{color:color-mix(in srgb,var(--ok) 78%,var(--ink));
   border-color:color-mix(in srgb,var(--ok) 42%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent);
   box-shadow:inset 0 0 8px color-mix(in srgb,var(--ok) 12%,transparent)}
-.dshc-gate.on::before{content:'鉁?';opacity:1}
+.dshc-gate.on::before{content:'✓';opacity:1}
 /* 草稿：像一份从对话里捞出来的数据包 */
 .dshc-pkt{position:relative;margin-bottom:7px;padding:9px 11px 9px 13px;border-radius:10px;border:1px solid var(--line);
   background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 46%,transparent),transparent 58%);
@@ -842,7 +847,7 @@ window.__ModuleLoader__.load({
 .dshc-vault-delta>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;
   color:var(--muted);font-size:12px;padding:3px 0;transition:color .15s}
 .dshc-vault-delta>summary::-webkit-details-marker{display:none}
-.dshc-vault-delta>summary::before{content:'鈻?';font-size:10px;opacity:.65;transition:transform .15s}
+.dshc-vault-delta>summary::before{content:'▸';font-size:10px;opacity:.65;transition:transform .15s}
 .dshc-vault-delta[open]>summary::before{transform:rotate(90deg)}
 .dshc-vault-delta>summary:hover{color:var(--ink)}
 .dshc-vault-delta[open]>summary{color:var(--ink);margin-bottom:6px}
@@ -2254,6 +2259,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'meta' },
           h(Pill, null, AFFECT_KEY[(o.affect && o.affect.label)] || '平静'),
           h(Pill, null, '记得你 ' + (o.memory_count || 0) + ' 件事'),
+          a.pending_bind ? h(Pill, { tone: 'ok', title: '下一个新建的对话会归它' }, '下一个新对话') : null,
           o.inbox && o.inbox.todo ? h(Pill, { tone: 'warn' }, '想做的事 ' + o.inbox.todo) : null,
           o.inbox && o.inbox.change ? h(Pill, { tone: 'warn' }, '想改的 ' + o.inbox.change) : null,
           headActions && headActions.length
@@ -2384,6 +2390,123 @@ window.__ModuleLoader__.load({
                 x.runtime_state === 'bound' ? '接着 ' + x.bound_sessions + ' 段' : x.runtime_state === 'idle' ? '在线空闲' : x.runtime_state === 'dormant' ? '自动休眠' : '休眠'),
               h('span', { className: 'dshc-mono' }, hbLine(x)))))
           : h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '还没有意识体。'))
+    }
+
+    /**
+     * 未归档的对话：DSH 侧边栏里还挂着的、没被归档的会话。
+     * 按侧边栏的分支（ds / knowledge / …）分组，标题也用侧边栏那一个；
+     * 没归人的挑卡归过去，已归人的也在同一列表里，随时能改。
+     */
+    function UnboundSessions({ agents, act, reload }) {
+      const [data, retry] = useAsync(() => call('GET', '/v1/sessions?limit=60'), [])
+      useLive(retry, 20000)
+      const [pick, setPick] = useState({})
+      const [busy, setBusy] = useState('')
+      const [note, setNote] = useState('')
+      const payload = data.data || {}
+      const all = (Array.isArray(payload.items) ? payload.items : []).filter((s) => s && s.session_id !== 'legacy')
+      const unbound = all.filter((s) => !s.bound)
+      // 宿主还没重载时这条路由不存在，返回的是空对象——别假装「都归好了」。
+      const notReady = !data.loading && !data.error && !!data.data && !Array.isArray(payload.items)
+      const choices = (agents || []).filter((a) => a.status !== 'soft_deleted')
+      // 按分支聚合：顺序照侧边栏（group_order），未分组排最后；组内仍是最近说话的在前。
+      const groups = (() => {
+        const map = new Map()
+        for (const s of all) {
+          const name = s.workspace || s.group || '未分组'
+          if (!map.has(name)) map.set(name, { name, order: Number(s.group_order) || 9999, items: [] })
+          map.get(name).items.push(s)
+        }
+        return [...map.values()].sort((a, b) => a.order - b.order || String(a.name).localeCompare(String(b.name)))
+      })()
+      const timeAgo = (iso) => {
+        const t = Date.parse(iso || '')
+        if (!Number.isFinite(t)) return '—'
+        const m = Math.floor((Date.now() - t) / 60000)
+        if (m < 1) return '刚刚'
+        if (m < 60) return m + ' 分钟前'
+        if (m < 60 * 24) return Math.floor(m / 60) + ' 小时前'
+        return Math.floor(m / 1440) + ' 天前'
+      }
+
+      async function bind(sid) {
+        if (busy) return
+        const aid = pick[sid] || (choices[0] && choices[0].id)
+        if (!aid) { setNote('先建一张角色卡'); return }
+        setBusy(sid); setNote('')
+        try {
+          const a = choices.find((x) => x.id === aid)
+          // QQ 旧通道（qq:p: / qq:g:）的归属在 conversations 表，不能走 bindings。
+          if (sid.startsWith('qq:')) {
+            await act(() => call('POST', '/v1/conversations/bind', { conversation_id: sid, agent_id: aid, channel: 'qq' }, true))
+          } else {
+            await act(() => call('POST', '/v1/agents/' + enc(aid) + '/bind', { session_id: sid }, true))
+          }
+          setNote('这段对话归「' + ((a && a.name) || aid) + '」了，下一句就按它说话')
+          await retry()
+          if (reload) await reload()
+          PRESENCE.bump()
+        } catch (e) { setNote('绑定失败：' + ((e && e.message) || e)) } finally { setBusy('') }
+      }
+
+      const row = (s, isBound) => h('div', {
+        key: s.session_id,
+        style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderTop: '1px solid var(--line)', paddingTop: 8 },
+      },
+        h('div', { style: { minWidth: 0, flex: '1 1 220px' } },
+          h('div', {
+            style: { fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+            // 标题跟侧边栏一致；悬停能看到第一句原文和会话 id，对不上号时好核
+            title: (s.first_text && s.first_text !== s.title ? s.first_text + '\n' : '') + s.session_id,
+          }, s.title),
+          h('div', { className: 'dshc-sub', style: { fontSize: 11.5 } },
+            (s.channel === 'qq' ? 'QQ · ' : '')
+            + (isBound ? '归「' + (s.agent_name || '已删除的人') + '」 · ' : '还没归人 · ')
+            + (s.turns || 0) + ' 轮 · ' + timeAgo(s.last_at))),
+        h('select', {
+          value: pick[s.session_id] || s.agent_id || (choices[0] ? choices[0].id : ''),
+          disabled: !choices.length || busy === s.session_id,
+          onChange: (e) => setPick((p) => ({ ...p, [s.session_id]: e.target.value })),
+          style: {
+            padding: '5px 8px', borderRadius: 8, background: 'var(--panel2)',
+            color: 'var(--ink)', border: '1px solid var(--line2)', fontSize: 12,
+          },
+        }, choices.map((a) => h('option', { key: a.id, value: a.id }, a.name))),
+        h(Btn, {
+          ghost: true, sm: true, disabled: busy === s.session_id || !choices.length,
+          onClick: () => bind(s.session_id),
+        }, busy === s.session_id ? '绑定中…' : (isBound ? '改绑' : '归它')))
+
+      // 一个分支一小块：标题就是侧边栏里的那个分支名，右边跟段数
+      const groupBlock = (g) => h('div', {
+        key: 'grp:' + g.name,
+        style: { border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px 2px' },
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 2 } },
+          h('span', { className: 'dshc-sub', style: { fontSize: 11.5, opacity: 0.75 } }, '▸'),
+          h('b', { style: { fontSize: 12.5 } }, g.name),
+          h('span', { className: 'dshc-sub', style: { fontSize: 11.5 } }, g.items.length + ' 段')),
+        g.items.map((s) => row(s, !!s.bound)))
+
+      return h(Card, { style: { marginTop: 14 } },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+          h('b', { style: { fontSize: 13 } }, '未归档的对话'),
+          h(Pill, { tone: unbound.length ? 'warn' : null }, unbound.length
+            ? unbound.length + ' 段还没归人'
+            : (all.length ? all.length + ' 段都有主' : '还没有对话')),
+          h('div', { style: { flex: 1 } }),
+          h('span', { className: 'dshc-sub' }, '按分支分组；没主的挑卡归过去，有主的随时能改')),
+        note ? h('div', {
+          className: note.startsWith('绑定失败') ? 'dshc-err' : 'dshc-sub',
+          style: { marginTop: 6, color: note.startsWith('绑定失败') ? null : 'var(--ok)' },
+        }, note) : null,
+        data.error ? h('div', { className: 'dshc-err', style: { marginTop: 8 } }, '读取会话失败：' + data.error) : null,
+        notReady
+          ? h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '宿主插件还是旧版：重启一次 DSH，这里才会列出会话。')
+          : all.length
+          ? h('div', { style: { display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 } },
+            groups.map(groupBlock))
+          : h('div', { className: 'dshc-sub', style: { marginTop: 8 } }, '没有未归档的对话。'))
     }
 
     function Roster({ agents, loading, error, reload, setAid, act }) {
@@ -2520,11 +2643,12 @@ window.__ModuleLoader__.load({
       }
 
       // 澶у崱 = 閱掔潃锛坅ctive锛夛紱灏忓崱 = 鐢ㄦ埛浼戠湢 / 鑷姩浼戠湢銆備笉鎷垮彲鑳借繃鏈熺殑 runtime_state 鎸″睍寮€銆?''
-              const runningCards = live.filter((a) => a.status === 'active' && presenceOf(a).key !== 'dormant')
-        .sort((x, y) => Number(y.bound_sessions || 0) - Number(x.bound_sessions || 0)
-          || String(y.last_interaction_at || '').localeCompare(String(x.last_interaction_at || '')))
+              const wokenOf = (a) => String(a.woken_at || a.last_interaction_at || '')
+      const runningCards = live.filter((a) => a.status === 'active' && presenceOf(a).key !== 'dormant')
+        .sort((x, y) => wokenOf(y).localeCompare(wokenOf(x))
+          || Number(y.bound_sessions || 0) - Number(x.bound_sessions || 0))
       const others = live.filter((a) => !runningCards.some((r) => r.id === a.id))
-        .sort((x, y) => String(y.last_interaction_at || '').localeCompare(String(x.last_interaction_at || '')))
+        .sort((x, y) => wokenOf(y).localeCompare(wokenOf(x)))
 
       return h('div', { className: 'dshc', 'data-view': 'user' },
         h(Style),
@@ -2557,7 +2681,7 @@ window.__ModuleLoader__.load({
 
         h(Sec, {
           title: '角色卡',
-          desc: '可以同时有好几个在运行；每一段对话只认一个人（新对话默认没有角色）。',
+          desc: '可以同时有好几个在运行；新对话自动归给最近唤醒的那只，老对话没归人的可以在下面手动挑。',
         },
           h(RuntimePanel, { reload }),
           loading ? h(Empty, null, '读取中…')
@@ -2577,6 +2701,7 @@ window.__ModuleLoader__.load({
                     }))) : null),
           h('div', { style: { marginTop: 16, display: 'flex', justifyContent: 'flex-end' } },
             h(Btn, { primary: true, onClick: () => { setImportErr(''); setFreeErr(''); setFreeRes(null); setImportOpen(true) } }, '导入意识体')),
+          h(UnboundSessions, { agents: live, act, reload }),
           importOpen ? h('div', { style: { position: 'fixed', inset: 0, zIndex: 9000, background: 'rgba(3,6,12,.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 } },
             h('div', { style: { width: '100%', maxWidth: 780, maxHeight: '86vh', overflow: 'auto', background: 'var(--panel2)', border: '1px solid var(--line2)', borderRadius: 16, padding: 18, boxShadow: '0 30px 80px -40px rgba(0,0,0,.8)' } },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 } },
@@ -2917,7 +3042,8 @@ window.__ModuleLoader__.load({
 
         h(ThoughtsSec, { aid: agent.id, thData, th, reloadTh, view, act }),
 
-        h(MutterSec, { aid, ov: o, act, reloadOv }))
+        h(MutterSec, { aid, ov: o, act, reloadOv }),
+        h(FeelSec, { aid: agent.id }))
     }
 
     /** 姒傝銆屽畠鐨勬兂娉曘€嶏細鍥涙鍙 + 鎵嬪姩閲嶆柊鎯充竴閬?*/
@@ -3001,6 +3127,35 @@ window.__ModuleLoader__.load({
             ? h('div', { style: { fontSize: 14.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', opacity: on ? 1 : 0.55 } }, m.text)
             : h('div', { className: 'dshc-sub' },
               on ? '还没聊过，或那次没写下嘀咕。' : '观测已关；打开后下一轮对话会再写。')))
+    }
+
+    /** 「我最近怎么感觉」：和嘀咕放同一块，读 feel 历史。只给看，不改任何状态。 */
+    function FeelSec({ aid }) {
+      const [s] = useAsync(() => call('GET', '/v1/agents/' + enc(aid) + '/feel?limit=8'), [aid])
+      const timeOf = (iso) => {
+        const t = Date.parse(iso)
+        if (!Number.isFinite(t)) return ''
+        const d = new Date(t)
+        const p = (n) => String(n).padStart(2, '0')
+        return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
+      }
+      const items = (s.data && s.data.items) || []
+      const body = s.loading && !s.data
+        ? h('div', { className: 'dshc-sub' }, '读取中…')
+        : s.error
+          ? h('div', { className: 'dshc-sub' }, '没读到：' + String((s.error && s.error.message) || s.error))
+          : items.length === 0
+            ? h('div', { className: 'dshc-sub' }, '还没记过。开口前觉得有点什么的时候，会写一句。')
+            : h('div', null, items.map((f) => h('div', {
+              key: f.id,
+              style: { padding: '6px 0', borderBottom: '1px solid rgba(127,127,127,.12)' },
+            },
+            h('span', { className: 'dshc-sub dshc-mono', style: { fontSize: 11, opacity: 0.55, marginRight: 8 } }, timeOf(f.at)),
+            h('span', { style: { fontSize: 13.5, lineHeight: 1.6 } }, f.text))))
+      return h(Sec, {
+        title: '我最近怎么感觉',
+        right: h('span', { className: 'dshc-sub', style: { fontSize: 11.5, opacity: 0.5 } }, '开口前写给自己的一句话'),
+      }, h(Card, null, body))
     }
 
     /* ============================================================= memory */
@@ -3787,6 +3942,13 @@ window.__ModuleLoader__.load({
           }, Object.entries(MARKS).map(([k, v]) => h('option', { key: k, value: k }, v)))),
         m.source_turn_id
           ? h('div', { style: { margin: '0 0 6px 14px' } }, h(SourceLine, { aid, turnId: m.source_turn_id }))
+          : null,
+        m.feel && m.feel.text
+          ? h('div', {
+            className: 'dshc-sub',
+            style: { margin: '0 0 6px 14px', fontSize: 12.5, opacity: 0.8 },
+            title: '出生那一刻自己写下的感觉：' + (m.feel.at || ''),
+          }, '当时的感觉：' + m.feel.text)
           : null)
 
       async function mark(m, value) {
@@ -4065,7 +4227,8 @@ window.__ModuleLoader__.load({
               const pair = AXES.find(([k]) => k === t.key) || []
               const hi = pair[2] || ''
               const lo = pair[3] || ''
-              return h(Row, { key: t.key, label: t.label },
+              const ab = POLES[t.key]
+              return h(Row, { key: t.key, label: ab ? ab[0] + '/' + ab[1] : (pair[1] || t.label) },
                 h('span', { className: 'dshc-sub', style: { minWidth: 40, textAlign: 'right' } }, lo),
                 h(Bar, { value: t.value }),
                 h('span', { className: 'dshc-sub', style: { minWidth: 40 } }, hi),

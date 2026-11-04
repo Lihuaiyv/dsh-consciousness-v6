@@ -14,7 +14,7 @@ import { ampFor, AMP_BASE, AMP_SPAN, AMP_GAIN } from '../algo/baseline.js'
 
 export const AXES = [
   ['ei', 'E/I', '偏外向', '偏内向'],
-  ['sn', 'S/N', '偏实感', '偏直觉'],
+  ['sn', 'S/N', '偏直觉', '偏实感'],
   ['tf', 'T/F', '偏思考', '偏情感'],
   ['jp', 'J/P', '偏判断', '偏知觉'],
   ['sensitivity', '敏感', '敏感', '钝感'],

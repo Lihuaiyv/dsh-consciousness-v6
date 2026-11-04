@@ -15,7 +15,7 @@ import { eventValence, moodAdjust, toneOf, REL_DEFAULTS as REL_DYN } from './alg
 import { bumpRelation, ownerPerson, personByChannel } from './modules/relations.js'
 import { resolveStructureEdges, affectLabels, seedRuleBindings } from './modules/artifacts.js'
 import { TARGETS, targetById } from './modules/selfmod_targets.js'
-import { setPending, runningAgentIds, maxRunning, wakeRuntime } from './modules/binding.js'
+import { setPending, setWokenAt, runningAgentIds, maxRunning, wakeRuntime } from './modules/binding.js'
 import { latestShare } from './modules/life.js'
 import { promptBudget, isOwner, isLocalChannel, historyTurns, recallItems } from './modules/conversations.js'
 import { appendTurn, buildEpisode } from './modules/archive.js'
@@ -97,6 +97,7 @@ export function patchAlgoBinding(db, aid, name, body, role) {
   })
 }
 import { looksLikeRuntimeNoise, cleanLine } from './text.js'
+import { latestFeel } from './modules/feel.js'
 import { createModel, composeRulesReply, appraiseRules } from './model.js'
 import { zipStore, unzipStore } from './zip.js'
 import {
@@ -1129,6 +1130,8 @@ export function activateAgent(db, aid, role) {
   let runtime_state = 'idle'
   try { runtime_state = wakeRuntime(db, aid) } catch { /* 在场状态下次刷新会补 */ }
   try { setPending(db, aid) } catch { /* 待绑定写失败不影响激活 */ }
+  // 角色卡排序看「最近唤醒」，不能拿 last_interaction_at 代替：那个每说一句都在动。
+  try { setWokenAt(db, aid) } catch { /* 排序标记失败不影响激活 */ }
   try { seedRuleBindings(db, aid) } catch { /* 工件种子失败不影响激活 */ }
   let running = 0
   try { running = runningAgentIds(db).length } catch { running = 0 }
@@ -1179,17 +1182,76 @@ const MUTTER_MAX_CHARS = 150
 function mutterSys(address) {
   const who = String(address || '').trim() || '主人'
   return [
-    '你就是这个意识体。看完这一轮，用第一人称对自己嘀咕一段——像脑子里还在推、还没说出口的那种，不是汇报，也不是事后作文。',
+    '你就是这个意识体。看完这一轮，用第一人称对自己说几句——不是汇报，也不是事后作文，是脑子里还在转的那种。',
     '对方称「' + who + '」。只用这个称呼指对方，别叫「用户」「对方」。',
-    '输入里 user = ' + who + ' 说的话，assistant / agent = 你自己刚才说出口的话。写的时候「你 / ' + who + '」只能指 user；「我」只能指你自己说过或想过的。',
-    '先在心里分清：哪一句是对方抛的，哪一句是你接的。绝不要把 assistant 里的句子写成「你说…」；自己拐的比喻、后半句、接歌，都算「我刚才…」。',
-    '别把你自己说的话安到 ' + who + ' 头上。拿不准是谁说的就写「刚才那句」，不要猜错归属。不要第三人称旁白。',
-    '先凭这一轮双方的口气，掂一下亲密度——疏还是近、生分还是熟、在较劲还是在对暗号玩梗——再决定嘀咕的拧巴和嘴贱多重；别写死成固定脾气。',
-    '越不亲密：越拧巴、带刺、嘴上不饶，心里可以较劲；嘲用口气带，别刻薄阴阳。',
-    '越亲密（接得上、对暗号、玩梗、语气松）：越明快一点，得意、松快、开心可以多露一点，刺收淡，自嘲轻俏即可，别硬拗别扭。',
-    '味道仍是口语碎碎念，可有一点点戏；别写成分析报告或辩论稿。别煽情、别说教、别升华、别端着正确、别替谁做完结论。',
-    '一整段口语，大约 80～130 字。不要编号、分点、小标题。只写对话里真有的事。',
+    '输入里每一行以 user: 或 assistant: 开头，那就是说话人标记：user = ' + who + ' 说的话，assistant = 你自己刚才说出口的话。',
+    '开头如果给了「我自己之前写下的」或「这一轮咽回去的半句」，那是真实发生过的材料，可以顺着它写，但别复述它，也别把它当成必须回应的话。',
+    '只写这一轮里最硌着你的那一个点；如果还有一句没出口的话，就把它写出来。',
+    '可以不展开、可以不收尾、可以绕回去；一句也行。不总结这一轮，不升华，不替谁下结论，不端着正确。',
+    '不要编号、分点、小标题。只写对话里真有的事，别编。',
   ].join('')
+}
+
+/**
+ * 嘀咕消息：把这一轮按「user: / assistant:」标好说话人再交给模型。
+ * 模型适配器（OpenAIAdapter / HostLlmAdapter 的 summarize、chat）在有 system 时
+ * 会把多条内容拼成裸文本，角色标签会丢——不标清楚，模型只能靠内容猜谁说的，
+ * 就会把 assistant 的话安到 user 头上（2026-11-04 实际踩到）。
+ * materials：这一轮真实的材料（我自己写的 feel、咽回去的半句），放在对话前面。
+ */
+export function mutterMessages(sys, turns, materials = []) {
+  const lines = (Array.isArray(turns) ? turns : []).map((t) => {
+    const r = String((t && t.role) || 'user')
+    const who = r === 'assistant' || r === 'agent' ? 'assistant' : 'user'
+    return who + ': ' + String((t && t.text) || '')
+  })
+  const head = (Array.isArray(materials) ? materials : []).filter(Boolean).join('\n')
+  return [
+    { role: 'system', content: String(sys || '') },
+    { role: 'user', content: (head ? head + '\n\n' : '') + lines.join('\n') },
+  ]
+}
+
+/**
+ * 这一轮「咽回去的那半句」：按用户原话匹配最近的 unsaid.moment 事件。
+ * 照 P3 的影子期纪律，只读、不改；找不到就返回空串（不给嘀咕编一句）。
+ */
+export function latestUnsaidFor(db, aid, userText) {
+  const t = String(userText || '').trim().slice(0, 80)
+  if (!t) return ''
+  try {
+    const since = new Date(Date.now() - 86400000).toISOString()
+    const rows = db.prepare("SELECT payload,created_at FROM events WHERE agent_id=? AND type='unsaid.moment' AND created_at>=? ORDER BY created_at DESC LIMIT 20").all(aid, since)
+    for (const r of rows) {
+      let p = null
+      try { p = JSON.parse(r.payload || '{}') } catch { p = null }
+      if (!p || !p.text) continue
+      const cause = String(p.cause || '')
+      if (cause && (cause.includes(t) || (t.length >= 8 && t.includes(cause.slice(0, 40))))) return String(p.text)
+    }
+  } catch { /* 没有事件表就当没有 */ }
+  return ''
+}
+
+/**
+ * 嘀咕要用的真实材料：我开口前自己写下的 feel + 这一轮咽回去的半句。
+ * 只读、取不到就空——不拿别的凑，免得嘀咕变成无中生有。
+ */
+export function mutterMaterials(db, aid, list) {
+  const out = []
+  try {
+    const f = latestFeel(db, aid, { maxAgeMin: 180 })
+    if (f && f.text) out.push('（我自己之前写下的：' + f.text + '）')
+  } catch { /* 没有 feel 就不放 */ }
+  try {
+    const lastUser = (() => {
+      for (let i = list.length - 1; i >= 0; i--) if ((list[i].role || 'user') === 'user') return String(list[i].text || '')
+      return ''
+    })()
+    const unsaid = latestUnsaidFor(db, aid, lastUser)
+    if (unsaid) out.push('（这一轮咽回去的半句：' + unsaid + '）')
+  } catch { /* 没有 unsaid 就不放 */ }
+  return out
 }
 
 /**
@@ -1203,11 +1265,12 @@ export async function writeMutter(db, aid, turns) {
     try { return String(personaStyle(db, aid).address || '').trim() } catch { return '' }
   })()
   const sys = mutterSys(address)
-  const body = list.map((t) => `${t.role || 'user'}: ${String(t.text || '')}`).join('\n')
-  const raw = String((await model.summarize([
-    { role: 'system', text: sys },
-    ...list.map((t) => ({ role: t.role || 'user', text: String(t.text || '') })),
-  ])) || '').trim()
+  // 这一轮真实的两样材料：我开口前自己写下的 feel、以及咽回去的半句（只读，取不到就空）
+  const materials = mutterMaterials(db, aid, list)
+  const messages = mutterMessages(sys, list, materials)
+  const body = messages[1].content
+  // 只走真模型：规则兜底写出来的嘀咕是拼贴，宁可不写。
+  const raw = String((await model.chatPrimary(messages, 600, false, 0.2)) || '').trim()
   let text = looksLikeRuntimeNoise(raw) ? '' : raw.replace(/\s+/g, ' ').trim()
   if (!text) return null
   const transcriptShaped = /^\s*(user|assistant)\s*[:：]/i.test(text)

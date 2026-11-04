@@ -11,7 +11,15 @@ import { normalizeTerms } from './terms.js'
 import { attrConflict } from './contradict.js'
 import { askAboutConflict } from './conflict_ask.js'
 import { maskPositive } from './negation.js'
+import { feelsByIds } from './feel.js'
 export { normalizeTerms }
+
+/**
+ * 出生时挂 feel 的取数口：由装配层注入（index.js），memory 模块不直接读 affect_feel（INV10）。
+ * 没注入就返回 null——不挂，不编。
+ */
+let feelProvider = null
+export function setFeelProvider(fn) { feelProvider = typeof fn === 'function' ? fn : null }
 
 const SECRET = /(sk-[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,})/g
 const NEG = new Set([...'不没别无取消换改'])
@@ -170,6 +178,11 @@ export function addMemory(db, aid, body) {
   /* 出生时的情绪效价：调用方给了就用给的（对话里就是这一下的愉悦），
      没给就是 0（中性）——记忆模块不直接读情绪表（INV10），要加成由调用方注入。 */
   const valence = Math.max(-1, Math.min(1, body.valence != null ? Number(body.valence) || 0 : 0))
+  /* 出生那一刻自己写下的 feel：取数口由装配层注入（memory 模块不直接读 affect_feel，INV10）。
+     只存 id，正文仍留在 feel 自己那边，查记忆时顺着 id 翻。 */
+  const feelId = (() => {
+    try { return body.feel_id || (feelProvider ? feelProvider(db, aid) : null) || null } catch { return null }
+  })()
   const terms = normalizeTerms(body.terms)
   const factKey = String(body.fact_key || body.key || '').trim().slice(0, 120) || null
   const searchText = buildSearchText(safe, factKey, terms)
@@ -178,15 +191,15 @@ export function addMemory(db, aid, body) {
   let conflictId = null
   tx(db, () => {
     db.prepare(`INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,
-        last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version,feel_id)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(mid, aid, typ, 'normal', safe, String(body.source || 'manual').slice(0, 24), 0.5, 0.5, 1.0, 5.0,
-        now(), null, null, 'active', now(), null, 1)
+        now(), null, null, 'active', now(), null, 1, feelId)
     // 分层账本：重要度 / 情绪显著度 / 来源轮次；热度先按默认算一遍
     // 检索卡：fact_key + terms + search_text（写进 FTS 的是 search_text，不是原文）
-    db.prepare('UPDATE memory_items SET importance=?, salience=?, valence=?, confidence=?, source_turn_id=?, entity_id=?, fact_key=?, terms=?, search_text=? WHERE id=?')
+    db.prepare('UPDATE memory_items SET importance=?, salience=?, valence=?, confidence=?, source_turn_id=?, entity_id=?, fact_key=?, terms=?, search_text=?, feel_id=? WHERE id=?')
       .run(importance, salience, valence, body.confidence != null ? Number(body.confidence) : 0.8, body.turn_id || null,
-        body.entity_id || null, factKey, terms.length ? terms.join(' ') : null, searchText, mid)
+        body.entity_id || null, factKey, terms.length ? terms.join(' ') : null, searchText, feelId, mid)
     // 图关系：同一实体下的记忆互连（双向）。检索时一跳扩散靠它，
     // 之前只有自环、等于没有图；这里补上真正有意义的边。
     if (body.entity_id) {
@@ -282,7 +295,14 @@ export function listMemory(db, aid, includeDeleted = false) {
   const sql = "SELECT * FROM memory_items WHERE agent_id=?" + (includeDeleted ? '' : " AND status='active'") + ' ORDER BY created_at DESC LIMIT 100'
   // 面板上看到的热度按此刻现算（库里的是上次巡检的快照），写库不在这里做
   const at = Date.now()
-  return db.prepare(sql).all(aid).map((r) => nowRow(r, at))
+  const rows = db.prepare(sql).all(aid)
+  /* 出生那一刻的 feel：一次批量查（不 N+1），查记忆时旁边就带着。
+     没有就 null——不拿最近的 feel 顶上，那是编。 */
+  const feelMap = feelsByIds(db, rows.map((r) => r.feel_id))
+  return rows.map((r) => {
+    const row = nowRow(r, at)
+    return { ...row, feel: r.feel_id ? (feelMap.get(r.feel_id) || null) : null }
+  })
 }
 
 export function setMemoryMark(db, mid, body) {
