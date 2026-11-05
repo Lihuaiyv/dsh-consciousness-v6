@@ -119,7 +119,7 @@ export function registerPledges(db, aid, opt = {}) {
 }
 
 /** 是不是一条「我答应」命题（结算时决定 miss 还是 void）。 */
-export function isPledgeClaim(text) {
+function isPledgeClaim(text) {
   return /^我答应/.test(String(text || ''))
 }
 

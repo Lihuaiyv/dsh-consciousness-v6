@@ -1,0 +1,6092 @@
+{
+  "generated_at": "2026-11-04T15:26:19.666Z",
+  "agent": "小汐",
+  "source_db": "C:/Users/ygys1/.dsh/consciousness/app.db",
+  "note": "风险代理：旧说法进注入且不带任何时间提示 = bare。本脚本不调模型。",
+  "groups": {
+    "A_default": {
+      "label": "A 当前默认（挤出 on · 时间 on · 弱标 off）",
+      "candidates": 133,
+      "inRecall": 108,
+      "exposed": 82,
+      "annotated": 82,
+      "bare": 0,
+      "exposed_rate": 75.9,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "explicit_rate": 1.2,
+      "hint_rate": 4.9,
+      "levels": {
+        "0": 7,
+        "1": 70,
+        "2": 4,
+        "3": 1
+      },
+      "avg_tokens": 291
+    },
+    "B_no_eject": {
+      "label": "B 不挤（挤出 off）",
+      "candidates": 133,
+      "inRecall": 108,
+      "exposed": 82,
+      "annotated": 82,
+      "bare": 0,
+      "exposed_rate": 75.9,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "explicit_rate": 1.2,
+      "hint_rate": 4.9,
+      "levels": {
+        "0": 7,
+        "1": 70,
+        "2": 4,
+        "3": 1
+      },
+      "avg_tokens": 291
+    },
+    "C_no_statement": {
+      "label": "C 不标时间（时间 off）",
+      "candidates": 133,
+      "inRecall": 108,
+      "exposed": 82,
+      "annotated": 82,
+      "bare": 0,
+      "exposed_rate": 75.9,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "explicit_rate": 1.2,
+      "hint_rate": 4.9,
+      "levels": {
+        "0": 7,
+        "1": 70,
+        "2": 4,
+        "3": 1
+      },
+      "avg_tokens": 291
+    },
+    "D_weak_on": {
+      "label": "D 弱标开（weak on）",
+      "candidates": 133,
+      "inRecall": 108,
+      "exposed": 82,
+      "annotated": 82,
+      "bare": 0,
+      "exposed_rate": 75.9,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "explicit_rate": 1.2,
+      "hint_rate": 15.9,
+      "levels": {
+        "0": 6,
+        "1": 62,
+        "2": 13,
+        "3": 1
+      },
+      "avg_tokens": 292
+    },
+    "E_no_age_stmt": {
+      "label": "E 无年龄徽章 · 时间 on",
+      "candidates": 133,
+      "inRecall": 108,
+      "exposed": 82,
+      "annotated": 21,
+      "bare": 61,
+      "exposed_rate": 75.9,
+      "annotated_rate": 25.6,
+      "bare_rate": 74.4,
+      "explicit_rate": 1.2,
+      "hint_rate": 4.9,
+      "levels": {
+        "0": 77,
+        "1": 0,
+        "2": 4,
+        "3": 1
+      },
+      "avg_tokens": 291
+    },
+    "F_no_age_bare": {
+      "label": "F 无年龄徽章 · 时间 off",
+      "candidates": 133,
+      "inRecall": 108,
+      "exposed": 82,
+      "annotated": 14,
+      "bare": 68,
+      "exposed_rate": 75.9,
+      "annotated_rate": 17.1,
+      "bare_rate": 82.9,
+      "explicit_rate": 1.2,
+      "hint_rate": 4.9,
+      "levels": {
+        "0": 77,
+        "1": 0,
+        "2": 4,
+        "3": 1
+      },
+      "avg_tokens": 291
+    }
+  },
+  "by_source": {
+    "A_default": {
+      "weak:nonslot": {
+        "n": 49,
+        "exposed": 6,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 6
+      },
+      "weak:slot": {
+        "n": 79,
+        "exposed": 75,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 4,
+        "ages": 64
+      },
+      "topic_key:nonslot": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "topic_state:slot": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0,
+        "explicit": 1,
+        "hint": 0,
+        "ages": 0
+      }
+    },
+    "B_no_eject": {
+      "weak:nonslot": {
+        "n": 49,
+        "exposed": 6,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 6
+      },
+      "weak:slot": {
+        "n": 79,
+        "exposed": 75,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 4,
+        "ages": 64
+      },
+      "topic_key:nonslot": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "topic_state:slot": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0,
+        "explicit": 1,
+        "hint": 0,
+        "ages": 0
+      }
+    },
+    "C_no_statement": {
+      "weak:nonslot": {
+        "n": 49,
+        "exposed": 6,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 6
+      },
+      "weak:slot": {
+        "n": 79,
+        "exposed": 75,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 4,
+        "ages": 64
+      },
+      "topic_key:nonslot": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "topic_state:slot": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0,
+        "explicit": 1,
+        "hint": 0,
+        "ages": 0
+      }
+    },
+    "D_weak_on": {
+      "weak:nonslot": {
+        "n": 49,
+        "exposed": 6,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 6
+      },
+      "weak:slot": {
+        "n": 79,
+        "exposed": 75,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 13,
+        "ages": 56
+      },
+      "topic_key:nonslot": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "topic_state:slot": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0,
+        "explicit": 1,
+        "hint": 0,
+        "ages": 0
+      }
+    },
+    "E_no_age_stmt": {
+      "weak:nonslot": {
+        "n": 49,
+        "exposed": 6,
+        "bare": 4,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "weak:slot": {
+        "n": 79,
+        "exposed": 75,
+        "bare": 57,
+        "explicit": 0,
+        "hint": 4,
+        "ages": 0
+      },
+      "topic_key:nonslot": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "topic_state:slot": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0,
+        "explicit": 1,
+        "hint": 0,
+        "ages": 0
+      }
+    },
+    "F_no_age_bare": {
+      "weak:nonslot": {
+        "n": 49,
+        "exposed": 6,
+        "bare": 4,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "weak:slot": {
+        "n": 79,
+        "exposed": 75,
+        "bare": 64,
+        "explicit": 0,
+        "hint": 4,
+        "ages": 0
+      },
+      "topic_key:nonslot": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0,
+        "explicit": 0,
+        "hint": 0,
+        "ages": 0
+      },
+      "topic_state:slot": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0,
+        "explicit": 1,
+        "hint": 0,
+        "ages": 0
+      }
+    }
+  },
+  "details": {
+    "A_default": [
+      {
+        "id": "mem_523987797c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_21beb6eba0",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_815e20d386",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_e341731a87",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_845e4b5a16",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_9a0246a63e",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_4f7075d4ea",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0effb4b9a5",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_ce0187bc00",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_976826a4f6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0a2f722a99",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_d4ff74a83f",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_9b951f0acf",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_04c990a9b3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c8c7292c4",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_070c4c1aa8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0f04b5a1ef",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_fa9ca32b47",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_6abcf537eb",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_d6d30761a8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_66339c1638",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_2256a58b68",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_276ffd9777",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5b6e4d0a40",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bdbb446f91",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f67a3cf312",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 286
+      },
+      {
+        "id": "mem_2810ad1db1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_86e49c826b",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_30382c9162",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_ad26a25256",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5251cf9a79",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0d9aec16ed",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_74d0d2c89b",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bf290095fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a7aee91549",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f0945e326c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_9e3a0cb690",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_34f245a8d3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c498b3a093",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_27c9ee1072",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3a46a1e4fd",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8105ea45dc",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_cf602caca6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8851eae011",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_2235662af7",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_925a4683f1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_3563b1f1fb",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_285610a038",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_0ae8ada8bc",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_918a2f014b",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 296
+      },
+      {
+        "id": "mem_f045c88df2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_de3a871082",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_87e8cd0bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_d267e08fa3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_8b8c511201",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_bf6c6c0182",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 290
+      },
+      {
+        "id": "mem_6fe9b2694c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 227
+      },
+      {
+        "id": "mem_8323cef9a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 227
+      },
+      {
+        "id": "mem_9f562da8ca",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_aadf465415",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_e869eb39c0",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 147
+      },
+      {
+        "id": "mem_8d1703c681",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_cc08fe81ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c92ab6f1d2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0d7655739d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4191a02dd3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_1577ff7720",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_5acec91994",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f6de6ea37c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_d354263a61",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_9b87fc1fc7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_a9c2e716a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_2c665363a4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_75d7c08214",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4bc400e05a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_81bfc47450",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_ec89e3dede",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b74133548a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1356365577",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_fa9a224479",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_855bf97a53",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1d76edea5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c178637e4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_3fd5330e24",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_b0485ce4fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_7439aba527",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_f8d88547b7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_feddaf1c50",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b6b98f921f",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_db1e60de77",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_90e03de79e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_dd2bfbde02",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b5cb0f7918",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3c787ae39",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_1e84e3a04a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1adde1b315",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 298
+      },
+      {
+        "id": "mem_9e270e2a31",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_e5fe7ebbb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_85732bcc34",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 287
+      },
+      {
+        "id": "mem_fb598725a1",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_20af1e7e6c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_45c0674d3d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3087b4a79a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_14ca772267",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_d2cd4c0c16",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_25544ecc07",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_33a8b41317",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 99
+      },
+      {
+        "id": "mem_e3f41098c7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_1d3f0d38ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0fe07a2aac",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_70b9a97a0f",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1411d6ba7a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_decc7315e3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a43539f277",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_424935d0e8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_ca0b5fcf79",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_dd0cfb37f2",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_9bbd64713a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e2953567d8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_8ed7124573",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_8ae2747875",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3ad00b976",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_d5452246a1",
+        "src": "topic_state",
+        "exposed": true,
+        "level": 3,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b8633a985e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_f64eb04bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3480a61e63",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a800e12b2a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 287
+      },
+      {
+        "id": "mem_e9edb6614c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cabd68926a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_acbc6e268a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_5ad7fc2671",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_ff3c978edd",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_0fd0cb0f5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      }
+    ],
+    "B_no_eject": [
+      {
+        "id": "mem_523987797c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_21beb6eba0",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_815e20d386",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_e341731a87",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_845e4b5a16",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_9a0246a63e",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_4f7075d4ea",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0effb4b9a5",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_ce0187bc00",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_976826a4f6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0a2f722a99",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_d4ff74a83f",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_9b951f0acf",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_04c990a9b3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c8c7292c4",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_070c4c1aa8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0f04b5a1ef",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_fa9ca32b47",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_6abcf537eb",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_d6d30761a8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_66339c1638",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_2256a58b68",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_276ffd9777",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5b6e4d0a40",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bdbb446f91",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f67a3cf312",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 286
+      },
+      {
+        "id": "mem_2810ad1db1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_86e49c826b",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_30382c9162",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_ad26a25256",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5251cf9a79",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0d9aec16ed",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_74d0d2c89b",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bf290095fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a7aee91549",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f0945e326c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_9e3a0cb690",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_34f245a8d3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c498b3a093",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_27c9ee1072",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3a46a1e4fd",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8105ea45dc",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_cf602caca6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8851eae011",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_2235662af7",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_925a4683f1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_3563b1f1fb",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_285610a038",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_0ae8ada8bc",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_918a2f014b",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 296
+      },
+      {
+        "id": "mem_f045c88df2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_de3a871082",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_87e8cd0bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_d267e08fa3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_8b8c511201",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_bf6c6c0182",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 290
+      },
+      {
+        "id": "mem_6fe9b2694c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 227
+      },
+      {
+        "id": "mem_8323cef9a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 227
+      },
+      {
+        "id": "mem_9f562da8ca",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_aadf465415",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_e869eb39c0",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 147
+      },
+      {
+        "id": "mem_8d1703c681",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_cc08fe81ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c92ab6f1d2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0d7655739d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4191a02dd3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_1577ff7720",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_5acec91994",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f6de6ea37c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_d354263a61",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_9b87fc1fc7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_a9c2e716a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_2c665363a4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_75d7c08214",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4bc400e05a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_81bfc47450",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_ec89e3dede",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b74133548a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1356365577",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_fa9a224479",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_855bf97a53",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1d76edea5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c178637e4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_3fd5330e24",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_b0485ce4fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_7439aba527",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_f8d88547b7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_feddaf1c50",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b6b98f921f",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_db1e60de77",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_90e03de79e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_dd2bfbde02",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b5cb0f7918",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3c787ae39",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_1e84e3a04a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1adde1b315",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 298
+      },
+      {
+        "id": "mem_9e270e2a31",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_e5fe7ebbb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_85732bcc34",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 287
+      },
+      {
+        "id": "mem_fb598725a1",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_20af1e7e6c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_45c0674d3d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3087b4a79a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_14ca772267",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_d2cd4c0c16",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_25544ecc07",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_33a8b41317",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 99
+      },
+      {
+        "id": "mem_e3f41098c7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_1d3f0d38ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0fe07a2aac",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_70b9a97a0f",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1411d6ba7a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_decc7315e3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a43539f277",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_424935d0e8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_ca0b5fcf79",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_dd0cfb37f2",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_9bbd64713a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e2953567d8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_8ed7124573",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_8ae2747875",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3ad00b976",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_d5452246a1",
+        "src": "topic_state",
+        "exposed": true,
+        "level": 3,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b8633a985e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_f64eb04bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3480a61e63",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a800e12b2a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 287
+      },
+      {
+        "id": "mem_e9edb6614c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cabd68926a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_acbc6e268a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_5ad7fc2671",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_ff3c978edd",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_0fd0cb0f5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      }
+    ],
+    "C_no_statement": [
+      {
+        "id": "mem_523987797c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_21beb6eba0",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_815e20d386",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_e341731a87",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_845e4b5a16",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_9a0246a63e",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_4f7075d4ea",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0effb4b9a5",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_ce0187bc00",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_976826a4f6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0a2f722a99",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_d4ff74a83f",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_9b951f0acf",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_04c990a9b3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c8c7292c4",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_070c4c1aa8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0f04b5a1ef",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_fa9ca32b47",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_6abcf537eb",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_d6d30761a8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_66339c1638",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_2256a58b68",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_276ffd9777",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5b6e4d0a40",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bdbb446f91",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f67a3cf312",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_2810ad1db1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_86e49c826b",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_30382c9162",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_ad26a25256",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5251cf9a79",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0d9aec16ed",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_74d0d2c89b",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bf290095fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_a7aee91549",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f0945e326c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_9e3a0cb690",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_34f245a8d3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c498b3a093",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_27c9ee1072",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3a46a1e4fd",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8105ea45dc",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_cf602caca6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8851eae011",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_2235662af7",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_925a4683f1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_3563b1f1fb",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_285610a038",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_0ae8ada8bc",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_918a2f014b",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_f045c88df2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 287
+      },
+      {
+        "id": "mem_de3a871082",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_87e8cd0bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_d267e08fa3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_8b8c511201",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_bf6c6c0182",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 290
+      },
+      {
+        "id": "mem_6fe9b2694c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 227
+      },
+      {
+        "id": "mem_8323cef9a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 227
+      },
+      {
+        "id": "mem_9f562da8ca",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_aadf465415",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_e869eb39c0",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 147
+      },
+      {
+        "id": "mem_8d1703c681",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_cc08fe81ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c92ab6f1d2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0d7655739d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_4191a02dd3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_1577ff7720",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_5acec91994",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f6de6ea37c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 287
+      },
+      {
+        "id": "mem_d354263a61",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_9b87fc1fc7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_a9c2e716a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_2c665363a4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_75d7c08214",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_4bc400e05a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_81bfc47450",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_ec89e3dede",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b74133548a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1356365577",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_fa9a224479",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_855bf97a53",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1d76edea5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c178637e4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3fd5330e24",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_b0485ce4fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_7439aba527",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_f8d88547b7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_feddaf1c50",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b6b98f921f",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_db1e60de77",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_90e03de79e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_dd2bfbde02",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b5cb0f7918",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3c787ae39",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_1e84e3a04a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_1adde1b315",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 298
+      },
+      {
+        "id": "mem_9e270e2a31",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_e5fe7ebbb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_85732bcc34",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_fb598725a1",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_20af1e7e6c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_45c0674d3d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3087b4a79a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_14ca772267",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_d2cd4c0c16",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_25544ecc07",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_33a8b41317",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 99
+      },
+      {
+        "id": "mem_e3f41098c7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_1d3f0d38ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0fe07a2aac",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_70b9a97a0f",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1411d6ba7a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_decc7315e3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a43539f277",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_424935d0e8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_ca0b5fcf79",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_dd0cfb37f2",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_9bbd64713a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e2953567d8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_8ed7124573",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_8ae2747875",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3ad00b976",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_d5452246a1",
+        "src": "topic_state",
+        "exposed": true,
+        "level": 3,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b8633a985e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_f64eb04bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_3480a61e63",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a800e12b2a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 287
+      },
+      {
+        "id": "mem_e9edb6614c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cabd68926a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_acbc6e268a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_5ad7fc2671",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_ff3c978edd",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_0fd0cb0f5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      }
+    ],
+    "D_weak_on": [
+      {
+        "id": "mem_523987797c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_21beb6eba0",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_815e20d386",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_e341731a87",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_845e4b5a16",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_9a0246a63e",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_4f7075d4ea",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0effb4b9a5",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_ce0187bc00",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_976826a4f6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0a2f722a99",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_d4ff74a83f",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_9b951f0acf",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_04c990a9b3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c8c7292c4",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_070c4c1aa8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0f04b5a1ef",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_fa9ca32b47",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_6abcf537eb",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 299
+      },
+      {
+        "id": "mem_d6d30761a8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_66339c1638",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_2256a58b68",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_276ffd9777",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5b6e4d0a40",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bdbb446f91",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f67a3cf312",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 286
+      },
+      {
+        "id": "mem_2810ad1db1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_86e49c826b",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_30382c9162",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_ad26a25256",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5251cf9a79",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0d9aec16ed",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_74d0d2c89b",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bf290095fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a7aee91549",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f0945e326c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_9e3a0cb690",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_34f245a8d3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c498b3a093",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_27c9ee1072",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3a46a1e4fd",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8105ea45dc",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_cf602caca6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8851eae011",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_2235662af7",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_925a4683f1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_3563b1f1fb",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_285610a038",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_0ae8ada8bc",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_918a2f014b",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 299
+      },
+      {
+        "id": "mem_f045c88df2",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_de3a871082",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_87e8cd0bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_d267e08fa3",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 290
+      },
+      {
+        "id": "mem_8b8c511201",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_bf6c6c0182",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_6fe9b2694c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 231
+      },
+      {
+        "id": "mem_8323cef9a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 231
+      },
+      {
+        "id": "mem_9f562da8ca",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_aadf465415",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_e869eb39c0",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 147
+      },
+      {
+        "id": "mem_8d1703c681",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_cc08fe81ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 296
+      },
+      {
+        "id": "mem_c92ab6f1d2",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 299
+      },
+      {
+        "id": "mem_0d7655739d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4191a02dd3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_1577ff7720",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_5acec91994",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f6de6ea37c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_d354263a61",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_9b87fc1fc7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_a9c2e716a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_2c665363a4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_75d7c08214",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4bc400e05a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_81bfc47450",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_ec89e3dede",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b74133548a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1356365577",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_fa9a224479",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_855bf97a53",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1d76edea5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5c178637e4",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_3fd5330e24",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_b0485ce4fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_7439aba527",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 290
+      },
+      {
+        "id": "mem_f8d88547b7",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_feddaf1c50",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b6b98f921f",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_db1e60de77",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_90e03de79e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_dd2bfbde02",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b5cb0f7918",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3c787ae39",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 296
+      },
+      {
+        "id": "mem_1e84e3a04a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1adde1b315",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_9e270e2a31",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_e5fe7ebbb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_85732bcc34",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 287
+      },
+      {
+        "id": "mem_fb598725a1",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_20af1e7e6c",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_45c0674d3d",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3087b4a79a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_14ca772267",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_d2cd4c0c16",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_25544ecc07",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 291
+      },
+      {
+        "id": "mem_33a8b41317",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 99
+      },
+      {
+        "id": "mem_e3f41098c7",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1d3f0d38ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_0fe07a2aac",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_70b9a97a0f",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 293
+      },
+      {
+        "id": "mem_1411d6ba7a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_decc7315e3",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a43539f277",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 293
+      },
+      {
+        "id": "mem_424935d0e8",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 290
+      },
+      {
+        "id": "mem_ca0b5fcf79",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_dd0cfb37f2",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_9bbd64713a",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e2953567d8",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_8ed7124573",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 288
+      },
+      {
+        "id": "mem_8ae2747875",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e3ad00b976",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_d5452246a1",
+        "src": "topic_state",
+        "exposed": true,
+        "level": 3,
+        "tokens": 297
+      },
+      {
+        "id": "mem_b8633a985e",
+        "src": "weak",
+        "exposed": true,
+        "level": 1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_f64eb04bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_3480a61e63",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_a800e12b2a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 287
+      },
+      {
+        "id": "mem_e9edb6614c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cabd68926a",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 293
+      },
+      {
+        "id": "mem_acbc6e268a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_5ad7fc2671",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_ff3c978edd",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_0fd0cb0f5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      }
+    ],
+    "E_no_age_stmt": [
+      {
+        "id": "mem_523987797c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_21beb6eba0",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_815e20d386",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_e341731a87",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_845e4b5a16",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 287
+      },
+      {
+        "id": "mem_9a0246a63e",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4f7075d4ea",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0effb4b9a5",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_ce0187bc00",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_976826a4f6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0a2f722a99",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_d4ff74a83f",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_9b951f0acf",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_04c990a9b3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_5c8c7292c4",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_070c4c1aa8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0f04b5a1ef",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_fa9ca32b47",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_6abcf537eb",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_d6d30761a8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_66339c1638",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_2256a58b68",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_276ffd9777",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5b6e4d0a40",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bdbb446f91",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f67a3cf312",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 289
+      },
+      {
+        "id": "mem_2810ad1db1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_86e49c826b",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_30382c9162",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_ad26a25256",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5251cf9a79",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0d9aec16ed",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_74d0d2c89b",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bf290095fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_a7aee91549",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f0945e326c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_9e3a0cb690",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_34f245a8d3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c498b3a093",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_27c9ee1072",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3a46a1e4fd",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8105ea45dc",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cf602caca6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8851eae011",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_2235662af7",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_925a4683f1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3563b1f1fb",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_285610a038",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 288
+      },
+      {
+        "id": "mem_0ae8ada8bc",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_918a2f014b",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_f045c88df2",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_de3a871082",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_87e8cd0bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_d267e08fa3",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_8b8c511201",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_bf6c6c0182",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 297
+      },
+      {
+        "id": "mem_6fe9b2694c",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 210
+      },
+      {
+        "id": "mem_8323cef9a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 210
+      },
+      {
+        "id": "mem_9f562da8ca",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 270
+      },
+      {
+        "id": "mem_aadf465415",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 270
+      },
+      {
+        "id": "mem_e869eb39c0",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 136
+      },
+      {
+        "id": "mem_8d1703c681",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cc08fe81ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_c92ab6f1d2",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_0d7655739d",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_4191a02dd3",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1577ff7720",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 292
+      },
+      {
+        "id": "mem_5acec91994",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f6de6ea37c",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 289
+      },
+      {
+        "id": "mem_d354263a61",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_9b87fc1fc7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_a9c2e716a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_2c665363a4",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_75d7c08214",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_4bc400e05a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_81bfc47450",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_ec89e3dede",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_b74133548a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1356365577",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_fa9a224479",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_855bf97a53",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1d76edea5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_5c178637e4",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 289
+      },
+      {
+        "id": "mem_3fd5330e24",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 292
+      },
+      {
+        "id": "mem_b0485ce4fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_7439aba527",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_f8d88547b7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_feddaf1c50",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_b6b98f921f",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_db1e60de77",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_90e03de79e",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_dd2bfbde02",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_b5cb0f7918",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_e3c787ae39",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 289
+      },
+      {
+        "id": "mem_1e84e3a04a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1adde1b315",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_9e270e2a31",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e5fe7ebbb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_85732bcc34",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 290
+      },
+      {
+        "id": "mem_fb598725a1",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_20af1e7e6c",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_45c0674d3d",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_3087b4a79a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_14ca772267",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_d2cd4c0c16",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 292
+      },
+      {
+        "id": "mem_25544ecc07",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_33a8b41317",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 93
+      },
+      {
+        "id": "mem_e3f41098c7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 289
+      },
+      {
+        "id": "mem_1d3f0d38ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_0fe07a2aac",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_70b9a97a0f",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 298
+      },
+      {
+        "id": "mem_1411d6ba7a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_decc7315e3",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_a43539f277",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_424935d0e8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_ca0b5fcf79",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_dd0cfb37f2",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_9bbd64713a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e2953567d8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_8ed7124573",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_8ae2747875",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e3ad00b976",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 291
+      },
+      {
+        "id": "mem_d5452246a1",
+        "src": "topic_state",
+        "exposed": true,
+        "level": 3,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b8633a985e",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_f64eb04bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_3480a61e63",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_a800e12b2a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e9edb6614c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_cabd68926a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_acbc6e268a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5ad7fc2671",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_ff3c978edd",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0fd0cb0f5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      }
+    ],
+    "F_no_age_bare": [
+      {
+        "id": "mem_523987797c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_21beb6eba0",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_815e20d386",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_e341731a87",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_845e4b5a16",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_9a0246a63e",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_4f7075d4ea",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0effb4b9a5",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_ce0187bc00",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_976826a4f6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0a2f722a99",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_d4ff74a83f",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_9b951f0acf",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_04c990a9b3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_5c8c7292c4",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 299
+      },
+      {
+        "id": "mem_070c4c1aa8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0f04b5a1ef",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_fa9ca32b47",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_6abcf537eb",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_d6d30761a8",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 294
+      },
+      {
+        "id": "mem_66339c1638",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 293
+      },
+      {
+        "id": "mem_2256a58b68",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_276ffd9777",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5b6e4d0a40",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bdbb446f91",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f67a3cf312",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_2810ad1db1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_86e49c826b",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_30382c9162",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_ad26a25256",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_5251cf9a79",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_0d9aec16ed",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_74d0d2c89b",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_bf290095fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_a7aee91549",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_f0945e326c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_9e3a0cb690",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_34f245a8d3",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_c498b3a093",
+        "src": "topic_key",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_27c9ee1072",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 295
+      },
+      {
+        "id": "mem_3a46a1e4fd",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8105ea45dc",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 298
+      },
+      {
+        "id": "mem_cf602caca6",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_8851eae011",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_2235662af7",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_925a4683f1",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3563b1f1fb",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 0
+      },
+      {
+        "id": "mem_285610a038",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0ae8ada8bc",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_918a2f014b",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f045c88df2",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_de3a871082",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_87e8cd0bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_d267e08fa3",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_8b8c511201",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_bf6c6c0182",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 297
+      },
+      {
+        "id": "mem_6fe9b2694c",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 210
+      },
+      {
+        "id": "mem_8323cef9a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 210
+      },
+      {
+        "id": "mem_9f562da8ca",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 270
+      },
+      {
+        "id": "mem_aadf465415",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 270
+      },
+      {
+        "id": "mem_e869eb39c0",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 136
+      },
+      {
+        "id": "mem_8d1703c681",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_cc08fe81ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_c92ab6f1d2",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_0d7655739d",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_4191a02dd3",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1577ff7720",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 292
+      },
+      {
+        "id": "mem_5acec91994",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_f6de6ea37c",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 287
+      },
+      {
+        "id": "mem_d354263a61",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_9b87fc1fc7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_a9c2e716a7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_2c665363a4",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_75d7c08214",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_4bc400e05a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_81bfc47450",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_ec89e3dede",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_b74133548a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1356365577",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_fa9a224479",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_855bf97a53",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_1d76edea5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_5c178637e4",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3fd5330e24",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 292
+      },
+      {
+        "id": "mem_b0485ce4fe",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 297
+      },
+      {
+        "id": "mem_7439aba527",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_f8d88547b7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_feddaf1c50",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_b6b98f921f",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_db1e60de77",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_90e03de79e",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_dd2bfbde02",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_b5cb0f7918",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e3c787ae39",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 289
+      },
+      {
+        "id": "mem_1e84e3a04a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_1adde1b315",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 300
+      },
+      {
+        "id": "mem_9e270e2a31",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 296
+      },
+      {
+        "id": "mem_e5fe7ebbb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_85732bcc34",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 291
+      },
+      {
+        "id": "mem_fb598725a1",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_20af1e7e6c",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_45c0674d3d",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_3087b4a79a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_14ca772267",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_d2cd4c0c16",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 292
+      },
+      {
+        "id": "mem_25544ecc07",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_33a8b41317",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 93
+      },
+      {
+        "id": "mem_e3f41098c7",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 289
+      },
+      {
+        "id": "mem_1d3f0d38ce",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_0fe07a2aac",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 294
+      },
+      {
+        "id": "mem_70b9a97a0f",
+        "src": "weak",
+        "exposed": true,
+        "level": 2,
+        "tokens": 296
+      },
+      {
+        "id": "mem_1411d6ba7a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_decc7315e3",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_a43539f277",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      },
+      {
+        "id": "mem_424935d0e8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 286
+      },
+      {
+        "id": "mem_ca0b5fcf79",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 298
+      },
+      {
+        "id": "mem_dd0cfb37f2",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_9bbd64713a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 295
+      },
+      {
+        "id": "mem_e2953567d8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 293
+      },
+      {
+        "id": "mem_8ed7124573",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_8ae2747875",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e3ad00b976",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 291
+      },
+      {
+        "id": "mem_d5452246a1",
+        "src": "topic_state",
+        "exposed": true,
+        "level": 3,
+        "tokens": 300
+      },
+      {
+        "id": "mem_b8633a985e",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_f64eb04bb8",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_3480a61e63",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_a800e12b2a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_e9edb6614c",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 296
+      },
+      {
+        "id": "mem_cabd68926a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_acbc6e268a",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 300
+      },
+      {
+        "id": "mem_5ad7fc2671",
+        "src": "weak",
+        "exposed": false,
+        "level": -1,
+        "tokens": 292
+      },
+      {
+        "id": "mem_ff3c978edd",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 297
+      },
+      {
+        "id": "mem_0fd0cb0f5b",
+        "src": "weak",
+        "exposed": true,
+        "level": 0,
+        "tokens": 299
+      }
+    ]
+  },
+  "samples": [
+    {
+      "id": "mem_6abcf537eb",
+      "type": "appraisal",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 298,
+      "snippet": "- （5 天前）我之前有个同好叫小号\n- （5 天前）用户提到自己之前有一个同好叫“小号”，说明这段同好关系已是过去式\n- （从聊天里记下的，3 天前）我之前在别的地方传了git（11-01 记下的判断，不是说现在）\n- （5 天前）事实：用户直接问“小号是谁来着”，说明用户当下对“小号”的具体身份记不清；助手提到用户"
+    },
+    {
+      "id": "mem_0ae8ada8bc",
+      "type": "appraisal",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 295,
+      "snippet": "- （从聊天里记下的，2 天前）还有一个项目几乎是照着我们这套问题写的——Shikigami-Protocol：情绪×精力×好感的状态机、记忆管线\n- （从聊天里记下的）还有一条：写侧「没做完 → 做好了」的取代（stale_pair）默认是 off，只记观测事件\n- （从聊天里记下的，1 天前）用户有一个「情绪快照」"
+    },
+    {
+      "id": "mem_918a2f014b",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 2,
+      "bare": false,
+      "tokens": 296,
+      "snippet": "- （从聊天里记下的，2 天前）要不要先从记忆检索这块开刀（后来你提过：QQ 这边：2301 tokens，全是 bridge 自己…）\n- （从聊天里记下的，1 天前）要不要我接着把记忆检索那几个工具挪进 QQ 会话\n- （5 天前）事实：用户手头已有一套自建的记忆检索框架（FTS5、2-gram、指纹、实体一跳、R"
+    },
+    {
+      "id": "mem_f045c88df2",
+      "type": "episode",
+      "src": "weak",
+      "slot": false,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 288,
+      "snippet": "- （从聊天里记下的，2 天前）用户正在搭建一个 Node 编写的桥接服务，用来把主模型接入 QQ，并做全链路联调\n- （从聊天里记下的，2 天前）事实：用户正在调研或搭建一个涉及情绪状态、主动唤醒、自动上下文浮现与后台整理的产品/框架，并询问可借鉴的类似产品功能\n- （从聊天里记下的，4 天前）用户正在确认方案A是否"
+    },
+    {
+      "id": "mem_de3a871082",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 294,
+      "snippet": "- （从聊天里记下的，2 天前）QQ 通道每条消息直接调用 /chat，追加到 agent 的全局 chat_turns，不创建「一段对话」会话\n- （从聊天里记下的，3 天前）用户的事实认知是：睡着时情绪会继续慢慢退，快情绪应“一动就画”、按每条消息记录\n- （从聊天里记下的，1 天前，不一定对）用户偏好把回复拆成多"
+    },
+    {
+      "id": "mem_87e8cd0bb8",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 294,
+      "snippet": "- （从聊天里记下的，2 天前）插件会话绑定表 bindings 中小汐有 4 条记录，全部是 DSH 网页会话，没有任何一条来自 QQ\n- （从聊天里记下的，2 天前）DSH 网页会话的提示词包含系统提示、插件通过 systemPrompt.section 注入的完整意识体包（人设、语气\n- （从聊天里记下的，2 天"
+    },
+    {
+      "id": "mem_d267e08fa3",
+      "type": "appraisal",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 296,
+      "snippet": "- （从聊天里记下的，2 天前）好，先一起给我列一个计划\n- （从聊天里记下的，1 天前）对于所有这些的实现，列一个详细计划把，注意要时刻检查不要跟现有的项目冲突\n- （从聊天里记下的）好的，按你的来，结合现在的代码（话说现在这一块代码是不是有挺多不用的）列一个详细的修改计划把（包括删废代码\n- （从聊天里记下的）然后"
+    },
+    {
+      "id": "mem_8b8c511201",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 299,
+      "snippet": "- （从聊天里记下的，2 天前）用户设定：陌生人可以正常聊天，但不算作主人\n- （从聊天里记下的，2 天前）用户提供了常用大号 3192248859，并明确陌生人可以正常聊，但不算“主人”\n- （从聊天里记下的，2 天前）用户提供常用大号 ID 3192248859，并明确陌生人可以正常聊天，但不算“主人”\n- （从聊"
+    },
+    {
+      "id": "mem_bf6c6c0182",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 2,
+      "bare": false,
+      "tokens": 290,
+      "snippet": "- （从聊天里记下的，2 天前）重载后需做真机复验：陌生人说话时不得返回“主人/记住了”这类主人身份回应（后来在 11-02 的纪要里聊到：你说了\n- （从聊天里记下的，2 天前）用户只说了“继续”，事实信息很少，表明希望接着推进当前任务\n- （我自己想的，1 天前）用户正在配置和调试 QQ 机器人及 DeepSeek"
+    },
+    {
+      "id": "mem_6fe9b2694c",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 227,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    },
+    {
+      "id": "mem_8323cef9a7",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 227,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    },
+    {
+      "id": "mem_9f562da8ca",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "level": 1,
+      "bare": false,
+      "tokens": 291,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    }
+  ]
+}

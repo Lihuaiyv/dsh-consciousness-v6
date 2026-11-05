@@ -281,7 +281,7 @@ function buildStance(score, presence) {
   }
 }
 
-export function resolveLifeKey(raw) {
+function resolveLifeKey(raw) {
   const t = String(raw || '').trim()
   if (!t) return null
   const bare = t.startsWith('lifeview.') ? t.slice(9) : t

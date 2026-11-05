@@ -33,6 +33,16 @@ export function dayOf(iso) {
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : ''
 }
 
+/**
+ * 这条属于哪一天：她自己写的那几条（self.day / self.insight）日期本来就写在 fact_key 里，
+ * 优先信它。因为补跑会跨过午夜——凌晨补 11-04 的日记，写入时间已经是 11-05 了，
+ * 只按时间戳算会把这一笔错记到第二天，攒日子的门槛也就跟着歪。
+ */
+export function dayOfRow(row = {}) {
+  const m = /^self\.(?:day|insight)\.(\d{4}-\d{2}-\d{2})$/.exec(String(row.fact_key || ''))
+  return m ? m[1] : dayOf(row.created_at)
+}
+
 /** 最近 windowDays 天里她自己写的事，按「日期 · 正文」排；同时给出覆盖到几个不同日期。 */
 export function patternMaterial(db, aid, windowDays = 30) {
   const n = Math.max(7, Math.min(180, Number(windowDays) || 30))
@@ -40,11 +50,11 @@ export function patternMaterial(db, aid, windowDays = 30) {
   const bits = []
   const days = new Set()
   try {
-    const rows = db.prepare(`SELECT text, created_at FROM memory_items
+    const rows = db.prepare(`SELECT text, created_at, fact_key FROM memory_items
       WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND source='self' AND created_at>=?
       ORDER BY created_at DESC LIMIT 160`).all(aid, since)
     for (const r of rows) {
-      const d = dayOf(r.created_at)
+      const d = dayOfRow(r)
       if (!d) continue
       days.add(d)
       bits.push(d + ' · ' + String(r.text || '').slice(0, 100))

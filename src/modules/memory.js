@@ -233,7 +233,7 @@ export function addMemory(db, aid, body) {
         memory_id: mid, text: safe, type: typ, mark: 'normal',
         importance, salience, confidence: body.confidence != null ? Number(body.confidence) : 0.8,
         fact_key: factKey, source_turn_id: body.turn_id || null,
-        source: body.source || 'model',
+        source: body.source || 'model', feel_id: feelId,
       })
       birthRef = fa && fa.id ? fa.id : null
     } catch {

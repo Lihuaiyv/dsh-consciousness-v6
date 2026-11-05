@@ -10,7 +10,7 @@
  */
 import { readEvents } from './ledger.js'
 import { loadState, listHeads } from './projection.js'
-import { isTerminal, SIGMA_OPEN } from './catalog.js'
+import { isTerminal } from './catalog.js'
 import { isEnabled, sangguanConfig } from './config.js'
 import { injectLog, liveReady, injectView } from './inject.js'
 import { getFlag, setFlag } from '../../kernel.js'

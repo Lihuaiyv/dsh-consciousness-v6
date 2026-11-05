@@ -60,6 +60,17 @@ CREATE TABLE IF NOT EXISTS events(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, type TEXT NOT NULL,
   payload TEXT NOT NULL, created_at TEXT NOT NULL);
 
+-- 模型窄门判定缓存（记忆时态）：同一对记忆只判一次。
+-- 只加表、不 ALTER 老表；verdict 取 supersede / supplement / unrelated / uncertain。
+-- reason 与 model 留着，是事后抽查准确率（90% 这个数）的唯一凭据。
+CREATE TABLE IF NOT EXISTS memory_pair_judge(
+  pair_key TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  old_id TEXT NOT NULL, new_id TEXT NOT NULL,
+  verdict TEXT NOT NULL, confidence REAL, model TEXT, reason TEXT,
+  judged_at TEXT NOT NULL, via TEXT NOT NULL, applied INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_pair_judge_agent ON memory_pair_judge(agent_id, judged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pair_judge_verdict ON memory_pair_judge(agent_id, verdict);
+
 CREATE TABLE IF NOT EXISTS journal(
   seq INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, turn_id TEXT,
   op TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'intent',
@@ -217,7 +228,7 @@ CREATE TABLE IF NOT EXISTS agent_bindings(
 CREATE TABLE IF NOT EXISTS thoughts(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
   self_text TEXT, other_text TEXT, world_text TEXT, want_text TEXT,
-  other_label TEXT, source TEXT NOT NULL DEFAULT 'model', created_at TEXT NOT NULL);
+  other_label TEXT, source TEXT NOT NULL DEFAULT 'model', created_at TEXT NOT NULL, feel_id TEXT);
 CREATE INDEX IF NOT EXISTS idx_thoughts_agent ON thoughts(agent_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS persona_views(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, text TEXT NOT NULL,
@@ -244,7 +255,7 @@ CREATE TABLE IF NOT EXISTS episodes(
   importance REAL NOT NULL DEFAULT 0.5, hits INTEGER NOT NULL DEFAULT 0,
   last_hit_at TEXT, source TEXT NOT NULL DEFAULT 'rules', created_at TEXT NOT NULL,
   -- 日记 v2：这件事有多「扎心」（0–10）。选场用，算一次存下来；null = 没算过。
-  poignancy REAL);
+  poignancy REAL, feel_id TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ep_uniq ON episodes(agent_id, session_id, day);
 
 -- T3 日记层（温偏冷）：一天一篇，第一人称，可重建不覆盖。
@@ -252,7 +263,7 @@ CREATE TABLE IF NOT EXISTS diaries(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, day TEXT NOT NULL,
   text TEXT NOT NULL, mood TEXT, highlights TEXT, refs TEXT,
   source TEXT NOT NULL DEFAULT 'rules', version INTEGER NOT NULL DEFAULT 1,
-  late INTEGER NOT NULL DEFAULT 0,
+  late INTEGER NOT NULL DEFAULT 0, feel_ids TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_diary_day ON diaries(agent_id, day);
 -- 写这篇日记时的「它是什么状态」：人格 / 价值观 / 情绪 / 驱力 / 关系，用来解释口吻
@@ -275,7 +286,7 @@ CREATE TABLE IF NOT EXISTS fact_archive(
   text TEXT NOT NULL, type TEXT, mark TEXT,
   importance REAL, salience REAL, confidence REAL,
   fact_key TEXT, source_turn_id TEXT, source TEXT NOT NULL DEFAULT 'model',
-  payload TEXT, created_at TEXT NOT NULL);
+  payload TEXT, created_at TEXT NOT NULL, feel_id TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fa_mem ON fact_archive(agent_id, memory_id);
 CREATE INDEX IF NOT EXISTS idx_fa_agent ON fact_archive(agent_id, created_at DESC);
 CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
@@ -316,7 +327,7 @@ CREATE TABLE IF NOT EXISTS open_loops(
   due_at TEXT, stale_after TEXT,
   state TEXT NOT NULL DEFAULT 'open',
   fired_at TEXT, fire_count INTEGER NOT NULL DEFAULT 0,
-  closed_at TEXT, closed_by TEXT,
+  closed_at TEXT, closed_by TEXT, feel_id TEXT,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_loop_open ON open_loops(agent_id, state, due_at);
 CREATE INDEX IF NOT EXISTS idx_loop_mem ON open_loops(agent_id, memory_id);
@@ -373,7 +384,8 @@ CREATE TABLE IF NOT EXISTS rel_event(
   payload     TEXT NOT NULL DEFAULT '{}',
   at          TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
-  created_at  TEXT NOT NULL
+  created_at  TEXT NOT NULL,
+  feel_id     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rel_event_fp ON rel_event(agent_id, fingerprint);
 CREATE INDEX IF NOT EXISTS idx_rel_event_at ON rel_event(agent_id, at DESC);
@@ -600,8 +612,17 @@ export function openDb(file) {
   db.exec(`CREATE TABLE IF NOT EXISTS affect_feel(
     id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, at TEXT NOT NULL,
     text TEXT NOT NULL, label TEXT, fast REAL, slow REAL, total REAL,
-    session_id TEXT, source TEXT NOT NULL DEFAULT 'tool');`)
+    session_id TEXT, source TEXT NOT NULL DEFAULT 'tool', turn_id TEXT);`)
+  // 老库补这一列：这条 feel 是哪一轮说的。没有就退回按时间配（旧行为，不报错）。
+  try { db.exec('ALTER TABLE affect_feel ADD COLUMN turn_id TEXT') } catch { /* 已存在 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_feel_agent_at ON affect_feel(agent_id, at DESC)') } catch { /* 老库异常不影响启动 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_feel_turn ON affect_feel(agent_id, turn_id)') } catch { /* 老库异常不影响启动 */ }
+  // 其它层的「那时候什么感觉」：老库补列，没有就 null（不编）。
+  try { db.exec('ALTER TABLE episodes ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE diaries ADD COLUMN feel_ids TEXT') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE thoughts ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE open_loops ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE rel_event ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
   // 快情绪的时间锚：两次评价隔了多久，快情绪就按这个间隔自己退（不是一句话直接归零）
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN fast_at TEXT') } catch { /* 已存在 */ }
   // 累积负荷：底色的第三层（日节律之外）。被慢情绪的持续偏离拖走一点，几天代谢回来。
@@ -739,6 +760,8 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, cr
   // 旧 core/deep 分区标签下线：数据已无任何读取方，旧库直接把列摘掉（新库没有这列，失败即忽略）。
   try { db.exec('ALTER TABLE memory_items DROP COLUMN tier') } catch { /* 已不存在 / 老 SQLite 不支持 */ }
   try { db.exec('ALTER TABLE fact_archive DROP COLUMN tier') } catch { /* 已不存在 / 老 SQLite 不支持 */ }
+  // 存根也带出生那一刻的感觉：查旧账时能看见「当初记这句时什么心情」。
+  try { db.exec('ALTER TABLE fact_archive ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_mem_band ON memory_items(agent_id, band, heat DESC)') } catch { /* 索引失败不影响开库 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_mem_entity ON memory_items(agent_id, entity_id)') } catch { /* 索引失败不影响开库 */ }
   // 向量通道（P3）：一条记忆一行，vec 是 Float32Array 的字节。独立表，随时可删表回退。

@@ -74,7 +74,7 @@ function addDayUsed(db, aid, axis, step) {
 }
 
 /** 人工清掉「今天已挪」的账（测试/调试用；正常不该碰） */
-export function resetDaily(db, aid, axis = null) {
+function resetDaily(db, aid, axis = null) {
   for (const a of axis ? [axis] : AXIS_KEYS) {
     try { setFlag(db, 'axis.move.day:' + a + ':' + aid, '') } catch { /* ignore */ }
   }

@@ -55,6 +55,18 @@ const few = await writeSelfPattern(db, aid, { chat: chat({ patterns: [P1] }) })
 check('窗口里日期不够 → few_days', few.skipped === 'few_days', few)
 setParam(db, aid, 'memory.pattern.min_days', { value: 3 })
 
+// ---- 跨午夜补写：日期按 fact_key 算，不按写入时间 ----
+// 凌晨补前一天那条时，created_at 已经是第二天了；只按时间戳算会把这一笔错记到第二天。
+const y6 = dAgo(6)
+const lateRow = addMemory(db, aid, {
+  text: '我凌晨才把前几天那条补上，补完心里松了一点',
+  type: 'episode', source: 'self', fact_key: 'self.day.' + y6,
+})
+db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(new Date().toISOString(), lateRow.id)
+const pm2 = patternMaterial(db, aid, 30)
+check('跨午夜补写按 fact_key 记日期', pm2.days.has(y6), [...pm2.days])
+check('不会错记到写入那天', !pm2.days.has(new Date().toISOString().slice(0, 10)), [...pm2.days])
+
 // ---- 闸门 ----
 const badKey = await writeSelfPattern(db, aid, { chat: chat({ patterns: [{ ...P1, key: '用户总道歉' }] }) })
 check('key 含「用户」被挡', badKey.skipped === 'no_pattern', badKey)

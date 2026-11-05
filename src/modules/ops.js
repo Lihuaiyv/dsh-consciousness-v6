@@ -12,10 +12,11 @@ import { readEvents } from './sangguan/ledger.js'
 /**
  * 存储体检 + 自愈。
  *
- * 存储层最容易坏在两处，而且都不会报错、只会静默丢能力：
+ * 存储层最容易坏在三处，而且都不会报错、只会静默丢能力：
  *   ① 全文索引漏行（写入中断 / 外部导入）→ 那条记忆永远搜不到；
- *   ② 图边指向已不存在的记忆 → 一跳扩散捞到空。
- * 两项都能自动修，所以巡检顺手做掉，不等人发现。
+ *   ② 图边指向已不存在的记忆 → 一跳扩散捞到空；
+ *   ③ 感觉引用指向已不存在的 feel（跨实例导入 / 手动删库）→ 旁边那句「当时的感觉」永远是空的。
+ * 前两项能自动修，所以巡检顺手做掉；第三项只报告不自动清——删引用是导入口的事，巡检不越权。
  */
 export function auditStore(db, opt = {}) {
   const n = (sql) => { try { return Number(db.prepare(sql).get().n || 0) } catch { return -1 } }
@@ -24,6 +25,13 @@ export function auditStore(db, opt = {}) {
     { name: 'raw_fts', bad: n("SELECT COUNT(*) n FROM raw_turns r WHERE NOT EXISTS(SELECT 1 FROM raw_fts f WHERE f.id=r.id)") },
     { name: 'fact_fts', bad: n("SELECT COUNT(*) n FROM fact_archive f WHERE NOT EXISTS(SELECT 1 FROM fact_fts x WHERE x.id=f.id)") },
     { name: 'memory_links', bad: n("SELECT COUNT(*) n FROM memory_links l WHERE NOT EXISTS(SELECT 1 FROM memory_items m WHERE m.id=l.from_id) OR NOT EXISTS(SELECT 1 FROM memory_items m WHERE m.id=l.to_id)") },
+    { name: 'feel_refs', bad: n(`SELECT (
+        (SELECT COUNT(*) FROM memory_items m WHERE m.feel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM affect_feel f WHERE f.id=m.feel_id))
+      + (SELECT COUNT(*) FROM fact_archive x WHERE x.feel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM affect_feel f WHERE f.id=x.feel_id))
+      + (SELECT COUNT(*) FROM episodes e WHERE e.feel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM affect_feel f WHERE f.id=e.feel_id))
+      + (SELECT COUNT(*) FROM rel_event r WHERE r.feel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM affect_feel f WHERE f.id=r.feel_id))
+      + (SELECT COUNT(*) FROM open_loops l WHERE l.feel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM affect_feel f WHERE f.id=l.feel_id))
+      ) n`) },
   ]
   const bad = checks.some((c) => c.bad > 0)
   const repaired = []
@@ -63,7 +71,7 @@ export function purgeExpired(db) {
   const cutoff = new Date(Date.now() - 7 * 86400000).toISOString()
   let agents = 0, memories = 0
   const TABLES = ['memory_items', 'conflicts', 'persona', 'persona_values', 'preferences', 'taboos',
-    'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'condition_state', 'drive_state',
+    'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_feel', 'affect_user_read', 'condition_state', 'drive_state',
     'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'events',
     'metric_snapshots', 'metric_samples', 'chat_turns', 'bindings', 'agent_bindings', 'algo_bindings', 'agent_params', 'persona_views', 'thoughts',
     'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
@@ -90,7 +98,9 @@ export function purgeExpired(db) {
     db.prepare('DELETE FROM agents WHERE id=?').run(a.id)
     agents++
   }
-  for (const m of db.prepare("SELECT id FROM memory_items WHERE status='soft_deleted' AND deleted_at<?").all(cutoff)) {
+  // 'deleted'（门禁判删）和 'soft_deleted'（用户隐藏）都是「说好要忘的」，
+  // 以前只清 soft_deleted，门禁删的那批永远停在原地——现在一起清。
+  for (const m of db.prepare("SELECT id FROM memory_items WHERE status IN ('soft_deleted','deleted') AND deleted_at<?").all(cutoff)) {
     try { db.prepare('DELETE FROM memory_fts WHERE id=?').run(m.id) } catch { /* 忽略 */ }
     // 明确硬删 = 连 T4 的事实存根一起清：说好要忘的，不能只在主表忘。
     // 改写留下的 `<id>:hist:<n>` 旧句也得删。前缀用 substr 比较——LIKE 里的 _ 是通配符，会误伤相似 id。

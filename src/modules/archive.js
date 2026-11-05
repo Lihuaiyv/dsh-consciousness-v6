@@ -13,9 +13,10 @@
  */
 
 import crypto from 'node:crypto'
-import { now } from '../db.js'
-import { nid, getParam } from '../kernel.js'
-import { foldValueWeights } from './sangguan/vweights.js'
+import { now, localDay, localDayBounds } from '../db.js'
+import { feelIdIn, feelIdsOnDay } from './feel.js'
+import { nid } from '../kernel.js'
+import {  } from './sangguan/vweights.js'
 import {
   weekday, diaryContext, diaryTone, diaryOpening, normalizeDiaryText, isPromptEcho, bodyLength,
   buildDiaryV2, diaryParams,
@@ -239,13 +240,14 @@ export function archiveFact(db, aid, fact = {}) {
   } catch { payload = null }
   const at = String(fact.created_at || now())
   const r = db.prepare(`INSERT OR IGNORE INTO fact_archive(id,agent_id,memory_id,text,type,mark,
-      importance,salience,confidence,fact_key,source_turn_id,source,payload,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      importance,salience,confidence,fact_key,source_turn_id,source,payload,created_at,feel_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, aid, mid, text, fact.type || 'fact', fact.mark || null,
     fact.importance != null ? Number(fact.importance) : null,
     fact.salience != null ? Number(fact.salience) : null,
     fact.confidence != null ? Number(fact.confidence) : null,
     fact.fact_key || null, fact.source_turn_id || null, String(fact.source || 'model'), payload, at,
+    fact.feel_id ? String(fact.feel_id).slice(0, 120) : null,
   )
   if (!Number(r.changes)) return { id: null, duplicate: true }
   try { db.prepare('INSERT INTO fact_fts(id,text) VALUES(?,?)').run(id, text) } catch { /* 索引失败不挡存根 */ }
@@ -257,7 +259,7 @@ export function listFactArchive(db, aid, opt = {}) {
   const limit = Math.max(1, Math.min(500, Number(opt.limit) || 50))
   const offset = Math.max(0, Number(opt.offset) || 0)
   return db.prepare(`SELECT id,memory_id,text,type,importance,salience,confidence,
-      source_turn_id,source,created_at FROM fact_archive
+      source_turn_id,source,created_at,feel_id FROM fact_archive
     WHERE agent_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(aid, limit, offset)
 }
 
@@ -383,20 +385,22 @@ export function buildEpisode(db, aid, opt = {}) {
   }
   const old = db.prepare('SELECT id,importance FROM episodes WHERE agent_id=? AND session_id IS ? AND day=?')
     .get(aid, ep.session_id, ep.day)
+  // 这一段的「代表感觉」：取时段内离结尾最近的一条。没有就 null——不拿段外的感觉凑。
+  const epFeel = feelIdIn(db, aid, { from: ep.start_at, to: ep.end_at })
   if (old) {
     db.prepare(`UPDATE episodes SET start_at=?, end_at=?, turns=?, title=?, summary=?, topics=?,
-        open_loops=?, importance=?, source=? WHERE id=?`)
+        open_loops=?, importance=?, source=?, feel_id=COALESCE(?, feel_id) WHERE id=?`)
       .run(ep.start_at, ep.end_at, ep.turns, ep.title, ep.summary, ep.topics, ep.open_loops,
-        Math.max(Number(old.importance || 0), ep.importance), ep.source, old.id)
-    return { ...ep, id: old.id, updated: true }
+        Math.max(Number(old.importance || 0), ep.importance), ep.source, epFeel, old.id)
+    return { ...ep, id: old.id, updated: true, feel_id: epFeel }
   }
   ep.id = nid('ep_')
-  db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,turns,title,summary,topics,open_loops,importance,source,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,turns,title,summary,topics,open_loops,importance,source,feel_id,created_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     ep.id, aid, ep.session_id, ep.day, ep.start_at, ep.end_at, ep.turns, ep.title, ep.summary,
-    ep.topics, ep.open_loops, ep.importance, ep.source, now(),
+    ep.topics, ep.open_loops, ep.importance, ep.source, epFeel, now(),
   )
-  return ep
+  return { ...ep, feel_id: epFeel }
 }
 
 export function listEpisodes(db, aid, opt = {}) {
@@ -485,18 +489,22 @@ export async function buildDiary(db, aid, day, opt = {}) {
 }
 
 export async function buildDiaryV1(db, aid, day, opt = {}) {
-  const d = String(day || dayOf(now()))
+  // day 是本地日历日（nightly 也传本地日）；查询按本地日的时间边界，不拿 day 去对
+  // raw_turns.day 那套 UTC 日期——凌晨 0-8 点两边会差一天。
+  const d = String(day || localDay(new Date()))
+  const bounds = localDayBounds(d)
   const eps = listEpisodes(db, aid, { day: d, limit: 20 })
   const facts = db.prepare(`SELECT id,text,type,importance FROM memory_items
-    WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND substr(created_at,1,10)=?
-    ORDER BY importance DESC, created_at LIMIT 12`).all(aid, d)
+    WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=? AND created_at<?
+    ORDER BY importance DESC, created_at LIMIT 12`).all(aid, bounds.start, bounds.end)
   let raw = []
   try {
     raw = db.prepare(`SELECT role,text FROM raw_turns
-      WHERE agent_id=? AND day=? AND role IN ('user','assistant')
-      ORDER BY created_at, seq`).all(aid, d)
+      WHERE agent_id=? AND created_at>=? AND created_at<? AND role IN ('user','assistant')
+      ORDER BY created_at, seq`).all(aid, bounds.start, bounds.end)
   } catch { raw = [] }
-  const rawCount = raw.length || Number(db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND day=?').get(aid, d).n)
+  const rawCount = raw.length || Number(db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND created_at>=? AND created_at<?')
+    .get(aid, bounds.start, bounds.end).n)
   if (!eps.length && !facts.length && !rawCount) return null
 
   const ctx = diaryContext(db, aid)
@@ -590,12 +598,15 @@ export async function buildDiaryV1(db, aid, day, opt = {}) {
   const version = old ? Number(old.version) + 1 : 1
   const id = old ? old.id : nid('dry_')
   const ctxJson = JSON.stringify(ctx)
-  db.prepare(`INSERT INTO diaries(id,agent_id,day,text,mood,highlights,refs,source,version,context,late,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+  // 这一天写过哪几句感觉：按时间串起来存 id，日记是回忆入口，翻到时能看见当天的原话。
+  const feelIds = JSON.stringify(feelIdsOnDay(db, aid, d))
+  db.prepare(`INSERT INTO diaries(id,agent_id,day,text,mood,highlights,refs,source,version,context,late,feel_ids,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ON CONFLICT(agent_id,day) DO UPDATE SET text=excluded.text, mood=excluded.mood,
       highlights=excluded.highlights, refs=excluded.refs, source=excluded.source,
-      version=excluded.version, context=excluded.context, late=excluded.late, updated_at=excluded.updated_at`)
-    .run(id, aid, d, text, mood, JSON.stringify(highlights), refs, source, version, ctxJson, late, at, at)
+      version=excluded.version, context=excluded.context, late=excluded.late,
+      feel_ids=excluded.feel_ids, updated_at=excluded.updated_at`)
+    .run(id, aid, d, text, mood, JSON.stringify(highlights), refs, source, version, ctxJson, late, feelIds, at, at)
   return { id, day: d, text, mood, source, version, late, highlights, context: ctx, tone }
 }
 

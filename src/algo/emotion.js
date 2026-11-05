@@ -66,7 +66,7 @@ export const CLOSE_SPAN = 0.7
  *       2026-11-03 晚第一版就是「扶向 0」，模拟里共情占比掉七成，太不像在乎。
  * 衰减：两边同号且都超过 0.5，接收打五折，免得互相点着。 */
 export const EMPATHY_HOLD = 0.35
-export const EMPATHY_HOLD_GAIN = 0.3
+const EMPATHY_HOLD_GAIN = 0.3
 export const EMPATHY_DAMPEN = 0.5
 export const EMPATHY_DAMPEN_BOTH = 0.5
 export const EMPATHY_INVERT_BELOW = -0.35

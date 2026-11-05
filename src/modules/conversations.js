@@ -24,7 +24,7 @@ function flagSet(db, key, value) {
 }
 
 /** 会话键：私聊 qq:p:<QQ号>，群聊 qq:g:<群号>。 */
-export function conversationKey({ channel = 'qq', type = 'private', handle = '' } = {}) {
+function conversationKey({ channel = 'qq', type = 'private', handle = '' } = {}) {
   const ch = String(channel || 'qq').toLowerCase()
   const kind = type === 'group' ? 'g' : 'p'
   return `${ch}:${kind}:${String(handle).trim()}`

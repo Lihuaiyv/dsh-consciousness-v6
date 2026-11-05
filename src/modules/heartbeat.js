@@ -137,7 +137,7 @@ export function heartbeatStats(db) {
 }
 
 /** 事件里那句人话（界面直接用，不用再拼）。 */
-export function describeHeartbeat(row) {
+function describeHeartbeat(row) {
   if (!row) return '还没心跳过'
   const ago = row.last_at ? Math.round((Date.now() - Number(row.last_at)) / 1000) : null
   const next = Math.round((Number(row.next_at) - Date.now()) / 1000)

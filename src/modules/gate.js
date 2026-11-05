@@ -17,7 +17,8 @@ import { buildSearchText, conflictPairExists } from './memory.js'
 import { hasNegation, isPositiveCompoundAt } from './negation.js'
 import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
 import { isStalePair } from './stale_pair.js'
-import { tx, getParam } from '../kernel.js'
+import { structureCandidates, judgePair, pairKey } from './pair_judge.js'
+import { tx, getParam, model } from '../kernel.js'
 
 export const GATE = Object.freeze({
   MERGE: 0.92,
@@ -187,10 +188,11 @@ function commitUpdate(db, aid, target, cand, write) {
   let ok = false
   try {
     tx(db, () => {
-      const ins = db.prepare(`INSERT OR IGNORE INTO fact_archive(id,agent_id,memory_id,text,type,mark,fact_key,source,payload,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?)`).run(
+      const ins = db.prepare(`INSERT OR IGNORE INTO fact_archive(id,agent_id,memory_id,text,type,mark,fact_key,source,payload,created_at,feel_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
         histId, aid, histId, oldText, target.type || 'fact', 'normal', key,
         'update_history', JSON.stringify({ at, actor: 'gate' }), at,
+        target.feel_id || null,
       )
       if (!Number(ins.changes)) throw new Error('hist_slot_taken')
       reviseMemory(db, aid, target.id, text, { textRef: histId, at, actor: 'gate' })
@@ -209,10 +211,10 @@ function commitUpdate(db, aid, target, cand, write) {
 }
 
 /**
- * 按判定落库。write 由调用方注入（通常是 addMemory），避免本模块直接碰记忆写入。
+ * 内部落库逻辑：同步、不碰模型。
  * @param {(cand:{text:string,entity_id?:string|null})=>{id?:string}} write
  */
-export function applyWrite(db, aid, cand, write, opt = {}) {
+function applyWriteInner(db, aid, cand, write, opt = {}) {
   const d = decideWrite(db, aid, cand)
   if (d.action === 'drop') return { action: 'drop', reason: d.reason, score: d.score }
 
@@ -301,4 +303,107 @@ export function applyWrite(db, aid, cand, write, opt = {}) {
     })
   } catch { /* 记录失败也要把新的事实留下来 */ }
   return { action: 'conflict', id: r && r.id, conflict_id: cid, score: d.score }
+}
+
+// ── 模型窄门调度（P4）──────────────────────────────────────
+//
+// 为什么异步：applyWrite 在抽取链上是同步的，不能因为一次模型调用（0.6–3s）
+// 把整批抽取堵住。所以这里「先按规则落库，再排队判定」：
+//   shadow（默认）——只写缓存与事件，不动记忆
+//   on           ——判出取代才 async 作废旧条（窗口期几秒，可接受）
+// 判不出来、超时、没模型：什么也不做，写入照旧。
+
+const judgeState = { day: '', count: 0, lastAt: 0, pending: new Set(), seen: new Set() }
+
+function judgeDayKey(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+}
+
+function judgeMode(db, aid) {
+  try {
+    if (String(getParam(db, aid, 'memory.judge.enable') || 'off') !== 'on') return 'off'
+    const mode = String(getParam(db, aid, 'memory.judge.gate') || 'shadow')
+    return mode === 'on' ? 'on' : mode === 'shadow' ? 'shadow' : 'off'
+  } catch { return 'off' }
+}
+
+/** 还在跑的判定（测试里等它跑完再断言）。 */
+export function pendingJudges() { return [...judgeState.pending] }
+export async function flushJudges() { await Promise.allSettled([...judgeState.pending]) }
+/** 只给测试：清掉进程内的节流状态。 */
+export function resetJudgeState() {
+  judgeState.day = ''
+  judgeState.count = 0
+  judgeState.lastAt = 0
+  judgeState.seen.clear()
+}
+
+function maybeJudge(db, aid, cand, out, opt) {
+  try {
+    const mode = judgeMode(db, aid)
+    if (mode === 'off') return
+    if (!out || (out.action !== 'new' && out.action !== 'conflict') || !out.id) return
+
+    const day = judgeDayKey()
+    if (judgeState.day !== day) { judgeState.day = day; judgeState.count = 0; judgeState.seen.clear() }
+    const max = Math.max(1, Number(getParam(db, aid, 'memory.judge.daily_max')) || 40)
+    if (judgeState.count >= max) return
+    const gap = Math.max(0, Number(getParam(db, aid, 'memory.judge.min_interval_ms')) || 0)
+    if (judgeState.lastAt && Date.now() - judgeState.lastAt < gap) return
+
+    const newRow = db.prepare('SELECT * FROM memory_items WHERE id=?').get(out.id)
+    if (!newRow) return
+    let cands = []
+    try { cands = structureCandidates(db, aid, { newRow, limit: 3 }) } catch { return }
+    // 只判「旧 → 新」；同刻或更晚的候选不归这次管。
+    const pool = cands.filter((c) => String(c.row.created_at || '') < String(newRow.created_at || ''))
+    if (!pool.length) return
+    const target = pool[0]
+    const key = pairKey(aid, target.row, newRow)
+    if (judgeState.seen.has(key)) return
+    judgeState.seen.add(key)
+    judgeState.count++
+    judgeState.lastAt = Date.now()
+
+    const complete = typeof opt.complete === 'function' ? opt.complete : ((req) => model.complete(req))
+    const timeoutMs = Math.max(200, Number(getParam(db, aid, 'memory.judge.timeout_ms')) || 3000)
+    const evId = () => 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
+
+    const p = (async () => {
+      const r = await judgePair({ db, aid, oldRow: target.row, newerRow: newRow, complete, timeoutMs, via: 'gate' })
+      try {
+        db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(evId(), aid, 'memory.judge.gate', JSON.stringify({
+          old: target.row.id, by: newRow.id, verdict: r.verdict, reason: r.reason,
+          mode, cached: !!r.cached, ms: r.ms,
+        }).slice(0, 800), new Date().toISOString())
+      } catch { /* 事件失败不影响 */ }
+
+      if (mode === 'on' && r.verdict === 'supersede') {
+        try {
+          const at = new Date().toISOString()
+          invalidateMemory(db, aid, target.row.id, { at, reason: 'judge_supersede', causeId: newRow.id, actor: 'gate' })
+          db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(evId(), aid, 'memory.judge.superseded',
+            JSON.stringify({ old: target.row.id, by: newRow.id, via: 'gate' }), at)
+        } catch { /* 作废失败就别动它 */ }
+      }
+      try {
+        db.prepare('UPDATE memory_pair_judge SET applied=? WHERE pair_key=?')
+          .run(mode === 'on' && r.verdict === 'supersede' ? 1 : 0, key)
+      } catch { /* 没缓存表就算了 */ }
+    })().catch(() => {})
+    judgeState.pending.add(p)
+    p.finally(() => { judgeState.pending.delete(p) })
+  } catch { /* 判定失败不拦写入 */ }
+}
+
+/**
+ * 按判定落库（对外入口）。同步部分与改造前完全一致；
+ * 模型判定在后台排队，默认 shadow 不动任何记忆。
+ * @param {(cand:{text:string,entity_id?:string|null})=>{id?:string}} write
+ */
+export function applyWrite(db, aid, cand, write, opt = {}) {
+  const out = applyWriteInner(db, aid, cand, write, opt)
+  maybeJudge(db, aid, cand, out, opt)
+  return out
 }

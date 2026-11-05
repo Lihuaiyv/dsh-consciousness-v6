@@ -12,6 +12,7 @@ import crypto from 'node:crypto'
 import { now } from '../db.js'
 import { err, nid, agent, active, tx } from '../kernel.js'
 import { applyEvent, habitOf, weightOf, stimulusKey, repairTrust, REL_DEFAULTS } from '../algo/reldyn.js'
+import { feelIdIn } from './feel.js'
 
 /** 三档策略表：代码是唯一来源，启动时 upsert（用户改值会在下次启动被覆盖）。 */
 export const TIERS = Object.freeze([
@@ -128,12 +129,22 @@ function insertEvent(db, aid, ev) {
   const payload = { ...(ev.payload || {}) }
   if (ev.mutations && ev.mutations.length) payload.mutations = ev.mutations
   const fingerprint = ev.fingerprint || fpOf([ev.kind, ev.source, ev.session_id || '', ev.turn_id || '', ev.speaker_id || '', ev.text || '', fpMutations(ev.mutations)])
+  // 这笔关系账发生的时候，我心里是什么样（事件之前 30 分钟内最近一条 feel）。没有就 null。
+  let feelId = null
+  try {
+    const atMs = Date.parse(at)
+    const base = Number.isFinite(atMs) ? atMs : Date.now()
+    feelId = feelIdIn(db, aid, {
+      from: new Date(base - 30 * 60000).toISOString(),
+      to: new Date(base + 60000).toISOString(),
+    })
+  } catch { feelId = null }
   const r = db.prepare(`INSERT OR IGNORE INTO rel_event(
-    id,agent_id,kind,source,session_id,turn_id,speaker_id,text,payload,at,fingerprint,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    id,agent_id,kind,source,session_id,turn_id,speaker_id,text,payload,at,fingerprint,created_at,feel_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     ev.id || nid('rev_'), aid, String(ev.kind || 'utterance'), String(ev.source || 'chat'),
     ev.session_id || null, ev.turn_id || null, ev.speaker_id || null,
-    ev.text == null ? null : String(ev.text), JSON.stringify(payload), at, fingerprint, at)
+    ev.text == null ? null : String(ev.text), JSON.stringify(payload), at, fingerprint, at, feelId)
   const id = db.prepare('SELECT id FROM rel_event WHERE agent_id=? AND fingerprint=?').get(aid, fingerprint).id
   return { id, dup: Number(r.changes) === 0, at }
 }
@@ -738,11 +749,11 @@ export function axesSeries(db, aid, pid, days = 30) {
 
 export function listEvents(db, aid, limit = 20) {
   agent(db, aid)
-  return db.prepare(`SELECT id,kind,source,text,at,speaker_id,session_id,payload FROM rel_event
+  return db.prepare(`SELECT id,kind,source,text,at,speaker_id,session_id,payload,feel_id FROM rel_event
     WHERE agent_id=? ORDER BY rowid DESC LIMIT ?`).all(aid, Math.max(1, Math.min(100, Number(limit) || 20)))
     .map((r) => ({
       id: r.id, kind: r.kind, source: r.source, text: r.text, at: r.at,
-      speaker_id: r.speaker_id, session_id: r.session_id,
+      speaker_id: r.speaker_id, session_id: r.session_id, feel_id: r.feel_id || null,
       summary: eventSummary(db, aid, r),
     }))
 }

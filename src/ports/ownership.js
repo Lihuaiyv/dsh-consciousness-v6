@@ -121,7 +121,7 @@ export const OWNERSHIP = {
       // purge / zip 级联（命令式清理，不算业务耦合）
       'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'persona', 'persona_values', 'preferences', 'taboos',
       'open_loops',
-      'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'drive_state',
+      'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'affect_feel', 'drive_state',
       'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'alerts', 'algo_bindings',
       'agent_params', 'agent_bindings', 'rule_artifacts', 'proactive',
       // 分层记忆的级联清理

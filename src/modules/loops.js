@@ -12,6 +12,7 @@
  *   3. 关掉要留痕：closed_by = user_done / expired / manual。
  */
 import { now } from '../db.js'
+import { feelIdIn } from './feel.js'
 
 /** 用户说这些，表示「这件事完了」。 */
 const CLOSE_RE = /(好了|搞定|弄好了|完成|做完了|用不上了|不用了|算了|解决了|已经做了|结束了|可以了)/
@@ -194,9 +195,14 @@ export function addLoop(db, aid, opt = {}) {
   const id = 'lp_' + Math.random().toString(16).slice(2, 12)
   const due = opt.due_at || null
   const stale = opt.stale_after || (due ? stamp(Date.parse(due) + DAY) : stamp(at + 2 * DAY))
-  db.prepare(`INSERT INTO open_loops(id,agent_id,kind,text,memory_id,source_turn_id,due_at,stale_after,state,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?,?, 'open', ?, ?)`)
-    .run(id, aid, opt.kind || 'task', text, opt.memory_id || null, opt.source_turn_id || null, due, stale, stamp(at), stamp(at))
+  // 挂上这一条时心里是什么样（30 分钟窗口内最近一条 feel）。没有就 null——不拿旧感觉凑。
+  const feelId = feelIdIn(db, aid, {
+    from: stamp(at - 30 * 60000),
+    to: stamp(at + 60000),
+  })
+  db.prepare(`INSERT INTO open_loops(id,agent_id,kind,text,memory_id,source_turn_id,due_at,stale_after,state,feel_id,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?, 'open', ?, ?, ?)`)
+    .run(id, aid, opt.kind || 'task', text, opt.memory_id || null, opt.source_turn_id || null, due, stale, feelId, stamp(at), stamp(at))
   return { id, created: true, row: rowOf(db, aid, id) }
 }
 

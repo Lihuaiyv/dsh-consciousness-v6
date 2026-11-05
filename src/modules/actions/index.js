@@ -14,7 +14,7 @@ import { budgetConsume } from '../drive.js'
 import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
 import { ingestBrowse } from '../browse.js'
-import { recordFeel } from '../feel.js'
+import { recordFeel, feelRecall } from '../feel.js'
 
 export const PORT_LABELS = {
   send_message: '发消息（微信 / QQ）',
@@ -511,6 +511,37 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         if (!d || !a) return { ok: false, skipped: 'no_db' }
         const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : null
         return recordFeel(d, a, { text: args && args.text, sessionId: sid, source: 'tool' })
+      },
+    },
+    {
+      /* 按感觉找：不是关键词检索，是「那时候我是什么样」。
+         给标签或时间段，顺带带出同时段落下的记忆和当天日记。 */
+      name: 'feel_search',
+      description:
+        '按感觉找记忆：给一个情绪标签（joy / curious / calm / irritated 等）或时间范围（ISO），'
+        + '找回那几条感觉，以及同时段落下的记忆和当天日记。'
+        + '用来回答「什么时候我是开心的」「那阵子到底在为什么悬着」。只读，不改任何状态。',
+      parameters: schema({
+        label: str('情绪标签，可不填'),
+        from: str('开始时间（ISO），可不填'),
+        to: str('结束时间（ISO），可不填'),
+        limit: num('最多几条，默认 10'),
+      }),
+      output: {
+        schema: { type: 'object', properties: { items: { type: 'array' } } },
+        render: (_a, v) => {
+          const items = (v && v.items) || []
+          if (!items.length) return TEXT('没找到对得上的感觉。')
+          return TEXT(items.map((x) => x.feel.text + (x.memories && x.memories.length ? '（连着 ' + x.memories.length + ' 条记忆）' : '')).join('\n'))
+        },
+      },
+      timeoutMs: 5000,
+      presentCall: (args) => ({ card: 'generic', title: '按感觉找 · ' + String((args && (args.label || args.from)) || '最近'), kind: 'other', rawInput: args }),
+      async execute(args, exec) {
+        const d = db()
+        const a = aidOfSession(exec) || aid()
+        if (!d || !a) return { ok: false, skipped: 'no_db' }
+        return { items: feelRecall(d, a, { label: args && args.label, from: args && args.from, to: args && args.to, limit: args && args.limit }) }
       },
     },
   ]

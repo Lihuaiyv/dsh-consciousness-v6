@@ -140,7 +140,7 @@ export function commitQuote(db, aid, cand, at = Date.now()) {
 }
 
 /** 面板用：最近几天留了几条、回放了几条。 */
-export function quoteStats(db, aid, { days = 7, at = Date.now() } = {}) {
+function quoteStats(db, aid, { days = 7, at = Date.now() } = {}) {
   const since = new Date(at - Math.max(1, days) * DAY).toISOString()
   const one = (type) => {
     try { return Number(db.prepare('SELECT COUNT(*) n FROM events WHERE agent_id=? AND type=? AND created_at>=?').get(aid, type, since).n || 0) } catch { return 0 }

@@ -1,4 +1,4 @@
-import { now } from './db.js'
+﻿import { now } from './db.js'
 import { createModel } from './model.js'
 import { bootstrapAlgos } from './algo/index.js'
 
@@ -106,6 +106,28 @@ export const PARAMS = {
   'memory.self.repeat_max': ['C4', 2],
   // 一天最多写几条「我自己」：防自恋式刷屏（每轮最多 3 条 + 生活流 + 夜间一条）。
   'self.per_day': ['C4', 8],
+  // 分时段配额：每 window_hours 小时最多 per_window 条。别让早上的话把一整天的额度一次用完，
+  // 晚上反而一条都留不下（2026-11-04 实测：一天被「天上限」挡了 408 次，多半是晚上攒的）。
+  'self.per_window': ['C4', 2],
+  'self.window_hours': ['C4', 3],
+  // 进热层的规矩：time=先到先得（旧行为）；score=按分量选人，低分先落冷等结算。
+  'self.admission': ['C4', 'time'],
+  'self.admission.min_score': ['C4', 0.35],
+  // 额度满了还值得破例的分数线：真正想明白的事，最多超出额度两条也要进来。
+  'self.admission.bypass_score': ['C4', 0.6],
+  // 按分量换人：到点把冷层里分高的换上来；差多少才换、一次换几条。
+  'self.settle': ['C4', 'on'],
+  'self.settle.every_hours': ['C4', 3],
+  'self.settle.gap': ['C4', 0.15],
+  'self.settle.max_move': ['C4', 2],
+  // 当天额度跟着实际浮动：保底 4，聊得多/被挡得多往上加，封顶 16。
+  'self.quota.auto': ['C4', 'on'],
+  'self.quota.base': ['C4', 4],
+  'self.quota.max': ['C4', 16],
+  // 拿不准的句子（通篇没有「我」、又不明显是垃圾）要不要叫模型判一句。
+  'memory.write.self.judge': ['C4', 'on'],
+  // 一天最多问模型判多少条：超了就直接落冷层，宁可少记也不乱烧。
+  'memory.write.self.judge.per_day': ['C4', 60],
   // 夜间把当天自己的事合成一条「今天我怎么过的」；没素材就不写。
   'memory.write.self.daily': ['C4', 'on'],
   // 夜里再写一条「今晚想明白的一件事」：和流水账分开；当天自己的事少于 min_items 就不写。
@@ -179,7 +201,9 @@ export const PARAMS = {
   'memory.asof.auto': ['C4', 'off'],
   // 注入行护照（S1）：旧条带「哪天的、后来有没有更新」；off 时回到无护照。
   'memory.passport': ['C4', 'on'],
-  // 弱标（同主题但不同 key、只标不挤）默认不进注入；on 时才显示「同主题后面还有一条说法」。
+  // 弱标（同主题但不同 key、只标不挤）：**已证伪，冻结，不要开**。
+  // 开过一回，8 条提示全是「同主题」词撞车（「oneLine」能撞出五条互不相干的结论）。
+  // 参数留着只为回放 D 组能复现历史对照；注入口子默认关，别再拿它当判定。
   'memory.passport.weak': ['C4', 'off'],
   // 非槽位旧条目（反思 / 情景 / 评价）超过三天时带一句「这是哪天的判断」；off 时不贴。
   'memory.passport.statement': ['C4', 'on'],
@@ -187,6 +211,19 @@ export const PARAMS = {
   'memory.stale.eject': ['C4', 'on'],
   // 写侧分工（S4）：时间顺序明确的「没做完 → 做好了」走取代，不再开冲突卡；默认只观测。
   'memory.write.stale_supersede': ['C4', 'off'],
+  // 模型窄门（记忆时态）：只在「结构指得出候选、规则判不了」时问模型一次。
+  // 总开关默认关；off 时判定逻辑一行都不执行，行为与改造前完全一致。
+  'memory.judge.enable': ['C4', 'off'],
+  // 写入门控怎么用判定：off 不判 / shadow 只记事件与缓存、不改记忆 / on 才允许取代。
+  'memory.judge.gate': ['C4', 'shadow'],
+  // 夜间批量判定（仍受 enable 总闸控制）。
+  'memory.judge.nightly': ['C4', 'on'],
+  // 每天最多判多少对（成本闸）。
+  'memory.judge.daily_max': ['C4', 40],
+  // 写入门控单次超时（毫秒）：判不出来就退回现状，不阻塞写入。
+  'memory.judge.timeout_ms': ['C4', 3000],
+  // 两次模型调用之间的最小间隔（毫秒）：抽取高峰时别把宿主模型打满。
+  'memory.judge.min_interval_ms': ['C4', 800],
   // 模糊最多用几档：1 只删括号 / 2 再删数字 / 3 再删引号原话。默认 3（到头）。
   'memory.fade.max_level': ['C4', 3],
   // 复习抵年龄：被想起过的旧事糊得慢一点（有效年龄 = 真实年龄 ÷ 复习系数，下限 50%）。
@@ -585,3 +622,4 @@ export function setFlag(db, key, value) {
 export function clearFlag(db, key) {
   db.prepare('DELETE FROM flags WHERE key=?').run(key)
 }
+

@@ -108,7 +108,7 @@ export function shouldDeferExtract(db, aid, day = localDay()) {
  * 把同日仍 pending 的 extract 延后到次日 00:05（本地），并记 skip 原因到 last_error。
  * @returns {number} 改写条数
  */
-export function deferExtractForDay(db, aid, day = localDay(), reason = 'budget') {
+function deferExtractForDay(db, aid, day = localDay(), reason = 'budget') {
   const d = dayKey(day)
   const [y, m, dd] = d.split('-').map(Number)
   const next = new Date(y, m - 1, dd + 1, 0, 5, 0)

@@ -7,7 +7,7 @@
  * 约定：所有字段都可有可无；没有就是默认值。这里只做清洗与默认，不碰库。
  */
 
-export const META_KEYS = Object.freeze([
+const META_KEYS = Object.freeze([
   'scene',        // 适用场景：什么时候会被碰到
   'expectation',  // 对世界/对方的可检验预期（W 必填）
   'observe',      // 怎么观察这条预期落没落

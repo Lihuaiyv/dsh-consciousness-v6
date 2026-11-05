@@ -134,7 +134,7 @@ export function commitResidue(db, aid, cand, at = Date.now()) {
 }
 
 /** 兼容旧调用：取到就落账。 */
-export function residueLine(db, aid, at = Date.now()) {
+function residueLine(db, aid, at = Date.now()) {
   const c = residueCandidate(db, aid, at)
   if (c.line) commitResidue(db, aid, c, at)
   return c.line

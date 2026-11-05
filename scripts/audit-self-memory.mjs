@@ -77,18 +77,30 @@ const pct = (n, d) => d ? (n * 100 / d).toFixed(1) + '%' : '0%'
 /** 写入通道体检：每天真写进来几条、被哪道闸挡了多少、挡掉的像不像「真事」。
  *  只读。数据全在本地库：memory_items + events（memory.self_rejected / memory.self.shown）。 */
 function gateReport(db, aid, name, limit) {
-  const day = (col) => `substr(${col},1,10)`
-  const since = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10)
-  console.log('\n--- 写入通道（近 14 天）---')
+  // 按本地日切，不用 SQL 里的 substr(created_at,1,10)：库里的时间是 UTC，
+  // 直接切会差一天，和 selfCountToday（本地零点）的口径对不上。
+  const localDay = (iso) => {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return String(iso || '').slice(0, 10)
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  }
+  const dayLocal = (iso) => localDay(iso)
+  const start = new Date()
+  start.setDate(start.getDate() - 14)
+  start.setHours(0, 0, 0, 0)
+  const since = start.toISOString()
+  console.log('\n--- 写入通道（近 14 天，按本地日）---')
   try {
-    const perDay = db.prepare(`SELECT ${day('created_at')} d, source, count(*) n
-      FROM memory_items WHERE agent_id=? AND deleted_at IS NULL AND source IN ('self','life') AND created_at >= ?
-      GROUP BY d, source ORDER BY d DESC`).all(aid, since)
+    const perDay = db.prepare(`SELECT created_at, source FROM memory_items
+      WHERE agent_id=? AND deleted_at IS NULL AND source IN ('self','life') AND created_at >= ?
+      ORDER BY created_at DESC`).all(aid, since)
     if (!perDay.length) console.log('  这 14 天一条自我记忆都没写进来。')
     const byDay = new Map()
     for (const r of perDay) {
-      if (!byDay.has(r.d)) byDay.set(r.d, {})
-      byDay.get(r.d)[r.source] = r.n
+      const d = dayLocal(r.created_at)
+      if (!byDay.has(d)) byDay.set(d, {})
+      const m = byDay.get(d)
+      m[r.source] = (m[r.source] || 0) + 1
     }
     for (const [d, m] of byDay) console.log('  ' + d + '  self ' + (m.self || 0) + '  life ' + (m.life || 0))
   } catch (e) { console.log('  （读自我记忆失败：' + e.message + '）') }
@@ -142,14 +154,55 @@ function gateReport(db, aid, name, limit) {
     console.log('  没有被挡记录（memory.self_rejected 为空）。')
   }
 
+  // 模型判留 + 落冷两路：判了多少、留下几条、冷了几条、花多久。
   try {
-    const shown = db.prepare(`SELECT ${day('created_at')} d, count(*) n FROM events
-      WHERE agent_id=? AND type='memory.self.shown' AND created_at >= ?
-      GROUP BY d ORDER BY d DESC`).all(aid, since)
-    if (shown.length) console.log('  注入露出（memory.self.shown，近 14 天）：' + shown.map((r) => r.d + ' ' + r.n).join('，'))
-    else console.log('  注入露出（memory.self.shown）：近 14 天 0 次。')
+    const judge = db.prepare(`SELECT created_at, payload FROM events
+      WHERE agent_id=? AND type='memory.self.judge' AND created_at >= ?`).all(aid, since)
+    if (judge.length) {
+      let n = 0; let keep = 0; let drop = 0; let ms = 0; let failed = 0
+      for (const r of judge) {
+        let p = {}
+        try { p = JSON.parse(r.payload || '{}') } catch { p = {} }
+        if (p.failed) { failed++; ms += Number(p.ms) || 0; continue }
+        n += Number(p.n) || 0; keep += Number(p.keep) || 0; drop += Number(p.drop) || 0; ms += Number(p.ms) || 0
+      }
+      console.log('  模型判留（memory.self.judge，近 14 天）：判 ' + n + ' 句，留 ' + keep + '，扔 ' + drop
+        + '，失败 ' + failed + ' 次，累计 ' + Math.round(ms / 1000) + ' 秒')
+    } else {
+      console.log('  模型判留：近 14 天 0 次（还没遇到拿不准的句子，或开关关着）。')
+    }
+    const colds = db.prepare(`SELECT payload FROM events
+      WHERE agent_id=? AND type='memory.self_cold' AND created_at >= ?`).all(aid, since)
+    if (colds.length) {
+      const why = new Map()
+      for (const r of colds) {
+        let p = {}
+        try { p = JSON.parse(r.payload || '{}') } catch { p = {} }
+        const k = p.why || 'unknown'
+        why.set(k, (why.get(k) || 0) + 1)
+      }
+      console.log('  落冷层（memory.self_cold，近 14 天）：' + [...why].map(([k, v]) => k + ' ' + v).join('，'))
+    }
+    const settle = db.prepare(`SELECT payload FROM events
+      WHERE agent_id=? AND type='memory.self.settle' AND created_at >= ?`).all(aid, since)
+    console.log('  按分量换人（memory.self.settle，近 14 天）：' + settle.length + ' 次')
+  } catch { /* 老库没有这些事件 */ }
+
+  try {
+    const shown = db.prepare(`SELECT created_at FROM events
+      WHERE agent_id=? AND type='memory.self.shown' AND created_at >= ?`).all(aid, since)
+    if (shown.length) {
+      const per = new Map()
+      for (const r of shown) {
+        const d = dayLocal(r.created_at)
+        per.set(d, (per.get(d) || 0) + 1)
+      }
+      const list = [...per].sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      console.log('  注入露出（memory.self.shown，近 14 天，按本地日）：' + list.map(([d, n]) => d + ' ' + n).join('，'))
+    } else {
+      console.log('  注入露出（memory.self.shown）：近 14 天 0 次。')
+    }
   } catch { /* 忽略 */ }
-  console.log('  注：天数按 created_at 的 UTC 日期切，跨零点前后会差一天。')
 }
 
 let applied = 0

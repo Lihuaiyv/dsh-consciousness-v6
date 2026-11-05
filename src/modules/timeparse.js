@@ -193,6 +193,6 @@ export function parseTimeRange(text, opt = {}) {
 }
 
 /** 问句里是否带有可解析的过去时间（给对话自动触发用）。 */
-export function hasPastAnchor(text, opt = {}) {
+function hasPastAnchor(text, opt = {}) {
   return parseTimeRange(text, opt) != null
 }

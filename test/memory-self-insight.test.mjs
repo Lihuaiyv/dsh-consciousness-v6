@@ -58,6 +58,7 @@ const flat = await writeSelfInsight(db, aid, DAY0, { chat: fake('我今天改了
 check('流水式被挡（flat）', flat.skipped === 'flat', flat)
 const narr = await writeSelfInsight(db, aid, DAY0, { chat: fake('用户正在推进第二阶段，要求先写测试') })
 check('旁白式被挡（gate）', narr.skipped === 'gate', narr)
+check('被挡时带上原因和长度', narr.why === 'narration' && typeof narr.n === 'number', narr)
 const short = await writeSelfInsight(db, aid, DAY0, { chat: fake('我明白了原来是这样') })
 check('太短被挡（length）', short.skipped === 'length', short)
 const boom = await writeSelfInsight(db, aid, DAY0, { chat: async () => { throw new Error('x') } })

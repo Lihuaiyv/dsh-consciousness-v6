@@ -358,6 +358,46 @@ class OpenAIAdapter {
   async reply(ctx) {
     return this.chat(replyMessages(ctx))
   }
+  /**
+   * 判「这句算不算我自己」——只用来处理规则判不了的那一小撮。
+   * 一次问一批，不一条一调；问两句具体的（主语是不是她、是不是真事），别问「该不该留」。
+   * 返回 { keep: boolean[] }，长度与输入一致；失败返回 null，调用方落冷层。
+   */
+  async judgeSelf(items, ctx = {}) {
+    return judgeSelfByChat((messages, maxTokens, json, temp) => this.chat(messages, maxTokens, json, temp), items, ctx)
+  }
+}
+
+/** 抽出来给两个适配器共用：拼提示词、解析、对齐条数。 */
+async function judgeSelfByChat(chat, items, ctx) {
+  const list = (Array.isArray(items) ? items : []).map((t, i) => (i + 1) + '. ' + String(t || '').slice(0, 200)).join('\n')
+  if (!list) return { keep: [], score: [] }
+  const sys = '你在判断一条记忆该不该算作「她自己」的经历。逐条问三个问题：①这句话的主语是不是她（第一人称的「我」）？'
+    + '②它是不是她真做过、真想过、真感受到的事，而不是在评论或转述这段对话？③这件事有多值得她以后记住（0–1）？'
+    + '想明白什么、改了主意、情绪很重、答应过的事算高分；「第几步、跑了什么测试」这类进度算低分。'
+    + 'keep 两个问题都成立才是 true，拿不准就 false。只输出 JSON：{"keep":[true,false],"score":[0.8,0.3]}，条数与顺序跟输入一致，不要解释。'
+  const body = ((ctx && ctx.context) ? '她这一轮说过的话（供对照，不是候选）：\n' + String(ctx.context).slice(0, 600) + '\n\n' : '')
+    + '候选句子：\n' + list
+  const raw = await chat([
+    { role: 'system', content: sys },
+    { role: 'user', content: body },
+  ], 300, true, 0.1)
+  let parsed = null
+  try { parsed = parseJson(raw) } catch { parsed = null }
+  const keep = Array.isArray(parsed && parsed.keep) ? parsed.keep.map(Boolean)
+    : (Array.isArray(parsed) ? parsed.map(Boolean) : null)
+  if (!keep) return null
+  // 对齐条数：模型少回或多回都不能让调用方错位。
+  const want = (Array.isArray(items) ? items : []).length
+  const rawScore = Array.isArray(parsed && parsed.score) ? parsed.score : []
+  const score = keep.map((k, i) => {
+    const n = Number(rawScore[i])
+    if (Number.isFinite(n)) return Math.max(0, Math.min(1, n))
+    return k ? 0.6 : 0.3
+  })
+  while (keep.length < want) keep.push(false)
+  while (score.length < want) score.push(0.3)
+  return { keep: keep.slice(0, want), score: score.slice(0, want) }
 }
 
 const CAPABILITIES = ['appraise', 'extract', 'summarize', 'reply', 'complete', 'chat', 'embed']
@@ -421,6 +461,13 @@ export class ModelPort {
     this.servedBy = 'fallback'
     if (typeof this.fallback?.chat === 'function') return this.fallback.chat(messages, maxTokens, json, temperature)
     throw new Error('模型 chat 不可用')
+  }
+  /**
+   * 判「这句算不算我自己」：只处理规则判不了的那一小撮。
+   * 走 chat（自带熔断与兜底）；模型不在就返回 null，调用方落冷层。
+   */
+  judgeSelf(items, ctx) {
+    return judgeSelfByChat((messages, maxTokens, json, temp) => this.chat(messages, maxTokens, json, temp), items, ctx)
   }
   /**
    * 只走 primary，不走规则兜底：模型不在就抛。

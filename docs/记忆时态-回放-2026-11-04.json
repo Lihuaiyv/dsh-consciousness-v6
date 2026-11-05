@@ -1,0 +1,330 @@
+{
+  "generated_at": "2026-11-04T14:08:26.716Z",
+  "agent": "小汐",
+  "source_db": "C:/Users/ygys1/.dsh/consciousness/app.db",
+  "note": "风险代理：旧说法进注入且不带任何时间提示 = bare。本脚本不调模型。",
+  "groups": {
+    "A_default": {
+      "label": "A 当前默认（挤出 on · 时间 on · 弱标 off）",
+      "candidates": 132,
+      "inRecall": 110,
+      "exposed": 75,
+      "annotated": 75,
+      "bare": 0,
+      "exposed_rate": 68.2,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "avg_tokens": 292
+    },
+    "B_no_eject": {
+      "label": "B 不挤（挤出 off）",
+      "candidates": 132,
+      "inRecall": 110,
+      "exposed": 75,
+      "annotated": 75,
+      "bare": 0,
+      "exposed_rate": 68.2,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "avg_tokens": 292
+    },
+    "C_no_statement": {
+      "label": "C 不标时间（时间 off）",
+      "candidates": 132,
+      "inRecall": 110,
+      "exposed": 75,
+      "annotated": 75,
+      "bare": 0,
+      "exposed_rate": 68.2,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "avg_tokens": 292
+    },
+    "D_weak_on": {
+      "label": "D 弱标开（weak on）",
+      "candidates": 132,
+      "inRecall": 110,
+      "exposed": 75,
+      "annotated": 75,
+      "bare": 0,
+      "exposed_rate": 68.2,
+      "annotated_rate": 100,
+      "bare_rate": 0,
+      "avg_tokens": 292
+    },
+    "E_no_age_stmt": {
+      "label": "E 无年龄徽章 · 时间 on",
+      "candidates": 132,
+      "inRecall": 110,
+      "exposed": 75,
+      "annotated": 32,
+      "bare": 43,
+      "exposed_rate": 68.2,
+      "annotated_rate": 42.7,
+      "bare_rate": 57.3,
+      "avg_tokens": 291
+    },
+    "F_no_age_bare": {
+      "label": "F 无年龄徽章 · 时间 off",
+      "candidates": 132,
+      "inRecall": 110,
+      "exposed": 75,
+      "annotated": 15,
+      "bare": 60,
+      "exposed_rate": 68.2,
+      "annotated_rate": 20,
+      "bare_rate": 80,
+      "avg_tokens": 291
+    }
+  },
+  "by_source": {
+    "A_default": {
+      "weak": {
+        "n": 127,
+        "exposed": 74,
+        "bare": 0
+      },
+      "topic_key": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0
+      },
+      "topic_state": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0
+      }
+    },
+    "B_no_eject": {
+      "weak": {
+        "n": 127,
+        "exposed": 74,
+        "bare": 0
+      },
+      "topic_key": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0
+      },
+      "topic_state": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0
+      }
+    },
+    "C_no_statement": {
+      "weak": {
+        "n": 127,
+        "exposed": 74,
+        "bare": 0
+      },
+      "topic_key": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0
+      },
+      "topic_state": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0
+      }
+    },
+    "D_weak_on": {
+      "weak": {
+        "n": 127,
+        "exposed": 74,
+        "bare": 0
+      },
+      "topic_key": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0
+      },
+      "topic_state": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0
+      }
+    },
+    "E_no_age_stmt": {
+      "weak": {
+        "n": 127,
+        "exposed": 74,
+        "bare": 43
+      },
+      "topic_key": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0
+      },
+      "topic_state": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0
+      }
+    },
+    "F_no_age_bare": {
+      "weak": {
+        "n": 127,
+        "exposed": 74,
+        "bare": 60
+      },
+      "topic_key": {
+        "n": 4,
+        "exposed": 0,
+        "bare": 0
+      },
+      "topic_state": {
+        "n": 1,
+        "exposed": 1,
+        "bare": 0
+      }
+    }
+  },
+  "samples": [
+    {
+      "id": "mem_6abcf537eb",
+      "type": "appraisal",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 300,
+      "snippet": "- （5 天前）我之前有个同好叫小号\n- （5 天前）用户提到自己之前有一个同好叫“小号”，说明这段同好关系已是过去式\n- （从聊天里记下的，3 天前）我之前在别的地方传了git（11-01 记下的判断，不是说现在）\n- （5 天前）事实：用户直接问“小号是谁来着”，说明用户当下对“小号”的具体身份记不清；助手提到用户"
+    },
+    {
+      "id": "mem_0ae8ada8bc",
+      "type": "appraisal",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 299,
+      "snippet": "- （从聊天里记下的，2 天前）还有一个项目几乎是照着我们这套问题写的——Shikigami-Protocol：情绪×精力×好感的状态机、记忆管线\n- （从聊天里记下的）还有一条：写侧「没做完 → 做好了」的取代（stale_pair）默认是 off，只记观测事件\n- （从聊天里记下的）用户有一个「情绪快照」的事还没做"
+    },
+    {
+      "id": "mem_918a2f014b",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 297,
+      "snippet": "- （从聊天里记下的，2 天前）要不要先从记忆检索这块开刀（后来你提过：QQ 这边：2301 tokens，全是 bridge 自己…）\n- （从聊天里记下的，1 天前）要不要我接着把记忆检索那几个工具挪进 QQ 会话\n- （5 天前）事实：用户手头已有一套自建的记忆检索框架（FTS5、2-gram、指纹、实体一跳、R"
+    },
+    {
+      "id": "mem_f045c88df2",
+      "type": "episode",
+      "src": "weak",
+      "slot": false,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 295,
+      "snippet": "- （从聊天里记下的，2 天前）用户正在搭建一个 Node 编写的桥接服务，用来把主模型接入 QQ，并做全链路联调\n- （2 天前）用户正在为 dsh 开发一款插件（项目处于开发阶段）\n- （从聊天里记下的，3 天前）对方想新建一个专门琢磨天天赚钱、搜集网上赚钱信息的意识体，最终定名为“吞吞”\n- （我自己想的，2 天"
+    },
+    {
+      "id": "mem_de3a871082",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 296,
+      "snippet": "- （从聊天里记下的，2 天前）QQ 通道每条消息直接调用 /chat，追加到 agent 的全局 chat_turns，不创建「一段对话」会话\n- （从聊天里记下的，不一定对）用户偏好把回复拆成多条独立消息发送，而不是合并成一条长消息\n- （从聊天里记下的，1 天前）风险：心跳持续消耗同一被动消息的 msg_seq，"
+    },
+    {
+      "id": "mem_87e8cd0bb8",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 294,
+      "snippet": "- （从聊天里记下的，2 天前）插件会话绑定表 bindings 中小汐有 4 条记录，全部是 DSH 网页会话，没有任何一条来自 QQ\n- （从聊天里记下的，2 天前）DSH 网页会话的提示词包含系统提示、插件通过 systemPrompt.section 注入的完整意识体包（人设、语气\n- （从聊天里记下的，2 天"
+    },
+    {
+      "id": "mem_8b8c511201",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 300,
+      "snippet": "- （从聊天里记下的，2 天前）用户设定：陌生人可以正常聊天，但不算作主人\n- （我自己想的，2 天前）我自称「主人」、称助手「小汐」，喜欢不加糖的冰美式，并强调陌生人可正常聊天但不应被当作主人\n- （从聊天里记下的，2 天前）项目中的对话角色区分「主人」与「陌生人」，陌生人不应称呼对方为「主人」\n- （从聊天里记下的"
+    },
+    {
+      "id": "mem_bf6c6c0182",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 296,
+      "snippet": "- （从聊天里记下的，2 天前）重载后需做真机复验：陌生人说话时不得返回“主人/记住了”这类主人身份回应（后来在 11-02 的纪要里聊到：你说了\n- （我自己想的，1 天前）用户正在配置和调试 QQ 机器人及 DeepSeek Harness，会采纳他人提供的版本并安装\n- （从聊天里记下的，2 天前）用户正在排查主"
+    },
+    {
+      "id": "mem_6fe9b2694c",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 227,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    },
+    {
+      "id": "mem_8323cef9a7",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 227,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    },
+    {
+      "id": "mem_9f562da8ca",
+      "type": "fact",
+      "src": "weak",
+      "slot": true,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 291,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    },
+    {
+      "id": "mem_aadf465415",
+      "type": "episode",
+      "src": "weak",
+      "slot": false,
+      "inRecall": true,
+      "exposed": true,
+      "annotated": true,
+      "bare": false,
+      "tokens": 291,
+      "snippet": "- （从聊天里记下的，2 天前）oneLine 的长度门槛已与 floor 对齐\n- （从聊天里记下的，2 天前）oneLine 的长度校验曾因去掉句号后触发 20 字门槛，导致 19 字内容被判为“太短”\n- （从聊天里记下的，2 天前）`oneLine` 会在第一个句号处截断，导致 floor 从 14 字变成 1"
+    }
+  ]
+}

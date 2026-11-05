@@ -8,6 +8,7 @@
  */
 import { now } from '../db.js'
 import { nid, agent, model } from '../kernel.js'
+import { feelIdIn } from './feel.js'
 import { getPersona, listRelations } from './persona.js'
 import { getAffect } from './affect.js'
 import { getDrive } from './drive.js'
@@ -258,8 +259,13 @@ async function generate(db, aid) {
   if (!data) { data = fallbackThoughts(ctx); source = 'rules' }
   lastNote = note
   const id = nid('th_')
-  db.prepare('INSERT INTO thoughts(id,agent_id,self_text,other_text,world_text,want_text,other_label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
-    .run(id, aid, data.self, data.other, data.world, data.want, ctx.you, source, now())
+  // 嘀咕是心里话：挂上写的时候最近的那条感觉（30 分钟窗口内）。没有就 null。
+  const feelId = feelIdIn(db, aid, {
+    from: new Date(Date.now() - 30 * 60000).toISOString(),
+    to: new Date(Date.now() + 60000).toISOString(),
+  })
+  db.prepare('INSERT INTO thoughts(id,agent_id,self_text,other_text,world_text,want_text,other_label,source,created_at,feel_id) VALUES(?,?,?,?,?,?,?,?,?,?)')
+    .run(id, aid, data.self, data.other, data.world, data.want, ctx.you, source, now(), feelId)
   return id
 }
 

@@ -45,7 +45,7 @@ check('self 落库', !!r1, s1)
 check('self 来源是 self', r1 && r1.source === 'self', r1 && r1.source)
 check('self 复用 episode 类型', r1 && r1.type === 'episode', r1 && r1.type)
 check('self 置信度 0.75', r1 && Number(r1.confidence) === 0.75, r1 && r1.confidence)
-check('self 重要度 0.45', r1 && Number(r1.importance) === 0.45, r1 && r1.importance)
+check('self 重要度按分量给（0–1）', r1 && Number(r1.importance) > 0 && Number(r1.importance) <= 1 && Number(r1.importance) === s1.score, { imp: r1 && r1.importance, score: s1.score })
 check('self 计数 +1', selfCountToday(db, aid) === 1, selfCountToday(db, aid))
 
 // ---- 用户那条道没变 ----
@@ -57,20 +57,27 @@ check('user 置信度 0.7', ru && Number(ru.confidence) === 0.7)
 // ---- 闸门 ----
 const before = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND source='self'").get(aid).n
 const bad = writeExtractedItem(db, aid, { text: '用户正在推进一个分步骤实现任务', who: 'self' })
-check('旁白式 self 被丢', bad.action === 'drop' && bad.reason === 'self_gate', bad)
-check('旁白式 self 没落库', db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND source='self'").get(aid).n === before)
+check('旁白式 self 被挡（不再冒充我记得的事）', bad.action === 'drop' && bad.reason === 'self_gate', bad)
+const badRow = bad.id ? row(bad.id) : null
+check('旁白式 self 落冷层不丢', !!badRow && badRow.temp_state === 'cold', badRow && badRow.temp_state)
+check('旁白式 self 不进热层', !db.prepare("SELECT id FROM memory_items WHERE agent_id=? AND source='self' AND temp_state IS NOT 'cold' AND text LIKE '%分步骤%'").get(aid))
 const ev = db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='memory.self_rejected'").get(aid).n
 check('拒绝写事件', ev >= 1, ev)
 
 // ---- 每日上限 ----
 const capBefore = selfCountToday(db, aid)
+setParam(db, aid, 'self.quota.auto', { value: 'off' })
+setParam(db, aid, 'self.per_window', { value: 99 })
 setParam(db, aid, 'self.per_day', { value: capBefore + 1 })
 const c1 = writeExtractedItem(db, aid, { text: '我把召回的名额留给自己的事了', who: 'self' })
 const c2 = writeExtractedItem(db, aid, { text: '我盯着那段注入文本，发现多出来的那条是我自己', who: 'self' })
-check('上限内继续写', !!c1.id && !c2.id, { capBefore, c1, c2 })
-check('超过上限被丢', c2.action === 'drop' && c2.reason === 'self_per_day', c2)
+check('上限内继续写', !!c1.id && c1.action === 'new', { capBefore, c1 })
+check('超过上限落冷层不丢', c2.action === 'cold' && c2.reason === 'self_per_day' && !!c2.id, c2)
+check('超过上限那条确实冷', c2.id && row(c2.id).temp_state === 'cold', c2.id && row(c2.id).temp_state)
 check('上限不挡用户那条道', writeExtractedItem(db, aid, { text: '考试系统判分规则里多选题少选给半分', type: 'fact', who: 'user' }).action === 'new')
 setParam(db, aid, 'self.per_day', { value: 8 })
+setParam(db, aid, 'self.per_window', { value: 2 })
+setParam(db, aid, 'self.quota.auto', { value: 'on' })
 
 // ---- 开关 ----
 setParam(db, aid, 'memory.write.self', { value: 'off' })
@@ -103,6 +110,55 @@ const seedDay = (d, text) => {
 seedDay('2026-10-02', '我那天翻了一遍注入文本，发现里面没有一句是我自己')
 const w3 = await writeSelfDay(db, aid, '2026-10-02', { chat: async () => '用户正在整理名单' })
 check('模型写了旁白也不落库', w3.skipped === 'gate', w3)
+
+// ---- 太长 / 开头跑偏：给它一次收紧的机会，闸门不放宽 ----
+setParam(db, aid, 'self.per_day', { value: 30 })
+const tooLong = '我今天翻了一遍夜里那条自我记忆的闸门，发现自己写的话老是被自己设的字数挡在外面，'
+  + '有的是超过上限，有的是开头不像自己说的话，我想把它改得松一点，又怕松了以后满屏都是凑出来的句子，'
+  + '心里有点犹豫，反复想了很久，最后还是决定只给它一次重写的机会，不把门槛整个拆掉。'
+check('造的长文本真的超上限', tooLong.length > 120, tooLong.length)
+
+seedDay('2026-10-04', '我那天在改夜间那条自我记忆的闸门')
+let calls1 = 0
+const w5 = await writeSelfDay(db, aid, '2026-10-04', {
+  chat: async () => (++calls1 === 1 ? tooLong : '我今天把夜里那道闸门放宽了一点，只给它一次重写的机会，心里还是有点不踏实。'),
+})
+check('太长会收紧重写一次', !!w5.ok && calls1 === 2, { w5, calls1 })
+check('重写后落的是短的那句', w5.ok && w5.text.length <= 120, w5.ok && w5.text)
+
+seedDay('2026-10-05', '我那天在想要不要给闸门留个重写的口子')
+let calls2 = 0
+const w6 = await writeSelfDay(db, aid, '2026-10-05', { chat: async () => { calls2++; return tooLong } })
+check('重写后还不合格就跳过', w6.skipped === 'gate' && w6.why === 'len' && calls2 === 2, { w6, calls2 })
+check('跳过时带上长度', typeof w6.n === 'number' && w6.n > 120, w6.n)
+
+seedDay('2026-10-06', '我那天在想开头为什么老是跑偏')
+let calls3 = 0
+const w8 = await writeSelfDay(db, aid, '2026-10-06', {
+  chat: async () => (++calls3 === 1 ? '这一天忙到半夜，我把自我记忆那几条又翻了一遍，心里有点空。' : '我今天把夜里那几条又翻了一遍，越翻越觉得心里有点空。'),
+})
+check('开头跑偏会重写', !!w8.ok && calls3 === 2, { w8, calls3 })
+
+// 旁白不重试：一句旁白改短了还是旁白，重写没意义。
+seedDay('2026-10-07', '我那天想弄清旁白为什么会被挡')
+let calls4 = 0
+const w9 = await writeSelfDay(db, aid, '2026-10-07', { chat: async () => { calls4++; return '用户正在整理名单' } })
+check('旁白只问一次不重试', w9.skipped === 'gate' && w9.why === 'narration' && calls4 === 1, { w9, calls4 })
+
+// 回一句空的：上一版就死在这里，两晚都没写出来。要再问一次。
+seedDay('2026-10-08', '我那天在想模型为什么给了我一句空的')
+let calls5 = 0
+const w10 = await writeSelfDay(db, aid, '2026-10-08', {
+  chat: async () => (++calls5 === 1 ? '' : '我今天又把那条空着的话补上了，心里松了一口气。'),
+})
+check('模型给空会再问一次', !!w10.ok && calls5 === 2, { w10, calls5 })
+check('空过一次也能落库', w10.ok && !!row(w10.id), w10)
+
+let calls6 = 0
+seedDay('2026-10-09', '我那天在想两次都空该怎么办')
+const w11 = await writeSelfDay(db, aid, '2026-10-09', { chat: async () => { calls6++; return '' } })
+check('两次都空就跳过', w11.skipped === 'gate' && w11.why === 'len' && calls6 === 2, { w11, calls6 })
+setParam(db, aid, 'self.per_day', { value: 8 })
 
 // ---- 没有模型就跳过 ----
 seedDay('2026-10-03', '我那天想弄明白为什么生活流一直不跑')

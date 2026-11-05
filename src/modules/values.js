@@ -13,7 +13,7 @@
  *   - 生成是确定性的：同一批数据算两次结果一样；变化只来自新经历，不来自随机数。
  */
 import { now } from '../db.js'
-import { agent, tx } from '../kernel.js'
+import { agent } from '../kernel.js'
 import { listRelations, listPreferences, listTaboos } from './persona.js'
 
 /** Schwartz 十维；顺序固定，界面与导出都按这个来 */

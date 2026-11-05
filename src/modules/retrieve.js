@@ -739,9 +739,11 @@ function maxEvidence(scored) {
 export function selfCandidates(db, aid, query, want = 1, opt = {}) {
   const n = Math.max(1, Math.min(3, Number(want) || 1))
   try {
+    // 冷层不硬补：退到深查层的话，就不该靠「她自己的名额」硬塞回常规注入。
+    const cold = (!opt.includeCold && hasTempCol(db)) ? " AND (temp_state IS NULL OR temp_state IN ('hot','warm'))" : ''
     const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_decay_at,stability,valence,importance,heat,source,confidence,fact_key
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
-        AND source IN ('self','life')
+        AND source IN ('self','life')${cold}
       ORDER BY created_at DESC LIMIT 24`).all(aid)
     if (!rows.length) return []
     const target = stripSceneWords(String(query || ''))

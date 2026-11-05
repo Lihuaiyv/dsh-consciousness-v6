@@ -15,7 +15,7 @@ import { call } from './llm.js'
 const DAY = 86400000
 
 /** 放弃物的六个类：聚类按它，不按话题。 */
-export const FOREGONE_KINDS = Object.freeze(['时间', '准确', '被喜欢', '省事', '安心', '面子'])
+const FOREGONE_KINDS = Object.freeze(['时间', '准确', '被喜欢', '省事', '安心', '面子'])
 
 const KIND_HINT = [
   [/时间|慢|等|拖|跑|熬|加班|两天|三天/, '时间'],

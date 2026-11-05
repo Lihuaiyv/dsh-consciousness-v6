@@ -223,7 +223,7 @@ function derive(db, aid) {
   }
 }
 
-export function resolveWorldKey(raw) {
+function resolveWorldKey(raw) {
   const t = String(raw || '').trim()
   if (!t) return null
   const bare = t.startsWith('worldview.') ? t.slice(10) : t

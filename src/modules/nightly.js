@@ -33,6 +33,7 @@ import { scan as scanPersona } from './self_scan.js'
 import { run as runPersonaJudge } from './persona_judge.js'
 import { run as runProbes } from './persona_probe.js'
 import { auditTimeline } from './timeline.js'
+import { judgeDay } from './pair_judge.js'
 
 /** 本地日期（不要用 toISOString，那是 UTC，跨零点会错一天）。 */
 export function localDay(d = new Date()) {
@@ -206,7 +207,7 @@ export async function runNightly(db, aid, opt = {}) {
   // ⑤c 她自己的记忆：当天有素材就写一条「今天我怎么过的」（第一人称，一天一条）。
   try {
     const sd = await writeSelfDay(db, aid, day, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
-    push('self_day', { ok: !!sd.ok, skipped: sd.skipped || null, id: sd.id || null })
+    push('self_day', { ok: !!sd.ok, skipped: sd.skipped || null, id: sd.id || null, why: sd.why || null, n: Number.isFinite(sd.n) ? sd.n : null })
   } catch (e) {
     push('self_day', { ok: false, error: String(e && e.message) })
   }
@@ -214,7 +215,7 @@ export async function runNightly(db, aid, opt = {}) {
   // ⑤e 她自己的记忆：日子攒够了，再写一条「今晚想明白的一件事」（不是流水账）。
   try {
     const si = await writeSelfInsight(db, aid, day, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
-    push('self_insight', { ok: !!si.ok, skipped: si.skipped || null, id: si.id || null })
+    push('self_insight', { ok: !!si.ok, skipped: si.skipped || null, id: si.id || null, why: si.why || null, n: Number.isFinite(si.n) ? si.n : null })
   } catch (e) {
     push('self_insight', { ok: false, error: String(e && e.message) })
   }
@@ -311,6 +312,36 @@ export async function runNightly(db, aid, opt = {}) {
     }
   } catch (e) {
     push('sangguan', { ok: true, skipped: true, error: String(e && e.message) })
+  }
+
+  // ⑪d 模型窄门（记忆时态）：把当天新增里「结构指得出候选」的对判一次。
+  //    只写判定缓存与事件，不改任何记忆；真取代是白天门控（memory.judge.gate=on）的事。
+  //    没开总闸 / 没模型都算正常跳过，不能让这一夜失败。
+  try {
+    const enabled = String(getParam(db, aid, 'memory.judge.enable') || 'off') === 'on'
+    const nightlyOn = String(getParam(db, aid, 'memory.judge.nightly') || 'on') !== 'off'
+    const engine = opt.model || model
+    let can = false
+    try { can = !!(engine.capabilities() || {}).complete } catch { can = false }
+    if (!enabled) {
+      push('stale_judge', { ok: true, skipped: 'off' })
+    } else if (!nightlyOn) {
+      push('stale_judge', { ok: true, skipped: 'nightly-off' })
+    } else if (!can) {
+      push('stale_judge', { ok: true, skipped: 'no-model' })
+    } else {
+      const r = await judgeDay({
+        db, aid, day,
+        complete: (req) => engine.complete(req),
+        limit: Math.max(1, Math.min(200, Number(getParam(db, aid, 'memory.judge.daily_max')) || 40)),
+        timeoutMs: Math.max(200, Number(getParam(db, aid, 'memory.judge.timeout_ms')) || 3000),
+        minIntervalMs: Math.max(0, Number(getParam(db, aid, 'memory.judge.min_interval_ms')) || 0),
+        via: 'nightly',
+      })
+      push('stale_judge', { ok: true, ...r })
+    }
+  } catch (e) {
+    push('stale_judge', { ok: true, skipped: 'error', error: String(e && e.message).slice(0, 120) })
   }
 
   // ⑫ 时效索引对账：白天钩子漏写的事件，这里按主表现状补 SYNC（标近似）。
