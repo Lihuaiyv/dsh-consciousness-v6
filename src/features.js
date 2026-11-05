@@ -121,7 +121,7 @@ import {
 } from './modules/persona.js'
 import { sampleAffect, affectHistory, affectTrend, reviewStats, triggerStats, fallbackStats } from './modules/affect.js'
 import { softRecall, listActiveMemories, memoryStats } from './modules/memory.js'
-import { setMemoryTemp } from './modules/memory_temp.js'
+import { setMemoryTemp } from './modules/memory_fields.js'
 import { invalidateMemory } from './modules/timeline.js'
 import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'

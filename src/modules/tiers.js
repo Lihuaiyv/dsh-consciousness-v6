@@ -19,6 +19,7 @@
 
 import { now } from '../db.js'
 import { tempStats, targetTemp } from './temps.js'
+import { setMemoryHeat, bumpMemoryHit } from './memory_fields.js'
 
 const DAY_MS = 86400000
 const clamp01 = (x) => Math.max(0, Math.min(1, Number(x) || 0))
@@ -101,7 +102,6 @@ export function nowRow(row, at = Date.now()) {
 /** 重算一个意识体的全部热度与档位。返回各档条数。 */
 export function refreshHeat(db, aid, at = Date.now()) {
   const rows = db.prepare("SELECT * FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL").all(aid)
-  const up = db.prepare('UPDATE memory_items SET heat=?, band=? WHERE id=?')
   const counts = { short: 0, mid: 0, long: 0 }
   db.exec('BEGIN IMMEDIATE')
   try {
@@ -109,7 +109,7 @@ export function refreshHeat(db, aid, at = Date.now()) {
       const h = heatOf(r, at)
       const b = bandOf(r, h)
       counts[b]++
-      up.run(h, b, r.id)
+      setMemoryHeat(db, r.id, h, b)
     }
     db.exec('COMMIT')
   } catch (e) {
@@ -144,7 +144,6 @@ export function touch(db, ids, at = Date.now()) {
   const list = [...new Set((ids || []).filter(Boolean))]
   if (!list.length) return 0
   const sel = db.prepare('SELECT * FROM memory_items WHERE id=?')
-  const up = db.prepare('UPDATE memory_items SET hits=hits+1, last_hit_at=?, last_decay_at=?, stability=?, heat=?, band=? WHERE id=?')
   const stamp = new Date(at).toISOString()
   let n = 0
   for (const id of list) {
@@ -155,7 +154,7 @@ export function touch(db, ids, at = Date.now()) {
     const s1 = Math.min(60, Math.max(0.5, s0 * (1 + 0.25 * (1 - R))))
     const next = { ...row, hits: Number(row.hits || 0) + 1, last_hit_at: stamp, last_decay_at: stamp, stability: s1 }
     const h = heatOf(next, at)
-    up.run(stamp, stamp, Math.round(s1 * 1000) / 1000, h, bandOf(next, h), id)
+    bumpMemoryHit(db, id, { at, stability: Math.round(s1 * 1000) / 1000, heat: h, band: bandOf(next, h) })
     n++
   }
   return n

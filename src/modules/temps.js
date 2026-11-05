@@ -15,7 +15,7 @@
  */
 
 import { now } from '../db.js'
-import { setMemoryTemp, setMemoryStateStreak } from './memory_temp.js'
+import { setMemoryTemp, setMemoryStateStreak } from './memory_fields.js'
 
 // 注意：这里不 import kernel —— kernel 会连带加载 algo 注册表，而 algo 又回头读 tiers，
 // 形成 kernel → algo → tiers → temps → kernel 的环，模块初始化时会踩 TDZ。事件直接写表。

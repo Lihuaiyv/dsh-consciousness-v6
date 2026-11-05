@@ -14,6 +14,7 @@
 import { askAboutConflict } from './conflict_ask.js'
 import { attrConflict } from './contradict.js'
 import { buildSearchText, conflictPairExists } from './memory.js'
+import { setMemorySearchOnly, strengthenMemory } from './memory_fields.js'
 import { hasNegation, isPositiveCompoundAt } from './negation.js'
 import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
 import { isStalePair } from './stale_pair.js'
@@ -196,7 +197,7 @@ function commitUpdate(db, aid, target, cand, write) {
       )
       if (!Number(ins.changes)) throw new Error('hist_slot_taken')
       reviseMemory(db, aid, target.id, text, { textRef: histId, at, actor: 'gate' })
-      db.prepare('UPDATE memory_items SET search_text=?, fact_key=COALESCE(?, fact_key) WHERE id=?').run(searchText, key, target.id)
+      setMemorySearchOnly(db, target.id, { key, searchText })
       try {
         db.prepare('DELETE FROM memory_fts WHERE id=?').run(target.id)
         db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(target.id, searchText)
@@ -248,8 +249,7 @@ function applyWriteInner(db, aid, cand, write, opt = {}) {
 
   if (d.action === 'merge') {
     try {
-      db.prepare('UPDATE memory_items SET hits=hits+1, last_hit_at=?, weight=MIN(1, COALESCE(weight,0.5)+?), version=version+1 WHERE id=?')
-        .run(new Date().toISOString(), Number(opt.strengthen || 0.02), d.target.id)
+      strengthenMemory(db, d.target.id, { delta: Number(opt.strengthen || 0.02) })
     } catch { /* 强化失败不影响判定 */ }
     return { action: 'merge', id: d.target.id, score: d.score }
   }
