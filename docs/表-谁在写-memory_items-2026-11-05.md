@@ -54,3 +54,5 @@
 - **2026-11-05 · 第 4 步**：热度 / 命中（`tiers` 2 处）+ 检索 / 强化（`gate` 2 处）已收——`memory_temp.js` 改名扩成 `memory_fields.js`（温度 / 热度 / 命中 / 检索字段的低层单点）。写 `memory_items` 的域 **5 → 3**（memory / ops / timeline）。中间踩了个时间戳坑（把毫秒写进了 `last_hit_at`），anchor-rotate 测试抓住，已修。全量 561/561。
 - 另：`test/recall-freshness.test.mjs` 有 1 条红（「S1 不扩二跳」），在 HEAD 的独立工作树里也一样红，不是这几步改坏的；另开一件查。
 - **2026-11-05 · 第 5 步（结论）**：`timeline` 那 5 处**不动**——它是生命周期字段（生效 / 正文 / 可见性）的法定写手，有 `check-timeline` 守门；把 SQL 挪走反而绕过守门。所以 `memory_items` 的收口落点是**按字段分写**，不是单写手：memory（内容 / 索引 / 打分 / 温度 / 热度）↔ timeline（生命周期），ops 的清库和 host 的导入导出算搬库例外。ownership 里 memory / timeline 都声明了 `writes`，用 `WRITE_SPLIT` 白名单写明 memory_items 的分写关系；`check-ownership` 现在管 3 个已分域，其余 19 个还按老样子。全量 561/561。
+- **2026-11-05 · 第 6 步**：`memory_fts` 也收了——删 / 插 / 重建全走 `memory_fields.js`；`changes` / `flags` 两张流水 / 便签表划进 `SHARED`（变更流水只追加、便签键必须带域前缀）。写 `memory_fts` 的只剩 memory 一个域。全量 561/561。
+- 过程里踩了一脚：想用 PowerShell 整文件替换 features.js，结果编码改花了（diff 变成两千行）；`git checkout -- src/features.js` 回 HEAD，重做后 diff 只有 3 行。以后整文件替换不用 PowerShell，用编辑工具。

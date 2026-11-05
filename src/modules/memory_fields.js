@@ -55,3 +55,40 @@ export function setMemorySearchOnly(db, id, { key = null, searchText = null } = 
   db.prepare('UPDATE memory_items SET search_text=?, fact_key=COALESCE(?, fact_key) WHERE id=?')
     .run(searchText, key, id)
 }
+
+// ---- 全文索引 memory_fts：它只是 memory_items 的影子，单点写在这里 ----
+
+/** 一条记忆的 FTS：先删后插。 */
+export function setMemoryFts(db, id, text) {
+  db.prepare('DELETE FROM memory_fts WHERE id=?').run(id)
+  db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(id, text)
+}
+
+/** 删一条的 FTS。 */
+export function deleteMemoryFts(db, id) {
+  db.prepare('DELETE FROM memory_fts WHERE id=?').run(id)
+}
+
+/** 清掉主表里已经没有的 FTS 影子。 */
+export function deleteMemoryFtsOrphans(db) {
+  db.prepare('DELETE FROM memory_fts WHERE id NOT IN (SELECT id FROM memory_items)').run()
+}
+
+/** 全量重建：从 active 的记忆正文重灌。 */
+export function rebuildMemoryFts(db) {
+  try {
+    db.exec('DELETE FROM memory_fts')
+    db.prepare("INSERT INTO memory_fts(id,text) SELECT id,text FROM memory_items WHERE status='active'").run()
+    return true
+  } catch { return false }
+}
+
+/**
+ * FTS5 的 rebuild 指令（导入后老写法，原样保留；这张表不支持时静默）。
+ * 单点是记忆模块：features 不再自己写 memory_fts。
+ */
+export function rebuildMemoryFtsIndex(db) {
+  try { db.prepare("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')").run() } catch { /* 老库可能没有 FTS */ }
+}
+
+

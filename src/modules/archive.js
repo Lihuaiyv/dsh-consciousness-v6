@@ -16,6 +16,7 @@ import crypto from 'node:crypto'
 import { now, localDay, localDayBounds } from '../db.js'
 import { feelIdIn, feelIdsOnDay } from './feel.js'
 import { nid } from '../kernel.js'
+import { rebuildMemoryFts as rebuildMemoryFtsRows } from './memory_fields.js'
 import {  } from './sangguan/vweights.js'
 import {
   weekday, diaryContext, diaryTone, diaryOpening, normalizeDiaryText, isPromptEcho, bodyLength,
@@ -303,11 +304,7 @@ export function rebuildFactFts(db) {
  * （这次体检查到 5 条 active 记忆不在 FTS 里，等于永远搜不到）。
  */
 export function rebuildMemoryFts(db) {
-  try {
-    db.exec('DELETE FROM memory_fts')
-    db.prepare("INSERT INTO memory_fts(id,text) SELECT id,text FROM memory_items WHERE status='active'").run()
-    return true
-  } catch { return false }
+  return rebuildMemoryFtsRows(db)
 }
 
 /**

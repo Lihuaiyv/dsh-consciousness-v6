@@ -5,6 +5,7 @@ import { getDrive } from './drive.js'
 import { getAffect } from './affect.js'
 import { inbox, listProposals } from './selfmod.js'
 import { memoryStats } from './memory.js'
+import { deleteMemoryFts, deleteMemoryFtsOrphans, setMemoryFts } from './memory_fields.js'
 import { rebuildMemoryFts, rebuildRawFts, rebuildFactFts } from './archive.js'
 import { purgeAgent, purgeOrphans } from './sangguan/purge.js'
 import { readEvents } from './sangguan/ledger.js'
@@ -90,7 +91,7 @@ export function purgeExpired(db) {
         }
       }
     }
-    try { db.prepare('DELETE FROM memory_fts WHERE id NOT IN (SELECT id FROM memory_items)').run() } catch { /* 忽略 */ }
+    try { deleteMemoryFtsOrphans(db) } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM raw_fts WHERE id NOT IN (SELECT id FROM raw_turns)').run() } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM fact_fts WHERE id NOT IN (SELECT id FROM fact_archive)').run() } catch { /* 忽略 */ }
     // 整实例清除：账本只增的唯一例外。失败不挡 agent 清除，孤儿留给 purgeOrphans
@@ -101,7 +102,7 @@ export function purgeExpired(db) {
   // 'deleted'（门禁判删）和 'soft_deleted'（用户隐藏）都是「说好要忘的」，
   // 以前只清 soft_deleted，门禁删的那批永远停在原地——现在一起清。
   for (const m of db.prepare("SELECT id FROM memory_items WHERE status IN ('soft_deleted','deleted') AND deleted_at<?").all(cutoff)) {
-    try { db.prepare('DELETE FROM memory_fts WHERE id=?').run(m.id) } catch { /* 忽略 */ }
+    try { deleteMemoryFts(db, m.id) } catch { /* 忽略 */ }
     // 明确硬删 = 连 T4 的事实存根一起清：说好要忘的，不能只在主表忘。
     // 改写留下的 `<id>:hist:<n>` 旧句也得删。前缀用 substr 比较——LIKE 里的 _ 是通配符，会误伤相似 id。
     const pre = m.id + ':'
@@ -168,8 +169,7 @@ export function importZip(db, aid, buffer) {
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(mid, aid, m.type || 'fact', m.mark || 'normal', m.text || '', 'import',
           0.5, 0.5, 1, 5, now(), null, null, m.status || 'active', m.created_at || now(), m.deleted_at || null, 1)
-      db.prepare('DELETE FROM memory_fts WHERE id=?').run(mid)
-      db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(mid, m.text || '')
+      setMemoryFts(db, mid, m.text || '')
       n++
     }
   }

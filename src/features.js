@@ -121,7 +121,7 @@ import {
 } from './modules/persona.js'
 import { sampleAffect, affectHistory, affectTrend, reviewStats, triggerStats, fallbackStats } from './modules/affect.js'
 import { softRecall, listActiveMemories, memoryStats } from './modules/memory.js'
-import { setMemoryTemp } from './modules/memory_fields.js'
+import { setMemoryTemp, rebuildMemoryFtsIndex } from './modules/memory_fields.js'
 import { invalidateMemory } from './modules/timeline.js'
 import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
@@ -1197,7 +1197,7 @@ export function importFull(db, aid, body) {
     }
   }
   // 重建全文索引，否则导入后的记忆搜不到
-  try { db.prepare("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')").run() } catch { /* 老库可能没有 FTS */ }
+  rebuildMemoryFtsIndex(db)
   try { rebuildRawFts(db) } catch { /* 老包没有原文层 */ }
   try { rebuildFactFts(db) } catch { /* 老包没有事实存根 */ }
   return { imported: total, tables: TABLES.length, fts: 'rebuilt' }
@@ -1343,7 +1343,7 @@ export function importMemory(db, aid, body) {
       }
     }
     // 重建全文索引，否则导入后的记忆搜不到
-    try { db.prepare("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')").run() } catch { /* 老库可能没有 FTS */ }
+    rebuildMemoryFtsIndex(db)
     try { rebuildRawFts(db) } catch { /* 老包没有原文层 */ }
     try { rebuildFactFts(db) } catch { /* 老包没有事实存根 */ }
     // 感觉不跨实例继承：导入包里的 feel_id 在本库查不到的一律清空

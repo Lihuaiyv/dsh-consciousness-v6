@@ -15,6 +15,7 @@ import { askAboutConflict } from './conflict_ask.js'
 import { attrConflict } from './contradict.js'
 import { buildSearchText, conflictPairExists } from './memory.js'
 import { setMemorySearchOnly, strengthenMemory } from './memory_fields.js'
+import { setMemoryFts } from './memory_fields.js'
 import { hasNegation, isPositiveCompoundAt } from './negation.js'
 import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
 import { isStalePair } from './stale_pair.js'
@@ -199,8 +200,7 @@ function commitUpdate(db, aid, target, cand, write) {
       reviseMemory(db, aid, target.id, text, { textRef: histId, at, actor: 'gate' })
       setMemorySearchOnly(db, target.id, { key, searchText })
       try {
-        db.prepare('DELETE FROM memory_fts WHERE id=?').run(target.id)
-        db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(target.id, searchText)
+        setMemoryFts(db, target.id, searchText)
       } catch { /* 老库没有 FTS 就跳过 */ }
     })
     ok = true

@@ -5,7 +5,13 @@
  * 仍允许：规则版本、指标聚合、导出/导入、绑定/对话编排。
  */
 
-export const SHARED = Object.freeze(['agents', 'events', 'journal', 'idempotency', 'sqlite_master'])
+export const SHARED = Object.freeze([
+  'agents', 'events', 'journal', 'idempotency', 'sqlite_master',
+  // 两张流水 / 便签：不是业务表，按「谁都可能记一笔」对待。
+  // changes：变更流水，只追加 + 标记回滚，跟 events 同类；
+  // flags：共享便签（开关 / 启动标记 / 学习状态），键必须带域前缀，别用裸 key。
+  'changes', 'flags',
+])
 
 /** @type {Record<string, { files: string[], tables: string[], reads?: string[], writes?: string[] }>} */
 export const OWNERSHIP = {
