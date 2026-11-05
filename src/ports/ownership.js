@@ -7,7 +7,7 @@
 
 export const SHARED = Object.freeze(['agents', 'events', 'journal', 'idempotency', 'sqlite_master'])
 
-/** @type {Record<string, { files: string[], tables: string[] }>} */
+/** @type {Record<string, { files: string[], tables: string[], reads?: string[], writes?: string[] }>} */
 export const OWNERSHIP = {
   memory: {
     files: [
@@ -27,9 +27,11 @@ export const OWNERSHIP = {
     ],
   },
   loops: {
-    // 开环：承诺 / 待办 / 悬着的事，写自己的表；只读记忆正文用来挂来源
-    files: ['modules/loops.js'],
-    tables: ['open_loops', 'memory_items'],
+    // 开环：承诺 / 待办 / 悬着的事。只写自己的表 open_loops；来源由调用方递进来，不碰记忆正文。
+    files: ['parts/loops/index.js', 'modules/loops.js'],
+    tables: ['open_loops'],
+    writes: ['open_loops'],
+    reads: [],
   },
   surfacing: {
     // 浮现观测：注入 / 用上，只写自己的表
@@ -213,17 +215,25 @@ export function tablesForFile(relPosix) {
   const norm = relPosix.replace(/\\/g, '/')
   for (const [mod, spec] of Object.entries(OWNERSHIP)) {
     if (spec.files.some((f) => norm === f || norm.endsWith('/' + f) || norm.endsWith(f))) {
-      return { module: mod, tables: spec.tables, shared: SHARED }
+      return { module: mod, tables: spec.tables, shared: SHARED, reads: spec.reads || null, writes: spec.writes || null }
     }
   }
   return null
 }
 
-export function isTableAllowed(relPosix, table) {
+/**
+ * op = 'read' | 'write'。填了 writes 的域，写别的表会被拒（reason=read_only）；
+ * 没填 writes 的域仍按老样子放行——读写拆分是逐个域补的，补一个管一个。
+ */
+export function isTableAllowed(relPosix, table, op = 'read') {
   const info = tablesForFile(relPosix)
   if (!info) return { ok: true, reason: 'untracked' }
   if (info.tables.includes('*')) return { ok: true, module: info.module }
   const t = String(table).toLowerCase()
-  if (info.shared.includes(t) || info.tables.includes(t)) return { ok: true, module: info.module }
-  return { ok: false, module: info.module, allowed: [...info.shared, ...info.tables] }
+  if (info.shared.includes(t)) return { ok: true, module: info.module }
+  if (!info.tables.includes(t)) return { ok: false, module: info.module, allowed: [...info.shared, ...info.tables] }
+  if (op === 'write' && info.writes && !info.writes.includes(t)) {
+    return { ok: false, module: info.module, reason: 'read_only', table: t, allowed: [...info.writes] }
+  }
+  return { ok: true, module: info.module }
 }

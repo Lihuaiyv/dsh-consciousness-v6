@@ -1,5 +1,6 @@
 /**
- * INV10：扫描 modules/algo/kernel SQL，表必须落在归属白名单内。
+ * INV10：扫描 tracked 模块的 SQL，表必须落在归属白名单内；写还要落在 `writes` 里。
+ * 读写拆分是逐个域补的：填了 writes 的域，写别的表就被拒；没填的仍按老样子放行。
  * 用法：node scripts/check-ownership.mjs
  */
 import fs from 'node:fs'
@@ -10,7 +11,9 @@ import { OWNERSHIP, SHARED, isTableAllowed } from '../src/ports/ownership.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const src = path.join(__dirname, '..', 'src')
 
-const SQL_RE = /\b(?:FROM|INTO|UPDATE|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi
+// 写：INSERT / REPLACE / UPDATE / DELETE / 改表结构；读：FROM / JOIN
+const WRITE_RE = /\b(?:INSERT(?:\s+OR\s+REPLACE)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?|ALTER\s+TABLE|DROP\s+TABLE)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi
+const READ_RE = /\b(?:FROM|JOIN)\s+([a-zA-Z_][a-zA-Z0-9_]*)/gi
 const SKIP = new Set(['select', 'set', 'values', 'where', 'and', 'or', 'on', 'as', 'left', 'right', 'inner', 'outer', 'cross'])
 
 function walk(dir, out = []) {
@@ -38,23 +41,73 @@ const files = walk(src).filter((p) => {
 for (const file of files) {
   const rel = path.relative(src, file).replace(/\\/g, '/')
   const text = fs.readFileSync(file, 'utf8')
-  const found = new Set()
-  for (const m of text.matchAll(SQL_RE)) {
+  const writes = new Set()
+  const reads = new Set()
+  for (const m of text.matchAll(WRITE_RE)) {
     const t = m[1].toLowerCase()
-    if (SKIP.has(t)) continue
-    found.add(t)
+    if (!SKIP.has(t)) writes.add(t)
   }
-  // 模板字符串里的 ${t} 动态表名：ops purge —— 已在白名单宽表；跳过明显动态
-  for (const t of found) {
-    const r = isTableAllowed(rel, t)
-    if (!r.ok) violations.push({ file: rel, table: t, module: r.module, allowed: r.allowed })
+  for (const m of text.matchAll(READ_RE)) {
+    const t = m[1].toLowerCase()
+    if (!SKIP.has(t)) reads.add(t)
   }
+  for (const t of writes) {
+    const r = isTableAllowed(rel, t, 'write')
+    if (!r.ok) {
+      violations.push({
+        file: rel, table: t, op: 'write', module: r.module,
+        reason: r.reason || 'not_allowed', allowed: r.allowed,
+      })
+    }
+  }
+  for (const t of reads) {
+    const r = isTableAllowed(rel, t, 'read')
+    if (!r.ok) {
+      violations.push({
+        file: rel, table: t, op: 'read', module: r.module,
+        reason: r.reason || 'not_allowed', allowed: r.allowed,
+      })
+    }
+  }
+}
+
+// 声明自检：writes 必须在 tables 里；同一张表最多一个域声明写（SHARED 除外）
+const declared = []
+let declaredDomains = 0
+for (const [mod, spec] of Object.entries(OWNERSHIP)) {
+  if (!spec.writes) continue
+  declaredDomains++
+  for (const t of spec.writes) {
+    if (!spec.tables.includes(t)) {
+      violations.push({ module: mod, table: t, op: 'declare', reason: 'writes_not_in_tables' })
+    }
+    if (SHARED.includes(t)) continue
+    declared.push([t, mod])
+  }
+}
+const byTable = new Map()
+for (const [t, mod] of declared) {
+  if (!byTable.has(t)) byTable.set(t, [])
+  byTable.get(t).push(mod)
+}
+for (const [t, mods] of byTable) {
+  const uniq = [...new Set(mods)]
+  if (uniq.length > 1) violations.push({ table: t, op: 'declare', reason: 'multi_writer', modules: uniq })
 }
 
 if (violations.length) {
   console.error('INV10 表白名单失败：')
-  for (const v of violations) console.error(`  ${v.file} → ${v.table} (module=${v.module})`)
+  for (const v of violations) {
+    if (v.file) {
+      console.error(`  ${v.file} → ${v.table}（${v.op}，module=${v.module}，${v.reason}）`)
+    } else if (v.reason === 'multi_writer') {
+      console.error(`  ${v.table} 被多个域声明写：${v.modules.join(', ')}`)
+    } else {
+      console.error(`  ${v.module || '?'} → ${v.table}（${v.reason}）`)
+    }
+  }
   process.exit(1)
 }
 
-console.log(`ownership ok — ${files.length} files, shared=[${SHARED.join(',')}]`)
+const pending = Object.keys(OWNERSHIP).length - declaredDomains
+console.log(`ownership ok — ${files.length} files；已分读写 ${declaredDomains} 个域，其余 ${pending} 个域还按老样子；shared=[${SHARED.join(',')}]`)
