@@ -2125,12 +2125,15 @@ export function clampInjection(lines, budget = 800) {
      一半材料读起来比没有更糟：像一句没说完的自言自语。 */
   const SNAPSHOT_TEST = (l) => l.startsWith('（上一句落在我身上') || /^（\d\d:\d\d 那会儿的读数/.test(String(l))
   const order = [
-    ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
     ['examples', (l) => l.startsWith('## 我说话的样子')],
     ['guard', (l) => l.startsWith('不要列点')],
     ['drive', (l) => l.startsWith('需求缺口档位')],
     ['diary', (l) => l.startsWith('最近我自己写下的')],
     ['memory', (l) => l.startsWith('关于这句话，你能想起的事')],
+    // 主动句排在记忆之后才丢：它是「已经决定要说的话」，又只有一行。
+    // 以前排第一个丢，结果每轮都被预算先吃掉，commit_after_pack 下永远落不了账，
+    // 队列里的消息只能等 ops 七天过期，等于这个功能静默死了（见 2026-11-05 的账）。
+    ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
     // 开环 / 续接 / 自发浮现排在记忆之后丢：它们是「自己先想起来的」，比一条泛记忆更该被说出来
     ['loop', (l) => l.startsWith('（你自己心里还挂着的事')],
     ['bridge', (l) => l.startsWith('（上次（')],

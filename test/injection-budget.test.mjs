@@ -5,6 +5,11 @@
  * 以前顺序是 proactive → affect → drive → …，一挤先把「感觉现在大概的情绪」扔掉，
  * 等于最难的时候先把她的人格扔掉。现在反过来。
  *
+ * 2026-11-05 又改了一次：主动句从「第一个丢」挪到「记忆之后才丢」。
+ * 起因是库里 3399 次「主动句被丢」、0 次「真的进了注入」——它每轮都被预算先吃掉，
+ * 加上「进了注入才落账」，队列里的主动消息永远发不出去，只能等七天过期。
+ * 所以这里反过来钉住：紧预算先丢示例 / 日记，主动句必须活到记忆之后。
+ *
  * 运行：node test/injection-budget.test.mjs
  */
 import { clampInjection } from '../src/features.js'
@@ -50,12 +55,29 @@ const tokensOf = (t) => Math.ceil(String(t).length / 2)
   check('宽松预算保留示例', has(out.text, '我说话的样子'))
 }
 
-// ---- 收紧：先丢主动句
+// ---- 收紧：示例先走，主动句要活到记忆之后才丢
 {
   const out = clampInjection(lines(), 150)
-  check('紧预算先丢主动句', out.dropped.includes('proactive'), out.dropped)
+  check('紧预算先丢示例', out.dropped.includes('examples'), out.dropped)
+  check('紧预算主动句还在', has(out.text, '你之前想主动说一句'), out.dropped)
   check('紧预算保住情绪', has(out.text, '感觉现在大概'), out.dropped)
   check('紧预算不超上限', out.tokens <= 150, out.tokens)
+}
+
+// ---- 极紧：主动句必须排在记忆之后才丢
+{
+  const out = clampInjection(lines(), 60)
+  const iPro = out.dropped.indexOf('proactive')
+  const iMem = out.dropped.indexOf('memory')
+  check('主动句等记忆走了才走', iPro >= 0 && iMem >= 0 && iPro > iMem, out.dropped)
+}
+
+// ---- 略超预算（生产常态）：主动句必须活下来
+{
+  const big = lines({ diary: '最近我自己写下的（日记，不是用户说的）：\n- ' + '今天把取数补上界，空值不再当零。'.repeat(30) })
+  const out = clampInjection(big, 800)
+  check('略超预算：主动句活着', has(out.text, '你之前想主动说一句'), out.dropped)
+  check('略超预算：不超上限', out.tokens <= 800, out.tokens)
 }
 
 // ---- 再收紧：示例要比记忆先走（记忆是内容，示例是风格）

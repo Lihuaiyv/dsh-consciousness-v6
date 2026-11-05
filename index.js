@@ -1036,7 +1036,8 @@ let styleLines = []
       + '。' : '',
     drive ? '需求缺口档位：' + drive.band + '。' : '',
     // ④ 记忆（≤5 条，带来源与时间）
-    proactiveLine ? { text: '（你之前想主动说一句：' + proactiveLine + '。）', key: 'proactive' } : '',
+    // 去掉句末标点再加「。）」：不然会拼出「叫我。。」这种双句号。
+    proactiveLine ? { text: '（你之前想主动说一句：' + String(proactiveLine).replace(/[。！？!?.]+$/, '') + '。）', key: 'proactive' } : '',
     diaryLines.length ? '最近我自己写下的（日记，不是用户说的）：\n' + diaryLines.join('\n') : '',
     bridgeText ? '（' + bridgeText + '。）' : '',
     loopText ? { text: loopText, key: 'loop' } : '',
