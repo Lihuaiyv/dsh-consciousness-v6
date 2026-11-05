@@ -187,6 +187,25 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'relation-before-part', note: '回退 = git checkout relation-before-part -- src/modules/parts.js src/algo/reldyn.js docs/给人看的/零件-关系动力.md，再删 test/exam-relation.test.mjs' },
   },
+  {
+    id: 'wgate',
+    name: '记忆写入闸',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/memory_source.js · gateSelfText',
+    files: [
+      'src/modules/memory_source.js',
+      'src/features.js',
+    ],
+    entry: 'gateSelfText / classifySelf / scoreSelf / narrationOnly（src/modules/memory_source.js）；writeExtractedItem 的 self 车道（src/features.js）',
+    exam: { file: 'test/exam-writegate.test.mjs', score: '51/51', note: '旁白 / 为什么被拦 / 三档 / 打分 / 判决 / 来源徽章 / 落热层·落冷层·不写库，51 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'wgate-before-part', note: '回退 = git checkout wgate-before-part -- src/modules/parts.js src/modules/memory_source.js src/features.js docs/给人看的/零件-记忆写入闸.md，再删 test/exam-writegate.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

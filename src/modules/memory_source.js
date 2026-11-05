@@ -108,6 +108,31 @@ export function scoreSelf(text) {
   return Math.max(0, Math.min(1, Math.round(s * 100) / 100))
 }
 
+/**
+ * 自述写入的判决：留 / 丢 / 落冷层，以及这一条的分量。
+ *
+ * 规则分打底；模型能补分时按六成规则、四成模型混；拿不准又没等到判词的，落冷层——
+ * 可回查，不真丢。低分那条在「按分量选人」时也不占热层。
+ * 纯函数：不读库、不问参数，判词和参数都由调用方递进来。
+ *
+ * @returns {{score:number, keep:boolean, cold?:boolean, why?:string}}
+ */
+export function gateSelfText({ cls, ruleScore = 0, modelHay = null, admission = 'time', minScore = 0.35 } = {}) {
+  const tier = (cls && cls.tier) || 'drop'
+  const modelScore = modelHay && Number.isFinite(Number(modelHay.score)) ? Number(modelHay.score) : null
+  const score = Math.max(0.05, Math.min(0.95, modelScore == null ? Number(ruleScore) || 0 : (Number(ruleScore) || 0) * 0.6 + modelScore * 0.4))
+  let verdict
+  if (tier === 'ok') verdict = { keep: true }
+  else if (tier === 'drop') verdict = { keep: false, cold: !!(cls && cls.cold), why: cls && cls.why }
+  else if (modelHay && modelHay.keep === true) verdict = { keep: true }
+  else if (modelHay && modelHay.keep === false) verdict = { keep: false, cold: true, why: 'model' }
+  else verdict = { keep: false, cold: true, why: cls && cls.why }
+  if (verdict.keep && String(admission) === 'score' && score < Number(minScore)) {
+    verdict = { keep: false, cold: true, why: 'low_score' }
+  }
+  return { ...verdict, score }
+}
+
 /** 从 payload / source_turn 拼一条人话溯源。 */
 function sourceHint(row = {}) {
   const badge = sourceBadge(row.source)

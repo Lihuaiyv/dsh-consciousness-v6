@@ -127,7 +127,7 @@ import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
 import { entityForText } from './modules/entities.js'
 import { applyWrite } from './modules/gate.js'
-import { narrationOnly, selfTextOk, classifySelf, scoreSelf } from './modules/memory_source.js'
+import { narrationOnly, selfTextOk, classifySelf, scoreSelf, gateSelfText } from './modules/memory_source.js'
 import { enrichOne, enrichPending, canEnrich } from './modules/enrich.js'
 import { judgeReflection, canJudge } from './modules/judge.js'
 import { detectLoop, addLoop, settleLoopsFromUser, expireLoops, pendingLoops, markLoopsFired } from './modules/loops.js'
@@ -513,28 +513,19 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
   if (String((m && m.who) || '') === 'self') {
     if (String(getParam(db, aid, 'memory.write.self') || 'on') === 'off') return { action: 'drop', reason: 'self_off' }
     /* 三档：ok 直接留；drop 明显不要；unsure 交给调用方先问模型（opt.selfDecision）。
-       判不了 / 模型超时 / 没配额 → 落冷层，不丢：丢掉的话，那件事就真没了。 */
+       判不了 / 模型超时 / 没配额 → 落冷层，不丢：丢掉的话，那件事就真没了。
+       判决本身在 memory_source.gateSelfText（纯函数，考卷能单独喂数据）。 */
     const cls = classifySelf(text)
     const body = cls.text || text
     // 场景分：规则分打底；拿不准的让模型补一句（六成规则、四成模型），只有模型给了分才混。
     const ruleScore = scoreSelf(body)
     const modelHay = typeof opt.selfDecision === 'function' ? opt.selfDecision(text) : null
-    const modelScore = modelHay && Number.isFinite(Number(modelHay.score)) ? Number(modelHay.score) : null
-    const score = Math.max(0.05, Math.min(0.95, modelScore == null ? ruleScore : ruleScore * 0.6 + modelScore * 0.4))
-    let verdict
-    if (cls.tier === 'ok') verdict = { keep: true }
-    else if (cls.tier === 'drop') verdict = { keep: false, cold: !!cls.cold, why: cls.why }
-    else {
-      if (modelHay && modelHay.keep === true) verdict = { keep: true }
-      else if (modelHay && modelHay.keep === false) verdict = { keep: false, cold: true, why: 'model' }
-      else verdict = { keep: false, cold: true, why: cls.why } // 没判：留冷层，可回查
-    }
     // 按分量选人：低分的不占热层名额，直接落冷（还能结算上来）。
     const admission = String(getParam(db, aid, 'self.admission') || 'time')
     const minScore = Math.max(0, Math.min(1, Number(getParam(db, aid, 'self.admission.min_score')) || 0.35))
-    if (verdict.keep && admission === 'score' && score < minScore) {
-      verdict = { keep: false, cold: true, why: 'low_score' }
-    }
+    const gate = gateSelfText({ cls, ruleScore, modelHay, admission, minScore })
+    const score = gate.score
+    const verdict = { keep: gate.keep, cold: gate.cold, why: gate.why }
     if (!verdict.keep) {
       try { event(db, aid, 'memory.self_rejected', { reason: 'gate', why: verdict.why, score, len: body.length, head: body.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
       let id = null

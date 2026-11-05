@@ -5,7 +5,8 @@
  * 两个坏版本：
  *   - 召回：把证据门放到 0（什么都放进来）；
  *   - 情绪评价：不再看「是不是冲我来的」（没点名的批评也算到她头上）。
- * 后面陆续补了：衰减忘太快、温度没迟滞、驱力迟滞失效 / 永不休眠、关系没上限 / 伤不再比暖快。
+ * 后面陆续补了：衰减忘太快、温度没迟滞、驱力迟滞失效 / 永不休眠、关系没上限 / 伤不再比暖快、
+ * 写入闸不判旁白 / 低分也占热层。
  * 每个都要让对应考卷至少红一条；全拦住才 exit 0。
  * 改了 retrieve / appraise 的实现或考卷的 import 写法，这里也要跟着改。
  */
@@ -88,6 +89,24 @@ const CASES = [
     to: 'rNeg: 0.01,',
     importFrom: "'../src/algo/reldyn.js'",
     importTo: "'../src/algo/reldyn.sabotage-7.js'",
+  },
+  {
+    name: '写入闸：旁白不再判（转述混进她自己的事）',
+    impl: 'src/modules/memory_source.js',
+    exam: 'test/exam-writegate.test.mjs',
+    from: '  return NARRATION.some((re) => re.test(t))',
+    to: '  return false',
+    importFrom: "'../src/modules/memory_source.js'",
+    importTo: "'../src/modules/memory_source.sabotage-8.js'",
+  },
+  {
+    name: '写入闸：低分也占热层（按分量选人失效）',
+    impl: 'src/modules/memory_source.js',
+    exam: 'test/exam-writegate.test.mjs',
+    from: '  if (verdict.keep && String(admission) === \'score\' && score < Number(minScore)) {',
+    to: '  if (false) {',
+    importFrom: "'../src/modules/memory_source.js'",
+    importTo: "'../src/modules/memory_source.sabotage-9.js'",
   },
 ]
 
