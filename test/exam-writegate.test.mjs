@@ -42,12 +42,13 @@ const near = (a, b, eps = 1e-9) => Math.abs(Number(a) - Number(b)) <= eps
   check('开头不像自己：head', selfTextWhy('这件事我想了很久才说') === 'head')
   check('以时间词开头、通篇没我：no_me', selfTextWhy('今天天气很好，出门走了走') === 'no_me')
   check('正常的一句：ok', selfTextOk('我想明白了，以后不把话说满'))
-  /* 真相：selfTextWhy 的 noise 判定排在 head 后面，所以「开头就是 User: / { / 出错」的句子
-     先被 head 拦下，只有「含我 + 后半句带 failed / Error」这一支真能走到 noise。
-     这是函数内部的次序，考卷照现实考，不按想象考。 */
+  /* 噪音要排在 head 前面判：开头就是转写标记 / 代码块 / 报错的，先记成 noise，
+     不然「为什么被拦」会显示 head，看的人改错地方（2026-11-05 夜修）。 */
+  check('开头就是转写：noise', selfTextWhy('User: 你好') === 'noise')
+  check('开头就是代码块：noise', selfTextWhy('{"a":1}') === 'noise')
+  check('开头就是报错：noise', selfTextWhy('出错了 Error: boom') === 'noise')
   check('正文里带报错：noise', selfTextWhy('我这边出错了，failed 三次') === 'noise')
   check('正文里带堆栈：noise', selfTextWhy('我这边出错了 Error: boom') === 'noise')
-  check('开头就是代码块：被 head 先拦（不是 noise）', selfTextWhy('{"a":1}') === 'head', selfTextWhy('{"a":1}'))
 }
 
 // ================================================================ 三档：留 / 冷放 / 丢

@@ -55,12 +55,14 @@ export function selfTextWhy(text) {
   const t = String(text || '').trim()
   if (t.length < 6 || t.length > 120) return 'len'
   if (narrationOnly(t)) return 'narration'
-  if (!SELF_HEAD.test(t)) return 'head'
-  if (!t.includes('我')) return 'no_me'
-  // 运行时噪音 / 转写残留
+  /* 运行时噪音 / 转写残留，要排在「开头不像自己」前面判。
+     以前它在后面：开头是 User: / { / < 的句子先被记成 head，看面板的人会以为是
+     「说话方式不对」而不是「这段是转写残留」，改法就跟着跑偏。 */
   if (/^(User|Assistant|user|assistant)\s*[:：]/.test(t)) return 'noise'
   if (/^\s*[\[{<]/.test(t)) return 'noise'
   if (/出错了|failed|Traceback|Error:/i.test(t)) return 'noise'
+  if (!SELF_HEAD.test(t)) return 'head'
+  if (!t.includes('我')) return 'no_me'
   return 'ok'
 }
 export function selfTextOk(text) {

@@ -201,7 +201,7 @@ export const PARTS = [
       'src/features.js',
     ],
     entry: 'gateSelfText / classifySelf / scoreSelf / narrationOnly（src/modules/memory_source.js）；writeExtractedItem 的 self 车道（src/features.js）',
-    exam: { file: 'test/exam-writegate.test.mjs', score: '51/51', note: '旁白 / 为什么被拦 / 三档 / 打分 / 判决 / 来源徽章 / 落热层·落冷层·不写库，51 道' },
+    exam: { file: 'test/exam-writegate.test.mjs', score: '53/53', note: '旁白 / 为什么被拦（含噪音次序）/ 三档 / 打分 / 判决 / 来源徽章 / 落热层·落冷层·不写库，53 道' },
     assert: null,
     swaps: [],
     rollback: { pointer: 'wgate-before-part', note: '回退 = git checkout wgate-before-part -- src/modules/parts.js src/modules/memory_source.js src/features.js docs/给人看的/零件-记忆写入闸.md，再删 test/exam-writegate.test.mjs' },
