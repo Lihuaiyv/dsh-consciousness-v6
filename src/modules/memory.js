@@ -292,6 +292,27 @@ export function addMemory(db, aid, body) {
   return { id: mid, conflict: kind === 'conflict' && risk === 'high', conflict_id: conflictId, superseded: kind === 'conflict' && risk === 'low', superseded_ids: superseded }
 }
 
+/**
+ * 自我模式又见到一次：重要度 / 信心缓慢上涨，封顶；记一次命中。
+ * 只给 self_pattern 用——把原来它直接写 memory_items 的那两句 SQL 收回记忆模块。
+ */
+export function bumpSelfPattern(db, id, at = null) {
+  try {
+    db.prepare(`UPDATE memory_items SET
+      importance=MIN(0.9, importance+0.05),
+      confidence=MIN(0.85, confidence+0.03),
+      last_hit_at=?
+      WHERE id=?`).run(at || now(), id)
+  } catch {
+    try {
+      db.prepare(`UPDATE memory_items SET
+        importance=MIN(0.9, importance+0.05),
+        confidence=MIN(0.85, confidence+0.03)
+        WHERE id=?`).run(id)
+    } catch { /* 老库没有 confidence 列之类，加不上分就算了，条目还在 */ }
+  }
+}
+
 export function listMemory(db, aid, includeDeleted = false) {
   agent(db, aid)
   const sql = "SELECT * FROM memory_items WHERE agent_id=?" + (includeDeleted ? '' : " AND status='active'") + ' ORDER BY created_at DESC LIMIT 100'

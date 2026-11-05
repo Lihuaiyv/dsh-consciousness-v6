@@ -44,3 +44,8 @@
 
 - 不改表结构、不合并表、不改语义。
 - 不在收口时顺手改行为；行为要改，另开一次「换」并写活论证。
+
+## 六、进展
+
+- **2026-11-05 · 第 1 步**：`self_pattern` 那 2 处已收——`memory.js` 新增 `bumpSelfPattern(db, id, at)`（原 SQL 原样搬进去，行为不变），`self_pattern.js` 改调它。`memory-items` 写手 **7 → 6**（selfhood 退出）；self-pattern 测试 27/27。
+- 下一步：`entities` 那 1 处（`entity_id`）→ `enrich` 那 1 处（检索字段）。

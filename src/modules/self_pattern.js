@@ -12,7 +12,7 @@
  */
 import { now } from '../db.js'
 import { getParam } from '../kernel.js'
-import { addMemory } from './memory.js'
+import { addMemory, bumpSelfPattern } from './memory.js'
 import { selfTextOk } from './memory_source.js'
 import { defaultDiaryChat } from './diary.js'
 import { vectorize, cosine } from './fingerprint.js'
@@ -93,22 +93,9 @@ export function upsertPattern(db, aid, { key, text }) {
   return { action: 'new', id: row && row.id }
 }
 
-/** 又见到一次：importance/confidence 缓慢上涨，封顶，别让一条模式变成万能解释。 */
+/** 又见到一次：分数上涨的动作在 memory 里（bumpSelfPattern），这里只转一下。 */
 function bumpPattern(db, aid, id) {
-  try {
-    db.prepare(`UPDATE memory_items SET
-      importance=MIN(0.9, importance+0.05),
-      confidence=MIN(0.85, confidence+0.03),
-      last_hit_at=?
-      WHERE id=?`).run(now(), id)
-  } catch {
-    try {
-      db.prepare(`UPDATE memory_items SET
-        importance=MIN(0.9, importance+0.05),
-        confidence=MIN(0.85, confidence+0.03)
-        WHERE id=?`).run(id)
-    } catch { /* 加不上分就算了，条目还在 */ }
-  }
+  bumpSelfPattern(db, id, now())
 }
 
 /**
