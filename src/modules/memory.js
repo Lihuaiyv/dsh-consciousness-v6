@@ -293,6 +293,25 @@ export function addMemory(db, aid, body) {
 }
 
 /**
+ * 把一条记忆挂到实体上（entities 回填用）：只动 entity_id。
+ * 写权收口：entities 不再直接写 memory_items。
+ */
+export function setMemoryEntity(db, id, entityId) {
+  db.prepare('UPDATE memory_items SET entity_id=? WHERE id=?').run(entityId, id)
+}
+
+/**
+ * 写检索卡片（enrich 用）：fact_key 只在原来空着时补，terms / search_text 覆盖，版本 +1。
+ * 写权收口：enrich 不再直接写 memory_items。
+ */
+export function setMemorySearchFields(db, id, { key = null, terms = [], searchText = null } = {}) {
+  const t = Array.isArray(terms) && terms.length ? terms.join(' ') : null
+  db.prepare('UPDATE memory_items SET fact_key=COALESCE(?,fact_key), terms=?, search_text=?, version=version+1 WHERE id=?')
+    .run(key, t, searchText, id)
+  return { id, key, terms }
+}
+
+/**
  * 自我模式又见到一次：重要度 / 信心缓慢上涨，封顶；记一次命中。
  * 只给 self_pattern 用——把原来它直接写 memory_items 的那两句 SQL 收回记忆模块。
  */

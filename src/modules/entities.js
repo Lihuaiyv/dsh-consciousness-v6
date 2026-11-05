@@ -10,6 +10,7 @@
 
 import { now } from '../db.js'
 import { nid } from '../kernel.js'
+import { setMemoryEntity } from './memory.js'
 
 const STOP = new Set(['这个', '那个', '我们', '你们', '他们', '自己', '什么', '怎么', '东西', '事情', '问题'])
 
@@ -167,7 +168,7 @@ export function backfillEntities(db, aid) {
     try {
       const ent = entityForText(db, aid, r.text || '')
       if (!ent) continue
-      db.prepare('UPDATE memory_items SET entity_id=? WHERE id=?').run(ent.id, r.id)
+      setMemoryEntity(db, r.id, ent.id)
       n++
     } catch { /* 单条失败跳过，不影响其余 */ }
   }

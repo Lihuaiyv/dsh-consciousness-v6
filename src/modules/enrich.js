@@ -11,7 +11,7 @@
  */
 
 import { model } from '../kernel.js'
-import { buildSearchText, normalizeTerms } from './memory.js'
+import { buildSearchText, normalizeTerms, setMemorySearchFields } from './memory.js'
 
 const SYSTEM = [
   '你在为长期记忆写「检索卡」。给定一条记忆原文，输出它以后被问起时可能用到的索引词。',
@@ -47,8 +47,7 @@ export function applyCard(db, memoryId, card, text) {
   const terms = normalizeTerms(card.terms)
   const key = String(card.key || '').trim().slice(0, 120) || null
   const searchText = buildSearchText(text, key, terms)
-  db.prepare('UPDATE memory_items SET fact_key=COALESCE(?,fact_key), terms=?, search_text=?, version=version+1 WHERE id=?')
-    .run(key, terms.length ? terms.join(' ') : null, searchText, memoryId)
+  setMemorySearchFields(db, memoryId, { key, terms, searchText })
   try {
     db.prepare('DELETE FROM memory_fts WHERE id=?').run(memoryId)
     db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(memoryId, searchText)
