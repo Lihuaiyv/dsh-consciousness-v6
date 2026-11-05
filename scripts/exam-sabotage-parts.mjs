@@ -5,7 +5,8 @@
  * 两个坏版本：
  *   - 召回：把证据门放到 0（什么都放进来）；
  *   - 情绪评价：不再看「是不是冲我来的」（没点名的批评也算到她头上）。
- * 每个都要让对应考卷至少红一条；两个都拦住才 exit 0。
+ * 后面陆续补了：衰减忘太快、温度没迟滞、驱力迟滞失效 / 永不休眠、关系没上限 / 伤不再比暖快。
+ * 每个都要让对应考卷至少红一条；全拦住才 exit 0。
  * 改了 retrieve / appraise 的实现或考卷的 import 写法，这里也要跟着改。
  */
 import fs from 'node:fs'
@@ -69,6 +70,24 @@ const CASES = [
     to: 'const dormant = false',
     importFrom: "'../src/modules/drive.js'",
     importTo: "'../src/modules/drive.sabotage-5.js'",
+  },
+  {
+    name: '关系：单次变化不再设上限',
+    impl: 'src/algo/reldyn.js',
+    exam: 'test/exam-relation.test.mjs',
+    from: 'dc = clamp(dc, -cap, cap)',
+    to: 'dc = clamp(dc, -1, 1)',
+    importFrom: "'../src/algo/reldyn.js'",
+    importTo: "'../src/algo/reldyn.sabotage-6.js'",
+  },
+  {
+    name: '关系：伤不再比暖快（对称）',
+    impl: 'src/algo/reldyn.js',
+    exam: 'test/exam-relation.test.mjs',
+    from: 'rNeg: 0.12,',
+    to: 'rNeg: 0.01,',
+    importFrom: "'../src/algo/reldyn.js'",
+    importTo: "'../src/algo/reldyn.sabotage-7.js'",
   },
 ]
 

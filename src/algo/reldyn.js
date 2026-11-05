@@ -191,7 +191,7 @@ function makeRelationDyn(version, mul = null) {
     name: 'relation_dyn',
     version,
     kind: 'relation_dyn',
-    owner: '',
+    owner: 'relation',
     file: FILE,
     metrics: ['relation.step_cap', 'relation.event_rate'],
     run(_ctx, input = {}) {
