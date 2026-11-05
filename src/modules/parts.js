@@ -88,6 +88,27 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'loops-before-swap', note: '回退 = git checkout loops-before-swap -- src/modules/loops.js src/modules/parts.js test/exam-loops.test.mjs，再删掉 src/parts/loops/' },
   },
+  {
+    id: 'recall',
+    name: '召回',
+    role: '器官',
+    chain: '链上',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/retrieve.js · retrieve',
+    files: [
+      'src/modules/retrieve.js',
+      'src/algo/recall.js',
+      'src/modules/pack.js',
+      'index.js',
+    ],
+    entry: 'retrieve / deepRecall（src/modules/retrieve.js）',
+    exam: { file: 'test/exam-recall.test.mjs', score: '76/76', note: '路由 / 证据门 / 实体与扩词 / 融合与重排 / 锚点与配额 / 深翻 / 遗忘阈值，76 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'recall-before-part', note: '回退 = git checkout recall-before-part -- src/modules/parts.js docs/给人看的/零件-召回.md，再删 test/exam-recall.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
