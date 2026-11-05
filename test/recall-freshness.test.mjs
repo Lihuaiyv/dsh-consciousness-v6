@@ -94,7 +94,8 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   check('S3 里一跳邻居进得来', s3.items.some((x) => x.id === b.id), s3.items.map((x) => `${x.id}:${x.via}`))
 
   const s1 = retrieve(db, aid, '小周', { k: 6, floor: 0, scene: 'S1' })
-  check('S1 不扩二跳', !s1.items.some((x) => x.id === c.id), s1.items.map((x) => `${x.id}:${x.via}`))
+  // 只看「链接扩散」那一路：新鲜通道也会带进最近写的条目，不算二跳。
+  check('S1 不扩二跳', !s1.items.some((x) => x.id === c.id && x.via === 'link'), s1.items.map((x) => `${x.id}:${x.via}`))
 }
 
 db.close()
