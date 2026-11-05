@@ -10,6 +10,8 @@
 import { run as registryRun } from './registry.js'
 import { bandOf, heatOf, touch } from '../modules/tiers.js'
 
+const FILE = import.meta.url
+
 /** 中文连续段 / 英文数字段。标点在正则里天然断开，不会被当成词。 */
 function segments(q) {
   return String(q || '').match(/[\u4e00-\u9fff]+|[a-zA-Z0-9]{2,}/g) || []
@@ -151,6 +153,8 @@ function makeRecall(version, defaults) {
     name: 'recall',
     version,
     kind: 'recall',
+    owner: 'recall',
+    file: FILE,
     metrics: ['memory.recall_hit', 'memory.ndcg5', 'sys.algo_switch'],
     run(ctx, input = {}) {
       const db = ctx.db

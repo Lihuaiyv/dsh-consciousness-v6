@@ -9,11 +9,15 @@ function ageDays(lastDecayAt, nowMs) {
   return Number.isFinite(t) ? Math.max(0, (nowMs - t) / 86400000) : 0
 }
 
+const FILE = import.meta.url
+
 function makeDecay(version, scale) {
   return {
     name: 'decay',
     version,
     kind: 'decay',
+    owner: '',
+    file: FILE,
     metrics: ['memory.forget_fit', 'sys.algo_switch'],
     run(_ctx, input = {}) {
       const row = input.row || input

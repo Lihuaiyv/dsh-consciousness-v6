@@ -4,6 +4,8 @@
  * 输出：appraisal 字段 + algo
  */
 
+const FILE = import.meta.url
+
 function rulesV1(text) {
   const t = String(text || '')
   const directed = /你|您/.test(t)
@@ -91,6 +93,8 @@ function makeAppraise(version, preferModel, rulesFn) {
     name: 'appraise',
     version,
     kind: 'appraise',
+    owner: '',
+    file: FILE,
     metrics: ['affect.label_kappa', 'sys.algo_switch'],
     run(_ctx, input = {}) {
       const text = String(input.text || '')

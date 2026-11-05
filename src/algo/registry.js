@@ -11,7 +11,8 @@ function keyOf(name, version) {
 }
 
 /**
- * @param {{ name: string, version: string, kind?: string, metrics?: string[], run: Function }} spec
+ * @param {{ name: string, version: string, kind?: string, metrics?: string[], owner?: string, file?: string, run: Function }} spec
+ * owner / file：算法册的归属。owner 指向零件册里的 id；file 由实现文件用 import.meta.url 自动带。
  */
 export function register(spec) {
   if (!spec || !spec.name || !spec.version || typeof spec.run !== 'function') {
@@ -27,6 +28,8 @@ export function register(spec) {
       version: String(spec.version),
       kind: spec.kind || spec.name,
       metrics: Array.isArray(spec.metrics) ? spec.metrics : [],
+      owner: String(spec.owner || ''),
+      file: String(spec.file || ''),
       run: spec.run,
     })
     return key
@@ -36,6 +39,8 @@ export function register(spec) {
     version: String(spec.version),
     kind: spec.kind || spec.name,
     metrics: Array.isArray(spec.metrics) ? spec.metrics : [],
+    owner: String(spec.owner || ''),
+    file: String(spec.file || ''),
     run: spec.run,
   })
   return key
@@ -55,7 +60,7 @@ export function get(name, version) {
 export function list(name = null) {
   const out = []
   for (const spec of map.values()) {
-    if (name == null || spec.name === name) out.push({ name: spec.name, version: spec.version, kind: spec.kind, metrics: spec.metrics })
+    if (name == null || spec.name === name) out.push({ name: spec.name, version: spec.version, kind: spec.kind, metrics: spec.metrics, owner: spec.owner, file: spec.file })
   }
   return out.sort((a, b) => (a.name + a.version).localeCompare(b.name + b.version))
 }

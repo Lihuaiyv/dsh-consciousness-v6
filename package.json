@@ -32,6 +32,7 @@
     "check:params": "node scripts/check-params.mjs",
     "check:host": "node scripts/check-host.mjs",
     "check:parts": "node scripts/check-parts.mjs",
+    "check:algos": "node scripts/check-algos.mjs",
     "check:dead": "node scripts/dead-code-audit.mjs",
     "replay:drive": "node scripts/replay-drive.mjs",
     "sim:emotion": "node scripts/sim-emotion-memory.mjs",
@@ -46,7 +47,7 @@
     "test:selfnote": "node test/self-note.test.mjs",
     "test:feel": "node test/feel-turnid.test.mjs && node test/feel-purge.test.mjs && node test/feel-archive.test.mjs && node test/feel-layers.test.mjs && node test/feel-rel-event.test.mjs && node test/feel-search.test.mjs && node test/feel-transfer.test.mjs && node test/feel-import-clean.test.mjs && node test/feel-day-boundary.test.mjs && node test/feel-display-api.test.mjs && node test/feel-health.test.mjs",
     "eval:persona": "node scripts/eval-persona.mjs",
-    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs && node scripts/check-parts.mjs",
+    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs && node scripts/check-parts.mjs && node scripts/check-algos.mjs",
     "exam:sabotage": "node scripts/exam-sabotage.mjs",
     "exam:recall": "node test/exam-recall.test.mjs"
   },

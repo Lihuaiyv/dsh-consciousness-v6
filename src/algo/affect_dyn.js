@@ -4,6 +4,8 @@
  * mode=decay：{ state, hours, coef? } → 衰减后的 intensity / mood
  */
 
+const FILE = import.meta.url
+
 const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x))
 
 /** 情绪标签 → PAD 锚点（修复 v1：PAD 必须跟着标签走，不能各自漂移） */
@@ -26,6 +28,8 @@ function makeAffectDyn(version, applyScale, decayScale) {
     name: 'affect_dyn',
     version,
     kind: 'affect_dyn',
+    owner: '',
+    file: FILE,
     metrics: ['affect.intensity_mae', 'sys.algo_switch'],
     run(_ctx, input = {}) {
       if (input.mode === 'decay') {

@@ -14,6 +14,8 @@
 
 import { desensitize, stimulusKey } from './desensitize.js'
 
+const FILE = import.meta.url
+
 const num = (v, d) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : d
@@ -189,6 +191,8 @@ function makeRelationDyn(version, mul = null) {
     name: 'relation_dyn',
     version,
     kind: 'relation_dyn',
+    owner: '',
+    file: FILE,
     metrics: ['relation.step_cap', 'relation.event_rate'],
     run(_ctx, input = {}) {
       const p = mul ? scaleParams(mul) : REL_DEFAULTS

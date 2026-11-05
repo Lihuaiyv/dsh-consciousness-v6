@@ -5,6 +5,8 @@
  * 输出：{ deficits(ñ), raw, D, band, smooth, dims }
  */
 
+const FILE = import.meta.url
+
 function parseDims(input) {
   if (input.dims) return { ...input.dims }
   return {
@@ -63,6 +65,8 @@ function makeDeficit(version, enter, exit, opts = {}) {
     name: 'deficit',
     version,
     kind: 'deficit',
+    owner: '',
+    file: FILE,
     metrics: ['drive.band_switch', 'sys.algo_switch'],
     run(_ctx, input = {}) {
       const dims = parseDims(input)
@@ -168,6 +172,8 @@ export const deficitV1d = {
   name: 'deficit',
   version: 'v1d',
   kind: 'deficit',
+  owner: '',
+  file: FILE,
   metrics: ['drive.band_switch', 'sys.algo_switch'],
   run(_ctx, input = {}) {
     const dims = parseDims(input)
@@ -326,6 +332,8 @@ export const deficitV2 = {
   name: 'deficit',
   version: 'v2',
   kind: 'deficit',
+  owner: '',
+  file: FILE,
   metrics: ['drive.band_switch', 'sys.algo_switch'],
   run(_ctx, input = {}) {
     const dims = parseDims(input)
@@ -467,6 +475,8 @@ export const deficitV3 = {
   name: 'deficit',
   version: 'v3',
   kind: 'deficit',
+  owner: '',
+  file: FILE,
   metrics: ['drive.band_switch', 'sys.algo_switch'],
   run(ctx, input = {}) {
     const base = deficitV2.run(ctx, input)

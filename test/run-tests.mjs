@@ -903,6 +903,8 @@ try {
   check('宿主契约 CI', hostCheck.status === 0, hostCheck.text)
   const partsCheck = runScript('check-parts.mjs')
   check('零件册：考卷真跑 CI', partsCheck.status === 0, partsCheck.text)
+  const algosCheck = runScript('check-algos.mjs')
+  check('算法册：owner 指回零件册 CI', algosCheck.status === 0, algosCheck.text)
   const health2 = await api('GET', '/health')
   check('ModelPort 能力声明', health2.model?.capabilities?.reply === true && !!health2.model?.adapter, health2.model)
   check('memoryPort 契约', typeof memoryPort.query.stats === 'function' && typeof memoryPort.command.add === 'function', memoryPort)
