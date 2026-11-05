@@ -136,14 +136,18 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   check('想起过两次还不够热', targetTemp({ ...base, hits: HOT_HITS - 1, last_hit_at: daysAgo(5) }, at) === 'warm')
   check('其余 → warm', targetTemp({ ...base, created_at: daysAgo(10) }, at) === 'warm')
   check('空行给 warm', targetTemp(null) === 'warm')
+  // 写入闸落的冷：年轻、没被想起过 → 保持冷（不能因为 age 小就被翻回温）
+  check('写入闸的冷不会被年龄翻热', targetTemp({ ...base, created_at: daysAgo(3), temp_state: 'cold', hits: 0 }, at) === 'cold')
+  check('冷但被想起过，才交给年龄/热度规则', targetTemp({ ...base, created_at: daysAgo(3), temp_state: 'cold', hits: 1, last_hit_at: daysAgo(1) }, at) === 'warm')
 }
 
 // ================================================================ 温度：迟滞
 {
-  const mk = (id, temp, ageDays, mark = 'normal') => {
+  const mk = (id, temp, ageDays, extra = {}) => {
     addMemory(db, aid, { text: '温度测试 ' + id, type: 'fact', importance: 0.5 })
     db.prepare('UPDATE memory_items SET temp_state=?, state_streak=0, created_at=?, last_hit_at=NULL, mark=? WHERE text=?')
-      .run(temp, daysAgo(ageDays), mark, '温度测试 ' + id)
+      .run(temp, daysAgo(ageDays), extra.mark || 'normal', '温度测试 ' + id)
+    if (extra.hits) db.prepare('UPDATE memory_items SET hits=?, last_hit_at=? WHERE text=?').run(extra.hits, daysAgo(extra.hitDays || 5), '温度测试 ' + id)
   }
   mk('a', 'warm', COLD_DAYS + 5)
   const r1 = tickTemps(db, aid, at)
@@ -155,11 +159,18 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   check('连续两天一致才迁到 cold', a2.temp_state === 'cold' && Number(a2.state_streak) === 0, a2)
   check('迁移有记录', r2.some((x) => x.to === 'cold'), r2)
 
-  mk('b', 'cold', 5)
+  // 写入闸落的冷：年轻 + 从没被想起 → 夜巡也不该翻热
+  mk('c', 'cold', 2)
+  tickTemps(db, aid, at)
+  tickTemps(db, aid, at)
+  const c1 = db.prepare("SELECT temp_state FROM memory_items WHERE text='温度测试 c'").get()
+  check('写入闸的冷过一夜仍是冷', c1.temp_state === 'cold', c1)
+
+  mk('b', 'cold', 5, { hits: HOT_HITS, hitDays: 1 })
   const r3 = tickTemps(db, aid, at)
   const b1 = db.prepare("SELECT temp_state FROM memory_items WHERE text='温度测试 b'").get()
-  check('往上升立刻生效（不用等两次）', b1.temp_state === 'warm', b1)
-  check('上升也有记录', r3.some((x) => x.to === 'warm'), r3)
+  check('被真正想起来就立刻回热（不用等两次）', b1.temp_state === 'hot', b1)
+  check('上升也有记录', r3.some((x) => x.to === 'hot'), r3)
 
   const stats = tempStats(db, aid)
   check('温度统计把状态加起来', Number(stats.cold) >= 1 && Number(stats.warm) >= 1, stats)

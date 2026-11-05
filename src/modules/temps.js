@@ -44,6 +44,11 @@ export function targetTemp(row, at = Date.now()) {
   if (!row) return 'warm'
   if (row.mark === 'locked') return 'hot' // 钉住的不下沉
   const age = (at - anchorOf(row)) / DAY_MS
+  /* 写入闸落的冷：它是「不值得每轮想起」的判定，不是「还没长大」的默认。
+     年轻 + 一次都没被想起来 → 保持冷，别因为 age 小就被夜巡翻回温。
+     被真正想起来过（hits>0）或老了，才交给下面的年龄/热度规则。 */
+  const cur = String(row.temp_state || '')
+  if (cur === 'cold' && Number(row.hits || 0) === 0 && age < COLD_DAYS) return 'cold'
   if (age >= ARCHIVE_DAYS) return 'archived'
   if (age >= COLD_DAYS) return 'cold'
   const recent = Date.parse(row.last_hit_at || '')

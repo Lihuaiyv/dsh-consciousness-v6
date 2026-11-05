@@ -143,7 +143,7 @@ export const PARTS = [
       'src/algo/decay.js',
     ],
     entry: 'retrievability / heatOf / bandOf / touch / targetTemp（src/modules/tiers.js）',
-    exam: { file: 'test/exam-tiers.test.mjs', score: '66/66', note: '半衰期 / 热度五项 / 档位 / 可提取性 / 强化 / 冷热温度 / 迟滞 / 巡检补账，66 道' },
+    exam: { file: 'test/exam-tiers.test.mjs', score: '69/69', note: '半衰期 / 热度五项 / 档位 / 可提取性 / 强化 / 冷热温度 / 迟滞 / 写入闸的冷不被年龄翻热，69 道' },
     assert: null,
     swaps: [],
     rollback: { pointer: 'tiers-before-part', note: '回退 = git checkout tiers-before-part -- src/modules/parts.js docs/给人看的/零件-记忆衰减与分层.md，再删 test/exam-tiers.test.mjs' },
