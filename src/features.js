@@ -121,6 +121,7 @@ import {
 } from './modules/persona.js'
 import { sampleAffect, affectHistory, affectTrend, reviewStats, triggerStats, fallbackStats } from './modules/affect.js'
 import { softRecall, listActiveMemories, memoryStats } from './modules/memory.js'
+import { setMemoryTemp } from './modules/memory_temp.js'
 import { invalidateMemory } from './modules/timeline.js'
 import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
@@ -459,8 +460,8 @@ export function settleSelfHot(db, aid, at = Date.now()) {
       const up = Number(c.importance) || 0
       const down = Number(h.importance) || 0
       if (up - down <= gap) break
-      db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=?").run(now(), h.id)
-      db.prepare("UPDATE memory_items SET temp_state='hot', state_since=? WHERE id=?").run(now(), c.id)
+      setMemoryTemp(db, h.id, 'cold', now())
+      setMemoryTemp(db, c.id, 'hot', now())
       used.add(h.id)
       moved++
       try { event(db, aid, 'memory.self.settle', { up: c.id, down: h.id, up_score: up, down_score: down }) } catch { /* 忽略 */ }
@@ -492,8 +493,7 @@ function selfJudgeKey(text) {
 function forceCold(db, id) {
   if (!id) return
   try {
-    db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=? AND (temp_state IS NULL OR temp_state<>'cold')")
-      .run(now(), id)
+    setMemoryTemp(db, id, 'cold', now(), { onlyIfChanged: true })
   } catch { /* 老库没温度列就当热的 */ }
 }
 
@@ -605,8 +605,7 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
   }))
   if (narr && out.id && out.action !== 'new') {
     try {
-      db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=? AND (temp_state IS NULL OR temp_state<>'cold')")
-        .run(now(), out.id)
+      setMemoryTemp(db, out.id, 'cold', now(), { onlyIfChanged: true })
     } catch { /* 老库没有温度列就算了 */ }
   }
   return out

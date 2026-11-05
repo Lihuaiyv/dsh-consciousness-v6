@@ -50,5 +50,6 @@
 - **2026-11-05 · 第 1 步**：`self_pattern` 那 2 处已收——`memory.js` 新增 `bumpSelfPattern(db, id, at)`（原 SQL 原样搬进去，行为不变），`self_pattern.js` 改调它。`memory-items` 写手 **7 → 6**（selfhood 退出）；self-pattern 测试 27/27。
 - **2026-11-05 · 第 2 步**：`entities` 1 处、`enrich` 1 处已收——`memory.js` 新增 `setMemoryEntity` / `setMemorySearchFields`，两个模块改调它们。写 `memory_items` 的**文件从 10 个降到 7 个**、域 6 个；全量 561/561。
 - 注意：写点**条数**还是 28——SQL 是搬进 memory 了，不是消失。看收口进度要看「谁在写」（文件 / 域），不看条数。
-- 另：`test/recall-freshness.test.mjs` 有 1 条红（「S1 不扩二跳」），在 HEAD 的独立工作树里也一样红，不是这两步改坏的；另开一件查。
-- 下一步：`temps` 2 处 + `features.js` 的温度写 4 处（一起收成 `setMemoryTemp`）。
+- **2026-11-05 · 第 3 步**：温度 6 处已收（`temps` 2 + `features` 4）——新建 `src/modules/memory_temp.js` 当低层单点，`temps` / `features` 改调它。**直接 import memory.js 会成环**（temps → memory → tiers → temps），所以这一层只依赖 db.js；它登记在 memory 域的文件里。写 `memory_items` 的**文件 7 → 5**（layers / writegate / memory / ops / timeline）；p5 18/18、self-settle 20/20、全量 561/561。
+- 另：`test/recall-freshness.test.mjs` 有 1 条红（「S1 不扩二跳」），在 HEAD 的独立工作树里也一样红，不是这几步改坏的；另开一件查。
+- 下一步：`tiers` 的热度 / 命中 2 处（连同 memory 自己的热度写），收成 `setMemoryHeat` / `touchMemoryHit`。

@@ -15,6 +15,7 @@
  */
 
 import { now } from '../db.js'
+import { setMemoryTemp, setMemoryStateStreak } from './memory_temp.js'
 
 // 注意：这里不 import kernel —— kernel 会连带加载 algo 注册表，而 algo 又回头读 tiers，
 // 形成 kernel → algo → tiers → temps → kernel 的环，模块初始化时会踩 TDZ。事件直接写表。
@@ -64,14 +65,12 @@ export function tickTemps(db, aid, at = Date.now()) {
   } catch { return [] }
 
   const changed = []
-  const upState = db.prepare('UPDATE memory_items SET temp_state=?, state_since=?, state_streak=0 WHERE id=?')
-  const upStreak = db.prepare('UPDATE memory_items SET state_streak=? WHERE id=?')
 
   for (const r of rows) {
     const cur = String(r.temp_state || 'warm')
     const want = targetTemp(r, at)
     if (want === cur) {
-      if (Number(r.state_streak || 0) !== 0) try { upStreak.run(0, r.id) } catch { /* 忽略 */ }
+      if (Number(r.state_streak || 0) !== 0) try { setMemoryStateStreak(db, r.id, 0) } catch { /* 忽略 */ }
       continue
     }
     const streak = Number(r.state_streak || 0) + 1
@@ -79,12 +78,12 @@ export function tickTemps(db, aid, at = Date.now()) {
     const rising = RANK[want] > RANK[cur]
     if (rising || streak >= HYSTERESIS) {
       try {
-        upState.run(want, now(), r.id)
+        setMemoryTemp(db, r.id, want, now(), { resetStreak: true })
         changed.push({ id: r.id, from: cur, to: want, text: String(r.text || '').slice(0, 40) })
         localEvent(db, aid, 'memory.temp_changed', { memory_id: r.id, from: cur, to: want })
       } catch { /* 单条失败跳过 */ }
     } else {
-      try { upStreak.run(streak, r.id) } catch { /* 忽略 */ }
+      try { setMemoryStateStreak(db, r.id, streak) } catch { /* 忽略 */ }
     }
   }
   return changed

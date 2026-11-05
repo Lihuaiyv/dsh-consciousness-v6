@@ -12,6 +12,7 @@ export const OWNERSHIP = {
   memory: {
     files: [
       'modules/memory.js',
+      'modules/memory_temp.js',
       'modules/conflict.js',
       'modules/contradict.js',
       'modules/conflict_ask.js',
