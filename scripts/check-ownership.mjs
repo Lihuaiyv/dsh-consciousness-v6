@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { OWNERSHIP, SHARED, isTableAllowed } from '../src/ports/ownership.js'
+import { OWNERSHIP, SHARED, WRITE_SPLIT, isTableAllowed } from '../src/ports/ownership.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const src = path.join(__dirname, '..', 'src')
@@ -92,7 +92,11 @@ for (const [t, mod] of declared) {
 }
 for (const [t, mods] of byTable) {
   const uniq = [...new Set(mods)]
-  if (uniq.length > 1) violations.push({ table: t, op: 'declare', reason: 'multi_writer', modules: uniq })
+  if (uniq.length > 1) {
+    const split = WRITE_SPLIT[t]
+    if (split && uniq.every((m) => split.includes(m))) continue
+    violations.push({ table: t, op: 'declare', reason: 'multi_writer', modules: uniq })
+  }
 }
 
 if (violations.length) {

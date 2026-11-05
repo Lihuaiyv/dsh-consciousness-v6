@@ -26,6 +26,7 @@ export const OWNERSHIP = {
       // 只读：召回的关系加成（记忆挂在谁名下、那个人多亲近）
       'rel_evidence', 'rel_person',
     ],
+    writes: ['memory_items', 'memory_fts', 'proactive', 'alerts', 'conflicts'],
   },
   loops: {
     // 开环：承诺 / 待办 / 悬着的事。只写自己的表 open_loops；来源由调用方递进来，不碰记忆正文。
@@ -164,10 +165,11 @@ export const OWNERSHIP = {
     tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive', 'memory_pair_judge'],
   },
   timeline: {
-    // G1 时效索引：只追加写 memory_timeline；作废 / 复活仍按原 UPDATE 写 memory_items。
-    // 其余只读：正文从 memory_items / fact_archive 取，说话时间从 raw_turns / episodes 认。
+    // G1 时效索引：写 memory_timeline；生效 / 正文 / 可见性按字段分写给 memory_items（check-timeline 守门）。
+    // flags 记门开关；其余只读：正文从 memory_items / fact_archive 取，说话时间从 raw_turns / episodes 认。
     files: ['modules/timeline.js', 'modules/timeparse.js', 'modules/asof.js'],
     tables: ['memory_timeline', 'memory_items', 'fact_archive', 'raw_turns', 'episodes', 'conflicts', 'flags'],
+    writes: ['memory_timeline', 'memory_items', 'flags'],
   },
   sangguan: {
     // 三观引擎：L0 只增账本 + 可重建投影 + 判定缓存；claim_purge 只在整 agent 清除的事务里存在
@@ -211,6 +213,15 @@ export const OWNERSHIP = {
     ],
   },
 }
+
+/**
+ * 允许「按字段分写」的表：表级两个域各写各的字段，不是抢。
+ * memory_items：内容 / 索引 / 打分 / 温度 / 热度 归 memory；生效 / 正文 / 可见性 归 timeline（check-timeline 守门）。
+ * ops 的清库、host 的导入导出是搬库，单独算例外，不在这张表里。
+ */
+export const WRITE_SPLIT = Object.freeze({
+  memory_items: ['memory', 'timeline'],
+})
 
 export function tablesForFile(relPosix) {
   const norm = relPosix.replace(/\\/g, '/')

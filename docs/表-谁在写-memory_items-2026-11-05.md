@@ -53,4 +53,4 @@
 - **2026-11-05 · 第 3 步**：温度 6 处已收（`temps` 2 + `features` 4）——新建 `src/modules/memory_temp.js` 当低层单点，`temps` / `features` 改调它。**直接 import memory.js 会成环**（temps → memory → tiers → temps），所以这一层只依赖 db.js；它登记在 memory 域的文件里。写 `memory_items` 的**文件 7 → 5**（layers / writegate / memory / ops / timeline）；p5 18/18、self-settle 20/20、全量 561/561。
 - **2026-11-05 · 第 4 步**：热度 / 命中（`tiers` 2 处）+ 检索 / 强化（`gate` 2 处）已收——`memory_temp.js` 改名扩成 `memory_fields.js`（温度 / 热度 / 命中 / 检索字段的低层单点）。写 `memory_items` 的域 **5 → 3**（memory / ops / timeline）。中间踩了个时间戳坑（把毫秒写进了 `last_hit_at`），anchor-rotate 测试抓住，已修。全量 561/561。
 - 另：`test/recall-freshness.test.mjs` 有 1 条红（「S1 不扩二跳」），在 HEAD 的独立工作树里也一样红，不是这几步改坏的；另开一件查。
-- 下一步：`timeline` 的生命周期 5 处（作废 / 复活 / 改句 / 隐藏 / 删除），收进 `memory_fields.js`，事件留痕还留在 timeline。
+- **2026-11-05 · 第 5 步（结论）**：`timeline` 那 5 处**不动**——它是生命周期字段（生效 / 正文 / 可见性）的法定写手，有 `check-timeline` 守门；把 SQL 挪走反而绕过守门。所以 `memory_items` 的收口落点是**按字段分写**，不是单写手：memory（内容 / 索引 / 打分 / 温度 / 热度）↔ timeline（生命周期），ops 的清库和 host 的导入导出算搬库例外。ownership 里 memory / timeline 都声明了 `writes`，用 `WRITE_SPLIT` 白名单写明 memory_items 的分写关系；`check-ownership` 现在管 3 个已分域，其余 19 个还按老样子。全量 561/561。
