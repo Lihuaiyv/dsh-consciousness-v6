@@ -6,11 +6,17 @@
  */
 
 /**
- * 迁移期的写入声明补充表：域对象里写了 writes 的优先用域里的，没写的看这里。
- * 一次性把剩下的域补齐，省得改十几个对象；补完可以并回域对象。
+ * 写入声明：一张表只有声明过的域能写（ops / host 两个搬库例外不声明）。
+ * 写在这里而不是散在各域对象里，是为了整张表能一眼看完、检查器只读这一处。
  * selfhood / selfread 声明为空数组：它们只读，不该再直接写 memory_items。
  */
 export const WRITES = Object.freeze({
+  loops: ['open_loops'],
+  memory: ['memory_items', 'memory_fts', 'proactive', 'alerts', 'conflicts'],
+  timeline: ['memory_timeline', 'memory_items', 'flags'],
+  layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
+  persona: ['persona', 'relations', 'preferences', 'taboos'],
+  selfmod: ['metric_samples', 'persona', 'proposals', 'rule_artifacts', 'rule_versions', 'agent_bindings', 'change_journal', 'inbox_items'],
   affect: ['affect_baseline', 'affect_episodes', 'affect_events', 'affect_review', 'affect_samples', 'affect_state', 'affect_trigger', 'affect_user_read', 'affect_v3'],
   drive: ['action_log', 'action_ports', 'budgets', 'cooldowns', 'drive_state'],
   relations: ['rel_channel', 'rel_edge', 'rel_evidence', 'rel_habit', 'rel_mention', 'rel_person', 'rel_tier', 'rel_violation'],
@@ -58,13 +64,11 @@ export const OWNERSHIP = {
       // 只读：召回的关系加成（记忆挂在谁名下、那个人多亲近）
       'rel_evidence', 'rel_person',
     ],
-    writes: ['memory_items', 'memory_fts', 'proactive', 'alerts', 'conflicts'],
   },
   loops: {
     // 开环：承诺 / 待办 / 悬着的事。只写自己的表 open_loops；来源由调用方递进来，不碰记忆正文。
     files: ['parts/loops/index.js', 'modules/loops.js'],
     tables: ['open_loops'],
-    writes: ['open_loops'],
     reads: [],
   },
   surfacing: {
@@ -93,7 +97,6 @@ export const OWNERSHIP = {
   persona: {
     files: ['modules/persona.js'],
     tables: ['persona', 'persona_values', 'changes', 'preferences', 'taboos', 'relations'],
-    writes: ['persona', 'relations', 'preferences', 'taboos'],
   },
   relations: {
     // 人物账本：rel_event 是主数据，其余都是可重放投影。
@@ -149,7 +152,6 @@ export const OWNERSHIP = {
       // 回滚她自己改的样子（persona.style.*）时按 changes.before 写回
       'persona',
     ],
-    writes: ['metric_samples', 'persona', 'proposals', 'rule_artifacts', 'rule_versions', 'agent_bindings', 'change_journal', 'inbox_items'],
   },
   ops: {
     files: ['modules/ops.js', 'modules/chat.js', 'modules/edges.js', 'modules/qq_push.js'],
@@ -184,7 +186,6 @@ export const OWNERSHIP = {
       'entities', 'memory_links',
       // 向量通道：检索读已存向量
       'memory_vec'],
-    writes: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
   },
   vectors: {
     // 向量通道：写自己的 memory_vec，读记忆正文
@@ -204,7 +205,6 @@ export const OWNERSHIP = {
     // flags 记门开关；其余只读：正文从 memory_items / fact_archive 取，说话时间从 raw_turns / episodes 认。
     files: ['modules/timeline.js', 'modules/timeparse.js', 'modules/asof.js'],
     tables: ['memory_timeline', 'memory_items', 'fact_archive', 'raw_turns', 'episodes', 'conflicts', 'flags'],
-    writes: ['memory_timeline', 'memory_items', 'flags'],
   },
   sangguan: {
     // 三观引擎：L0 只增账本 + 可重建投影 + 判定缓存；claim_purge 只在整 agent 清除的事务里存在
@@ -266,7 +266,7 @@ export function tablesForFile(relPosix) {
   const norm = relPosix.replace(/\\/g, '/')
   for (const [mod, spec] of Object.entries(OWNERSHIP)) {
     if (spec.files.some((f) => norm === f || norm.endsWith('/' + f) || norm.endsWith(f))) {
-      return { module: mod, tables: spec.tables, shared: SHARED, reads: spec.reads || null, writes: spec.writes || (Object.prototype.hasOwnProperty.call(WRITES, mod) ? WRITES[mod] : null) }
+      return { module: mod, tables: spec.tables, shared: SHARED, reads: spec.reads || null, writes: Object.prototype.hasOwnProperty.call(WRITES, mod) ? WRITES[mod] : null }
     }
   }
   return null

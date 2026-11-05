@@ -75,7 +75,7 @@ for (const file of files) {
 const declared = []
 let declaredDomains = 0
 for (const [mod, spec] of Object.entries(OWNERSHIP)) {
-  const writes = spec.writes || (Object.prototype.hasOwnProperty.call(WRITES, mod) ? WRITES[mod] : null)
+  const writes = Object.prototype.hasOwnProperty.call(WRITES, mod) ? WRITES[mod] : null
   if (!writes) continue
   declaredDomains++
   for (const t of writes) {
