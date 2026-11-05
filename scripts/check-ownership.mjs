@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { OWNERSHIP, SHARED, WRITE_SPLIT, isTableAllowed } from '../src/ports/ownership.js'
+import { OWNERSHIP, SHARED, WRITE_SPLIT, WRITES, isTableAllowed } from '../src/ports/ownership.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const src = path.join(__dirname, '..', 'src')
@@ -75,9 +75,10 @@ for (const file of files) {
 const declared = []
 let declaredDomains = 0
 for (const [mod, spec] of Object.entries(OWNERSHIP)) {
-  if (!spec.writes) continue
+  const writes = spec.writes || (Object.prototype.hasOwnProperty.call(WRITES, mod) ? WRITES[mod] : null)
+  if (!writes) continue
   declaredDomains++
-  for (const t of spec.writes) {
+  for (const t of writes) {
     if (!spec.tables.includes(t)) {
       violations.push({ module: mod, table: t, op: 'declare', reason: 'writes_not_in_tables' })
     }

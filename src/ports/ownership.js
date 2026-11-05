@@ -5,6 +5,32 @@
  * 仍允许：规则版本、指标聚合、导出/导入、绑定/对话编排。
  */
 
+/**
+ * 迁移期的写入声明补充表：域对象里写了 writes 的优先用域里的，没写的看这里。
+ * 一次性把剩下的域补齐，省得改十几个对象；补完可以并回域对象。
+ * selfhood / selfread 声明为空数组：它们只读，不该再直接写 memory_items。
+ */
+export const WRITES = Object.freeze({
+  affect: ['affect_baseline', 'affect_episodes', 'affect_events', 'affect_review', 'affect_samples', 'affect_state', 'affect_trigger', 'affect_user_read', 'affect_v3'],
+  drive: ['action_log', 'action_ports', 'budgets', 'cooldowns', 'drive_state'],
+  relations: ['rel_channel', 'rel_edge', 'rel_evidence', 'rel_habit', 'rel_mention', 'rel_person', 'rel_tier', 'rel_violation'],
+  sangguan: [
+    'claim_edges', 'claim_events', 'claim_evidence', 'claim_kappa', 'claim_llm_cache', 'claim_predictions',
+    'claim_proj_claim', 'claim_proj_edge', 'claim_proj_kappa', 'claim_proj_meta', 'claim_proj_nu', 'claim_proj_theta',
+    'claim_purge', 'claim_questions', 'claim_summaries', 'persona_claims', 'sangguan_drafts',
+  ],
+  writegate: ['entities', 'extract_queue', 'memory_pair_judge'],
+  vectors: ['memory_vec'],
+  surfacing: ['surfaced_items'],
+  pulse: ['surface_queue'],
+  algo: ['algo_bindings'],
+  kernel: ['agent_params'],
+  selfhood: [],
+  selfread: ['affect_v3'],
+  poisons: [],
+  values: ['persona_values'],
+})
+
 export const SHARED = Object.freeze([
   'agents', 'events', 'journal', 'idempotency', 'sqlite_master',
   // 两张流水 / 便签：不是业务表，按「谁都可能记一笔」对待。
@@ -232,13 +258,15 @@ export const WRITE_SPLIT = Object.freeze({
   memory_items: ['memory', 'timeline'],
   // persona：人格模块写整行；selfmod 回滚时只按 changes.before 写回 style.* 那几个键。
   persona: ['persona', 'selfmod'],
+  // affect_v3：情绪模块写整行；selfread 回读时只改慢情绪那几个字段。
+  affect_v3: ['affect', 'selfread'],
 })
 
 export function tablesForFile(relPosix) {
   const norm = relPosix.replace(/\\/g, '/')
   for (const [mod, spec] of Object.entries(OWNERSHIP)) {
     if (spec.files.some((f) => norm === f || norm.endsWith('/' + f) || norm.endsWith(f))) {
-      return { module: mod, tables: spec.tables, shared: SHARED, reads: spec.reads || null, writes: spec.writes || null }
+      return { module: mod, tables: spec.tables, shared: SHARED, reads: spec.reads || null, writes: spec.writes || (Object.prototype.hasOwnProperty.call(WRITES, mod) ? WRITES[mod] : null) }
     }
   }
   return null
