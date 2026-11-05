@@ -1324,12 +1324,15 @@ try {
       db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at) VALUES(?,?,?,?,?,?,?)')
         .run(pushId, pv.id, line, 'test', 'C', 'pending', now())
       let got = null
-      const fake = { prompt: async (req) => { got = req } }
+      let gotSig = null
+      const fake = { prompt: async (req, sig) => { got = req; gotSig = sig } }
       const p1 = await pushProactiveLine({ db, aid: pv.id, line, proactiveId: pushId, sessionId: 'sid_test', controller: fake, prefs: { push: true } })
       const rowAfter = db.prepare('SELECT state, delivered_at FROM proactive WHERE id=?').get(pushId)
       check('推送：调 prompt 并标记已投递', p1.ok === true && got && got.sessionId === 'sid_test' && got.mode === 'queue'
         && got.content[0].text.includes(line) && rowAfter.state === 'delivered' && rowAfter.delivered_at == null,
       { p1, got, rowAfter })
+      check('推送：prompt 带上 AbortSignal（宿主必传第二个参数）',
+        !!gotSig && typeof gotSig.aborted === 'boolean', { gotSig: gotSig ? typeof gotSig.aborted : null })
       const p2 = await pushProactiveLine({ db, aid: pv.id, line, proactiveId: pushId, sessionId: 'sid_test', controller: fake, prefs: { push: false } })
       check('推送：没授权就不发', p2.ok === false && p2.reason === 'off', p2)
       const p3 = await pushProactiveLine({ db, aid: pv.id, line, proactiveId: pushId, sessionId: null, controller: fake, prefs: { push: true } })

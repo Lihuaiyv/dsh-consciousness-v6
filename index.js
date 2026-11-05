@@ -11,9 +11,11 @@ import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
 import { attachHostLlm } from './src/model.js'
 import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences, attachContextBlock, closingIntentOf } from './src/features.js'
+// 主动开口零件入口：心跳只认这一个口，不直接碰零件内部
+import { runSpeakTick } from './src/parts/speak/index.js'
 import { nid, purgeExpired, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraft, TARGET_IDS, latestUserEmotion, decayAffect, getDrive, spontaneousTick } from './src/core.js'
 import { seedRuleBindings } from './src/modules/artifacts.js'
-import { DIMS } from './src/modules/values.js'
+import {  } from './src/modules/values.js'
 import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
@@ -55,7 +57,7 @@ import { tickEscalation } from './src/modules/conflict.js'
 import { runNightly, dueDiaryDays, hasDiaryMaterial } from './src/modules/nightly.js'
 import { repairPending, repairOldDiaries, defaultDiaryChat } from './src/modules/diary.js'
 import { readViews } from './src/modules/sangguan/bridge.js'
-import { speakTurn, selfInquiry } from './src/modules/sangguan/speak.js'
+import {  } from './src/modules/sangguan/speak.js'
 import { afterTurn as sangguanAfterTurn } from './src/modules/sangguan/fast.js'
 import { promptHook as sangguanPrompt } from './src/modules/sangguan/inject.js'
 import { ensureHeatBootstrapped, touch } from './src/modules/tiers.js'
@@ -67,9 +69,9 @@ import { addMemory, setFeelProvider } from './src/modules/memory.js'
 import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
-import { resolveAgentId, touchSession, peekPending, bindingOf, bindSession, bindingsOf, runningAgentIds, maxRunning, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
+import { resolveAgentId, peekPending, bindingOf, bindSession, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
-import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, parseChatKey, loadSessionMap, qqChannelBlock, conversationIdOf, chatKeyOfSessionId, qqSessionPrefix } from './src/modules/qq_bridge.js'
+import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock, conversationIdOf, chatKeyOfSessionId } from './src/modules/qq_bridge.js'
 import { findQQSessionsFile } from './src/modules/qq_watch.js'
 import { mindLine, noteMeter, meterFromUsage, meterOf } from './src/modules/mindstate.js'
 import { makeOwnerGuard, verdictFor } from './src/modules/owner_gate.js'
@@ -334,7 +336,7 @@ try { applyDriverToDrive(d, aid) } catch { /* 椹卞姩鎺ㄧ己鍙ｅけ璐ヨ�
 async function heartbeatDeep(aid) {
   const d = ensureDb()
   try {
-    const p = queueProactive(d, aid)
+    const p = runSpeakTick(d, aid)
     const out = p && p.then ? await p : p
     // 无条件调：没有新排的也要看一眼积压里有没有该发的（拿到哪句由函数自己判断）。
     await maybePushProactive(d, aid, out)
@@ -555,7 +557,7 @@ export function commitLoop(db, aid, ids, at = Date.now()) {
 }
 
 /** 兼容旧调用：取到就落账。consciousnessBlock 不再走这条。 */
-export function surfaceLoopLine(db, aid) {
+function surfaceLoopLine(db, aid) {
   const c = loopCandidate(db, aid)
   if (c.text) commitLoop(db, aid, c.ids)
   return c.text

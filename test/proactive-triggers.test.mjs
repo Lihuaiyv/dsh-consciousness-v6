@@ -49,7 +49,7 @@ function basePrefs(w, extra = {}) {
   } finally { w.close() }
 }
 
-// ③ 今天已经说过 → 不再因为开环多说
+// ③ 今天已经说过一句，但有一件到期的事 → 破例说一次（2026-11-05 主人定：一路绿灯）
 {
   const w = makeWorld()
   try {
@@ -58,7 +58,7 @@ function basePrefs(w, extra = {}) {
     w.db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
       .run('prc_old', w.aid, '早上说的那句', 'x', 'R', 'sent', at(-3600000), at(-3600000))
     const d = decideSpeak(w.db, w.aid, { trigger: proactiveTriggerOf(w.db, w.aid) })
-    check('今天说过就按额度拦', d.will === false && ['per_day', 'no_intent'].includes(d.reason), { reason: d.reason })
+    check('今天说过一句，但到期的事仍然破例', d.will === true && d.reason === 'ok', { reason: d.reason })
   } finally { w.close() }
 }
 

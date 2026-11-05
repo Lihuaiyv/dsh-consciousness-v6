@@ -43,6 +43,7 @@ import * as bd from './modules/binding.js'
 import * as qw from './modules/qq_watch.js'
 import * as cv from './modules/conversations.js'
 import * as au from './modules/self_author.js'
+import * as parts from './modules/parts.js'
 import * as res from './modules/self_residue.js'
 import { lifeTick, lifeLine } from './modules/life.js'
 import { model as kernelModel } from './kernel.js'
@@ -523,6 +524,7 @@ async function routes(db, method, path, body, role, bound) {
   }
   if (method === 'GET' && path === '/v1/metrics/catalog') return c.METRICS.map(([key, label]) => ({ key, label }))
   if (method === 'GET' && path === '/v1/algos') return f.catalogAlgos()
+  if (method === 'GET' && path === '/v1/parts') return parts.listParts()
 
   // ---- 关系域：人物账本（v2）。分类不是节点，人是节点；旧 /relations 暂留一版 ----
   const relUrl = path.split('?')[0]
@@ -658,6 +660,23 @@ async function routes(db, method, path, body, role, bound) {
       return jg.judgeSample(db, aid, { limit: Number(q(path, 'limit') || 30), floor: Number(q(path, 'floor') || 0.7) })
     }
     if (method === 'GET' && sub === 'memory') return c.listMemory(db, aid, q(path, 'include_deleted') === '1')
+    // 「按感觉找」：label / 时间段 → 那几条 feel + 同时段的记忆与当天日记。只读。
+    if (method === 'GET' && sub === 'feel' && sub2 === 'search') {
+      return {
+        items: fl.feelRecall(db, aid, {
+          label: q(path, 'label'), from: q(path, 'from'), to: q(path, 'to'),
+          limit: Number(q(path, 'limit') || 10),
+        }),
+        mode: 'feel',
+      }
+    }
+    // 感觉 ↔ 情绪事件对照：我开口前写的 feel，和评价层随后判的事件对不对得上。只读。
+    // 默认只给趋势 + 3 条抽样，别把逐条「不一致」推给人看；full=1 才要全量 pairs。
+    if (method === 'GET' && sub === 'feel' && sub2 === 'compare') {
+      const out = fl.feelEventContrast(db, aid, { days: Number(q(path, 'days') || 7), limit: Number(q(path, 'limit') || 50) })
+      if (q(path, 'full') === '1') return out
+      return { stats: out.stats, samples: out.pairs.slice(0, 3), mode: 'trend' }
+    }
     // 「我最近怎么感觉」：feel 历史（只读）。/:id 取单条；查记忆时顺着 memory.feel 也能翻到。
     if (method === 'GET' && sub === 'feel') {
       if (sub2) {
@@ -806,6 +825,7 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'PUT' && sub === 'proactive' && sub2 === 'settings') return f.setProactivePrefs(db, aid, body)
     if (method === 'GET' && sub === 'proactive') return f.listProactive(db, aid)
     if (method === 'POST' && sub === 'proactive' && sub2) return f.ackProactive(db, aid, sub2)
+    if (method === 'PUT' && sub === 'loops' && sub2) return f.markLoopImportant(db, aid, decodeURIComponent(sub2), body.important !== false)
     if (method === 'GET' && sub === 'blind') return f.startBlind(db, aid)
     if (method === 'POST' && sub === 'blind' && sub2) return f.scoreBlind(db, aid, sub2, body.answers)
     if (method === 'GET' && sub === 'legitimacy') return c.legitimacy(db, aid)
@@ -841,10 +861,13 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'POST' && sub === 'extract-queue' && sub2 === 'retry') return { retried: ex.retryFailed(db, aid) }
     if (method === 'GET' && sub === 'archive' && sub2 === 'facts') {
       const query = q(path, 'q')
+      const items = query
+        ? ar.searchFactArchive(db, aid, query, Number(q(path, 'k') || 8))
+        : ar.listFactArchive(db, aid, { limit: Number(q(path, 'limit') || 50), offset: Number(q(path, 'offset') || 0) })
+      // 存根出生那一刻的感觉：只挂 id 对应的那条，没有就 null（不拿最近的顶）
+      const feelMap = fl.feelsByIds(db, items.map((i) => i.feel_id))
       return {
-        items: query
-          ? ar.searchFactArchive(db, aid, query, Number(q(path, 'k') || 8))
-          : ar.listFactArchive(db, aid, { limit: Number(q(path, 'limit') || 50), offset: Number(q(path, 'offset') || 0) }),
+        items: items.map((i) => ({ ...i, feel: i.feel_id ? (feelMap.get(i.feel_id) || null) : null })),
         mode: query ? 'search' : 'timeline',
       }
     }
@@ -857,10 +880,21 @@ async function routes(db, method, path, body, role, bound) {
       }
     }
     if (method === 'GET' && sub === 'sessions') return ar.listSessions(db, aid, Number(q(path, 'limit') || 50))
-    if (method === 'GET' && sub === 'episodes') return ar.listEpisodes(db, aid, { day: q(path, 'day'), limit: Number(q(path, 'limit') || 30) })
+    if (method === 'GET' && sub === 'episodes') {
+      const items = ar.listEpisodes(db, aid, { day: q(path, 'day'), limit: Number(q(path, 'limit') || 30) })
+      const feelMap = fl.feelsByIds(db, items.map((x) => x.feel_id))
+      return items.map((x) => ({ ...x, feel: x.feel_id ? (feelMap.get(x.feel_id) || null) : null }))
+    }
     if (method === 'GET' && sub === 'diaries' && sub2) {
       const row = ar.getDiary(db, aid, sub2)
-      if (row) return row
+      if (row) {
+        // 这一天的感觉：存的是 id 列表，拼成原话给页面看；找不到的 id 不硬凑
+        let ids = []
+        try { ids = JSON.parse(row.feel_ids || '[]') } catch { ids = [] }
+        ids = Array.isArray(ids) ? ids : []
+        const feelMap = fl.feelsByIds(db, ids)
+        return { ...row, feels: ids.map((id) => feelMap.get(id)).filter(Boolean) }
+      }
       // 没写成不是 404：把待补状态带回去，面板才能说「等模型回来补」。
       const pend = diary.pendingForDay(db, aid, sub2)
       if (pend) return { day: sub2, text: '', source: 'none', pending: true, attempts: Number(pend.attempts || 0), fail_reason: pend.last_error || null }
@@ -978,7 +1012,9 @@ async function routes(db, method, path, body, role, bound) {
     if (method === 'GET' && sub === 'relations' && sub2 === 'review') return { items: R.listReview(db, aid) }
     if (method === 'GET' && sub === 'relations' && sub2 === 'events') {
       R.bootstrap(db, aid)
-      return { items: R.listEvents(db, aid, Number(q(path, 'limit') || 20)) }
+      const items = R.listEvents(db, aid, Number(q(path, 'limit') || 20))
+      const feelMap = fl.feelsByIds(db, items.map((x) => x.feel_id))
+      return { items: items.map((x) => ({ ...x, feel: x.feel_id ? (feelMap.get(x.feel_id) || null) : null })) }
     }
     if (method === 'POST' && sub === 'relations' && sub2 === 'tick') return R.tick(db, aid, body)
     if (method === 'GET' && sub === 'mentions') {

@@ -537,7 +537,8 @@ export function budgetSet(db, aid, body) {
 
 export function budgetConsume(db, aid, kind, amount = 1) {
   const b = budgetGet(db, aid)
-  if (kind === 'disturb' && b.disturb_used + amount > b.disturb_limit) err(409, 'BUDGET', '今日打扰预算已用完')
+  // 打扰预算的「限额判断」统一在 decideSpeak 里做（按天 + 月度兜底）；这里只记账。
+  // 两处各判一次的话，决策说「能说」、记账说「没钱」，就会像 11-05 那样卡死。
   if (kind === 'token' && b.token_limit && b.token_used + amount > b.token_limit) err(409, 'BUDGET', 'token 预算已用完')
   if (kind === 'disturb') db.prepare('UPDATE budgets SET disturb_used=disturb_used+?, updated_at=? WHERE agent_id=?').run(amount, now(), aid)
   if (kind === 'token') db.prepare('UPDATE budgets SET token_used=token_used+?, updated_at=? WHERE agent_id=?').run(amount, now(), aid)

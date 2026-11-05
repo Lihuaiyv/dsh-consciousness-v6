@@ -26,12 +26,17 @@ export async function pushProactiveLine({ db, aid, line, proactiveId, sessionId,
   if (!controller || typeof controller.prompt !== 'function') return { ok: false, reason: 'no_port' }
   if (!line) return { ok: false, reason: 'empty' }
   try {
+    // 宿主 sessionController.prompt(request, signal)：第二个参数是必传的 AbortSignal。
+    // 不传的话宿主内部 signal.throwIfAborted() 会炸（11-03 那条 prompt_failed 就是这么来的）。
+    const signal = typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(15000)
+      : new AbortController().signal
     await controller.prompt({
       requestId: 'preq_' + Math.random().toString(36).slice(2) + Date.now().toString(36),
       sessionId,
       mode: 'queue',
       content: [{ type: 'text', text: proactivePushText(line) }],
-    })
+    }, signal)
     // delivered_at 留空：主动推的不算「24 小时没回就被忽略」，等对方真回话再记 answered
     const r = db.prepare("UPDATE proactive SET state='delivered', delivered_at=NULL WHERE id=? AND state='pending'").run(proactiveId)
     try {

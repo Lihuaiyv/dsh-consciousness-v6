@@ -3792,6 +3792,14 @@ window.__ModuleLoader__.load({
       const filled = counts
         ? HEAT_BANDS.filter((b) => Number(counts[b.key] || 0) > 0).length
         : HEAT_BANDS.filter((b) => byBand[b.key].length > 0).length
+      // 同一条感觉会被好几条记忆共享：列表里只展开一次，其余写「同上一条」
+      const feelOnce = new Set()
+      const rowOnce = (m) => {
+        const key = m.feel && m.feel.text ? String(m.feel.text) : ''
+        const dup = !!key && feelOnce.has(key)
+        if (key && !dup) feelOnce.add(key)
+        return row(m, dup)
+      }
       // 鏈湴 mix锛岄伩鍏嶄緷璧栧悗闈㈡墠澹版槑鐨?tlMix锛堟湁鐨勫姞杞藉櫒涓嶆寜鍑芥暟鎻愬崌锛?''
               const mixOf = (arr) => {
         const m = new Map()
@@ -3864,11 +3872,11 @@ window.__ModuleLoader__.load({
                 ? h('div', { className: 'dshc-tl-body' }, h('div', { className: 'dshc-sub' },
                     nAll > 0 ? '这档有 ' + nAll + ' 条，当前榜没展到（配额给了更烫的档）。' : '这档还没有。'))
                 : h('div', { className: 'dshc-tl-body' },
-                    list.slice(0, 10).map((m) => row(m)),
+                    list.slice(0, 10).map((m) => rowOnce(m)),
                     list.length > 10
                       ? h('details', { className: 'dshc-fold dshc-tl-more' },
                           h('summary', null, '另外 ' + (list.length - 10) + ' 条 · 点开'),
-                          list.slice(10).map((m) => row(m)))
+                          list.slice(10).map((m) => rowOnce(m)))
                       : null))
           })))
     }
@@ -3959,7 +3967,7 @@ window.__ModuleLoader__.load({
       const metricSlice = useMetricSlice(aid, 0, 9)
 
       // 涓庢椂闂寸嚎 TLRow 鍚岄鏋讹細鍦嗙偣 + 姝ｆ枃 + 鐑害锛涙爣璁拌窡鍙充晶锛屽師璇濆崟鐙竴琛?''
-              const memRow = (m) => h('div', { key: m.id },
+              const memRow = (m, dupFeel) => h('div', { key: m.id },
         h('div', { className: 'dshc-tl-row' },
           h('span', { className: 'dshc-tl-dot', 'data-t': m.type, title: TYPE_LABEL[m.type] || m.type }),
           h('div', { className: 't', title: m.text }, m.text),
@@ -3983,9 +3991,9 @@ window.__ModuleLoader__.load({
         m.feel && m.feel.text
           ? h('div', {
             className: 'dshc-sub',
-            style: { margin: '0 0 6px 14px', fontSize: 12.5, opacity: 0.8 },
+            style: { margin: '0 0 6px 14px', fontSize: 12.5, opacity: dupFeel ? 0.5 : 0.8 },
             title: '出生那一刻自己写下的感觉：' + (m.feel.at || ''),
-          }, '当时的感觉：' + m.feel.text)
+          }, dupFeel ? '当时的感觉：同上一条' : '当时的感觉：' + m.feel.text)
           : null)
 
       async function mark(m, value) {
@@ -4623,7 +4631,14 @@ window.__ModuleLoader__.load({
                   className: 'dshc-sub',
                   style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
                 }, relEventText(e)),
-                h('span', { className: 'm dshc-mono' }, relWhen(e.at))))))))
+                h('span', { className: 'm dshc-mono' }, relWhen(e.at))),
+              e.feel && e.feel.text
+                ? h('div', {
+                  className: 'dshc-sub',
+                  title: '这笔账发生那一刻的感觉：' + (e.feel.at || ''),
+                  style: { marginTop: 2, marginLeft: 2, fontSize: 11.5, opacity: 0.62 },
+                }, '当时的感觉：' + String(e.feel.text).slice(0, 60))
+                : null)))))
     }
 
     function EdgeGraphPanel({ aid }) {
@@ -5152,6 +5167,16 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 } },
           h(Pill, null, day),
           chips.map((c, i) => h(Pill, { key: i }, c))),
+        d.feels && d.feels.length
+          ? h('div', { className: 'dshc-sub', style: { marginBottom: 8, lineHeight: 1.7 } },
+            '这一天的感觉（' + d.feels.length + ' 条）',
+            d.feels.slice(0, 3).map((f) => h('div', { key: f.id, style: { marginTop: 2 } },
+              '· ' + String(f.text || '') + (f.at ? '（' + String(f.at).slice(11, 16) + '）' : ''))),
+            d.feels.length > 3
+              ? h('div', { style: { marginTop: 2, opacity: 0.7 } },
+                '还有 ' + (d.feels.length - 3) + ' 条，去「我最近怎么感觉」看全部')
+              : null)
+          : null,
         h('textarea', {
           className: 'dshc-ta', readOnly: true, value: pending ? '' : String(d.text || ''),
           style: { width: '100%', minHeight: 260, lineHeight: 1.9, resize: 'vertical', background: 'transparent', fontSize: 13.5 },
@@ -7515,6 +7540,95 @@ window.__ModuleLoader__.load({
         h('div', { className: 'dshc-sub', style: { opacity: .72 } }, agoText(c.applied_at)))
     }
 
+    /* ---------------- 零件盒：零件册在界面上的落点（自修改页最上面） ---------------- */
+
+    /** 一个零件现在能不能换：登记 + 考卷 + 回退点，三样缺一就标黄 */
+    function partState(p) {
+      if (p && p.status === '已退役') return ['已退役', undefined]
+      const hasExam = !!(p && p.exam && p.exam.file)
+      const hasRollback = !!(p && p.rollback && p.rollback.pointer)
+      if (!hasExam) return ['在用 · 没考卷', 'warn']
+      if (!hasRollback) return ['有考卷 · 没回退点', 'warn']
+      const score = p.exam.score
+      return ['可换' + (score != null ? ' · 最近 ' + score : ''), 'ok']
+    }
+
+    function partsSearch(p, kw) {
+      if (!kw) return true
+      const hay = [p.id, p.name, p.owner, p.role, p.chain, p.judge]
+        .concat(p.files || []).join(' ').toLowerCase()
+      return hay.indexOf(kw) >= 0
+    }
+
+    function PartRow({ p, open, onToggle }) {
+      const [state, tone] = partState(p)
+      const tags = [p.role ? '角色 · ' + p.role : null, p.chain || null, p.judge ? '判准 · ' + p.judge : null]
+        .filter(Boolean).join(' ｜ ')
+      // 窄屏也别冲破：长文本一律允许换行，flex 子项允许收缩
+      const wrap = { minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word', overflowWrap: 'anywhere' }
+      const muted = { ...wrap, color: 'var(--muted)', fontSize: 11, lineHeight: 1.5 }
+      return h('div', {
+        className: 'dshc-item dshc-part', 'data-open': open ? '1' : '0',
+        style: { flexDirection: 'column', alignItems: 'stretch', gap: 5, minWidth: 0 },
+      },
+        h('div', {
+          style: { display: 'flex', gap: '4px 10px', alignItems: 'baseline', flexWrap: 'wrap', cursor: 'pointer', minWidth: 0 },
+          role: 'button', tabIndex: 0, title: open ? '收起' : '点开看考卷和回退点',
+          onClick: onToggle,
+          onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } },
+        },
+          h('span', { className: 't', style: { flex: '1 1 140px', ...wrap } }, p.name || p.id),
+          h(Pill, { tone }, state),
+          h('span', { className: 'm dshc-mono', style: { flex: '0 0 auto' } }, p.version || '—')),
+        h('div', { style: { ...muted, opacity: 0.9 } }, p.owner || '—'),
+        h('div', { style: { ...muted, opacity: 0.75 } }, tags || '—'),
+        open ? h('div', { style: { borderTop: '1px dashed var(--line)', paddingTop: 6, minWidth: 0 } },
+          h(Row, { label: '文件' }, h('span', { className: 'm dshc-mono', style: wrap }, (p.files || []).join(' · ') || '—')),
+          h(Row, { label: '入口' }, h('span', { className: 'm', style: wrap }, p.entry || '—')),
+          h(Row, { label: '考卷' }, h('span', { className: 'm', style: wrap },
+            p.exam && p.exam.file
+              ? (p.exam.file + (p.exam.score != null ? ' · 最近 ' + p.exam.score : ''))
+              : (p.exam && p.exam.note) || '没写考卷')),
+          h(Row, { label: '迁移断言' }, h('span', { className: 'm', style: wrap }, p.assert || '还没写')),
+          h(Row, { label: '换的记录' }, h('span', { className: 'm', style: wrap },
+            (p.swaps && p.swaps.length)
+              ? p.swaps.map((s) => [s.who || '?', s.at || '', s.from && s.to ? s.from + ' → ' + s.to : ''].filter(Boolean).join(' · ')).join('；')
+              : '还没换过')),
+          h(Row, { label: '回退点' }, h('span', { className: 'm', style: wrap },
+            (p.rollback && p.rollback.pointer) || (p.rollback && p.rollback.note) || '还没建')))
+        : null)
+    }
+
+    function PartsBox({ view }) {
+      const [kw, setKw] = useState('')
+      const [open, setOpen] = useState({})
+      const [parts] = useAsync(() => call('GET', '/v1/parts'), [])
+      const list = Array.isArray(parts.data) ? parts.data : []
+      const k = kw.trim().toLowerCase()
+      const shown = list.filter((p) => partsSearch(p, k))
+      const rows = shown.map((p) => h(PartRow, {
+        key: p.id, p, open: !!open[p.id],
+        onToggle: () => setOpen((o) => ({ ...o, [p.id]: !o[p.id] })),
+      }))
+      return h(Sec, {
+        title: '零件盒',
+        desc: view === 'user'
+          ? '它身上能单独拎出来换的东西。没考卷的先标黄——先考，再换。'
+          : '零件册在界面上就这一块。默认一行一个零件；点开看考卷、迁移断言、换的记录、回退点。登记、考卷、回退点三样齐了才叫可换。',
+        right: h(Pill, null, list.length + ' 个'),
+      }, h(Card, null,
+        h('div', { className: 'dshc-form' },
+          h(Input, {
+            className: 'grow', placeholder: '搜零件：名字 / 归属 / 文件',
+            value: kw, onChange: (e) => setKw(e.target.value),
+          })),
+        parts.error
+          ? h(LoadErr, { error: '零件册读取失败：' + parts.error })
+          : list.length === 0 ? h(Empty, null, '零件册里还没有登记的零件。')
+            : shown.length === 0 ? h(Empty, null, '没有匹配的零件。')
+              : h('div', { className: 'dshc-list', style: { marginTop: 8 } }, rows)))
+    }
+
     function SelfPage({ aid, view, act, setTab }) {
       const [tick, setTick] = useState(0)
       const [err, setErr] = useState('')
@@ -7724,6 +7838,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dshc-note' }, 'C3 进影子（20 轮），C2 直接 screened；G7 永远 pending，只能由你点。')))
 
       return h('div', null,
+        h(PartsBox, { view }),
         proposalSection,
         autoSection,
         authorSection,

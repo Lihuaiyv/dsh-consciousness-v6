@@ -1,7 +1,7 @@
 {
   "source": "client.js · 各页 Sec / FoldBlock 区块（自动生成，勿手改）",
   "tabs": 1,
-  "items": 99,
+  "items": 100,
   "groups": [
     {
       "name": "全部区块",
@@ -64,6 +64,7 @@
         "缺口与预算（deficit / tokens）",
         "合法性约束",
         "行动接口",
+        "零件盒",
         "收件箱",
         "想法与门槛（targets / drafts）",
         "算法版本与灰度",

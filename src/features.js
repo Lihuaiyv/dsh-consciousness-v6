@@ -18,6 +18,20 @@ import { TARGETS, targetById } from './modules/selfmod_targets.js'
 import { setPending, setWokenAt, runningAgentIds, maxRunning, wakeRuntime } from './modules/binding.js'
 import { latestShare } from './modules/life.js'
 import { promptBudget, isOwner, isLocalChannel, historyTurns, recallItems } from './modules/conversations.js'
+// 主动开口零件（src/parts/speak/）：偏好、额度、事由、判断、存储、生成已搬进去，这里只 import 来用
+import { PROACTIVE_DEFAULTS, getProactivePrefs, setProactivePrefs } from './parts/speak/prefs.js'
+import { proactiveSpend, addProactiveSpend } from './parts/speak/budget.js'
+import { markLoopImportant, isLoopImportant, proactiveTriggerOf } from './parts/speak/trigger.js'
+import { decideSpeak, proactiveDecision, nextTryInHours, proactiveGate, proactiveCost, minDeficitFor } from './parts/speak/judge.js'
+import { model, freeformModelHook } from './parts/speak/hooks.js'
+import { composeProactiveLine } from './parts/speak/compose.js'
+import { recordProactiveDecision, listProactiveDecisions, lastProactiveDecision, listProactive, settleProactiveAnswered, markProactiveIgnored, proactiveStats, ackProactive, bumpStat } from './parts/speak/store.js'
+export { composeProactiveLine }
+export {
+  decideSpeak, proactiveDecision, nextTryInHours, proactiveGate, proactiveCost, minDeficitFor,
+  recordProactiveDecision, listProactiveDecisions, lastProactiveDecision, listProactive,
+  settleProactiveAnswered, markProactiveIgnored, proactiveStats, ackProactive,
+}
 import { appendTurn, buildEpisode } from './modules/archive.js'
 import * as R from './modules/relations.js'
 import { enqueueRelationRead } from './modules/relations_extract.js'
@@ -98,6 +112,7 @@ export function patchAlgoBinding(db, aid, name, body, role) {
 }
 import { looksLikeRuntimeNoise, cleanLine } from './text.js'
 import { latestFeel } from './modules/feel.js'
+import { feelIdsAll } from './modules/feel.js'
 import { createModel, composeRulesReply, appraiseRules } from './model.js'
 import { zipStore, unzipStore } from './zip.js'
 import {
@@ -111,7 +126,7 @@ import { asofInjectItems } from './modules/asof.js'
 import { rebuildRawFts, rebuildFactFts } from './modules/archive.js'
 import { entityForText } from './modules/entities.js'
 import { applyWrite } from './modules/gate.js'
-import { narrationOnly, selfTextOk } from './modules/memory_source.js'
+import { narrationOnly, selfTextOk, classifySelf, scoreSelf } from './modules/memory_source.js'
 import { enrichOne, enrichPending, canEnrich } from './modules/enrich.js'
 import { judgeReflection, canJudge } from './modules/judge.js'
 import { detectLoop, addLoop, settleLoopsFromUser, expireLoops, pendingLoops, markLoopsFired } from './modules/loops.js'
@@ -124,7 +139,7 @@ import {
   executeAction, listActions, applySatisfaction,
 } from './modules/drive.js'
 
-const model = createModel()
+// model 单例已搬到 src/parts/speak/hooks.js（开口生成与测试钩子共用同一份）
 
 /* ---------------- 外部通道的意识体包 ----------------
  * 网页端由 index.js 的 systemPrompt.section 注入 consciousnessBlock；
@@ -145,8 +160,8 @@ export function clampContextBlock(s, max) {
   return t.slice(0, Math.max(0, max - 16)) + '\n…（上下文按预算截断）'
 }
 
-/** 测试钩子：可替换自由导入的模型调用 */
-export const freeformModelHook = { complete: null }
+/** 测试钩子：可替换自由导入的模型调用（定义在零件里，这里 re-export，测试照旧从 features 注入） */
+export { freeformModelHook }
 /** 测试钩子：可替换「自己长偏好」的模型调用 */
 export const growModelHook = { complete: null }
 
@@ -373,15 +388,113 @@ export async function learnRelationsFromTurns(db, aid, turns) {
   return out
 }
 
-/** 今天已经写了多少条「我自己」——按本地日界算，和她的「今天」一致。 */
+/** 今天已经写了多少条「我自己」——按本地日界算，和她的「今天」一致。
+ *  冷层不算：那几条退到深查层了，不该占平常的名额。 */
 export function selfCountToday(db, aid, at = Date.now()) {
   try {
     const d = new Date(at)
     d.setHours(0, 0, 0, 0)
     const since = d.toISOString()
-    return Number(db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND source='self' AND created_at>=?")
+    return Number(db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND source='self' AND created_at>=? AND (temp_state IS NULL OR temp_state<>'cold')")
       .get(aid, since).n || 0)
   } catch { return 0 }
+}
+
+/** 这一小段时间还能留几条：别让早上的话把一整天的额度一次用完。 */
+export function selfWindowState(db, aid, at = Date.now()) {
+  try {
+    const winH = Math.max(1, Math.min(24, Number(getParam(db, aid, 'self.window_hours')) || 3))
+    const dayCap = selfQuotaToday(db, aid, at)
+    const want = Math.max(1, Number(getParam(db, aid, 'self.per_window')) || Math.ceil(dayCap / 4))
+    const cap = Math.max(1, Math.min(30, want))
+    const since = new Date(at - winH * 3600 * 1000).toISOString()
+    const n = Number(db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND source='self' AND created_at>=? AND (temp_state IS NULL OR temp_state<>'cold')")
+      .get(aid, since).n || 0)
+    return { cap, winH, used: n, left: Math.max(0, cap - n) }
+  } catch { return { cap: 2, winH: 3, used: 0, left: 2 } }
+}
+
+/** 当天额度：安静的日子保底，聊得多、被挡得多就往上浮。
+ *  缓存一小时，别每写一句都数一遍事件。 */
+const quotaCache = new Map()
+export function selfQuotaToday(db, aid, at = Date.now()) {
+  try {
+    const auto = String(getParam(db, aid, 'self.quota.auto') || 'on') !== 'off'
+    const base = Math.max(1, Math.min(30, Number(getParam(db, aid, 'self.quota.base')) || 4))
+    const max = Math.max(base, Math.min(40, Number(getParam(db, aid, 'self.quota.max')) || 16))
+    if (!auto) return Math.max(1, Math.min(30, Number(getParam(db, aid, 'self.per_day')) || 8))
+    const hourKey = Math.floor(at / 3600000)
+    const hit = quotaCache.get(aid)
+    if (hit && hit.hour === hourKey) return hit.quota
+    const d = new Date(at)
+    d.setHours(0, 0, 0, 0)
+    const since = d.toISOString()
+    const turns = Number(db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='chat.turn' AND created_at>=?").get(aid, since).n || 0)
+    const blocked = Number(db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type IN ('memory.self_rejected','memory.self_cold') AND created_at>=?").get(aid, since).n || 0)
+    const q = Math.round(base + turns / 15 + blocked / 25)
+    const quota = Math.max(base, Math.min(max, q))
+    quotaCache.set(aid, { hour: hourKey, quota })
+    return quota
+  } catch { return 8 }
+}
+
+/** 按分量换人：拿当天冷层里分最高的，跟热层里分最低的比，差够了才换。
+ *  每 3 小时跑一次（由 ingest 顺带触发），单次最多换两条，防一天大搬家。 */
+export function settleSelfHot(db, aid, at = Date.now()) {
+  try {
+    if (String(getParam(db, aid, 'self.settle') || 'on') === 'off') return { moved: 0, skipped: 'off' }
+    const d = new Date(at)
+    d.setHours(0, 0, 0, 0)
+    const since = d.toISOString()
+    const gap = Math.max(0.05, Math.min(0.5, Number(getParam(db, aid, 'self.settle.gap')) || 0.15))
+    const maxMove = Math.max(1, Math.min(3, Number(getParam(db, aid, 'self.settle.max_move')) || 2))
+    const base = "FROM memory_items WHERE agent_id=? AND source='self' AND status='active' AND deleted_at IS NULL AND created_at>=?"
+    const cold = db.prepare('SELECT id,text,importance ' + base + " AND temp_state='cold' ORDER BY importance DESC, created_at ASC LIMIT ?").all(aid, since, maxMove)
+    const hot = db.prepare('SELECT id,text,importance ' + base + " AND (temp_state IS NULL OR temp_state IN ('hot','warm')) ORDER BY importance ASC, created_at ASC LIMIT ?").all(aid, since, maxMove)
+    let moved = 0
+    const used = new Set()
+    for (const c of cold) {
+      const h = hot.find((x) => !used.has(x.id))
+      if (!h) break
+      const up = Number(c.importance) || 0
+      const down = Number(h.importance) || 0
+      if (up - down <= gap) break
+      db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=?").run(now(), h.id)
+      db.prepare("UPDATE memory_items SET temp_state='hot', state_since=? WHERE id=?").run(now(), c.id)
+      used.add(h.id)
+      moved++
+      try { event(db, aid, 'memory.self.settle', { up: c.id, down: h.id, up_score: up, down_score: down }) } catch { /* 忽略 */ }
+    }
+    return { moved, cold: cold.length, hot: hot.length, gap }
+  } catch { return { moved: 0, error: true } }
+}
+
+const lastSettle = new Map()
+/** ingest 里顺带触发：不到间隔就不跑，别每轮都算一遍。 */
+function maybeSettleSelf(db, aid, at = Date.now()) {
+  try {
+    if (String(getParam(db, aid, 'self.settle') || 'on') === 'off') return
+    const every = Math.max(1, Math.min(24, Number(getParam(db, aid, 'self.settle.every_hours')) || 3))
+    const last = Number(lastSettle.get(aid) || 0)
+    if (at - last < every * 3600 * 1000) return
+    lastSettle.set(aid, at)
+    settleSelfHot(db, aid, at)
+  } catch { /* 结算失败不影响这一轮 */ }
+}
+
+/** 判过的话记在内存里：同一句被反复抽出来时不重问模型。进程重启就清空，只当省调用。 */
+const selfJudgedCache = new Map()
+function selfJudgeKey(text) {
+  return String(text || '').trim().replace(/\s+/g, ' ').slice(0, 200).toLowerCase()
+}
+
+/** 落冷层：addMemory 的 cold 分支在「撞到重复、改走合并」时不会生效，这里补一刀。 */
+function forceCold(db, id) {
+  if (!id) return
+  try {
+    db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=? AND (temp_state IS NULL OR temp_state<>'cold')")
+      .run(now(), id)
+  } catch { /* 老库没温度列就当热的 */ }
 }
 
 /**
@@ -399,41 +512,96 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
   // ---- P1 她自己的车道 ----
   if (String((m && m.who) || '') === 'self') {
     if (String(getParam(db, aid, 'memory.write.self') || 'on') === 'off') return { action: 'drop', reason: 'self_off' }
-    // 闸门：必须第一人称、6~120 字、不是旁白、不是运行时噪音。
-    if (!selfTextOk(text)) {
-      // 记下为什么被挡：只靠 reason:'gate' 分不出是「太长」还是「不像我」，
-      // 而这两种要改的地方完全不同（前者改阈值，后者改抽取提示词）。
-      const why = (text.length < 6 || text.length > 120) ? 'len'
-        : narrationOnly(text) ? 'narration'
-          : (/^(User|Assistant|user|assistant)\s*[:：]/.test(text) || /^\s*[\[{<]/.test(text) || /出错了|failed|Traceback|Error:/i.test(text)) ? 'noise'
-            : 'head'
-      try { event(db, aid, 'memory.self_rejected', { reason: 'gate', why, len: text.length, head: text.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
-      return { action: 'drop', reason: 'self_gate' }
+    /* 三档：ok 直接留；drop 明显不要；unsure 交给调用方先问模型（opt.selfDecision）。
+       判不了 / 模型超时 / 没配额 → 落冷层，不丢：丢掉的话，那件事就真没了。 */
+    const cls = classifySelf(text)
+    const body = cls.text || text
+    // 场景分：规则分打底；拿不准的让模型补一句（六成规则、四成模型），只有模型给了分才混。
+    const ruleScore = scoreSelf(body)
+    const modelHay = typeof opt.selfDecision === 'function' ? opt.selfDecision(text) : null
+    const modelScore = modelHay && Number.isFinite(Number(modelHay.score)) ? Number(modelHay.score) : null
+    const score = Math.max(0.05, Math.min(0.95, modelScore == null ? ruleScore : ruleScore * 0.6 + modelScore * 0.4))
+    let verdict
+    if (cls.tier === 'ok') verdict = { keep: true }
+    else if (cls.tier === 'drop') verdict = { keep: false, cold: !!cls.cold, why: cls.why }
+    else {
+      if (modelHay && modelHay.keep === true) verdict = { keep: true }
+      else if (modelHay && modelHay.keep === false) verdict = { keep: false, cold: true, why: 'model' }
+      else verdict = { keep: false, cold: true, why: cls.why } // 没判：留冷层，可回查
     }
-    // 每日上限：一天最多 self.per_day 条，防自恋式刷屏。
-    const cap = Math.max(1, Math.min(30, Number(getParam(db, aid, 'self.per_day')) || 8))
-    if (selfCountToday(db, aid) >= cap) {
+    // 按分量选人：低分的不占热层名额，直接落冷（还能结算上来）。
+    const admission = String(getParam(db, aid, 'self.admission') || 'time')
+    const minScore = Math.max(0, Math.min(1, Number(getParam(db, aid, 'self.admission.min_score')) || 0.35))
+    if (verdict.keep && admission === 'score' && score < minScore) {
+      verdict = { keep: false, cold: true, why: 'low_score' }
+    }
+    if (!verdict.keep) {
+      try { event(db, aid, 'memory.self_rejected', { reason: 'gate', why: verdict.why, score, len: body.length, head: body.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
+      let id = null
+      if (verdict.cold) {
+        try {
+          const row = addMemory(db, aid, {
+            text: body, type: 'episode', mark: (m && m.mark) || 'normal',
+            source: 'self', confidence: 0.5, importance: score, cold: true, turn_id: opt.turnId || null,
+          })
+          id = row && row.id
+          forceCold(db, id)
+          try { event(db, aid, 'memory.self_cold', { why: verdict.why, score, head: body.slice(0, 40) }) } catch { /* 忽略 */ }
+        } catch { /* 冷层写失败就当没写 */ }
+      }
+      return { action: 'drop', reason: 'self_gate', cold: !!id, id, score }
+    }
+    // 配额两道：一天总量（跟着实际浮动）+ 每窗口量。超了落冷，不丢。
+    // 为什么分软硬：日额度是「今天大概记几条」的目标，不是硬闸——硬闸是窗口（每 3 小时 2 条），
+    // 否则早上写满 6 条，下午再想到什么都进不来。auto 关掉时回到旧的硬日闸。
+    const dayCap = selfQuotaToday(db, aid)
+    const win = selfWindowState(db, aid)
+    const usedToday = selfCountToday(db, aid)
+    const autoOn = String(getParam(db, aid, 'self.quota.auto') || 'on') !== 'off'
+    const hardMax = Math.max(dayCap, Math.min(40, Number(getParam(db, aid, 'self.quota.max')) || 16))
+    const dayLimit = (admission === 'score' && autoOn) ? hardMax : dayCap
+    const bypass = Math.max(0, Math.min(1, Number(getParam(db, aid, 'self.admission.bypass_score')) || 0.7))
+    const allowBypass = admission === 'score' && score >= bypass && usedToday < hardMax + 2
+    if ((usedToday >= dayLimit || win.left <= 0) && !allowBypass) {
+      const reason = usedToday >= dayLimit ? 'per_day' : 'per_window'
       // 带上头部：不然「被上限挡掉的是流水账还是真事」永远答不上来（体检脚本要用）。
-      try { event(db, aid, 'memory.self_rejected', { reason: 'per_day', cap, len: text.length, head: text.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
-      return { action: 'drop', reason: 'self_per_day' }
+      try { event(db, aid, 'memory.self_rejected', { reason, cap: dayCap, window_hours: win.winH, score, len: body.length, head: body.slice(0, 40) }) } catch { /* 事件失败不影响写入 */ }
+      let id = null
+      try {
+        const row = addMemory(db, aid, {
+          text: body, type: 'episode', mark: (m && m.mark) || 'normal',
+          source: 'self', confidence: 0.5, importance: score, cold: true, turn_id: opt.turnId || null,
+        })
+        id = row && row.id
+        forceCold(db, id)
+        try { event(db, aid, 'memory.self_cold', { why: reason, score, head: body.slice(0, 40) }) } catch { /* 忽略 */ }
+      } catch { /* 冷层写失败就当没写 */ }
+      return { action: 'cold', reason: 'self_' + reason, cold: true, id, score }
+    }
+    if (allowBypass && (usedToday >= dayCap || win.left <= 0)) {
+      try { event(db, aid, 'memory.self.bypass', { score, cap: dayCap, used: usedToday, head: body.slice(0, 40) }) } catch { /* 忽略 */ }
     }
     const row = addMemory(db, aid, {
-      text, type: 'episode', mark: (m && m.mark) || 'normal',
-      source: 'self', confidence: 0.75, importance: 0.45, turn_id: opt.turnId || null,
+      text: body, type: 'episode', mark: (m && m.mark) || 'normal',
+      source: 'self', confidence: 0.75, importance: score, turn_id: opt.turnId || null,
     })
-    return { action: row && row.duplicate ? 'merge' : 'new', id: row && row.id, self: true }
+    return { action: row && row.duplicate ? 'merge' : 'new', id: row && row.id, self: true, score }
   }
   const type = (m && m.type) || 'fact'
   const seedFn = typeof opt.seed === 'function' ? opt.seed : (t, ty) => seedScores(t, ty, 0)
   const ent = (() => { try { return entityForText(db, aid, text) } catch { return null } })()
   const narr = narrationOnly(text)
+  // 这个 key 要同时喂给两层：gate 的判定读 cand.fact_key（决定「同 key 原地改写」），
+  // addMemory 的落库读 cand.key / cand.fact_key。以前只传了 key，门控拿到的 factKey 永远空，
+  // 「同 key 更新」分支在提取路径上从没生效过——旧条全靠 addMemory 的 supersedeByKey 兜底。
+  const factKey = String((m && (m.key || m.fact_key)) || '').trim()
   const out = applyWrite(db, aid, {
-    text, entity_id: ent ? ent.id : null, key: (m && m.key) || '', terms: (m && m.terms) || [],
+    text, entity_id: ent ? ent.id : null, fact_key: factKey, key: factKey, terms: (m && m.terms) || [],
   }, (cand) => addMemory(db, aid, {
     text: cand.text, type, mark: (m && m.mark) || 'normal',
     entity_id: cand.entity_id || null, source: 'extract', confidence: narr ? 0.5 : 0.7,
     cold: narr, turn_id: opt.turnId || null, ...seedFn(cand.text, type),
-    fact_key: cand.key || '', terms: cand.terms || [],
+    fact_key: cand.fact_key || cand.key || '', terms: cand.terms || [],
   }))
   if (narr && out.id && out.action !== 'new') {
     try {
@@ -533,14 +701,66 @@ export async function ingest(db, aid, body) {
   const written = []
   const newPairs = [] // 这一轮真正新落库的条目：{text, id}，开环从它们里长
   const actions = { new: 0, merge: 0, conflict: 0, drop: 0 }
+  /* 拿不准的自我条目：一次问模型，别一条一调。
+     缓存按文本：同一句话被反复抽出来时不重问；模型没判 / 超时 → writeExtractedItem 落冷层。 */
+  const selfDecision = await (async () => {
+    try {
+      if (String(getParam(db, aid, 'memory.write.self.judge') || 'on') === 'off') return () => null
+      const unsure = []
+      for (const m of extracted) {
+        if (String((m && m.who) || '') !== 'self') continue
+        const t = String((m && m.text) || '').trim()
+        if (!t) continue
+        if (classifySelf(t).tier !== 'unsure') continue
+        const key = selfJudgeKey(t)
+        if (selfJudgedCache.has(key)) continue
+        if (!unsure.includes(key)) unsure.push(key)
+      }
+      if (!unsure.length) return (t) => { const k = selfJudgeKey(t); const v = selfJudgedCache.get(k); return v ? { keep: v.keep, score: v.score } : null }
+      if (!(model.capabilities && model.capabilities().chat)) return () => null
+      const dayStart = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString() })()
+      let judgedToday = 0
+      try {
+        const row = db.prepare("SELECT payload FROM events WHERE agent_id=? AND type='memory.self.judge' AND created_at>=?").all(aid, dayStart)
+        for (const r of row) { try { judgedToday += Number(JSON.parse(r.payload || '{}').n) || 0 } catch { /* 忽略 */ } }
+      } catch { judgedToday = 0 }
+      const budget = Math.max(0, Number(getParam(db, aid, 'memory.write.self.judge.per_day')) || 60)
+      const batch = unsure.slice(0, Math.max(0, budget - judgedToday))
+      if (!batch.length) return () => null
+      const t0 = Date.now()
+      let got = null
+      try {
+        const context = turns.filter((t) => String(t.role || '') === 'assistant').map((t) => String(t.text || '')).join('\n').slice(-400)
+        got = await model.judgeSelf(batch, { context })
+      } catch { got = null }
+      const ms = Date.now() - t0
+      if (got && Array.isArray(got.keep)) {
+        const keepN = got.keep.filter(Boolean).length
+        let scoreSum = 0
+        batch.forEach((text, i) => {
+          const keep = !!got.keep[i]
+          const score = Number.isFinite(Number(got.score && got.score[i])) ? Number(got.score[i]) : (keep ? 0.6 : 0.3)
+          scoreSum += score
+          selfJudgedCache.set(text, { keep, score })
+          if (selfJudgedCache.size > 400) selfJudgedCache.delete(selfJudgedCache.keys().next().value)
+        })
+        try { event(db, aid, 'memory.self.judge', { n: batch.length, keep: keepN, drop: batch.length - keepN, avg_score: Math.round(scoreSum / batch.length * 100) / 100, ms }) } catch { /* 忽略 */ }
+      } else {
+        try { event(db, aid, 'memory.self.judge', { n: batch.length, failed: true, ms }) } catch { /* 忽略 */ }
+      }
+      return (t) => { const k = selfJudgeKey(t); const v = selfJudgedCache.get(k); return v ? { keep: v.keep, score: v.score } : null }
+    } catch { return () => null }
+  })()
   for (const m of extracted) {
     try {
-      const out = writeExtractedItem(db, aid, m, { turnId: batchTurnId, seed })
+      const out = writeExtractedItem(db, aid, m, { turnId: batchTurnId, seed, selfDecision })
       actions[out.action] = (actions[out.action] || 0) + 1
       written.push(out)
       if (out.action === 'new' && out.id) newPairs.push({ text: String(m.text || ''), id: out.id })
     } catch { /* 单条失败不影响整轮 */ }
   }
+  // 按分量换人：到点才跑（默认 3 小时一次），别每轮都搬。
+  try { maybeSettleSelf(db, aid) } catch { /* 结算失败不影响这一轮 */ }
   // 开环：答应过的 / 还没做完的，单独挂一张表。它不走召回打分，
   // 由时间（到期 / 两天没提）决定什么时候自己浮上来。
   // 只从**用户原话**里长：记忆条目常是第三人称转述（「用户正在检查…」「阶段 2 通过了…」），
@@ -879,7 +1099,7 @@ export function metricsHistory(db, aid, days = 30, keys = null) {
 
 // ---------------- 全量导出 / 导入 ----------------
 const TABLES = ['agents', 'memory_items', 'memory_links', 'conflicts', 'persona', 'affect_state', 'alerts',
-  'affect_episodes', 'drive_state', 'action_ports', 'relations', 'persona_values', 'preferences',
+  'affect_episodes', 'affect_feel', 'drive_state', 'action_ports', 'relations', 'persona_values', 'preferences',
   'taboos', 'condition_state', 'affect_samples', 'cooldowns', 'budgets', 'rule_versions', 'metric_samples',
   'affect_user_read',
   'action_log', 'proposals', 'changes', 'inbox_items', 'events', 'metric_snapshots', 'algo_bindings', 'agent_params',
@@ -1012,6 +1232,40 @@ export function exportMemory(db, aid) {
   return { zip_base64: zipStore(files).toString('base64'), counts, manifest: { kind: 'memory', schema: 9 } }
 }
 
+/**
+ * 导入后清掉指向本库不存在的感觉引用。
+ * 记忆包不带 affect_feel——感觉不该跨实例继承；留着悬空 id 会让后面统计/清理误判。
+ * 返回清掉的条数（日记按「有变化的天」算）。
+ */
+function dropDanglingFeelIds(db) {
+  const keep = feelIdsAll(db)
+  let n = 0
+  const drop = (t) => {
+    let rows = []
+    try { rows = db.prepare(`SELECT id, feel_id FROM ${t} WHERE feel_id IS NOT NULL`).all() } catch { return }
+    for (const r of rows) {
+      if (keep.has(String(r.feel_id))) continue
+      try { db.prepare(`UPDATE ${t} SET feel_id=NULL WHERE id=?`).run(r.id); n++ } catch { /* 跳过 */ }
+    }
+  }
+  drop('memory_items')
+  drop('fact_archive')
+  drop('episodes')
+  try {
+    for (const r of db.prepare("SELECT id, feel_ids FROM diaries WHERE feel_ids IS NOT NULL AND feel_ids<>'[]'").all()) {
+      let ids = []
+      try { ids = JSON.parse(r.feel_ids) } catch { ids = [] }
+      if (!Array.isArray(ids)) ids = []
+      const kept = ids.filter((x) => keep.has(String(x)))
+      if (kept.length !== ids.length) {
+        db.prepare('UPDATE diaries SET feel_ids=? WHERE id=?').run(JSON.stringify(kept), r.id)
+        n++
+      }
+    }
+  } catch { /* 老库没有这张表 */ }
+  return n
+}
+
 /** 导入记忆：整份备份包也能吃，但只取记忆那几张表，别的一律不动。 */
 export function importMemory(db, aid, body) {
   active(db, aid)
@@ -1093,6 +1347,8 @@ export function importMemory(db, aid, body) {
     try { db.prepare("INSERT INTO memory_fts(memory_fts) VALUES('rebuild')").run() } catch { /* 老库可能没有 FTS */ }
     try { rebuildRawFts(db) } catch { /* 老包没有原文层 */ }
     try { rebuildFactFts(db) } catch { /* 老包没有事实存根 */ }
+    // 感觉不跨实例继承：导入包里的 feel_id 在本库查不到的一律清空
+    try { dropDanglingFeelIds(db) } catch { /* 清理失败不挡导入 */ }
   })
   return {
     imported: total, by_table: byTable, tables: present.length, fts: 'rebuilt',
@@ -1161,6 +1417,12 @@ export function getFlag(db, key) {
 export function clearFlag(db, key) {
   db.prepare('DELETE FROM flags WHERE key=?').run(key)
 }
+
+// 「特别看重」的标/撤和事由已收进零件：src/parts/speak/trigger.js。这里只 re-export。
+export { markLoopImportant, isLoopImportant, proactiveTriggerOf }
+
+// 主动开口的额度记账已收进零件：src/parts/speak/budget.js。这里只 re-export，保持导入面不变。
+export { proactiveSpend, addProactiveSpend }
 
 // ---------------- 对话 ----------------
 
@@ -1301,7 +1563,7 @@ export async function writeMutter(db, aid, turns) {
 }
 
 /** 读最近一条嘀咕（展示用）。 */
-export function readMutter(db, aid) {
+function readMutter(db, aid) {
   try {
     const raw = getFlag(db, 'ui.mutter.' + aid)
     if (!raw) return null
@@ -1635,338 +1897,7 @@ export function scoreBlind(db, aid, tid, answers) {
   return { score: +score.toFixed(3), hit, total, pass: score >= 0.8 }
 }
 
-// ---------------- 主动开口 ----------------
-// 两层合在一起看：
-//   ① 它这一侧：哪一维缺口最大（想说话的冲动）
-//   ② 你这一侧：有没有具体的事可讲、隔了多久、上次开口你接没接（值不值得打扰）
-// 只有「冲动 + 证据 + 时机」压过「打扰成本」才开口。研究里管这个叫
-// interruption cost：打扰别人的代价会随频率上升，收益不够就别打断。
-// 硬拦（关闭/休眠/今天说过/话题冷却/凭空没材料）优先于打分。
-const DIM_LINE = {
-  R: '有点想你了，最近还好吗？',
-  E: '我最近琢磨着一点事，想跟你说说。',
-  C: '有件事我可以帮你看看，需要的话叫我。',
-  A: '想问问你，最近有什么想让我少管一点的吗？',
-  S: '我记得你之前说过一些事，想确认一下你还好吗。',
-}
-
-const DIM_NAME = { R: '关系', E: '探索', C: '贡献', A: '自主', S: '安全' }
-const DIM_KIND = { R: 'greet', E: 'explore', C: 'offer_help', A: 'ask_choice', S: 'check_safety' }
-const DIM_TITLE = {
-  R: '它想问问你最近怎么样',
-  E: '它想聊聊新东西',
-  C: '它想帮你做点什么',
-  A: '它想让你做个选择',
-  S: '它想确认一件事是否安全',
-}
-/** 这几维开口得有真材料，不能凭空说「我看到个东西」 */
-const DIM_NEEDS_EVIDENCE = { E: true, C: true, S: true }
-
-/**
- * 「她自己想说的那句」才能占额度、算重复、算打扰成本。
- * 冲突确认（reason=conflict:*）是系统让她问的，混进去会把当天的 1 句额度吃光，
- * 还把近 7 天的打扰频率顶到上限，结果她永远开不了口。
- */
-const SELF_SENT_SQL = " AND (reason IS NULL OR reason NOT LIKE 'conflict:%')"
-
-/** 打分用的常量，全部集中在这里，方便对账 */
-const PROACTIVE = {
-  // 旧口径：固定 0.30。0.18 重标之后这个数已经够不到了，改成按档位取（见 BAND_MIN_DEFICIT）
-  MIN_DEFICIT: 0.3,
-  W_DEFICIT: 0.5, W_EVIDENCE: 0.3, W_TIMING: 0.2,
-  COST_BASE: 0.2, COST_PER_SENT7: 0.05, COST_SENT7_CAP: 0.3, COST_IGNORE: 0.35,
-  EVIDENCE_DAYS: 3, EVIDENCE_FULL: 3,
-  TIMING_FROM_H: 12, TIMING_FULL_H: 72,
-  IDLE_HARD_MAX: 96,
-}
-
-/**
- * 开口门槛跟着档位走，而不是一个固定数。
- * 档位本身就是「最饿那条到了多少」，所以门槛比它低一档才有意义：
- *   D0 不开口；D1 还不到「想主动说」的程度；D2 够格；D3 更急，门槛再松一点。
- * 参数 proactive.min_deficit > 0 时可以强制一个固定门槛（覆盖这张表）。
- */
-const BAND_MIN_DEFICIT = { D0: 0.99, D1: 0.22, D2: 0.15, D3: 0.10 }
-export function minDeficitFor(band, override = 0) {
-  const o = Number(override)
-  if (Number.isFinite(o) && o > 0) return o
-  return BAND_MIN_DEFICIT[String(band || 'D0')] ?? PROACTIVE.MIN_DEFICIT
-}
-/** 带参数覆盖的版本（业务里用这个） */
-function minDeficit(db, aid, band) {
-  let override = 0
-  try { override = Number(getParam(db, aid, 'proactive.min_deficit')) || 0 } catch { override = 0 }
-  return minDeficitFor(band, override)
-}
-
-/** 五道门 + 前置检查。id 固定，界面按这个顺序渲染，别在业务里另起名字。 */
-export const GATE_LABEL = {
-  state: '它醒着',
-  switch: '你允许它主动开口',
-  dormant: '它没有休眠',
-  temper: '它不在气头上',
-  deficit: '有一个够大的缺口',
-  evidence: '手头有能引用的真事',
-  frequency: '今天还没说、这个方向没在冷却',
-  idle: '沉默够久',
-  quiet: '不在安静时段',
-  disturb: '月度打扰预算还没用完',
-  value: '想说的劲头压得过打扰成本',
-  content: '这句话本身能说',
-}
-
-function gateRow(id, ok, detail) {
-  return { id, label: GATE_LABEL[id] || id, ok: ok === null ? null : !!ok, detail: detail || '' }
-}
-
-/** 所有「够格的缺口」，按大小排队；不再落议程表，现算。
- *  阈值按性格微调（每维 ±0.3）：外向要关系更急、直觉要探索更急、情感要贡献更急、知觉要自主更急、敏感要安全更急。 */
-export function rankIntents(db, aid) {
-  let drive = null
-  try { drive = getDrive(db, aid) } catch { return [] }
-  const ds = (drive && drive.deficits) || {}
-  const axes = readAxes(db, aid)
-  const factor = (dim) => {
-    const d = (k) => (Number(axes[k]) || 0.5) - 0.5
-    switch (dim) {
-      case 'R': return 1 - 0.30 * d('ei')
-      case 'E': return 1 - 0.30 * d('sn')
-      case 'C': return 1 + 0.20 * d('tf')   // F 一侧更急着帮
-      case 'A': return 1 + 0.20 * d('jp')   // J 一侧更急着要结构
-      case 'S': return 1 - 0.30 * d('sensitivity')
-      default: return 1
-    }
-  }
-  const band = String((drive && drive.band) || 'D0')
-  const base = minDeficit(db, aid, band)
-  return Object.entries(ds)
-    .map(([dim, n]) => ({ dim, deficit: Number(n) || 0, min: base * factor(dim) }))
-    .filter((x) => x.deficit >= x.min)
-    .sort((a, b) => b.deficit - a.deficit)
-    .map((x) => ({
-      dim: x.dim,
-      deficit: +x.deficit.toFixed(3),
-      min: +x.min.toFixed(3),
-      band,
-      kind: DIM_KIND[x.dim] || 'greet',
-      title: DIM_TITLE[x.dim] || '有点想跟你说话',
-      reason: '缺口 ' + x.deficit.toFixed(2) + '（' + band + ' 门槛 ' + x.min.toFixed(2) + '）',
-      utility: x.deficit,
-    }))
-}
-
-/** 兼容旧调用：最想说的那一个 */
-/** 证据：手头有多少可引用的真事；近几天有没有新的。 */
-export function proactiveEvidence(db, aid) {
-  const days = PROACTIVE.EVIDENCE_DAYS
-  const since = new Date(Date.now() - days * 86400000).toISOString()
-  let items = 0
-  let recent = 0
-  try {
-    const r = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL").get(aid)
-    items = Number(r?.n || 0)
-  } catch { items = 0 }
-  try {
-    const r = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=?").get(aid, since)
-    recent = Number(r?.n || 0)
-  } catch { recent = 0 }
-  return { items, recent, days, score: Math.min(1, recent / PROACTIVE.EVIDENCE_FULL) }
-}
-
-/** 打扰成本：基础代价 + 最近发得太勤 + 上次开口没被接住的比例。 */
-export function proactiveCost(db, aid) {
-  const day7 = new Date(Date.now() - 7 * 86400000).toISOString()
-  const day30 = new Date(Date.now() - 30 * 86400000).toISOString()
-  let sent7 = 0
-  let sent = 0
-  let answered = 0
-  let ignored = 0
-  try {
-    sent7 = Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at>=?' + SELF_SENT_SQL).get(aid, day7).n || 0)
-    sent = Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at>=?' + SELF_SENT_SQL).get(aid, day30).n || 0)
-    const r = db.prepare('SELECT COALESCE(SUM(answered),0) a, COALESCE(SUM(ignored),0) i FROM proactive WHERE agent_id=? AND created_at>=?' + SELF_SENT_SQL).get(aid, day30)
-    answered = Number(r?.a || 0)
-    ignored = Number(r?.i || 0)
-  } catch { /* 旧库没有这些列 */ }
-  const ignoreRate = sent ? Math.min(1, ignored / sent) : 0
-  const base = PROACTIVE.COST_BASE
-  const frequency = +Math.min(PROACTIVE.COST_SENT7_CAP, sent7 * PROACTIVE.COST_PER_SENT7).toFixed(3)
-  const ignore = +(ignoreRate * PROACTIVE.COST_IGNORE).toFixed(3)
-  const cost = +(base + frequency + ignore).toFixed(3)
-  return {
-    cost, parts: { base, frequency, ignore },
-    sent7, sent, answered, ignored,
-    ignore_rate: +ignoreRate.toFixed(3),
-  }
-}
-
-/** 时机：刚聊完 0 分，越久越接近 1（12 小时起算，72 小时满）。 */
-export function proactiveTiming(hoursSince) {
-  const h = Number(hoursSince)
-  if (!Number.isFinite(h) || h <= PROACTIVE.TIMING_FROM_H) return 0
-  return +Math.min(1, (h - PROACTIVE.TIMING_FROM_H) / (PROACTIVE.TIMING_FULL_H - PROACTIVE.TIMING_FROM_H)).toFixed(3)
-}
-
-/** 今天已经让模型试着开口几次（SILENT 也算一次，防心跳每 10 分钟反复烧 token） */
-export function proactiveAttemptsToday(db, aid) {
-  const day = now().slice(0, 10)
-  try {
-    const j = JSON.parse(getFlag(db, 'proactive_attempt:' + aid) || 'null')
-    if (j && j.day === day) return Number(j.n) || 0
-  } catch { /* 坏值当 0 */ }
-  return 0
-}
-
-function noteProactiveAttempt(db, aid) {
-  const day = now().slice(0, 10)
-  try {
-    setFlag(db, 'proactive_attempt:' + aid, JSON.stringify({ day, n: proactiveAttemptsToday(db, aid) + 1 }))
-  } catch { /* 计数失败不影响开口 */ }
-}
-
-function minutesOf(s, d) {
-  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim())
-  if (!m) return d
-  const h = Number(m[1])
-  const mm = Number(m[2])
-  if (h > 23 || mm > 59) return d
-  return h * 60 + mm
-}
-
-/** 半夜是安静的：这段时间只回话，不主动开口。 */
-export function inQuietHours(prefs, date = new Date()) {
-  if (!prefs || !prefs.quiet) return false
-  const from = minutesOf(prefs.quiet_from, 23 * 60 + 30)
-  const to = minutesOf(prefs.quiet_to, 7 * 60 + 30)
-  const m = date.getHours() * 60 + date.getMinutes()
-  return from <= to ? (m >= from && m < to) : (m >= from || m < to)
-}
-
-function withTimeout(p, ms) {
-  return Promise.race([
-    p,
-    new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('timeout')), ms); if (t.unref) t.unref() }),
-  ])
-}
-
-/** 只接受一句话：去引号、取首行、拦技术噪音和框架词。
- *  实现挪进 text.js（感受快照也要用同一把尺），这里只做转发。 */
-export { cleanLine }
-
-/** 内容门：一句话、不追问、不用提醒/播报腔。返回 { ok, detail }。 */
-export function contentCheck(s) {
-  const t = String(s || '')
-  if (!t) return { ok: false, detail: '空句' }
-  if (/[?？]/.test(t)) return { ok: false, detail: '带问句，像在追问' }
-  if (/(提醒|播报|通知|汇报)/.test(t)) return { ok: false, detail: '有提醒/播报腔' }
-  return { ok: true, detail: '一句话' }
-}
-
-/**
- * 生成一句主动的话：
- * - 依据门：只给真实记忆/状态，材料不足就 SILENT
- * - 内容门：一句话、不追问、不放路径日志、不用「提醒/播报」
- * 返回 { text, source, gate, memories, silent? }；text=null 表示这次不说。
- * gate 是内容门的结论，会被写进决策记录。
- */
-export async function composeProactiveLine(db, aid, ag, { approved = false, evidence = null } = {}) {
-  const a = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
-  if (!a) return { text: null, source: 'none', gate: gateRow('content', false, '找不到这个意识体'), memories: [] }
-  const style = personaStyle(db, aid)
-  const you = style.address || '你'
-  const ev = evidence == null ? proactiveEvidence(db, aid).items : Number(evidence) || 0
-  let mems = []
-  try {
-    mems = db.prepare("SELECT id,text FROM memory_items WHERE agent_id=? AND status='active' ORDER BY weight DESC LIMIT 6").all(aid)
-  } catch { mems = [] }
-  let affect = ''
-  try {
-    const af = db.prepare('SELECT primary_label FROM affect_state WHERE agent_id=?').get(aid)
-    if (af) affect = String(af.primary_label || '')
-  } catch { /* ignore */ }
-  let band = ''
-  try { band = String(db.prepare('SELECT band FROM drive_state WHERE agent_id=?').get(aid)?.band || '') } catch { /* ignore */ }
-
-  const rules = (why) => {
-    // 她自己生活里看到的事，本身已经是一句人话，别退回「有点想跟你说话」。
-    if (ag.kind === 'share' && ag.summary) {
-      return { text: ag.summary, source: 'rules', gate: gateRow('content', true, '用她自己的生活原句'), memories: mems }
-    }
-    if (DIM_NEEDS_EVIDENCE[ag.dim] && !ev) {
-      return { text: null, source: 'rules', gate: gateRow('content', false, '这一维要真事，手头没有'), memories: mems }
-    }
-    return {
-      text: (style.address ? style.address + '，' : '') + (DIM_LINE[ag.dim] || '有点想跟你说话。'),
-      source: 'rules',
-      gate: gateRow('content', true, why || '规则兜底句'),
-      memories: mems,
-    }
-  }
-
-  const sys = [
-    '你在替一个「意识体」决定要不要主动说一句话。只根据下面给的真实材料，不要编造。',
-    '材料够、而且此刻确实值得开口，就只输出那一句话（不超过 60 个字，口语，像熟人随口说起）。',
-    '材料不够、或者没什么值得说的，就只输出 SILENT（四个大写字母，别加别的字）。',
-    '硬约束：',
-    '1) 依据门：只能引用材料里出现过的具体事；没有具体事就 SILENT。',
-    '2) 内容门：不追问对方为什么不回，不重复上一句，不出现路径、日志、代码、凭据，不用「提醒」「播报」「通知」这类词。',
-    '3) 一次只说一件事，不要列表、不要括号补充。',
-    approved ? '4) 对方刚刚让它说，语气可以更直接一点。' : '4) 对方没在等你说话，别显得急。',
-  ].join('\n')
-  const facts = [
-    '它叫 ' + a.name + '，对对方的称呼是 ' + you,
-    affect ? '此刻情绪：' + affect : '',
-    band ? '驱力档位：' + band : '',
-    '它想做的这件事：' + (ag.title || '') + '（维度：' + (DIM_NAME[ag.dim] || ag.dim || '未知') + '）',
-    ag.kind === 'share' && ag.summary ? '它自己生活里看到的：' + ag.summary : '',
-    mems.length ? '它能引用的真实记忆（' + mems.length + ' 条）：' : '它还没有可引用的记忆',
-    ...mems.map((m) => '- ' + String(m.text).slice(0, 90)),
-  ].filter(Boolean).join('\n')
-
-  try {
-    const call = freeformModelHook.complete
-      ? freeformModelHook.complete({ system: sys, text: facts })
-      : model.complete({ system: sys, text: facts })
-    const raw = await withTimeout(Promise.resolve(call), 12000)
-    if (/^\s*SILENT\s*$/i.test(String(raw || ''))) {
-      return { text: null, source: 'model', silent: true, gate: gateRow('content', false, '它看了材料，觉得没有值得说的（SILENT）'), memories: mems }
-    }
-    const line = cleanLine(raw)
-    if (line) {
-      const cg = contentCheck(line)
-      if (cg.ok) return { text: line, source: 'model', gate: gateRow('content', true, '模型给的一句话，过了内容门'), memories: mems }
-      return rules('模型的句子被内容门挡下（' + cg.detail + '），退回规则句')
-    }
-    // 模型给了没法用的一坨（不是明确的 SILENT）→ 用兜底句，别让功能失效
-    return rules('模型没给出可用的一句，退回规则句')
-  } catch {
-    return rules('模型超时/失败，退回规则句')
-  }
-}
-
-/**
- * 现在该不该开口（v2）：缺口层 + 反模式混合。
- * - 保留「缺口 → 想说话」：五维缺口 + 候选打分，现算、不落审批表；
- * - 五道门逐条给结论（依据/空闲/频率/打扰/内容），内容门等生成后再补；
- * - 显式算收益和成本（拆到每一项），benefit > cost 才开口；
- * - 只读，不改库。manual=true 只跳过「安静时段 / 沉默时长 / 打扰预算 / 打分」。
- */
-/** C6：当前对话对象的开口意愿（0..1）；读不到关系就给中性值 */
-function initiativeOf(db, aid) {
-  try {
-    const p = ownerPerson(db, aid) || personByChannel(db, aid)
-    let mood = 0.5
-    try { mood = Number(getAffect(db, aid).mood) || 0.5 } catch { /* 老库没有情绪表 */ }
-    const axes = readAxes(db, aid)
-    return toneOf({
-      closeness: p ? p.closeness : 0.5,
-      trust: p ? p.trust : 0.5,
-      kind: p ? p.tier : 'acquaintance',
-      mood,
-      extraversion: axes.ei,
-    }).initiative
-  } catch { return 0.3 }
-}
+// 开口的常量 / 门 / 打分 / 事由 / 生成 / 存储都已搬进 src/parts/speak/；这里不再留第二份。
 
 const CLOSING_GOODBYE = /(晚安|再见|拜拜|先这样|睡了|先去睡)/
 // 问句不只看结尾：「你怎么看」「为什么这样」中间带疑问词也算
@@ -2002,525 +1933,22 @@ export function closingIntentOf(db, aid, { at = Date.now(), level = '' } = {}) {
   return { line: level === 'quiet' ? '今天不太想说话了，先这样。' : '有点晚了，我想先收一收。' }
 }
 
-/**
- * 主动开口的「事由」：有没有一件该说的事。
- *
- * 原来的开口理由全是数字——缺口多少、隔了几小时、劲头压没压过成本。
- * 真正像人的触发是「上次说的那件事到时候了」。这里只负责找事由，不管闸门；
- * 夜间静默、气头上、预算这些硬条件仍然在 decideSpeak 里拦。
- */
-export function proactiveTriggerOf(db, aid, at = Date.now()) {
-  // 最重的一类欠账先看：sangguan 里「答应过、到点没做到」的承诺。
-  // 它比普通开环更该被主动提起——普通开环是「该记挂的事」，这个是「我说了要做却没做」。
-  try {
-    const pm = pledgeMissLine(db, aid, new Date(at).toISOString())
-    if (pm) {
-      const text = String(pm.line || '')
-        .replace(/^（/, '').replace(/）$/, '')
-        .replace(/^你答应过的「/, '').replace(/」到点没做到。这件事还欠着。$/, '')
-      if (text) return { kind: 'loop', owed: true, dim: 'R', id: 'pmiss:' + pm.seq, text: text.slice(0, 60), due_at: null }
-    }
-  } catch { /* 三观没开、或没有账本，就当没有这条 */ }
-  // 欠账优先：答应过的、提醒的事排在「我生活里看到的好玩的」前面。
-  // 人不会拿一件开心事盖住一句「我答应你的事还没做」。
-  try {
-    const loops = pendingLoops(db, aid, { at, limit: 3, includeHalfSaid: true })
-    const owed = loops.find((l) => l.kind === 'promise' || l.kind === 'reminder') || null
-    if (owed) {
-      return {
-        kind: 'loop',
-        owed: true,
-        dim: 'R',
-        id: owed.id,
-        text: String(owed.text || owed.title || '').slice(0, 60),
-        due_at: owed.due_at || owed.stale_after || null,
-      }
-    }
-  } catch { /* 开环表异常不影响开口 */ }
-  try {
-    const share = latestShare(db, aid, at)
-    if (share) return { kind: 'share', dim: 'R', id: share.id, text: share.title, summary: share.summary, due_at: null }
-  } catch { /* 生活流没挂也不影响开口 */ }
-  try {
-    const loops = pendingLoops(db, aid, { at, limit: 1 })
-    if (loops.length) {
-      const l = loops[0]
-      return {
-        kind: 'loop',
-        dim: 'R',
-        id: l.id,
-        text: String(l.text || l.title || '').slice(0, 60),
-        due_at: l.due_at || l.stale_after || null,
-      }
-    }
-  } catch { /* 开环表异常不影响开口 */ }
-  return null
-}
+// proactiveTriggerOf / markLoopImportant / isLoopImportant 已搬进 src/parts/speak/trigger.js
 
-export function decideSpeak(db, aid, { manual = false, at = Date.now(), trigger = null } = {}) {
-  const gates = []
-  const G = (id, ok, detail) => { const g = gateRow(id, ok, detail); gates.push(g); return g }
-  const out = {
-    version: 2, will: false, reason: 'ok', manual: !!manual, at: now(),
-    hours_since: null, idle_need_hours: null,
-    quiet: null, intent: null, candidates: [], score: null,
-    benefit: null, benefit_parts: null, cost: null, cost_parts: null, evidence: null,
-    gates, gate: gates, explain: '',
-  }
-  const a = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
-  const alive = !!a && a.status === 'active'
-  G('state', alive, alive ? '' : (a ? '它在休眠（' + (a.status === 'paused' ? '你让它暂停了' : a.status) + '），不会主动开口' : '找不到这个意识体'))
-  if (!alive) return { ...out, reason: 'inactive', explain: '它在休眠，不会主动开口。' }
+// decideSpeak / explainSilent / nextTryInHours 已搬进 src/parts/speak/judge.js
 
-  const prefs = getProactivePrefs(db, aid)
-  out.prefs = prefs
-  const on = !!prefs.enabled && Number(prefs.per_day) > 0
-  G('switch', on, on ? ('每天最多 ' + prefs.per_day + ' 句') : '主动开口是关的')
-  if (!on) return { ...out, reason: 'proactive_off', explain: '主动开口是关的。' }
-
-  let dm = null
-  try { dm = getDrive(db, aid) } catch { dm = null }
-  const awake = !(dm && dm.dormant)
-  G('dormant', awake, awake ? '' : '太久没互动，它已经休眠了')
-  if (!awake) return { ...out, reason: 'dormant', explain: '太久没互动，它已经休眠了。' }
-
-  // R03（戈夫曼）：正在气头上，不主动开口（回复长度由语气档另管）
-  let af0 = null
-  try { af0 = getAffect(db, aid) } catch { af0 = null }
-  const hot = !!af0 && ['irritated', 'frustrated'].includes(String(af0.primary_label)) && Number(af0.intensity) > 0.7
-  G('temper', !hot, hot ? ('火气 ' + Number(af0.intensity).toFixed(2) + '，不想先开口') : '情绪平稳')
-  if (hot) {
-    return {
-      ...out, reason: 'temper', explain: '正在气头上，它不会主动开口（R03）。',
-      affect: { label: af0.primary_label, intensity: Number(af0.intensity) },
-    }
-  }
-
-  // ---- 数字全部现算，只读 ----
-  const today = now().slice(0, 10)
-  let saidToday = 0
-  try { saidToday = Number(db.prepare("SELECT COUNT(*) n FROM proactive WHERE agent_id=? AND created_at LIKE ?" + SELF_SENT_SQL).get(aid, today + '%').n || 0) } catch { saidToday = 0 }
-  const lastAt = a.last_interaction_at ? Date.parse(a.last_interaction_at) : 0
-  const hoursSince = lastAt ? +((at - lastAt) / 3600000).toFixed(2) : 999
-  const cx = proactiveCost(db, aid)
-  const ev = proactiveEvidence(db, aid)
-  const timing = proactiveTiming(hoursSince)
-  const quietOn = inQuietHours(prefs)
-  // 有「该说的事」时，允许不看额度说一次——但一天只给这一次，而且不越过夜间静默和火气
-  const owed = trigger ? { ...trigger } : null
-  // 欠账（答应过 / 提醒）不该被「今天已经主动说过一句」挤掉——那句多半是别的分享。
-  const owedOnce = !!owed && (owed.owed === true || saidToday < 1)
-  out.trigger = owed
-  const axes = readAxes(db, aid)
-  // 8 idle：外向的人等得短一点
-  const idleNeed = Math.min(PROACTIVE.IDLE_HARD_MAX, Math.max(0, Number(prefs.idle_hours) || 0)
-    * (1 + cx.ignore_rate) * (1 - 0.30 * ((Number(axes.ei) || 0.5) - 0.5)))
-  out.hours_since = hoursSince
-  out.idle_need_hours = +idleNeed.toFixed(1)
-  out.quiet = { on: !!prefs.quiet, from: prefs.quiet_from || '23:30', to: prefs.quiet_to || '07:30', in_window: quietOn }
-  out.evidence = ev
-  out.cost = cx.cost
-  out.cost_parts = cx.parts
-
-  const intents = rankIntents(db, aid)
-  out.candidates = intents.map((x) => ({ dim: x.dim, deficit: x.deficit, min: x.min, kind: x.kind, title: x.title }))
-  const needTh = intents.length ? intents[0].min : minDeficit(db, aid, (dm && dm.band) || 'D0')
-  out.min_deficit = +needTh.toFixed(3)
-  // 有「该说的事」时，允许不看额度说一次——但一天只给这一次，而且不越过夜间静默和火气
-  const deficitOk = intents.length > 0 || owedOnce
-  G('deficit', deficitOk, intents.length
-    ? intents.map((x) => (DIM_NAME[x.dim] || x.dim) + ' ' + x.deficit.toFixed(2)).join(' / ')
-    : owedOnce
-      ? ('有事由：' + owed.text)
-      : '五个方向都在门槛 ' + needTh.toFixed(2) + ' 以下（当前 ' + ((dm && dm.band) || 'D0') + '）')
-  if (!deficitOk) return { ...out, reason: 'no_intent', explain: '它现在哪儿都不缺，不勉强找话说。' }
-
-  // 硬拦：冷却中的、今天说过的、没材料的，逐个跳过，换下一个缺口
-  let pick = null
-  for (const it of intents) {
-    const c = out.candidates.find((x) => x.dim === it.dim)
-    const gate = proactiveGate(db, aid, it.dim)
-    if (!gate.ok) { c.blocked = 'cooldown'; c.why = '冷却到 ' + String(gate.until || '').slice(0, 16).replace('T', ' '); continue }
-    let dup = null
-    try { dup = db.prepare("SELECT 1 FROM proactive WHERE agent_id=? AND dim=? AND created_at LIKE ?" + SELF_SENT_SQL).get(aid, it.dim, today + '%') } catch { dup = null }
-    if (dup) { c.blocked = 'already_today'; c.why = '这个方向今天说过了'; continue }
-    if (DIM_NEEDS_EVIDENCE[it.dim] && ev.items === 0) {
-      c.blocked = 'no_evidence'; c.why = '这一维要真事，手头 0 条'; continue
-    }
-    pick = it
-    break
-  }
-  // 有事由但没有缺口时，也要有一个「方向」好往下算：这件事本身就是方向
-  const top = pick || intents[0] || { dim: (owed && owed.dim) || 'R', deficit: 0, kind: 'loop', title: (owed && owed.text) || '' }
-  const evOk = owedOnce || !(DIM_NEEDS_EVIDENCE[top.dim] && ev.items === 0)
-  G('evidence', evOk, evOk
-    ? (owedOnce ? '有事由，不用再凑材料' : ('手头 ' + ev.items + ' 条真事，近 ' + ev.days + ' 天新增 ' + ev.recent + ' 条'))
-    : ('「' + (DIM_NAME[top.dim] || top.dim) + '」这一维要真事，手头一条都没有'))
-
-  const biasMul = driveAmp(axes, top.dim)
-  const eiMul = 1 + 0.15 * ((Number(axes.ei) || 0.5) - 0.5)
-  // C6（9 号 §6）：关系越近、心情越好，越愿意开口；疏离时把它压回去
-  const initiative = initiativeOf(db, aid)
-  const initiativeMul = 0.6 + 0.8 * initiative
-  // P2（情绪进判据）：总情绪高一点更想开口，低谷时更怕打扰。
-  // 只用乘子、不新增拆项，保证「收益三块加起来 = benefit / 成本三块 = cost」的核对口径不变。
-  const moodTotal = af0 && af0.v3 ? Math.max(-1, Math.min(1, Number(af0.v3.total) || 0)) : 0
-  const moodBenefitMul = +(0.9 + 0.2 * Math.max(0, Math.min(1, 0.5 + 0.5 * moodTotal))).toFixed(3)
-  const moodCostMul = moodTotal <= -0.2 ? 1.1 : 1
-  const personMul = eiMul * (1 + biasMul) * initiativeMul * moodBenefitMul
-  const benefit = +((top.deficit * PROACTIVE.W_DEFICIT + ev.score * PROACTIVE.W_EVIDENCE + timing * PROACTIVE.W_TIMING)
-    * personMul).toFixed(3)
-  // 敏感度抬高打扰成本：拆项按同一系数放大，三块加起来仍然等于 cost（不然「成本拆开算」对不上）
-  const costMul = (1 + 0.25 * ((Number(axes.sensitivity) || 0.5) - 0.5)) * moodCostMul
-  const cost = +(cx.cost * costMul).toFixed(3)
-  out.benefit = benefit
-  out.benefit_parts = {
-    deficit: +(top.deficit * PROACTIVE.W_DEFICIT * personMul).toFixed(3),
-    evidence: +(ev.score * PROACTIVE.W_EVIDENCE * personMul).toFixed(3),
-    timing: +(timing * PROACTIVE.W_TIMING * personMul).toFixed(3),
-    raw: { deficit: top.deficit, evidence: ev.score, timing },
-    weights: { deficit: PROACTIVE.W_DEFICIT, evidence: PROACTIVE.W_EVIDENCE, timing: PROACTIVE.W_TIMING },
-    persona: { ei: +eiMul.toFixed(3), axis: +biasMul.toFixed(3), initiative: +initiative.toFixed(3), initiative_mul: +initiativeMul.toFixed(3), mood: moodBenefitMul, mood_total: +moodTotal.toFixed(3), dimAxis: { R: 'tf', E: 'sn', C: 'tf', A: 'jp', S: 'sensitivity' }[top.dim] || null },
-  }
-  out.cost = cost
-  out.cost_parts = {
-    base: +(cx.parts.base * costMul).toFixed(3),
-    frequency: +(cx.parts.frequency * costMul).toFixed(3),
-    ignore: +(cx.parts.ignore * costMul).toFixed(3),
-    persona: +costMul.toFixed(3),
-    persona_mood: moodCostMul,
-    mood_total: +moodTotal.toFixed(3),
-  }
-  out.score = {
-    benefit, cost, deficit: top.deficit,
-    evidence: ev.score, evidence_items: ev.items, evidence_recent: ev.recent,
-    timing, sent7: cx.sent7, ignore_rate: cx.ignore_rate,
-    benefit_parts: out.benefit_parts, cost_parts: out.cost_parts,
-  }
-  out.intent = pick
-    ? { dim: pick.dim, kind: pick.kind, title: pick.title, deficit: pick.deficit, reason: '缺口 ' + pick.deficit.toFixed(2) }
-    : null
-  // 有该说的事：方向就是这件事，不当成「缺口」
-  if (owedOnce) {
-    const ok = (owed && owed.kind) || 'loop'
-    out.intent = {
-      dim: owed.dim || 'R', kind: ok, title: owed.text,
-      summary: owed.summary || '', deficit: top ? top.deficit : 0,
-      reason: ok === 'share' ? '我自己生活里看到的事：' + (owed.text || '') : '开环到期：' + owed.text,
-    }
-  }
-
-  // ---- 五道门 + 判据，全部给结论（不短路，方便解释） ----
-  const firstBlocked = out.candidates.find((c) => c.blocked)
-  const tries = proactiveAttemptsToday(db, aid)
-  out.tries_today = tries
-  // 7 frequency：J/P 调每天可试次数（J 更守上限，P 允许试多一点），但说了几句的上限不动
-  const perDay = Number(prefs.per_day)
-  const cap = Math.max(1, Math.ceil(perDay * (1 + 0.40 * ((Number(axes.jp) || 0.5) - 0.5))))
-  out.attempt_cap = cap
-  const freqOk = owedOnce || (saidToday < perDay && tries < cap && !!pick)
-  G('frequency', freqOk, owedOnce
-    ? ('有件没说完的事（' + owed.text + '），今天还没说，可以越过额度说一次')
-    : saidToday >= perDay
-      ? '今天已经说了 ' + saidToday + ' 句（上限 ' + perDay + '）'
-      : tries >= cap ? '今天已经试着开口 ' + tries + ' 次（上限 ' + cap + '），不再反复问模型'
-        : !pick ? '没有能说的方向：' + ((firstBlocked && firstBlocked.why) || '都不合适')
-          : '今天还没说；还能试 ' + (cap - tries) + ' 次')
-
-  const idleOk = owedOnce || hoursSince >= idleNeed
-  G('idle', idleOk, '距上次对话 ' + (hoursSince >= 999 ? '还没有过' : hoursSince.toFixed(1) + ' 小时') + '，要求至少 ' + idleNeed.toFixed(1) + ' 小时'
-    + (owedOnce ? '（有该说的事，不卡这一条）' : ''))
-
-  G('quiet', !quietOn, quietOn
-    ? ('现在是 ' + (prefs.quiet_from || '23:30') + '–' + (prefs.quiet_to || '07:30') + '，不打扰')
-    : '不在安静时段')
-
-  let budget = { disturb_used: 0, disturb_limit: 3 }
-  try { budget = budgetGet(db, aid) } catch { /* 老库没有预算表 */ }
-  const used = Number(budget.disturb_used || 0)
-  const limit = Number(budget.disturb_limit || 3)
-  G('disturb', used < limit, '这个月打扰了 ' + used + ' / ' + limit + ' 次')
-
-  const valueOk = manual || owedOnce || benefit > cost
-  G('value', valueOk, '劲头 ' + benefit.toFixed(2) + (benefit > cost ? ' > ' : ' ≤ ') + '打扰成本 ' + cost.toFixed(2)
-    + '（E/I ×' + eiMul.toFixed(2) + '，轴 ×' + (1 + biasMul).toFixed(2) + (manual ? '；你让它说的，跳过比较' : owedOnce ? '；有该说的事，跳过比较' : '') + '）')
-
-  // 内容门要等句子生成出来，先挂一个「待判」
-  G('content', null, '等生成出来再判（一句话、不追问、不用提醒腔）')
-
-  // 理由的先后：和旧版一致，先看硬条件，再看要不要开口
-  let reason = 'ok'
-  if (saidToday >= perDay && !owedOnce) reason = 'per_day'
-  else if (!manual && !owedOnce && tries >= cap) reason = 'attempt_cap'
-  else if (!manual && quietOn) reason = 'quiet'
-  else if (!manual && !owedOnce && hoursSince < idleNeed) reason = 'idle'
-  else if (!manual && used >= limit) reason = 'budget'
-  else if (!owedOnce && !pick) reason = (firstBlocked && firstBlocked.blocked) || 'no_intent'
-  else if (!manual && !owedOnce && benefit <= cost) reason = 'low_benefit'
-
-  out.reason = reason
-  out.will = reason === 'ok'
-  const im = DIM_NAME[top.dim] || top.dim
-  if (out.will) {
-    out.explain = '想说「' + im + '」：缺口 ' + top.deficit.toFixed(2) + ' + ' + ev.items + ' 条真事（近 ' + ev.days + ' 天 +' + ev.recent + '）'
-      + ' + 隔了 ' + (hoursSince >= 999 ? '很久' : hoursSince.toFixed(0) + ' 小时') + ' = 劲头 ' + benefit.toFixed(2)
-      + '，压过打扰成本 ' + cost.toFixed(2) + '（今天 ' + saidToday + ' 句，预算 ' + used + '/' + limit + '）。'
-      + (owedOnce ? '事由：' + owed.text + '（开环到期，今天第一次说）' : '')
-  } else {
-    out.explain = explainSilent(reason, { top, firstBlocked, hoursSince, idleNeed, benefit, cost, used, limit, prefs })
-  }
-  return out
-}
-
-/** 兼容旧名：v2 的判据就是它 */
-export const proactiveDecision = decideSpeak
-
-function explainSilent(reason, { top, firstBlocked, hoursSince, idleNeed, benefit, cost, used, limit, prefs }) {
-  const im = top ? (DIM_NAME[top.dim] || top.dim) : ''
-  switch (reason) {
-    case 'per_day': return '今天已经主动说了（上限 ' + (prefs && prefs.per_day) + ' 句），剩下的明天再说。'
-    case 'attempt_cap': return '今天已经试过怎么开口了，还没找到合适的说法，等明天。'
-    case 'quiet': return '现在是安静时段，它不吵你。'
-    case 'idle': return '你 ' + (hoursSince >= 999 ? '还没' : hoursSince.toFixed(1) + ' 小时前才') + '聊过，它要等满 ' + idleNeed.toFixed(1) + ' 小时才开口。'
-    case 'budget': return '这个月的打扰预算用完了（' + used + '/' + limit + '），先攒着。'
-    case 'cooldown': return '「' + im + '」这个方向上次没被接住，' + ((firstBlocked && firstBlocked.why) || '在冷却') + '。'
-    case 'already_today': return '「' + im + '」今天已经说过了。'
-    case 'no_evidence': return '「' + im + '」要真事才说，它手头一条都没有，不编。'
-    case 'low_benefit': return '劲头 ' + benefit.toFixed(2) + ' 没压过打扰成本 ' + cost.toFixed(2) + '（最近发得多 / 上回没被接住），先不说。'
-    case 'no_intent': return '五个缺口都在阈值以下，没必要硬找话。'
-    default: return '它现在没有想说的话。'
-  }
-}
-
-/** 同一句话不要反复说：去掉标点再比。 */
-function sameLine(a, b) {
-  const norm = (s) => String(s || '').replace(/[\s，。！？、,.!?~～…"'「」『』]/g, '')
-  return norm(a) === norm(b)
-}
-
-/** 把生成阶段的内容门结论补进理由链（替换那条「待判」）。 */
-function withContentGate(d, gate) {
-  if (!gate) return d
-  const gates = (d.gates || []).map((g) => (g.id === 'content' ? gate : g))
-  if (!gates.some((g) => g.id === 'content')) gates.push(gate)
-  return { ...d, gates, gate: gates }
-}
-
-export async function queueProactive(db, aid, opt = {}) {
-  const { manual = false } = opt
-  try { markProactiveIgnored(db, aid) } catch { /* ignore */ }
-  // 事由优先：有到期开环就拿它当方向；调用方也可以显式传 trigger（测试 / 手动）
-  const trigger = opt.trigger !== undefined ? opt.trigger : proactiveTriggerOf(db, aid)
-  const d = decideSpeak(db, aid, { manual, trigger })
-  if (!d.will) {
-    const did = recordProactiveDecision(db, aid, d)
-    return manual ? { queued: false, reason: d.reason, decision_id: did, why: d } : null
-  }
-  // 真正要叫模型了：先占掉今天的尝试次数（SILENT 也算，避免心跳每 10 分钟重问）
-  noteProactiveAttempt(db, aid)
-  const composed = await composeProactiveLine(db, aid, d.intent, { approved: manual, evidence: d.score ? d.score.evidence_items : null })
-  const decided = withContentGate(d, composed && composed.gate)
-  const memories = (composed && composed.memories) || []
-  if (!composed || composed.text == null) {
-    const reason = composed && composed.silent ? 'silent' : ((composed && composed.source === 'rules') ? 'no_evidence' : 'nothing_to_say')
-    const silentDecision = { ...decided, will: false, reason, explain: (composed && composed.gate && composed.gate.detail) || '它想了想，没什么可说的。' }
-    const did = recordProactiveDecision(db, aid, silentDecision, { text: null, source: composed ? composed.source : null })
-    return manual ? { queued: false, reason, decision_id: did, why: silentDecision } : null
-  }
-  const day30 = new Date(Date.now() - 30 * 86400000).toISOString()
-  let recent = []
-  try { recent = db.prepare('SELECT text FROM proactive WHERE agent_id=? AND created_at>=? ORDER BY created_at DESC LIMIT 3').all(aid, day30).map((r) => r.text) } catch { recent = [] }
-  if (recent.some((t) => sameLine(t, composed.text))) {
-    const rep = { ...decided, will: false, reason: 'repeat', explain: '它想说的跟之前那句一样，不重复了。' }
-    const did = recordProactiveDecision(db, aid, rep, { text: composed.text, source: composed.source })
-    return manual ? { queued: false, reason: 'repeat', decision_id: did, why: rep } : null
-  }
-  const id = nid('prc_')
-  const s = d.score || {}
-  const why = (d.intent.reason || '') + ' · ' + composed.source
-    + (d.manual ? ' · 你让它说' : ' · ' + Number(s.benefit || 0).toFixed(2) + '>' + Number(s.cost || 0).toFixed(2))
-  // 分享要按生活 id 记住「排过队没有」，否则下一轮心跳还会想分享同一件事。
-  const reason = (d.trigger && d.trigger.kind === 'share' && d.trigger.id) ? ('share:' + d.trigger.id + ' · ' + why) : why
-  db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
-    .run(id, aid, composed.text, reason, d.intent.dim || '', 'pending', now(), null)
-  // 说出来之后，这件事就不再「挂着」了；不提的话会每轮重复
-  if (d.trigger && d.trigger.kind === 'loop' && d.trigger.id) {
-    try { markLoopsFired(db, [d.trigger.id]) } catch { /* 记账失败不影响说话 */ }
-  }
-  bumpStat(db, aid, d.intent.dim || 'R', 'sent')
-  if (!manual) budgetConsume(db, aid, 'disturb', 1)
-  try {
-    event(db, aid, 'proactive.queued', {
-      dim: d.intent.dim, source: composed.source, manual: !!manual,
-      benefit: s.benefit, cost: s.cost, hours_since: d.hours_since,
-      trigger: d.trigger ? d.trigger.kind : null,
-    })
-  } catch { /* 记账失败不影响说话 */ }
-  const did = recordProactiveDecision(db, aid, decided, { text: composed.text, source: composed.source, memories })
-  return { queued: true, id, decision_id: did, text: composed.text, source: composed.source, dim: d.intent.dim || '', intent: d.intent.kind, why: decided }
-}
+export { queueProactive } from './parts/speak/index.js'
 
 // ---------------- 决策记录（解释用，不审批；连续同样的沉默合并） ----------------
 
-const DECISION_KEEP = 120
+// 决策落库 / 查询 / 结局追踪 已搬进 src/parts/speak/store.js
 
-/**
- * 每次「该不该说」都留一条：门槛结论、收益/成本、引用了哪条记忆。
- * 同一个判断（will/reason/dim 都一样）不新开行，只更新时间和次数。
- */
-export function recordProactiveDecision(db, aid, d, { text = null, source = null, memories = null } = {}) {
-  try {
-    const at = d.at || now()
-    const reason = d.reason || 'ok'
-    const dim = (d.intent && d.intent.dim) || null
-    const gates = Array.isArray(d.gates) ? d.gates : []
-    const chain = {
-      explain: d.explain || '',
-      benefit: d.benefit_parts || null,
-      cost: d.cost_parts || null,
-      evidence: d.evidence || null,
-      memory_used: (memories || []).map((m) => ({ id: m.id, text: String(m.text || '').slice(0, 120) })),
-      hours_since: d.hours_since, idle_need_hours: d.idle_need_hours,
-      source: source || null,
-    }
-    const last = db.prepare('SELECT * FROM proactive_decisions WHERE agent_id=? ORDER BY at DESC, rowid DESC LIMIT 1').get(aid)
-    if (last && Number(last.will) === (d.will ? 1 : 0) && last.reason === reason && (last.dim || '') === (dim || '')) {
-      db.prepare('UPDATE proactive_decisions SET at=?, repeats=repeats+1, text=COALESCE(?,text), source=COALESCE(?,source), benefit=?, cost=?, gates=?, chain=? WHERE id=?')
-        .run(at, text, source, d.benefit ?? null, d.cost ?? null, JSON.stringify(gates), JSON.stringify(chain), last.id)
-      return last.id
-    }
-    const id = nid('pdc_')
-    db.prepare('INSERT INTO proactive_decisions(id,agent_id,at,will,reason,dim,source,text,benefit,cost,gates,chain,repeats) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1)')
-      .run(id, aid, at, d.will ? 1 : 0, reason, dim, source, text, d.benefit ?? null, d.cost ?? null, JSON.stringify(gates), JSON.stringify(chain))
-    db.prepare('DELETE FROM proactive_decisions WHERE agent_id=? AND id NOT IN (SELECT id FROM proactive_decisions WHERE agent_id=? ORDER BY at DESC, rowid DESC LIMIT ?)')
-      .run(aid, aid, DECISION_KEEP)
-    return id
-  } catch { return null }
-}
-
-export function listProactiveDecisions(db, aid, limit = 20) {
-  agent(db, aid)
-  const n = Math.max(1, Math.min(100, Number(limit) || 20))
-  let rows = []
-  try { rows = db.prepare('SELECT * FROM proactive_decisions WHERE agent_id=? ORDER BY at DESC, rowid DESC LIMIT ?').all(aid, n) } catch { rows = [] }
-  return rows.map((r) => {
-    let gates = []
-    let chain = {}
-    try { gates = JSON.parse(r.gates || '[]') } catch { gates = [] }
-    try { chain = JSON.parse(r.chain || '{}') } catch { chain = {} }
-    return { ...r, will: !!r.will, gates, chain }
-  })
-}
-
-export function lastProactiveDecision(db, aid) {
-  try { return listProactiveDecisions(db, aid, 1)[0] || null } catch { return null }
-}
-
-export function listProactive(db, aid) {
-  agent(db, aid)
-  return db.prepare("SELECT * FROM proactive WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT 5").all(aid)
-}
-
-// ---------------- 主动开口的结局追踪（状态放库，不放模型脑子） ----------------
-
-function bumpStat(db, aid, dim, field) {
-  try {
-    db.prepare('INSERT OR IGNORE INTO proactive_stats(agent_id,dim) VALUES(?,?)').run(aid, dim)
-    db.prepare('UPDATE proactive_stats SET ' + field + '=' + field + '+1, last_sent_at=? WHERE agent_id=? AND dim=?').run(now(), aid, dim)
-  } catch { /* ignore */ }
-}
-
-/** 这个维度现在能不能提（冷却中就不提） */
-export function proactiveGate(db, aid, dim) {
-  try {
-    const s = db.prepare('SELECT * FROM proactive_stats WHERE agent_id=? AND dim=?').get(aid, dim)
-    if (s && s.cooldown_until && Date.parse(s.cooldown_until) > Date.now()) {
-      return { ok: false, reason: 'cooldown', until: s.cooldown_until, stats: s }
-    }
-    return { ok: true, stats: s || null }
-  } catch { return { ok: true, stats: null } }
-}
-
-/** 用户真的回了一句：把「已投递、还没回应」的主动消息标成被回应 */
-export function settleProactiveAnswered(db, aid) {
-  let n = 0
-  try {
-    const rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0").all(aid)
-    for (const r of rows) {
-      db.prepare('UPDATE proactive SET answered=1, answered_at=? WHERE id=?').run(now(), r.id)
-      bumpStat(db, aid, r.dim || 'R', 'answered')
-      n++
-    }
-  } catch { /* ignore */ }
-  return n
-}
-
-/** 24 小时没回应 → 记一次忽略；同一维度两次忽略且零回应 → 该维度冷却 7 天 */
-export function markProactiveIgnored(db, aid) {
-  let n = 0
-  try {
-    const cutoff = new Date(Date.now() - 24 * 3600000).toISOString()
-    const rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0 AND delivered_at<?").all(aid, cutoff)
-    for (const r of rows) {
-      const dim = r.dim || 'R'
-      db.prepare('UPDATE proactive SET ignored=1 WHERE id=?').run(r.id)
-      bumpStat(db, aid, dim, 'ignored')
-      const s = db.prepare('SELECT * FROM proactive_stats WHERE agent_id=? AND dim=?').get(aid, dim)
-      if (s && Number(s.ignored) >= 2 && Number(s.answered) === 0) {
-        db.prepare('UPDATE proactive_stats SET cooldown_until=? WHERE agent_id=? AND dim=?')
-          .run(new Date(Date.now() + 7 * 86400000).toISOString(), aid, dim)
-      }
-      n++
-    }
-  } catch { /* ignore */ }
-  return n
-}
-
-export function proactiveStats(db, aid) {
-  agent(db, aid)
-  return db.prepare('SELECT * FROM proactive_stats WHERE agent_id=? ORDER BY dim').all(aid)
-}
-
-export function ackProactive(db, aid, pid) {
-  const r = db.prepare('SELECT * FROM proactive WHERE id=? AND agent_id=?').get(pid, aid)
-  if (!r) err(404, 'NOT_FOUND', '这条主动消息不存在')
-  db.prepare("UPDATE proactive SET state='dismissed' WHERE id=?").run(pid)
-  return { id: pid, state: 'dismissed' }
-}
-
-// ---------------- 主动开口的偏好（可在设置里改） ----------------
-export const PROACTIVE_DEFAULTS = {
-  enabled: true, per_day: 1, idle_hours: 6,
-  quiet: true, quiet_from: '23:30', quiet_to: '07:30',
-  // push：把待发那句直接推进会话（不再等你先开口）。默认关，打开才算授权。
-  push: false,
-}
+// ---------------- 主动开口的偏好（已收进零件：src/parts/speak/prefs.js） ----------------
+export { PROACTIVE_DEFAULTS, getProactivePrefs, setProactivePrefs }
 
 /** 推消息时给对方看到的那段提示；后面跟着的才是它自己说的话。 */
 export function proactivePushText(line) {
   return '（它主动来找你，想说的是：「' + String(line || '') + '」。直接把这句话说给他听，不要复述这条提示。）'
-}
-
-export function getProactivePrefs(db, aid) {
-  const raw = getFlag(db, 'proactive:' + aid)
-  if (!raw) return { ...PROACTIVE_DEFAULTS }
-  try { return { ...PROACTIVE_DEFAULTS, ...JSON.parse(raw) } } catch { return { ...PROACTIVE_DEFAULTS } }
-}
-
-export function setProactivePrefs(db, aid, body) {
-  const cur = getProactivePrefs(db, aid)
-  const hhmm = (v, d) => (/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(v || '').trim()) ? String(v).trim() : d)
-  const next = {
-    enabled: body.enabled === undefined ? cur.enabled : !!body.enabled,
-    per_day: Math.max(0, Math.min(10, Number(body.per_day ?? cur.per_day))),
-    idle_hours: Math.max(0, Math.min(720, Number(body.idle_hours ?? cur.idle_hours))),
-    quiet: body.quiet === undefined ? cur.quiet : !!body.quiet,
-    quiet_from: hhmm(body.quiet_from ?? cur.quiet_from, PROACTIVE_DEFAULTS.quiet_from),
-    quiet_to: hhmm(body.quiet_to ?? cur.quiet_to, PROACTIVE_DEFAULTS.quiet_to),
-    push: body.push === undefined ? !!cur.push : !!body.push,
-  }
-  setFlag(db, 'proactive:' + aid, JSON.stringify(next))
-  return next
 }
 
 // ---------------- 人格与关系的慢更新（C4 自动，带步幅上限） ----------------
@@ -2661,9 +2089,130 @@ export function catalog() {
 import { getLearningPrefs, setLearningPrefs, LEARNING_DEFAULTS } from './kernel.js'
 export { getLearningPrefs, setLearningPrefs, LEARNING_DEFAULTS }
 
-// 注入预算裁剪已搬到 src/brain/inject.js（大脑盒第一个零件）。
-// features 保留同名 re-export：旧 import 一行都不用改，行为逐字不变。
-export { clampInjection } from './brain/inject.js'
+// 注入预算：估算 token（中文按 2 字符≈1 token）。这是**硬上限**：
+// ① 先按「主动句 → 情绪 → 驱力 → 日记 → 记忆」整段丢；
+// ② 还超就从日记 / 记忆块里按行往回砍（保留标题行）；
+// ③ 最后再超才硬截断（留省略号），保证返回的 tokens ≤ budget。
+export function clampInjection(lines, budget = 800) {
+  const est = (t) => Math.ceil(String(t).length / 2)
+  const cap = Math.max(40, Number(budget) || 800)
+  // 行可以是字符串，也可以是 { text, key }。带 key 的行用于「先拼装、后落账」：
+  // 只有真的留在最终文本里的 key 才算说过；被整行丢掉、被削断的都不算。
+  const parts = []
+  const keys = []
+  const src = Array.isArray(lines) ? lines : []
+  for (let i = 0; i < src.length; i++) {
+    const l = src[i]
+    parts.push(typeof l === 'string' ? l : String((l && l.text) || ''))
+    keys.push(typeof l === 'string' ? '#' + i : String(l && l.key != null ? l.key : '#' + i))
+  }
+  const dropped = []
+  const removed = new Set()
+  const total = () => est(parts.join('\n'))
+  const dropAt = (idx, label) => {
+    if (idx < 0 || idx >= parts.length) return false
+    removed.add(keys[idx])
+    parts.splice(idx, 1)
+    keys.splice(idx, 1)
+    if (label) dropped.push(label)
+    return true
+  }
+  // 丢的顺序 = 丢得起的顺序。改过一次（A2）：情绪原来排第 2，一挤就先没了。
+  // 现在情绪根本不进丢弃名单——它只有两行，却是人格的锚：
+  // 丢一条记忆伤准确度，丢情绪伤的是「她是谁」。真到极限，宁可削短别的行。
+  const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('现在的情绪是') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
+  /* 感受快照：**要么整行，要么没有**。它比别的行更怕被剪——
+     剪掉尾巴就剩「（上一句落在我身上的样子：你说「…」，那一刻 慢 +0.1…」，
+     一半材料读起来比没有更糟：像一句没说完的自言自语。 */
+  const SNAPSHOT_TEST = (l) => l.startsWith('（上一句落在我身上') || /^（\d\d:\d\d 那会儿的读数/.test(String(l))
+  const order = [
+    ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
+    ['examples', (l) => l.startsWith('## 我说话的样子')],
+    ['guard', (l) => l.startsWith('不要列点')],
+    ['drive', (l) => l.startsWith('需求缺口档位')],
+    ['diary', (l) => l.startsWith('最近我自己写下的')],
+    ['memory', (l) => l.startsWith('关于这句话，你能想起的事')],
+    // 开环 / 续接 / 自发浮现排在记忆之后丢：它们是「自己先想起来的」，比一条泛记忆更该被说出来
+    ['loop', (l) => l.startsWith('（你自己心里还挂着的事')],
+    ['bridge', (l) => l.startsWith('（上次（')],
+    // 收尾念头和潜台词都比「自己想起的事」更可丢：丢了只是正常聊
+    ['closing', (l) => l.startsWith('（你有点想收尾了')],
+    ['subtext', (l) => l.startsWith('（心里其实')],
+    // 关系余量：比潜台词更可丢；丢了只是下一轮少一句「上一句有点硬」。
+    ['residue', (l) => l.startsWith('（上一句你说得') || l.startsWith('（上一句你比平时')],
+    // 情绪的方向：一行，丢了只是少个「这两天」的层次，不影响这一轮聊下去
+    ['trend', (l) => l.startsWith('（这两天')],
+    ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
+    // 感受快照：比上面都晚丢（它是「刚才那一刻」的事实，不是装饰），
+    // 但预算真紧的时候还是让位——而且只允许整行丢，不许剪半句（见 SNAPSHOT_TEST）。
+    ['snapshot', (l) => SNAPSHOT_TEST(l)],
+  ]
+  for (const [name, test] of order) {
+    if (total() <= cap) break
+    const idx = parts.findIndex((l) => test(l))
+    if (idx >= 0) dropAt(idx, name)
+  }
+  // 段级丢完还超：先砍日记（叙事，隔天还能补），再砍记忆；记忆留 2 条兜底。
+  const trimBlock = (test, label, keep = 1) => {
+    const idx = parts.findIndex((l) => test(l))
+    if (idx < 0) return false
+    const sub = String(parts[idx]).split('\n')
+    if (sub.length <= 1) { dropAt(idx, label); return true }
+    if (sub.length <= keep) return false
+    let touched = false
+    while (sub.length > keep && total() > cap) { sub.pop(); parts[idx] = sub.join('\n'); touched = true }
+    // 一段被砍过就不再是完整注入；带 key 的行（落账用）不能算说过。
+    if (touched && !removed.has(keys[idx])) removed.add(keys[idx])
+    if (touched) dropped.push(label + '-lines')
+    return touched
+  }
+  if (total() > cap) trimBlock((l) => l.startsWith('最近我自己写下的'), 'diary', 1)
+  trimBlock((l) => l.startsWith('关于这句话，你能想起的事'), 'memory', 3)
+  /* 快照：要么完整，要么没有。在 shrink 之前就整行拿掉——
+     它是那种「剪一半就变味」的行（剩下「…那一刻 慢 +0.1…」，读起来像自言自语没说完）。 */
+  if (total() > cap) {
+    const si = parts.findIndex((l) => SNAPSHOT_TEST(l))
+    if (si >= 0) dropAt(si, 'snapshot-full')
+  }
+  // 还超：不删情绪那一行，改削别的长行（关系数字、约束这类）。
+  // 以前这里直接硬截，谁站得靠后就先烂；削长行等于把预算从「最占地方又不最要紧」的地方拿回来。
+  // 第一轮只削非情绪行；真到极限才动情绪行，而且留 20 字底线——宁可说得短，不能没得说。
+  if (total() > cap) {
+    const shrink = (allowAffect) => {
+      const list = parts
+        .map((l, i) => ({ l, i }))
+        .filter((x) => !x.l.startsWith('## ')
+          && !SNAPSHOT_TEST(x.l)
+          && x.l.length > (allowAffect ? 20 : 16)
+          && (allowAffect || !AFFECT_TEST(x.l)))
+        .sort((a, b) => b.l.length - a.l.length)
+      for (const { i } of list) {
+        if (total() <= cap) break
+        const cur = parts[i]
+        const needChars = Math.max(4, (total() - cap) * 2 + 2)
+        const floor = allowAffect ? 20 : 12
+        const keep = Math.max(floor, cur.length - needChars)
+        if (keep >= cur.length) continue
+        parts[i] = cur.slice(0, keep).replace(/\s+$/, '') + '…'
+        // 削断了就不算完整说过：下一轮宁可重来，也别把半句记成落账。
+        if (!removed.has(keys[i])) removed.add(keys[i])
+        const tag = allowAffect ? 'shrink-affect' : 'shrink'
+        if (!dropped.includes(tag)) dropped.push(tag)
+      }
+    }
+    shrink(false)
+    shrink(true)
+  }
+  let text = parts.join('\n')
+  if (est(text) > cap) {
+    text = text.slice(0, Math.max(0, cap * 2 - 1)).replace(/\s+$/, '') + '…'
+    // 硬截断后整段都不可信，所有带 key 的行都不落账。
+    for (const k of keys) removed.add(k)
+    dropped.push('truncate')
+  }
+  const kept = new Set(keys.filter((k) => !removed.has(k)))
+  return { text, tokens: est(text), dropped, kept, removed }
+}
 
 // 当前分类法（前端与提案用）
 export function taxonomyInfo(db, aid) {
@@ -3040,3 +2589,4 @@ export async function importLooseMemory(db, aid, body = {}) {
     summary: String(parsed.summary || '').slice(0, 300),
   }
 }
+

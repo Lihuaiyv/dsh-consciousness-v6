@@ -16,7 +16,7 @@ let src = fs.readFileSync(file, 'utf8')
 // 只在测试时把内部组件暴露出来，不改生产代码
 src = src.replace(
   "    return {\n      inject: ['slots'],",
-  "    return {\n      __test: { Page, Detail, Roster, OverviewPage, CharacterCard, MemoryPage, PersonaPage, RelationPage, AffectPage, DrivePage, SelfPage, SettingsPage, MetricsPage, AlgoBindingsPanel, MemoryImportDialog, MemorySettingsCard, ParamRow, FoldBlock, SettingJump, KnobCard, DriveBaselineCard, SETTING_KNOBS, PARAM_TAB_GROUPS, PARAM_META, SelfProposalCard, SelfAutoGroup, SelfIdeaRow, SelfChangeRow, SelfFinishedRow, prefSense, PrefRow },\n      inject: ['slots'],")
+  "    return {\n      __test: { Page, Detail, Roster, OverviewPage, CharacterCard, MemoryPage, PersonaPage, RelationPage, AffectPage, DrivePage, SelfPage, SettingsPage, MetricsPage, AlgoBindingsPanel, MemoryImportDialog, MemorySettingsCard, ParamRow, FoldBlock, SettingJump, KnobCard, DriveBaselineCard, SETTING_KNOBS, PARAM_TAB_GROUPS, PARAM_META, SelfProposalCard, SelfAutoGroup, SelfIdeaRow, SelfChangeRow, SelfFinishedRow, PartsBox, PartRow, prefSense, PrefRow },\n      inject: ['slots'],")
 if (!src.includes('__test')) throw new Error('没找到可注入的返回点，client.js 结构变了')
 
 const errors = []
@@ -261,11 +261,11 @@ cases.push(['SelfChangeRow/性格未回滚', () => T.SelfChangeRow({
   run: async () => {}, act: async (fn) => fn(),
 })])
 
-/* ---- 自修改页：四块顺序 + 人话文案是真的读数据 ---- */
+/* ---- 自修改页：零件盒在最上面 + 四块顺序 + 人话文案是真的读数据 ---- */
 const selfTree = T.SelfPage({ ...common, view: 'user', tab: 'self' })
 walk(selfTree, 'SelfPage/order')
 const selfText = renderTexts(selfTree).join('|')
-const wantOrder = ['收件箱', '它攒了多少想法', '变更记录']
+const wantOrder = ['零件盒', '收件箱', '它攒了多少想法', '变更记录']
 const orderIdx = wantOrder.map((s) => selfText.indexOf(s))
 if (!orderIdx.every((v, i) => v >= 0 && (i === 0 || v > orderIdx[i - 1]))) {
   errors.push('自修改页顺序不对：' + wantOrder.map((s, i) => s + '@' + orderIdx[i]).join(' '))
@@ -273,10 +273,28 @@ if (!orderIdx.every((v, i) => v >= 0 && (i === 0 || v > orderIdx[i - 1]))) {
 if (!selfText.includes('现在没有要你点头的事')) errors.push('自修改页空状态没写清楚')
 if (!selfText.includes('收件箱是空的')) errors.push('自修改页空状态缺提示')
 if (!/它顺手改的小事|它的变化/.test(selfText)) errors.push('自修改页缺自动变更区块')
-const heroOk = selfText.startsWith('收件箱') && selfText.includes('现在没有要你点头的事') && ['等你批', '影子中', '已生效'].every((k) => selfText.includes(k))
-if (!heroOk) errors.push('顶部摘要没排在最前或缺指标')
-console.log((heroOk ? 'ok   ' : 'FAIL ') + '顶部摘要：一句话 + 四个数')
+if (!selfText.includes('它身上能单独拎出来换的东西')) errors.push('零件盒缺说明（用户视图）')
+if (!selfText.includes('零件册里还没有登记的零件') && !selfText.includes('没有匹配的零件')) errors.push('零件盒空状态没写清楚')
+const heroOk = selfText.startsWith('零件盒') && selfText.indexOf('收件箱') > selfText.indexOf('零件盒') && selfText.includes('现在没有要你点头的事') && ['等你批', '影子中', '已生效'].every((k) => selfText.includes(k))
+if (!heroOk) errors.push('零件盒没排在最前，或顶部摘要缺指标')
+console.log((heroOk ? 'ok   ' : 'FAIL ') + '零件盒在最上面 + 顶部摘要：一句话 + 四个数')
 console.log((orderIdx.every((v, i) => v >= 0 && (i === 0 || v > orderIdx[i - 1])) ? 'ok   ' : 'FAIL ') + '自修改页四块顺序')
+
+/* ---- 零件盒：有数据时一行该露的东西（名字 / 状态 / 三个标签 / 没考卷 / 回退点）---- */
+const partRowText = renderTexts(T.PartRow({
+  p: {
+    id: 'speak', name: '主动开口', role: '器官', chain: '链上', judge: '混合',
+    status: '在用', version: 'v0.6.2', owner: 'features.js · decideSpeak',
+    files: ['src/features.js'], entry: 'decideSpeak（src/features.js:2302）',
+    exam: { file: null, score: null, note: '还没写' }, assert: null, swaps: [],
+    rollback: { pointer: null, note: '换门前打 tag speak-before-swap' },
+  },
+  open: true, onToggle() {},
+})).join('|')
+const partWant = ['主动开口', '器官', '链上', '混合', '没考卷', '还没写', 'speak-before-swap']
+const partMissing = partWant.filter((s) => !partRowText.includes(s))
+if (partMissing.length) errors.push('零件盒一行缺：' + partMissing.join('、'))
+console.log((partMissing.length ? 'FAIL ' : 'ok   ') + '零件盒一行：名字 / 标签 / 没考卷 / 回退点')
 
 const shadowText = renderTexts(T.SelfProposalCard({ ...cardCommon, p: propShadow })).join('|')
 const shadowOk = shadowText.includes('影子跑了 12/20 轮') && shadowText.includes('再跑 8 轮') && shadowText.includes('当时缺口 D2')
