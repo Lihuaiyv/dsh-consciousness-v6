@@ -83,7 +83,7 @@ export const PARTS = [
     owner: 'src/parts/loops/ · detectLoop',
     files: ['src/parts/loops/index.js'],
     entry: 'detectLoop / addLoop / pendingLoops（src/parts/loops/index.js）',
-    exam: { file: 'test/exam-loops.test.mjs', score: '61/61', note: '第二张：判据话料 / 到期 / 去重 / 浮现节流 / 关账 / 状态机 / 重要标记 / 注入行，61 道' },
+    exam: { file: 'test/exam-loops.test.mjs', score: '63/63', note: '第二张：判据话料 / 到期 / 去重 / 浮现节流 / 关账 / 状态机 / 重要标记 / 状态扰动 / 注入行，63 道' },
     assert: null,
     swaps: [],
     rollback: { pointer: 'loops-before-swap', note: '回退 = git checkout loops-before-swap -- src/modules/loops.js src/modules/parts.js test/exam-loops.test.mjs，再删掉 src/parts/loops/' },

@@ -148,6 +148,29 @@ function mkAgent() {
   check('收账：提满五次自动关，理由记「念够了」', closed === 1 && row.state === 'closed' && row.closed_by === 'expired', { closed, row })
 }
 
+// ---------------- 5b 状态扰动：只改一个状态，结论要跟着翻 ----------------
+{
+  const aid = mkAgent()
+  const l = addLoop(db, aid, { text: '把那份合同改完', at: T0 })
+  db.prepare('UPDATE open_loops SET due_at=?, stale_after=? WHERE id=?').run(iso(T0 + D), iso(T0 + 2 * D), l.id)
+  const before = pendingLoops(db, aid, { at: T0 + 2 * H, limit: 5, throttleHours: 0 })
+  db.prepare('UPDATE open_loops SET due_at=?, stale_after=? WHERE id=?').run(iso(T0 - H), iso(T0 + D), l.id)
+  const after = pendingLoops(db, aid, { at: T0 + 2 * H, limit: 5, throttleHours: 0 })
+  check('扰动：到期线往前挪，它就从「不冒」变「冒」',
+    !before.some((x) => x.id === l.id) && after.some((x) => x.id === l.id),
+    { before: before.map((x) => x.text), after: after.map((x) => x.text) })
+}
+{
+  const aid = mkAgent()
+  const l = addLoop(db, aid, { text: '回头把日志清一下', at: T0 })
+  markLoopsFired(db, [l.id], T0 + 2 * D)
+  const strict = pendingLoops(db, aid, { at: T0 + 2 * D + 2 * H, limit: 5, throttleHours: 6 })
+  const loose = pendingLoops(db, aid, { at: T0 + 2 * D + 2 * H, limit: 5, throttleHours: 1 })
+  check('扰动：节流窗口从 6 小时改 1 小时，结论跟着变',
+    strict.every((x) => x.id !== l.id) && loose.some((x) => x.id === l.id),
+    { strict: strict.map((x) => x.text), loose: loose.map((x) => x.text) })
+}
+
 // ---------------- 6 关账：你说「好了」时关哪条 ----------------
 {
   const aid = mkAgent()

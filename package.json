@@ -45,7 +45,8 @@
     "test:selfnote": "node test/self-note.test.mjs",
     "test:feel": "node test/feel-turnid.test.mjs && node test/feel-purge.test.mjs && node test/feel-archive.test.mjs && node test/feel-layers.test.mjs && node test/feel-rel-event.test.mjs && node test/feel-search.test.mjs && node test/feel-transfer.test.mjs && node test/feel-import-clean.test.mjs && node test/feel-day-boundary.test.mjs && node test/feel-display-api.test.mjs && node test/feel-health.test.mjs",
     "eval:persona": "node scripts/eval-persona.mjs",
-    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs"
+    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs",
+    "exam:sabotage": "node scripts/exam-sabotage.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",
