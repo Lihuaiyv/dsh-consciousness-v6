@@ -34,6 +34,24 @@ const CASES = [
     importFrom: "'../src/algo/appraise.js'",
     importTo: "'../src/algo/appraise.sabotage-1.js'",
   },
+  {
+    name: '记忆衰减：可提取性忘得更快',
+    impl: 'src/modules/tiers.js',
+    exam: 'test/exam-tiers.test.mjs',
+    from: 'return 1 / (1 + age / (9 * s))',
+    to: 'return 1 / (1 + age / (3 * s))',
+    importFrom: "'../src/modules/tiers.js'",
+    importTo: "'../src/modules/tiers.sabotage-2.js'",
+  },
+  {
+    name: '温度：去掉迟滞（降档立刻生效）',
+    impl: 'src/modules/temps.js',
+    exam: 'test/exam-tiers.test.mjs',
+    from: 'const rising = RANK[want] > RANK[cur]',
+    to: 'const rising = true',
+    importFrom: "'../src/modules/temps.js'",
+    importTo: "'../src/modules/temps.sabotage-3.js'",
+  },
 ]
 
 let pass = 0

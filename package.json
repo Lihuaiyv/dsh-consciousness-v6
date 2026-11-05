@@ -51,7 +51,8 @@
     "exam:sabotage": "node scripts/exam-sabotage.mjs",
     "exam:sabotage:parts": "node scripts/exam-sabotage-parts.mjs",
     "exam:recall": "node test/exam-recall.test.mjs",
-    "exam:appraise": "node test/exam-appraise.test.mjs"
+    "exam:appraise": "node test/exam-appraise.test.mjs",
+    "exam:tiers": "node test/exam-tiers.test.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",

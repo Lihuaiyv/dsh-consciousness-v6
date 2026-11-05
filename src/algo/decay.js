@@ -16,7 +16,7 @@ function makeDecay(version, scale) {
     name: 'decay',
     version,
     kind: 'decay',
-    owner: '',
+    owner: 'tiers',
     file: FILE,
     metrics: ['memory.forget_fit', 'sys.algo_switch'],
     run(_ctx, input = {}) {

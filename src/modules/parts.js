@@ -128,6 +128,26 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'appraise-before-part', note: '回退 = git checkout appraise-before-part -- src/modules/parts.js docs/给人看的/零件-情绪评价.md，再删 test/exam-appraise.test.mjs' },
   },
+  {
+    id: 'tiers',
+    name: '记忆衰减与分层',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/tiers.js · retrievability / heatOf',
+    files: [
+      'src/modules/tiers.js',
+      'src/modules/temps.js',
+      'src/algo/decay.js',
+    ],
+    entry: 'retrievability / heatOf / bandOf / touch / targetTemp（src/modules/tiers.js）',
+    exam: { file: 'test/exam-tiers.test.mjs', score: '66/66', note: '半衰期 / 热度五项 / 档位 / 可提取性 / 强化 / 冷热温度 / 迟滞 / 巡检补账，66 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'tiers-before-part', note: '回退 = git checkout tiers-before-part -- src/modules/parts.js docs/给人看的/零件-记忆衰减与分层.md，再删 test/exam-tiers.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
