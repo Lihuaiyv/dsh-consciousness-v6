@@ -13,7 +13,7 @@
 
 import { askAboutConflict } from './conflict_ask.js'
 import { attrConflict } from './contradict.js'
-import { buildSearchText, conflictPairExists } from './memory.js'
+import { buildSearchText, conflictPairExists, openConflict, openConflictAlert } from './memory.js'
 import { setMemorySearchOnly, strengthenMemory } from './memory_fields.js'
 import { setMemoryFts } from './memory_fields.js'
 import { hasNegation, isPositiveCompoundAt } from './negation.js'
@@ -281,19 +281,18 @@ function applyWriteInner(db, aid, cand, write, opt = {}) {
   try {
     invalidateMemory(db, aid, d.target.id, { at, reason: 'conflict', causeId: r.id, actor: 'gate' })
     disputeOpen(db, aid, [d.target.id, r.id], cid, { at, actor: 'gate' })
-    db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,evidence,escalation_level)
-      VALUES(?,?,?,?, 'open', ?, 'high',?,?,0)`).run(
-      cid, aid, d.target.id, r.id, at, kind,
-      JSON.stringify({
+    openConflict(db, aid, {
+      id: cid, aId: d.target.id, bId: r.id, at, kind,
+      evidence: JSON.stringify({
         similarity: d.score, via: 'gate', kind,
         attribute: d.attr || null,
         a_text: String(d.target.text || '').slice(0, 120), b_text: String(cand.text || '').slice(0, 120),
       }).slice(0, 800),
-    )
+      escalation: 0,
+    })
     db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
       'memory.conflict', JSON.stringify({ conflict_id: cid, a: d.target.id, b: r.id, via: 'gate' }), at)
-    db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)').run('alr_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
-      'data', 2, '有一条记忆冲突未处理', 'open', at)
+    openConflictAlert(db, aid, at)
     // 开案之后真的开口问（跟 addMemory 共用同一个问句出口）；
     // attr 的 sentence_a 是候选（新），sentence_b 是旧条——按时间顺序摆
     askAboutConflict(db, aid, {

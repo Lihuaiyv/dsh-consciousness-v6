@@ -332,6 +332,29 @@ export function bumpSelfPattern(db, id, at = null) {
   }
 }
 
+/**
+ * 开一条「待处理」的冲突记录：抽取和门控两处共用。
+ * - 抽取带 source_turn_id；门控带 escalation_level。两边写法保持原样，不强行合并成一列。
+ */
+export function openConflict(db, aid, o = {}) {
+  const stamp = o.at || now()
+  if (o.turnId !== undefined) {
+    db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,source_turn_id,evidence)
+      VALUES(?,?,?,?, 'open', ?, ?,?,?,?)`)
+      .run(o.id, aid, o.aId, o.bId, stamp, o.severity || 'high', o.kind || 'polarity', o.turnId || null, o.evidence == null ? null : o.evidence)
+    return
+  }
+  db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,evidence,escalation_level)
+    VALUES(?,?,?,?, 'open', ?, ?,?,?,?)`)
+    .run(o.id, aid, o.aId, o.bId, stamp, o.severity || 'high', o.kind || 'polarity', o.evidence == null ? null : o.evidence, o.escalation == null ? 0 : o.escalation)
+}
+
+/** 冲突落库时顺手挂一条数据告警（同一句提示）。 */
+export function openConflictAlert(db, aid, at = null) {
+  db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)')
+    .run(nid('alr_'), aid, 'data', 2, '有一条记忆冲突未处理', 'open', at || now())
+}
+
 export function listMemory(db, aid, includeDeleted = false) {
   agent(db, aid)
   const sql = "SELECT * FROM memory_items WHERE agent_id=?" + (includeDeleted ? '' : " AND status='active'") + ' ORDER BY created_at DESC LIMIT 100'

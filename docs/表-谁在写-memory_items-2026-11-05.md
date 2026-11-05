@@ -56,3 +56,4 @@
 - **2026-11-05 · 第 5 步（结论）**：`timeline` 那 5 处**不动**——它是生命周期字段（生效 / 正文 / 可见性）的法定写手，有 `check-timeline` 守门；把 SQL 挪走反而绕过守门。所以 `memory_items` 的收口落点是**按字段分写**，不是单写手：memory（内容 / 索引 / 打分 / 温度 / 热度）↔ timeline（生命周期），ops 的清库和 host 的导入导出算搬库例外。ownership 里 memory / timeline 都声明了 `writes`，用 `WRITE_SPLIT` 白名单写明 memory_items 的分写关系；`check-ownership` 现在管 3 个已分域，其余 19 个还按老样子。全量 561/561。
 - **2026-11-05 · 第 6 步**：`memory_fts` 也收了——删 / 插 / 重建全走 `memory_fields.js`；`changes` / `flags` 两张流水 / 便签表划进 `SHARED`（变更流水只追加、便签键必须带域前缀）。写 `memory_fts` 的只剩 memory 一个域。全量 561/561。
 - 过程里踩了一脚：想用 PowerShell 整文件替换 features.js，结果编码改花了（diff 变成两千行）；`git checkout -- src/features.js` 回 HEAD，重做后 diff 只有 3 行。以后整文件替换不用 PowerShell，用编辑工具。
+- **2026-11-05 · 第 7 步**：`conflicts` / `alerts` 两张也收了——`gate` 开头那两段 INSERT 改成调 `memory.openConflict` / `openConflictAlert`（写法按原样分支：抽取带 `source_turn_id`、门控带 `escalation_level`）。两张表的静态写手只剩 memory 域；conflict-ask 28/28、write-supersede 8/8、全量 561/561。
