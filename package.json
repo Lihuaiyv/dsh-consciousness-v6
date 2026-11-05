@@ -49,7 +49,8 @@
     "eval:persona": "node scripts/eval-persona.mjs",
     "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs && node scripts/check-parts.mjs && node scripts/check-algos.mjs",
     "exam:sabotage": "node scripts/exam-sabotage.mjs",
-    "exam:recall": "node test/exam-recall.test.mjs"
+    "exam:recall": "node test/exam-recall.test.mjs",
+    "exam:appraise": "node test/exam-appraise.test.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",

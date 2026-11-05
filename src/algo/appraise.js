@@ -93,7 +93,7 @@ function makeAppraise(version, preferModel, rulesFn) {
     name: 'appraise',
     version,
     kind: 'appraise',
-    owner: '',
+    owner: 'appraise',
     file: FILE,
     metrics: ['affect.label_kappa', 'sys.algo_switch'],
     run(_ctx, input = {}) {

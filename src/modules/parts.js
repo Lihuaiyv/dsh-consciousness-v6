@@ -109,6 +109,25 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'recall-before-part', note: '回退 = git checkout recall-before-part -- src/modules/parts.js docs/给人看的/零件-召回.md，再删 test/exam-recall.test.mjs' },
   },
+  {
+    id: 'appraise',
+    name: '情绪评价',
+    role: '器官',
+    chain: '链上',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/algo/appraise.js · rulesAppraise',
+    files: [
+      'src/algo/appraise.js',
+      'src/features.js',
+    ],
+    entry: 'rulesAppraise / appraise@v1（src/algo/appraise.js）',
+    exam: { file: 'test/exam-appraise.test.mjs', score: '59/59', note: '冲我来的才影响我 / 否定式 / 混合 / 分因 / 模型优先 / 关切口径 / 字段截断，59 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'appraise-before-part', note: '回退 = git checkout appraise-before-part -- src/modules/parts.js docs/给人看的/零件-情绪评价.md，再删 test/exam-appraise.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
