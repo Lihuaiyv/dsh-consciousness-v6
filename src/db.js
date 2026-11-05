@@ -327,7 +327,7 @@ CREATE TABLE IF NOT EXISTS open_loops(
   due_at TEXT, stale_after TEXT,
   state TEXT NOT NULL DEFAULT 'open',
   fired_at TEXT, fire_count INTEGER NOT NULL DEFAULT 0,
-  closed_at TEXT, closed_by TEXT, feel_id TEXT,
+  closed_at TEXT, closed_by TEXT, feel_id TEXT, important INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_loop_open ON open_loops(agent_id, state, due_at);
 CREATE INDEX IF NOT EXISTS idx_loop_mem ON open_loops(agent_id, memory_id);
@@ -622,6 +622,9 @@ export function openDb(file) {
   try { db.exec('ALTER TABLE diaries ADD COLUMN feel_ids TEXT') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE thoughts ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE open_loops ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
+  // 「我特别看重」从 flags 收回自己那一行（2026-11-05）：老库里已标的，搬过来一次。
+  try { db.exec('ALTER TABLE open_loops ADD COLUMN important INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
+  try { db.exec("UPDATE open_loops SET important=1 WHERE important=0 AND id IN (SELECT substr(key,16) FROM flags WHERE key LIKE 'loop.important:%' AND value='1')") } catch { /* 没有 flags 表也不影响 */ }
   try { db.exec('ALTER TABLE rel_event ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
   // 快情绪的时间锚：两次评价隔了多久，快情绪就按这个间隔自己退（不是一句话直接归零）
   try { db.exec('ALTER TABLE affect_v3 ADD COLUMN fast_at TEXT') } catch { /* 已存在 */ }

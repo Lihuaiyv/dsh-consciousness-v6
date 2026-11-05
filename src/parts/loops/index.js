@@ -266,6 +266,27 @@ export function closeLoops(db, aid, ids, by = 'manual', at = Date.now()) {
 }
 
 /**
+ * 这一条「我特别看重」——记在自己那一行（`open_loops.important`），不借 flags。
+ * 加和撤都归她：标 = 这件事我真放在心上、到点要提；撤 = 想清楚了 / 它过去了。
+ */
+export function isLoopImportant(db, loopId) {
+  try {
+    const r = db.prepare('SELECT important FROM open_loops WHERE id=?').get(String(loopId || ''))
+    return !!(r && Number(r.important) === 1)
+  } catch { return false }
+}
+
+export function markLoopImportant(db, aid, loopId, on = true) {
+  const id = String(loopId || '')
+  const row = db.prepare('SELECT id FROM open_loops WHERE id=? AND agent_id=?').get(id, aid)
+  if (!row) return { ok: false, reason: 'loop_not_found' }
+  db.prepare('UPDATE open_loops SET important=?, updated_at=? WHERE id=? AND agent_id=?')
+    .run(on ? 1 : 0, stamp(Date.now()), id, aid)
+  return { ok: true, loop_id: id, important: !!on }
+}
+
+
+/**
  * 用户说「好了 / 搞定了」时，把刚刚提过的那条关掉。
  * 只认两小时内被浮现过的——否则一句随口的「好了」会把不相干的待办全关掉。
  */

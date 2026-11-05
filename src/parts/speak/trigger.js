@@ -5,40 +5,14 @@
  * 只负责找事由，不管闸门；气头、安静、开关、预算仍然由 judge 拦。
  *
  * 共享件只读：pledgeMissLine（三观）、pendingLoops（开环）、latestShare（生活）。
- * 「特别看重」的标/撤也在这：存 flags 的 `loop.important:<loopId>`，是她自己的名单。
+ * 「特别看重」的标/撤归开环零件（`open_loops.important` 列）；这里只转发，方便老引用。
  */
 import { pledgeMissLine } from '../../modules/sangguan/pledge.js'
-import { pendingLoops } from '../../modules/loops.js'
+import { pendingLoops, markLoopImportant, isLoopImportant } from '../../modules/loops.js'
 import { latestShare } from '../../modules/life.js'
 
-function flag(db, key) {
-  try {
-    const r = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
-    return r ? r.value : null
-  } catch { return null }
-}
+export { markLoopImportant, isLoopImportant }
 
-function setFlag(db, key, v) {
-  db.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run(key, String(v))
-}
-
-function clearFlag(db, key) {
-  db.prepare('DELETE FROM flags WHERE key=?').run(key)
-}
-
-export function isLoopImportant(db, loopId) {
-  return flag(db, 'loop.important:' + String(loopId || '')) === '1'
-}
-
-/** 标 / 撤「这一条我特别看重」：加和撤都归她自己。 */
-export function markLoopImportant(db, aid, loopId, on = true) {
-  const id = String(loopId || '')
-  const row = db.prepare('SELECT id FROM open_loops WHERE id=? AND agent_id=?').get(id, aid)
-  if (!row) return { ok: false, reason: 'loop_not_found' }
-  if (on) setFlag(db, 'loop.important:' + id, '1')
-  else clearFlag(db, 'loop.important:' + id)
-  return { ok: true, loop_id: id, important: !!on }
-}
 
 export function proactiveTriggerOf(db, aid, at = Date.now()) {
   // 最重的一类欠账先看：sangguan 里「答应过、到点没做到」的承诺。

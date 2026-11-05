@@ -16,6 +16,7 @@ import { openDb } from '../src/db.js'
 import {
   detectLoop, parseDue, addLoop, pendingLoops, markLoopsFired,
   settleLoopsFromUser, closeLoops, expireLoops, loopLineFor, loopPrefixOf, loopStats,
+  markLoopImportant, isLoopImportant,
 } from '../src/modules/loops.js'
 
 let pass = 0
@@ -190,7 +191,23 @@ function mkAgent() {
   check('状态：关了就再也不冒', s2 === 'closed' && after.every((x) => x.id !== a.id), { s2, after: after.map((x) => x.text) })
 }
 
-// ---------------- 8 交给注入的那行字 ----------------
+// ---------------- 8 「我特别看重」记在它自己那一行 ----------------
+{
+  const aid = mkAgent()
+  const a = addLoop(db, aid, { text: '答应给主人修相机', kind: 'promise', at: T0 })
+  check('看重：标之前是 false', isLoopImportant(db, a.id) === false)
+  const on = markLoopImportant(db, aid, a.id, true)
+  const rowOn = db.prepare('SELECT important FROM open_loops WHERE id=?').get(a.id)
+  check('看重：标上，落在 open_loops.important', on.ok === true && on.important === true && Number(rowOn.important) === 1, { on, rowOn })
+  const off = markLoopImportant(db, aid, a.id, false)
+  const rowOff = db.prepare('SELECT important FROM open_loops WHERE id=?').get(a.id)
+  check('看重：撤掉，回到 0', off.ok === true && off.important === false && Number(rowOff.important) === 0, { off, rowOff })
+  check('看重：不借 flags 存', !db.prepare("SELECT 1 FROM flags WHERE key LIKE 'loop.important:%'").get())
+  const miss = markLoopImportant(db, aid, 'lp_nope', true)
+  check('看重：标一条不存在的说找不到', miss.ok === false && miss.reason === 'loop_not_found', miss)
+}
+
+// ---------------- 9 交给注入的那行字 ----------------
 {
   const aid = mkAgent()
   addLoop(db, aid, { text: '把旧日志清理掉', kind: 'task', at: T0 })
