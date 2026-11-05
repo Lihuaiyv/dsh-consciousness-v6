@@ -52,6 +52,24 @@ const CASES = [
     importFrom: "'../src/modules/temps.js'",
     importTo: "'../src/modules/temps.sabotage-3.js'",
   },
+  {
+    name: '驱力：迟滞失效（掉一点就降档）',
+    impl: 'src/algo/deficit.js',
+    exam: 'test/exam-drive.test.mjs',
+    from: 'if (D < exit[id]) cur--',
+    to: 'if (D < exit[id] + 0.1) cur--',
+    importFrom: "'../src/algo/deficit.js'",
+    importTo: "'../src/algo/deficit.sabotage-4.js'",
+  },
+  {
+    name: '驱力：永远不休眠',
+    impl: 'src/modules/drive.js',
+    exam: 'test/exam-drive.test.mjs',
+    from: 'const dormant = last ? Date.now() - Date.parse(last) > 14 * 86400000 : false',
+    to: 'const dormant = false',
+    importFrom: "'../src/modules/drive.js'",
+    importTo: "'../src/modules/drive.sabotage-5.js'",
+  },
 ]
 
 let pass = 0

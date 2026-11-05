@@ -65,7 +65,7 @@ function makeDeficit(version, enter, exit, opts = {}) {
     name: 'deficit',
     version,
     kind: 'deficit',
-    owner: '',
+    owner: 'drive',
     file: FILE,
     metrics: ['drive.band_switch', 'sys.algo_switch'],
     run(_ctx, input = {}) {
@@ -172,7 +172,7 @@ export const deficitV1d = {
   name: 'deficit',
   version: 'v1d',
   kind: 'deficit',
-  owner: '',
+  owner: 'drive',
   file: FILE,
   metrics: ['drive.band_switch', 'sys.algo_switch'],
   run(_ctx, input = {}) {
@@ -332,7 +332,7 @@ export const deficitV2 = {
   name: 'deficit',
   version: 'v2',
   kind: 'deficit',
-  owner: '',
+  owner: 'drive',
   file: FILE,
   metrics: ['drive.band_switch', 'sys.algo_switch'],
   run(_ctx, input = {}) {
@@ -475,7 +475,7 @@ export const deficitV3 = {
   name: 'deficit',
   version: 'v3',
   kind: 'deficit',
-  owner: '',
+  owner: 'drive',
   file: FILE,
   metrics: ['drive.band_switch', 'sys.algo_switch'],
   run(ctx, input = {}) {

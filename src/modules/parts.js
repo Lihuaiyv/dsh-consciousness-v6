@@ -148,6 +148,25 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'tiers-before-part', note: '回退 = git checkout tiers-before-part -- src/modules/parts.js docs/给人看的/零件-记忆衰减与分层.md，再删 test/exam-tiers.test.mjs' },
   },
+  {
+    id: 'drive',
+    name: '驱力缺口',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/drive.js · evaluateDrive',
+    files: [
+      'src/algo/deficit.js',
+      'src/modules/drive.js',
+    ],
+    entry: 'evaluateDrive / getDrive（src/modules/drive.js）；deficit@v1..v3（src/algo/deficit.js）',
+    exam: { file: 'test/exam-drive.test.mjs', score: '50/50', note: '五维缺口 / 平滑 / 迟滞 / 六个版本 / 基线学习 / 休眠 / 解锁 / 缺数据报错，50 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'drive-before-part', note: '回退 = git checkout drive-before-part -- src/modules/parts.js docs/给人看的/零件-驱力缺口.md，再删 test/exam-drive.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
