@@ -67,6 +67,7 @@ export const OWNERSHIP = {
   persona: {
     files: ['modules/persona.js'],
     tables: ['persona', 'persona_values', 'changes', 'preferences', 'taboos', 'relations'],
+    writes: ['persona', 'relations', 'preferences', 'taboos'],
   },
   relations: {
     // 人物账本：rel_event 是主数据，其余都是可重放投影。
@@ -122,6 +123,7 @@ export const OWNERSHIP = {
       // 回滚她自己改的样子（persona.style.*）时按 changes.before 写回
       'persona',
     ],
+    writes: ['metric_samples', 'persona', 'proposals', 'rule_artifacts', 'rule_versions', 'agent_bindings', 'change_journal', 'inbox_items'],
   },
   ops: {
     files: ['modules/ops.js', 'modules/chat.js', 'modules/edges.js', 'modules/qq_push.js'],
@@ -156,6 +158,7 @@ export const OWNERSHIP = {
       'entities', 'memory_links',
       // 向量通道：检索读已存向量
       'memory_vec'],
+    writes: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
   },
   vectors: {
     // 向量通道：写自己的 memory_vec，读记忆正文
@@ -227,6 +230,8 @@ export const OWNERSHIP = {
  */
 export const WRITE_SPLIT = Object.freeze({
   memory_items: ['memory', 'timeline'],
+  // persona：人格模块写整行；selfmod 回滚时只按 changes.before 写回 style.* 那几个键。
+  persona: ['persona', 'selfmod'],
 })
 
 export function tablesForFile(relPosix) {
