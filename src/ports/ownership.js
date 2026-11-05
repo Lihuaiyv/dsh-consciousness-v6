@@ -35,6 +35,11 @@ export const WRITES = Object.freeze({
   selfread: ['affect_v3'],
   poisons: [],
   values: ['persona_values'],
+  // 搬库 / 编排：ops 清库和导入、host 导入导出和接线。它们可以写别的域的表，
+  // 但只许在本名单里——不是「想写哪张写哪张」。真正的进一步拆分要等把导入/导出/清库
+  // 的代码抽成独立文件，那之前先按整域例外登记。
+  ops: ['memory_items', 'memory_timeline', 'proactive', 'chat_turns', 'fact_fts', 'open_loops', 'raw_fts', 'rule_artifacts', 'condition_state', 'fact_archive', 'memory_links'],
+  host: ['memory_timeline', 'proactive', 'chat_turns', 'diaries', 'metric_samples', 'proposals', 'relations', 'rule_versions', 'browse_items'],
 })
 
 export const SHARED = Object.freeze([
@@ -248,6 +253,12 @@ export const OWNERSHIP = {
     ],
   },
 }
+
+/**
+ * 搬库域：它们写别的域的表是清库 / 导入导出，不算业务写权。
+ * 判定规则：一张表的写手里，最多一个业务域，其余都必须是搬库域，或者整张表进 WRITE_SPLIT。
+ */
+export const MAINTENANCE = Object.freeze(['ops', 'host'])
 
 /**
  * 允许「按字段分写」的表：表级两个域各写各的字段，不是抢。

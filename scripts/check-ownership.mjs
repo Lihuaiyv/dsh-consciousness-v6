@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { OWNERSHIP, SHARED, WRITE_SPLIT, WRITES, isTableAllowed } from '../src/ports/ownership.js'
+import { OWNERSHIP, SHARED, WRITE_SPLIT, WRITES, MAINTENANCE, isTableAllowed } from '../src/ports/ownership.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const src = path.join(__dirname, '..', 'src')
@@ -94,8 +94,11 @@ for (const [t, mod] of declared) {
 for (const [t, mods] of byTable) {
   const uniq = [...new Set(mods)]
   if (uniq.length > 1) {
+    const business = uniq.filter((m) => !MAINTENANCE.includes(m))
+    // 搬库域可以帮忙写，但业务写手最多一个；或者整张表在分写白名单里。
+    if (business.length === 0 || business.length === 1) continue
     const split = WRITE_SPLIT[t]
-    if (split && uniq.every((m) => split.includes(m))) continue
+    if (split && business.every((m) => split.includes(m))) continue
     violations.push({ table: t, op: 'declare', reason: 'multi_writer', modules: uniq })
   }
 }
