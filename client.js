@@ -7566,13 +7566,16 @@ window.__ModuleLoader__.load({
         .filter(Boolean).join(' ｜ ')
       // 窄屏也别冲破：长文本一律允许换行，flex 子项允许收缩
       const wrap = { minWidth: 0, whiteSpace: 'normal', wordBreak: 'break-word', overflowWrap: 'anywhere' }
-      const muted = { ...wrap, color: 'var(--muted)', fontSize: 11, lineHeight: 1.5 }
+      // 扁：归属和三个标签并成一行，上下留白、行高都收窄。
+      // 这些只写在这一行上（不走 .dshc-item 公共样式），别的列表还是原来的高度。
+      const meta = { ...wrap, color: 'var(--muted)', fontSize: 11, lineHeight: 1.4, opacity: 0.85 }
+      const metaLine = [p.owner, tags].filter(Boolean).join(' ｜ ') || '—'
       return h('div', {
         className: 'dshc-item dshc-part', 'data-open': open ? '1' : '0',
-        style: { flexDirection: 'column', alignItems: 'stretch', gap: 5, minWidth: 0 },
+        style: { flexDirection: 'column', alignItems: 'stretch', gap: 3, padding: '5px 9px', minWidth: 0 },
       },
         h('div', {
-          style: { display: 'flex', gap: '4px 10px', alignItems: 'baseline', flexWrap: 'wrap', cursor: 'pointer', minWidth: 0 },
+          style: { display: 'flex', gap: '2px 10px', alignItems: 'baseline', flexWrap: 'wrap', cursor: 'pointer', lineHeight: 1.35, minWidth: 0 },
           role: 'button', tabIndex: 0, title: open ? '收起' : '点开看考卷和回退点',
           onClick: onToggle,
           onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle() } },
@@ -7580,8 +7583,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 't', style: { flex: '1 1 140px', ...wrap } }, p.name || p.id),
           h(Pill, { tone }, state),
           h('span', { className: 'm dshc-mono', style: { flex: '0 0 auto' } }, p.version || '—')),
-        h('div', { style: { ...muted, opacity: 0.9 } }, p.owner || '—'),
-        h('div', { style: { ...muted, opacity: 0.75 } }, tags || '—'),
+        h('div', { style: meta }, metaLine),
         open ? h('div', { style: { borderTop: '1px dashed var(--line)', paddingTop: 6, minWidth: 0 } },
           h(Row, { label: '文件' }, h('span', { className: 'm dshc-mono', style: wrap }, (p.files || []).join(' · ') || '—')),
           h(Row, { label: '入口' }, h('span', { className: 'm', style: wrap }, p.entry || '—')),
