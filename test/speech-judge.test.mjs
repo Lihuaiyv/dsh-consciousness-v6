@@ -12,7 +12,7 @@ import {
   LEVEL_ORDER, TONES, parseJudge, clampProposal, buildPrompt, judgeSpeech, recordShadow,
   parseCompare, buildComparePrompt, judgeCompare, recordCompare, recordMiss, toModelRequest,
 } from '../src/modules/speech_judge.js'
-import { createJudgeModel } from '../src/model.js'
+import { createJudgeModel, attachHostLlm, createHostJudgeModel, hostTalkModel } from '../src/model.js'
 
 let pass = 0
 let fail = 0
@@ -205,6 +205,49 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
   const mr = db2.prepare("SELECT payload FROM events WHERE agent_id=? AND type='expr.shadow.miss'").get(aid2)
   const mp = mr ? JSON.parse(mr.payload) : {}
   check('影子没跑成会留 miss 事件', !!mr && mp.reason === 'bad-json' && mp.raw.includes('随便聊两句'), mp)
+}
+
+// ================================================================ 评委改用 DSH 自己的模型
+{
+  check('没有宿主 llm 就不建评委（宁可没信号，也不假装）', createHostJudgeModel() === null)
+
+  // 假装宿主 llm 在线：回话用 deepseek-flash，另一个模型 deepseek-reasoner 也在
+  const calls = []
+  attachHostLlm(() => ({
+    get(name) {
+      if (name === 'llm') {
+        return {
+          listProviders: () => [{ id: 'deepseek-account' }],
+          listModels: async () => [{ id: 'deepseek-flash' }, { id: 'deepseek-reasoner' }],
+          async *stream() { /* 老接口：只有它也算「在」 */ },
+          prepareCall: async (cfg) => ({
+            config: { ...cfg },
+            async *stream(opts) {
+              calls.push(opts)
+              yield { type: 'text-delta', text: '{"pick":"A","why":"更顺","confidence":0.8}' }
+            },
+          }),
+        }
+      }
+      if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'deepseek-account', model: 'deepseek-flash' }) }
+      return null
+    },
+  }))
+
+  const hd = createHostJudgeModel()
+  check('宿主 llm 在就建得起来', !!hd && hd.name === 'dsh:default', hd && hd.name)
+  check('指定了模型就带在名字里', createHostJudgeModel('deepseek-reasoner').name === 'dsh:deepseek-reasoner')
+  check('回话那个模型读得到（用来比是不是自评）', hostTalkModel() === 'deepseek-flash', hostTalkModel())
+
+  const out = await hd.complete({ system: 'S', text: 'T' })
+  check('评委真的调得到模型', typeof out === 'string' && out.includes('pick'), out)
+  check('默认评委跟回话同一个模型（= 自评）', calls[0] && calls[0].model === 'deepseek-flash', calls[0] && calls[0].model)
+
+  await createHostJudgeModel('deepseek-reasoner').complete({ system: 'S', text: 'T' })
+  check('指定模型时真的换了模型', calls[1] && calls[1].model === 'deepseek-reasoner', calls[1] && calls[1].model)
+
+  const cmp = await judgeCompare({ complete: (m) => hd.complete(toModelRequest(m)), rule: rule('brief'), suggest: { level: 'warm' } })
+  check('评委能跑完整一票（A=规则版）', cmp.ok && cmp.pick === 'rule', cmp)
 }
 
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))
