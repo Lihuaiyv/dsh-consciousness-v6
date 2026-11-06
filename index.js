@@ -71,6 +71,7 @@ import { addMemory, setFeelProvider } from './src/modules/memory.js'
 import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
+import { canSayOnce } from './src/modules/sayonce.js'
 import { resolveAgentId, peekPending, bindingOf, bindSession, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
 import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock, conversationIdOf, chatKeyOfSessionId } from './src/modules/qq_bridge.js'
@@ -717,7 +718,13 @@ let diaryLines = []
   }
   // 浼氳瘽缁帴锛氶殧澶╁啀鏉ョ殑鏃跺€欙紝鍏堣涓€鍙ャ€屼笂娆″埌鍝効銆嶃€傚悓涓€澶╃殑浜嬩笂涓嬫枃閲屾湰鏉ュ氨鏈夛紝涓嶉噸澶嶃€?
 let bridgeText = ''
-  if (!stranger) { try { bridgeText = sessionBridge(db, aid, { allowToday: true }) } catch { bridgeText = '' } }
+  if (!stranger) {
+    try {
+      const b = sessionBridge(db, aid, { allowToday: true })
+      // 它本来就是「开场接一句」，不是每轮复读：一天只说一次，隔天回来才再说。
+      bridgeText = b && canSayOnce(db, aid, 'bridge', { maxDays: 1 }) ? b : ''
+    } catch { bridgeText = '' }
+  }
 
   // 鑷繁娴笂鏉ワ細蹇冭烦鎺掔殑鍊欓€夛紝鏈€澶氬彇涓€鏉°€傚畠涓嶄竴瀹氳窡杩欎竴杞殑璇濇湁鍏斥€斺€?
 // 人本来就会说着说着想起别的事。先取，再拼记忆块，免得同一条占两个名额。
@@ -999,12 +1006,13 @@ let styleLines = []
     relLine = '关系：你还不认识对方。别叫「主人」或任何称呼，也别装作熟；等对方自我介绍之后再叫名字。'
   }
 
-  // 情绪的方向：只在她真的有点情绪时给，免得正常起伏被读成「在下掉」
+  // 情绪的方向：只在她真的有点情绪时给，免得正常起伏被读成「在下掉」。
+  // 一天最多说一次；同一个方向说满三天就收声——那时候我不是不知道，是不用再听了。
   let trendLine = ''
   try {
     if (affect && Number(affect.intensity) >= 0.4) {
       const t = trendOf(db, aid)
-      if (t) trendLine = '（' + t.text + '。）'
+      if (t && canSayOnce(db, aid, 'trend.' + t.dir, { maxDays: 3 })) trendLine = '（' + t.text + '。）'
     }
   } catch { trendLine = '' }
 
