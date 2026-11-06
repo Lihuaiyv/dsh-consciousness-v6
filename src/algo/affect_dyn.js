@@ -28,7 +28,7 @@ function makeAffectDyn(version, applyScale, decayScale) {
     name: 'affect_dyn',
     version,
     kind: 'affect_dyn',
-    owner: '',
+    owner: 'affect',
     file: FILE,
     metrics: ['affect.intensity_mae', 'sys.algo_switch'],
     run(_ctx, input = {}) {
