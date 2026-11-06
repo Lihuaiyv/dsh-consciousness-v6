@@ -6,7 +6,7 @@
  *   - 召回：把证据门放到 0（什么都放进来）；
  *   - 情绪评价：不再看「是不是冲我来的」（没点名的批评也算到她头上）。
  * 后面陆续补了：衰减忘太快、温度没迟滞、驱力迟滞失效 / 永不休眠、关系没上限 / 伤不再比暖快、
- * 写入闸不判旁白 / 低分也占热层。
+ * 写入闸不判旁白 / 低分也占热层、注入丢保不丢边、说话分寸没迟滞、开环到期门、日记回声门、情绪动力衰减。
  * 每个都要让对应考卷至少红一条；全拦住才 exit 0。
  * 改了 retrieve / appraise 的实现或考卷的 import 写法，这里也要跟着改。
  */
@@ -163,6 +163,36 @@ const CASES = [
     from: '  if (byChannel) return { ...byChannel, source: \'channel\' }',
     to: '  if (false && byChannel) return { ...byChannel, source: \'channel\' }',
     importFrom: "'../src/modules/who.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：到期的判据拔掉——所有挂着的事都不冒头。
+    name: '开环：到期也不冒出来（到期门失效）',
+    impl: 'src/parts/loops/index.js',
+    exam: 'test/exam-loops.test.mjs',
+    from: '    const ready = (Number.isFinite(due) && due <= at) || (Number.isFinite(stale) && stale <= at)',
+    to: '    const ready = false',
+    importFrom: "'../src/modules/loops.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：抄回来的提示词原句不再拦（回声门失效）。
+    name: '日记：抄提示词不拦（回声门失效）',
+    impl: 'src/modules/diary.js',
+    exam: 'test/exam-diary.test.mjs',
+    from: '  if (/你在写这一天的日记|只写材料里出现|不要用 Markdown/.test(s)) return true',
+    to: '  if (false && /你在写这一天的日记|只写材料里出现|不要用 Markdown/.test(s)) return true',
+    importFrom: "'../src/modules/diary.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：衰减完反而把强度抬高（衰减不落）。
+    name: '情绪动力：衰减反而抬高（衰减不落）',
+    impl: 'src/parts/affect/index.js',
+    exam: 'test/exam-affect-apply.test.mjs',
+    from: '    .run(out.intensity, moodAlias, now(), aid)',
+    to: '    .run(Math.min(1, Number(r.intensity) + 0.15), moodAlias, now(), aid)',
+    importFrom: "'../src/parts/affect/index.js'",
     importTo: "'{MUTANT}'",
   },
 ]
