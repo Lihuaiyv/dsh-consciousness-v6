@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 主动开口 · 判断（零件内）
  *
  * 回答「现在该不该开口」：12 道门 + 缺口/真事/时机算分，benefit > cost 才说。
@@ -11,8 +11,8 @@ import { now } from '../../db.js'
 import { getParam, getAffect, getDrive } from '../../core.js'
 import { readAxes, driveAmp } from '../../modules/traits.js'
 import { budgetGet } from '../../modules/drive.js'
-import { ownerPerson, personByChannel } from '../../modules/relations.js'
 import { toneOf } from '../../algo/reldyn.js'
+import { whoIsSpeaking } from '../../modules/who.js'
 import { getProactivePrefs } from './prefs.js'
 import { proactiveSpend } from './budget.js'
 
@@ -223,7 +223,7 @@ export function inQuietHours(prefs, date = new Date()) {
 /** C6：当前对话对象的开口意愿（0..1）；读不到关系就给中性值 */
 function initiativeOf(db, aid) {
   try {
-    const p = ownerPerson(db, aid) || personByChannel(db, aid)
+    const p = whoIsSpeaking(db, aid)
     let mood = 0.5
     try { mood = Number(getAffect(db, aid).mood) || 0.5 } catch { /* 老库没有情绪表 */ }
     const axes = readAxes(db, aid)

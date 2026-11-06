@@ -155,6 +155,16 @@ const CASES = [
     importFrom: "import { decideSpeak, proactiveTriggerOf, setProactivePrefs, budgetGet, proactiveSpend, addProactiveSpend } from '../src/features.js'",
     importTo: "import { proactiveTriggerOf, setProactivePrefs, budgetGet, proactiveSpend, addProactiveSpend } from '../src/features.js'\nimport { decideSpeak } from '{MUTANT}'",
   },
+  {
+    // 变异点：把「通道优先」拆掉，永远落到主人（回到各写各的旧路子）。
+    name: '认人：通道绑了别人也认成主人（通道门失效）',
+    impl: 'src/modules/who.js',
+    exam: 'test/exam-who.test.mjs',
+    from: '  if (byChannel) return { ...byChannel, source: \'channel\' }',
+    to: '  if (false && byChannel) return { ...byChannel, source: \'channel\' }',
+    importFrom: "'../src/modules/who.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

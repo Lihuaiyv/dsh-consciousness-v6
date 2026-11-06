@@ -15,6 +15,7 @@ export const WRITES = Object.freeze({
   queue: ['proactive'],
   speak: ['proactive_decisions', 'proactive_stats'],
   expression: [],
+  who: [],
   memory: ['memory_items', 'memory_fts', 'alerts', 'conflicts'],
   timeline: ['memory_timeline', 'memory_items', 'flags'],
   layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
@@ -95,6 +96,12 @@ export const OWNERSHIP = {
       'proactive', 'proactive_decisions', 'proactive_stats', 'flags',
       'agents', 'memory_items', 'affect_state', 'drive_state',
     ],
+    reads: [],
+  },
+  who: {
+    // 认人：只回答「谁在说话」。不写库，读人物行 / 通道都走 relations 的公开函数。
+    files: ['modules/who.js'],
+    tables: [],
     reads: [],
   },
   expression: {

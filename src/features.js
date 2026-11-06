@@ -12,7 +12,8 @@ import { readAxes, driveAmp } from './modules/traits.js'
 import { addEvidence } from './modules/axis_evidence.js'
 import { rulesAppraise } from './algo/appraise.js'
 import { eventValence, moodAdjust, toneOf, REL_DEFAULTS as REL_DYN } from './algo/reldyn.js'
-import { bumpRelation, ownerPerson, personByChannel } from './modules/relations.js'
+import { bumpRelation } from './modules/relations.js'
+import { whoIsSpeaking } from './modules/who.js'
 import { resolveStructureEdges, affectLabels, seedRuleBindings } from './modules/artifacts.js'
 import { TARGETS, targetById } from './modules/selfmod_targets.js'
 import { setPending, setWokenAt, runningAgentIds, maxRunning, wakeRuntime } from './modules/binding.js'
@@ -985,7 +986,7 @@ export async function appraiseWithEdges(db, aid, text) {
   let ownerClose = 0.5
   let ownerTrust = 0.5
   try {
-    const p = ownerPerson(db, aid) || personByChannel(db, aid)
+    const p = whoIsSpeaking(db, aid)
     if (p) {
       ownerClose = Number(p.closeness)
       ownerTrust = Number(p.trust)

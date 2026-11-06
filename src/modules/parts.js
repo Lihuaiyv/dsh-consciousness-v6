@@ -234,6 +234,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'expression-before-part', note: '回退 = git checkout expression-before-part -- src/modules/parts.js docs/给人看的/零件-说话分寸.md，再删 test/exam-expression.test.mjs' },
   },
+  {
+    id: 'who',
+    name: '认人',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/who.js · whoIsSpeaking',
+    files: ['src/modules/who.js'],
+    entry: 'whoIsSpeaking（src/modules/who.js）；宿主接线：features.js / parts/speak/judge.js 调它',
+    exam: { file: 'test/exam-who.test.mjs', score: '11/11', note: '通道优先 / 主人兜底 / 没有就 null / 句柄与通道精确匹配 / 两个 agent 不串，11 道' },
+    assert: "表：无；读：whoIsSpeaking；回退：who-before-part",
+    swaps: [],
+    rollback: { pointer: 'who-before-part', note: '回退 = git checkout who-before-part -- src/modules/who.js src/modules/parts.js src/features.js src/parts/speak/judge.js test/exam-who.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
