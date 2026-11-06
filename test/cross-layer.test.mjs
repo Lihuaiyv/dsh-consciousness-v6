@@ -85,6 +85,12 @@ function putEpisode(db, aid, id, day, endAt, summary, openLoops = '[]') {
     check('间隔不够就不带', !b2.includes('今天早些时候'), b2)
     const b3 = sessionBridge(w.db, w.aid, { today: '2026-03-01' })
     check('显式 today 保持旧行为', b3 === '' || b3.includes('上次'), b3)
+    // 不再把散场前那串问话当「还没收尾的」念出来：它没有 id、没法关，念一次就是一笔假账
+    putEpisode(w.db, w.aid, 'ep_loops', '2026-03-01', new Date(Date.now() - 3 * 3600000).toISOString(),
+      '聊到零件和温度', JSON.stringify(['待立表是什么？不是删了吗？', '还得等温度查完是吗？']))
+    const b4 = sessionBridge(w.db, w.aid, { today: '2026-03-02' })
+    check('带上纪要', b4.includes('零件和温度'), b4)
+    check('不再念「还没收尾的」', !b4.includes('还没收尾') && !b4.includes('待立表'), b4)
   } finally { w.close() }
 }
 

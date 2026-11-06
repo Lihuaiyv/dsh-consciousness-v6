@@ -449,11 +449,11 @@ export function sessionBridge(db, aid, opt = {}) {
     if (!r) return ''
     const summary = String(r.summary).replace(/\s+/g, ' ').trim().slice(0, 70)
     if (!summary) return ''
-    const loops = safeJson(r.open_loops, [])
-      .map((x) => String(typeof x === 'string' ? x : (x && x.text) || '')).filter(Boolean)
-    const tail = loops.length ? '；还没收尾的：' + loops.slice(0, 2).join('、').slice(0, 40) : ''
+    /* 不再念 episode 里那串「还没收尾的」。
+       它其实只是散场前最后几句问话：没有 id、没有状态、没人能关它。挂上「待办」这个名字，
+       就成了一笔永远销不掉的假账，还天天复读。真没办完的事归 open_loops 那条线管。 */
     const head = sameDay ? '今天早些时候（' + r.day + '）你们聊到：' : '上次（' + r.day + '）你们聊到：'
-    return head + summary + tail
+    return head + summary
   } catch { return '' }
 }
 
