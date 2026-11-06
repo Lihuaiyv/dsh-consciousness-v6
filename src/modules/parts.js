@@ -298,6 +298,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'feel-before-part', note: '回退 = git checkout feel-before-part -- src/modules/parts.js src/ports/ownership.js docs/给人看的/零件-感受.md scripts/exam-sabotage-parts.mjs' },
   },
+  {
+    id: 'life',
+    name: '生活流',
+    role: '器官',
+    chain: '链上',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/life.js · lifeTick',
+    files: ['src/modules/life.js'],
+    entry: 'lifeTick / latestShare / lifeLine（src/modules/life.js）；宿主接线：index.js 心跳调 lifeTick，features 开口取 latestShare',
+    exam: { file: 'test/exam-life.test.mjs', score: '53/53', note: '选事与去重 / 七道门（开关、人不在、沉睡、夜里、次数、间隔、全局预算）/ 出门与空手 / 编经历不写 / 注入轮换与分享冷却，53 道' },
+    assert: '表：无；读：lifeLine / latestShare；回退：life-before-part',
+    swaps: [],
+    rollback: { pointer: 'life-before-part', note: '回退 = git checkout life-before-part -- src/modules/parts.js test/exam-life.test.mjs docs/给人看的/零件-生活流.md scripts/exam-sabotage-parts.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

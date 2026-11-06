@@ -205,6 +205,16 @@ const CASES = [
     importFrom: "'../src/modules/feel.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：夜里也出门（夜间门失效）——半夜爬起来去翻网。
+    name: '生活流：夜里也出门（夜间门失效）',
+    impl: 'src/modules/life.js',
+    exam: 'test/exam-life.test.mjs',
+    from: "  if (typeof browse === 'function' && !subj.repeat && !night) {",
+    to: "  if (typeof browse === 'function' && !subj.repeat) {",
+    importFrom: "'../src/modules/life.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

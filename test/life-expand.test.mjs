@@ -57,7 +57,8 @@ function insEvent(w, type, payload, at) {
     check('第一次跑起来', r1.ok === true, r1)
     const r2 = await lifeTick(w.db, w.aid, { at: t0 + 1800000, model: modelOk })
     check('第二次也能跑（不再一天一次）', r2.ok === true, r2)
-    const r3 = await lifeTick(w.db, w.aid, { at: t0 + 3600000, model: modelOk })
+    // 第三次按「现在」问：事件是按真实时钟落的，拿未来时刻问会跨日（22 点后必红）
+    const r3 = await lifeTick(w.db, w.aid, { at: Date.now(), model: modelOk })
     check('到上限 done_today', r3.ok === false && r3.skipped === 'done_today', r3)
   } finally { w.close() }
 }
