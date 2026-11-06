@@ -116,12 +116,17 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   check('同一时刻，库里留下了痕', evMid > evBefore, { evBefore, evMid })
   check('回执不提，句子照样进库',
     (db.prepare('SELECT text FROM affect_feel WHERE agent_id=? AND at=?').get(aid, new Date(T0 + 336000).toISOString()) || {}).text === '喉咙里顶着一口气')
-  const a5 = recordFeel(db, aid, { text: '那句话还在耳朵里', at: T0 + 348000 })
-  check('换到「话」：能记', a5.ok === true, a5)
-  const a6 = recordFeel(db, aid, { text: '手冷', at: T0 + 360000 })
-  check('两个字也收（那一刻本来就不完整）', a6.ok === true && a6.text === '手冷', a6)
-  const a7 = recordFeel(db, aid, { text: '嗯', at: T0 + 372000 })
-  check('一个字还是不收（说不清是哪一下）', a7.ok === false && a7.issue === 'too-short', a7)
+  const a5 = recordFeel(db, aid, { text: '指节还压着', at: T0 + 348000 })
+  check('第四条同类：不再重复留痕（不然 events 会被淹）', a5.ok === true, a5)
+  check('连着四条只留一条痕',
+    db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n === evMid,
+    db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n)
+  const a6 = recordFeel(db, aid, { text: '那句话还在耳朵里', at: T0 + 360000 })
+  check('换到「话」：能记', a6.ok === true, a6)
+  const a7 = recordFeel(db, aid, { text: '手冷', at: T0 + 372000 })
+  check('两个字也收（那一刻本来就不完整）', a7.ok === true && a7.text === '手冷', a7)
+  const a8 = recordFeel(db, aid, { text: '嗯', at: T0 + 384000 })
+  check('一个字还是不收（说不清是哪一下）', a8.ok === false && a8.issue === 'too-short', a8)
   check('成功回执永远只有一句「记下了。」',
     feel.output.render({}, a4).map((x) => x.text).join('') === '记下了。', feel.output.render({}, a4))
 }

@@ -100,7 +100,9 @@ function anchorRepeatHint(db, aid, cls, window, repeat) {
       if (feelAnchorOf(r.text) !== cls) break
       streak++
     }
-    if (streak >= repeat) {
+    // 只在「刚好够数」那一条留痕：连写十条手也只留一条。
+    // 用 >= 的话，第 3、4、5… 条每次都写一条，events 会被这一件事淹掉。
+    if (streak === repeat) {
       return '最近几条都落在' + (FEEL_ANCHOR_NAME[cls] || cls) + '上，换一样（视线、物件、那句话都行）'
     }
   } catch { /* 读不到就不提示 */ }
