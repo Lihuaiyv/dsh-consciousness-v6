@@ -18,6 +18,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { now } from '../db.js'
+import { isOwner } from './conversations.js'
 import { appendTurn } from './archive.js'
 
 const SCRIPT_PATH = fileURLToPath(new URL('../../scripts/wechat-inbox.py', import.meta.url))
@@ -152,6 +153,7 @@ export async function pollWeChatInbox(o = {}) {
   const added = []
   const seeded = []
   const touched = []
+  const replied = []
   for (const chat of res.chats || []) {
     const username = String(chat.username || '')
     if (!username) continue
@@ -160,9 +162,22 @@ export async function pollWeChatInbox(o = {}) {
     const msgs = Array.isArray(chat.messages) ? chat.messages : []
     const seen = chats ? getSeen(db, username) : (payload.seen[username] || 0)
     const maxSeq = msgs.reduce((n, m) => Math.max(n, Number(m.sort_seq) || 0), seen)
+    // 主人号：不自己记账，把这一轮交给回调（它会走完整条回复管线，顺手把话记了）
+    const owner = typeof o.onOwnerMessage === 'function' ? isOwner(db, username) : false
 
-    // 第一次见到这个会话：只记水位，不灌历史（接上那天别把几年旧消息吞进记忆）
+    // 第一次见到这个会话：只记水位，不灌历史（接上那天别把几年旧消息吞进记忆）。
+    // 例外：主人号且最后一句是刚发的（两小时内）——接上那一刻他也该被接住。
     if (!seen && !o.seed) {
+      if (owner && msgs.length) {
+        const last = msgs[msgs.length - 1]
+        const fresh = Date.now() - (Date.parse(String(last.at || '')) || 0) < 2 * 60 * 60 * 1000
+        if (fresh && !last.self) {
+          try {
+            const ok = await o.onOwnerMessage({ db, aid, name, username, text: String(last.text || ''), at: String(last.at || '') || now() })
+            if (ok) replied.push(name)
+          } catch { /* 接不住就只落水位，下一句再说 */ }
+        }
+      }
       setSeen(db, username, maxSeq)
       seeded.push(name)
       continue
@@ -186,6 +201,13 @@ export async function pollWeChatInbox(o = {}) {
           if (already) continue
         } catch { /* 查不到就当没记过 */ }
       }
+      // 主人说的话：交给回调走完整管线（召回 → 回一句 → 记账 → 发出去）。
+      // 回调说「处理了」就不再记一遍；回调抛错/返回 false 就退回普通记账，话不能丢。
+      if (owner && role === 'user') {
+        let handled = false
+        try { handled = !!(await o.onOwnerMessage({ db, aid, name, username, text, at })) } catch { handled = false }
+        if (handled) { replied.push(name); continue }
+      }
       const turnId = 'wx:' + username + ':' + (m.id || seq)
       let dup = false
       try {
@@ -207,5 +229,5 @@ export async function pollWeChatInbox(o = {}) {
     touched.push(name)
   }
 
-  return { ok: true, added: added.length, seeded, chats: touched, items: added.slice(0, 20) }
+  return { ok: true, added: added.length, seeded, chats: touched, replied, items: added.slice(0, 20) }
 }

@@ -26,9 +26,10 @@ import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
 import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_push.js'
-import { getConfig as getActionConfig } from './src/modules/actions/channels.js'
+import { getConfig as getActionConfig, sendMessage as sendViaChannel } from './src/modules/actions/channels.js'
 import { detectPython } from './src/modules/actions/wechat.js'
 import { pollWeChatInbox } from './src/modules/wechat_inbox.js'
+import { chatReply } from './src/features.js'
 import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
 import { presenceLine, webConversationId } from './src/modules/presence.js'
@@ -1963,6 +1964,30 @@ function startGrowPrefsWorker() {
  * 一分钟一次、每次只读「有消息的会话」，成本很低；读库由 Python 那侧缓存解密结果。
  * 第一次见到的会话只落水位（不灌历史）——接上的那天不该把几年的旧消息吞进她的记忆。
  */
+/**
+ * 主人在微信上说话：走完整条回复管线（召回 → 情绪 → 回一句 → 记账），再把这句话发回微信。
+ *
+ * 为什么用 chatReply：它已经把「记对话、写原文、认关系、压纪要」全做完了，
+ * 另起一条会又是一套手脚、又是两份账。它记完这一轮，所以这里不许再记一遍。
+ * 发不出去只能吞掉（话已经记了），下一条再说——别因为一次窗口卡住就把这轮拆成两条。
+ */
+async function wechatOwnerTurn({ db, aid, name, username, text }) {
+  const r = await chatReply(db, aid, {
+    text,
+    speaker: { channel: 'wechat', handle: username },
+    conversation_id: 'wechat:' + name,
+  })
+  const reply = String((r && r.reply) || '').trim()
+  if (!reply) return false
+  try {
+    const out = await sendViaChannel(db, aid, { channel: 'wechat', target: name, text: reply })
+    __probe('wechat-reply(' + name + ') ' + (out && out.status) + ' chars=' + reply.length)
+  } catch (e) {
+    __probe('wechat-reply-err(' + name + '): ' + (e && e.message))
+  }
+  return true
+}
+
 let wechatInboxTimer = null
 let wechatInboxBusy = false
 // 读不到（没装 Python 后端 / 微信没开 / 库没密钥）就退避 10 分钟，别每分钟刷一遍同样的错。
@@ -1998,6 +2023,7 @@ async function wechatInboxTick(reason) {
           skip: cfg['wechat.inbox.skip'],
           limit: cfg['wechat.inbox.limit'],
           python: py.cmd, pre: py.pre,
+          onOwnerMessage: wechatOwnerTurn,
         })
         if (out.added) __probe('wechat-inbox(' + reason + ') aid=' + aid.slice(0, 8) + ' added=' + out.added + ' chats=' + out.chats.join(','))
         if (out.seeded && out.seeded.length) __probe('wechat-inbox-seeded: ' + out.seeded.join(','))

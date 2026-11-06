@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
+import { setOwnerHandle } from '../src/modules/conversations.js'
 import { pollWeChatInbox, conversationIdOfWeChat, getSeen, runWeChatInbox } from '../src/modules/wechat_inbox.js'
 
 let pass = 0
@@ -130,6 +131,45 @@ const msg = (seq, text, extra = {}) => ({
   }] }]) })
   const n = db.prepare("SELECT COUNT(*) n FROM chat_turns WHERE agent_id=? AND conversation_id='wechat:自己'").get(aid).n
   check('自己说过的：发信那边记过，收信不再记第二遍', out.added === 0 && n === 1, { added: out.added, n })
+}
+
+// ================================================================ 主人号：交给回调，不记两遍
+{
+  setOwnerHandle(db, 'wxid_owner')
+  const calls = []
+  const hook = async (m) => { calls.push(m.text); return true }
+  const conv = 'wechat:主人'
+  const count = () => db.prepare('SELECT COUNT(*) n FROM chat_turns WHERE agent_id=? AND conversation_id=?').get(aid, conv).n
+
+  // 第一次见到 + 最后一句是刚发的：接住，但不写账（回调会走完整管线自己记）
+  const fresh = new Date().toISOString()
+  const first = await pollWeChatInbox({
+    db, aid, onOwnerMessage: hook,
+    run: fakeRun([{ ok: true, self: 'wxid_me', chats: [{ username: 'wxid_owner', name: '主人', messages: [msg(10000, '在吗', { at: fresh })] }] }]),
+  })
+  check('主人号：第一次见到也把刚发的那句接住', first.ok && first.replied.includes('主人') && calls.includes('在吗'), { first, calls })
+
+  // 新消息：交给回调，账本里不多一行（回调负责记）
+  const second = await pollWeChatInbox({
+    db, aid, onOwnerMessage: hook,
+    run: fakeRun([{ ok: true, self: 'wxid_me', chats: [{ username: 'wxid_owner', name: '主人', messages: [msg(11000, '你在干嘛', { at: fresh })] }] }]),
+  })
+  check('主人号：交给回调，自己不重复记账', second.added === 0 && count() === 0 && calls.includes('你在干嘛'), { second, n: count() })
+
+  // 回调说「没处理」：退回普通记账，话不能丢
+  const third = await pollWeChatInbox({
+    db, aid, onOwnerMessage: async () => false,
+    run: fakeRun([{ ok: true, self: 'wxid_me', chats: [{ username: 'wxid_owner', name: '主人', messages: [msg(12000, '那我记一下', { at: fresh })] }] }]),
+  })
+  check('主人号：回调没处理就退回普通记账', third.added === 1 && count() === 1, { third, n: count() })
+
+  // 回调抛错：同样退回记账，不能因为回一句失败把话丢了
+  const fourth = await pollWeChatInbox({
+    db, aid, onOwnerMessage: async () => { throw new Error('模型挂了') },
+    run: fakeRun([{ ok: true, self: 'wxid_me', chats: [{ username: 'wxid_owner', name: '主人', messages: [msg(13000, '回不了也要记住', { at: fresh })] }] }]),
+  })
+  check('主人号：回调抛错也退回记账', fourth.added === 1 && count() === 2, { fourth, n: count() })
+  setOwnerHandle(db, '3192248859')
 }
 
 // ================================================================ 水位、条数、注入

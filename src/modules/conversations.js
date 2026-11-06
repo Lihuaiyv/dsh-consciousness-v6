@@ -172,6 +172,14 @@ export function ownerHandle(db) {
   return String(flagGet(db, 'qq.owner') || FALLBACK_OWNER)
 }
 
+/**
+ * 主人可能有好几个号：QQ 一个、微信一个。`qq.owner` 允许逗号分隔，
+ * 认人时按「其中任意一个」判——否则加了微信号就会把 QQ 那边挤掉。
+ */
+export function ownerHandles(db) {
+  return ownerHandle(db).split(/[,，;；\s]+/).map((s) => s.trim()).filter(Boolean)
+}
+
 export function setOwnerHandle(db, handle) {
   flagSet(db, 'qq.owner', String(handle || '').trim())
   return ownerHandle(db)
@@ -194,7 +202,7 @@ function bareHandle(h) {
 export function isOwner(db, handle) {
   const h = bareHandle(handle)
   if (!h) return false
-  return h === bareHandle(ownerHandle(db))
+  return ownerHandles(db).some((x) => bareHandle(x) === h)
 }
 
 /**
