@@ -344,7 +344,7 @@ export const PARTS = [
     exam: { file: 'test/exam-selfmemory.test.mjs', score: '31/31', note: '当天素材 / 四道门（总开关、日更、素材、模型）/ 过闸与重试 / 一天一条 / 想明白的那条，31 道' },
     assert: '表：memory_items；读：selfDayMaterial / selfInsightMaterial；回退：selfmemory-before-part',
     swaps: [],
-    rollback: { pointer: 'selfmemory-before-part', note: '回退 = git checkout selfmemory-before-part -- src/modules/parts.js test/exam-selfmemory.test.mjs docs/给人看的/零件-自我记忆.md scripts/exam-sabotage-parts.mjs' },
+    rollback: { pointer: 'selfmemory-before-part', note: '回退 = git checkout selfmemory-before-part -- src/modules/parts.js test/exam-selfmemory.test.mjs docs/给人看的/零件-自我记忆.md scripts/exam-sabotage-parts.mjs；注意这个 tag 与记忆整理同点，只想退这一件时，先删 parts.js 里 selfmemory 那一段，别整文件 checkout' },
   },
   {
     id: 'consolidate',
@@ -360,7 +360,7 @@ export const PARTS = [
     exam: { file: 'test/exam-consolidate.test.mjs', score: '38/38', note: '聚类 / 合并与退场 / 解析失败不动 / 没价值不写 / dryRun / 反思只压流水账 / 游标，38 道' },
     assert: '表：memory_items / reflect_cursor；读：mergeBatch / reflectFrom；回退：consolidate-before-part',
     swaps: [],
-    rollback: { pointer: 'consolidate-before-part', note: '回退 = git checkout consolidate-before-part -- src/modules/parts.js test/exam-consolidate.test.mjs docs/给人看的/零件-记忆整理.md scripts/exam-sabotage-parts.mjs' },
+    rollback: { pointer: 'consolidate-before-part', note: '回退 = git checkout consolidate-before-part -- src/modules/parts.js test/exam-consolidate.test.mjs docs/给人看的/零件-记忆整理.md scripts/exam-sabotage-parts.mjs；注意这个 tag 与自我记忆同点，只想退这一件时，先删 parts.js 里 consolidate 那一段，别整文件 checkout' },
   },
 ]
 

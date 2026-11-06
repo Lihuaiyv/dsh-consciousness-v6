@@ -123,7 +123,7 @@ export const OWNERSHIP = {
     tables: ['surface_queue', 'surfaced_items', 'memory_items'],
   },
   selfread: {
-    // 回读自己那句话：只改 affect_v3 的慢情绪
+    // 回读自己那句话：只改 affect_v3 的快情绪（fast / total / fast_at），慢情绪不碰
     files: ['modules/self_read.js'],
     tables: ['affect_v3'],
   },
@@ -321,7 +321,7 @@ export const WRITE_SPLIT = Object.freeze({
   memory_items: ['memory', 'timeline'],
   // persona：人格模块写整行；selfmod 回滚时只按 changes.before 写回 style.* 那几个键。
   persona: ['persona', 'selfmod'],
-  // affect_v3：情绪模块写整行；selfread 回读时只改慢情绪那几个字段。
+  // affect_v3：情绪模块写整行；selfread 回读时只改快情绪那几个字段（慢情绪不碰）。
   affect_v3: ['affect', 'selfread'],
 })
 
