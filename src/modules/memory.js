@@ -10,6 +10,7 @@ import {
 import { normalizeTerms } from './terms.js'
 import { attrConflict } from './contradict.js'
 import { askAboutConflict } from './conflict_ask.js'
+import { dropPendingByReason } from './proactive.js'
 import { maskPositive } from './negation.js'
 import { feelsByIds } from './feel.js'
 export { normalizeTerms }
@@ -512,7 +513,7 @@ export function resolveConflict(db, aid, cid, body = {}) {
   db.prepare("UPDATE conflicts SET state='resolved', resolution=?, reason=?, resolved_at=? WHERE id=?").run(keep, reason, now(), cid)
   try { db.prepare("UPDATE alerts SET state='resolved' WHERE agent_id=? AND kind='data' AND title LIKE '%冲突%' AND state='open'").run(aid) } catch { /* 老库没有告警表 */ }
   // 已经拍板了，就别再把「到底是哪个」的问句排着队发出去
-  try { db.prepare("DELETE FROM proactive WHERE agent_id=? AND state='pending' AND reason=?").run(aid, 'conflict:' + cid) } catch { /* 老库没有主动消息表 */ }
+  try { dropPendingByReason(db, aid, 'conflict:' + cid) } catch { /* 老库没有主动消息表 */ }
   event(db, aid, 'memory.conflict_resolved', { conflict_id: cid, keep, reason })
   return { id: cid, state: 'resolved', keep, reason }
 }

@@ -7,6 +7,9 @@
 //   3. 名字 / 归属 / 入口不能空
 //   4. 零件内文件不许 import 宿主薄壳 features.js（回流检查）
 //   5. 考卷实跑的「通过 N / M」要和册子里登记的一致（登记不能停在旧数）
+//   6. 回退点写的是真的 git tag（不是一句字符串）
+//   7. 入口写的函数真在登记的文件里导出着
+//   8. 每个零件有对应的说明页 docs/给人看的/零件-<名字>.md
 // 任何一条不对就红。
 import fs from 'node:fs'
 import os from 'node:os'
@@ -59,6 +62,28 @@ for (const p of PARTS) {
     }
   }
   if (p.status === '可换' && !(p.rollback && p.rollback.pointer)) red(tag + '：可换零件必须有回退点')
+  // 6. 回退点是真的 git tag，不是只写了句字符串
+  if (p.rollback && p.rollback.pointer && String(p.rollback.pointer).trim()) {
+    const pointer = String(p.rollback.pointer).trim()
+    const r = spawnSync('git', ['rev-parse', '--verify', '--quiet', pointer], { cwd: root, stdio: 'ignore', timeout: 20000 })
+    if (r.status !== 0) red(tag + '：回退点 tag 不存在 ' + pointer)
+  }
+  // 7. 入口函数真在登记的文件里导出着（entry 里「名字（path.js）」逐组对）
+  for (const m of String(p.entry || '').matchAll(/([^；;（()]*?)（([^（）]*?\.js)）/g)) {
+    const names = m[1].split(/[／/、]/).map((s) => s.trim()).filter((s) => /^[A-Za-z_$][\w$]*$/.test(s))
+    const file = m[2].trim()
+    if (!/^[\w./-]+\.js$/.test(file)) continue
+    const abs = path.join(root, file)
+    if (!fs.existsSync(abs)) { red(tag + '：入口写的文件不存在 ' + file); continue }
+    const src = fs.readFileSync(abs, 'utf8')
+    for (const n of names) {
+      const re = new RegExp('export\\s+(?:async\\s+)?(?:function|const|let|var|class)\\s+' + n + '\\b|export\\s*\\{[^}]*\\b' + n + '\\b')
+      if (!re.test(src)) red(tag + '：入口函数 ' + n + ' 不在 ' + file + ' 里导出着')
+    }
+  }
+  // 8. 说明页必须在
+  const doc = path.join(root, 'docs', '给人看的', '零件-' + String(p.name || '') + '.md')
+  if (!fs.existsSync(doc)) red(tag + '：说明页不存在 docs/给人看的/零件-' + p.name + '.md')
   // 回流检查：零件内部不许反向依赖宿主薄壳 features.js
   for (const f of p.files || []) {
     if (!String(f).startsWith('src/parts/')) continue

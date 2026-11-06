@@ -84,7 +84,7 @@ for (const b of blocks) {
 
 console.log('\n--- 断言 ---')
 check('每轮都有行为示例', blocks.every((b) => b.block.includes('## 我说话的样子')))
-check('每轮都有情绪行', blocks.every((b) => b.block.includes('感觉现在大概')))
+check('每轮都有情绪行', blocks.every((b) => /这会儿大概|感觉现在大概/.test(b.block)))
 check('每轮都有记忆块', blocks.every((b) => b.block.includes('关于这句话')))
 check('旧记忆带时间标签', blocks.some((b) => /（\d+ 个月前|（\d+ 周前/.test(b.block)), blocks.map((b) => b.block.match(/（[^）]*(天前|周前|个月前)[^）]*）/) || null))
 // 不同话题的记忆可以碰巧一样（弱查询时只剩锚点 + 新近两席），

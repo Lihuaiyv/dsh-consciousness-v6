@@ -9,7 +9,8 @@
  * 链外接线（把已入队那句推进会话）由宿主层调，不在零件内。
  */
 import { now } from '../../db.js'
-import { nid, event } from '../../core.js'
+import { event } from '../../core.js'
+import { enqueueProactive } from '../../modules/proactive.js'
 import { budgetConsume } from '../../modules/drive.js'
 import { markLoopsFired } from '../../modules/loops.js'
 import { getProactivePrefs, setProactivePrefs, PROACTIVE_DEFAULTS } from './prefs.js'
@@ -80,14 +81,12 @@ export async function queueProactive(db, aid, opt = {}) {
     const did = recordProactiveDecision(db, aid, rep, { text: composed.text, source: composed.source })
     return manual ? { queued: false, reason: 'repeat', decision_id: did, why: rep } : null
   }
-  const id = nid('prc_')
   const s = d.score || {}
   const why = (d.intent.reason || '') + ' · ' + composed.source
     + (d.manual ? ' · 你让它说' : ' · ' + Number(s.benefit || 0).toFixed(2) + '>' + Number(s.cost || 0).toFixed(2))
   // 分享要按生活 id 记住「排过队没有」，否则下一轮心跳还会想分享同一件事。
   const reason = (d.trigger && d.trigger.kind === 'share' && d.trigger.id) ? ('share:' + d.trigger.id + ' · ' + why) : why
-  db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
-    .run(id, aid, composed.text, reason, d.intent.dim || '', 'pending', now(), null)
+  const id = enqueueProactive(db, aid, { text: composed.text, reason, dim: d.intent.dim || '', at: now() })
   // 说出来之后，这件事就不再「挂着」了；不提的话会每轮重复
   if (d.trigger && d.trigger.kind === 'loop' && d.trigger.id) {
     try { markLoopsFired(db, [d.trigger.id]) } catch { /* 记账失败不影响说话 */ }

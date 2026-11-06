@@ -7,6 +7,7 @@
  */
 import { now } from './db.js'
 import { event } from './core.js'
+import { markDelivered } from './modules/proactive.js'
 import { proactivePushText } from './features.js'
 
 /**
@@ -38,9 +39,9 @@ export async function pushProactiveLine({ db, aid, line, proactiveId, sessionId,
       content: [{ type: 'text', text: proactivePushText(line) }],
     }, signal)
     // delivered_at 留空：主动推的不算「24 小时没回就被忽略」，等对方真回话再记 answered
-    const r = db.prepare("UPDATE proactive SET state='delivered', delivered_at=NULL WHERE id=? AND state='pending'").run(proactiveId)
+    const changed = markDelivered(db, proactiveId)
     try {
-      event(db, aid, 'proactive.pushed', { id: proactiveId, session: sessionId, changed: Number(r.changes || 0), at: now() })
+      event(db, aid, 'proactive.pushed', { id: proactiveId, session: sessionId, changed, at: now() })
     } catch { /* 记账失败不影响推 */ }
     return { ok: true, session: sessionId }
   } catch (e) {

@@ -9,6 +9,7 @@ import { deleteMemoryFts, deleteMemoryFtsOrphans, setMemoryFts } from './memory_
 import { rebuildMemoryFts, rebuildRawFts, rebuildFactFts } from './archive.js'
 import { purgeAgent, purgeOrphans } from './sangguan/purge.js'
 import { readEvents } from './sangguan/ledger.js'
+import { expireStaleProactive } from './proactive.js'
 
 /**
  * 存储体检 + 自愈。
@@ -121,7 +122,7 @@ export function purgeExpired(db) {
   // 陈年 pending：7 天没投递的主动消息作废。别让旧账占着注入位和「今天说过」的统计。
   let staleProactive = 0
   try {
-    staleProactive = Number(db.prepare("UPDATE proactive SET state='expired' WHERE state='pending' AND created_at < ?").run(new Date(Date.now() - 7 * 86400000).toISOString()).changes || 0)
+    staleProactive = expireStaleProactive(db, new Date(Date.now() - 7 * 86400000).toISOString())
   } catch { /* 老库没有 proactive 表 */ }
   // agents 里已经没有、三观数据还在的（上次清除失败的），补清
   try { purgeOrphans(db) } catch { /* 补清失败下次再来 */ }

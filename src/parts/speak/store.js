@@ -1,14 +1,15 @@
-﻿/**
+/**
  * 主动开口 · 存储与结局追踪（零件内）
  *
  * 管 proactive 三张表：proactive（待发/已发）、proactive_decisions（每次判断留一条）、
  * proactive_stats（按维度的发/答/忽略/冷却）。
- * 这些表归开口，只有这个文件和 queueProactive 写；别的零件只读。
+ * proactive 的写归 modules/proactive.js（队列单写手）；这个文件只写 decisions / stats，别的零件只读。
  *
  * 共享件只 import：db 的 now、core 的 nid/agent/err。
  */
 import { now } from '../../db.js'
 import { nid, agent, err } from '../../core.js'
+import { markAnswered, markIgnored, dismissProactive } from '../../modules/proactive.js'
 
 const DECISION_KEEP = 120
 
@@ -85,7 +86,7 @@ export function settleProactiveAnswered(db, aid) {
   try {
     const rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0").all(aid)
     for (const r of rows) {
-      db.prepare('UPDATE proactive SET answered=1, answered_at=? WHERE id=?').run(now(), r.id)
+      markAnswered(db, r.id)
       bumpStat(db, aid, r.dim || 'R', 'answered')
       n++
     }
@@ -101,7 +102,7 @@ export function markProactiveIgnored(db, aid) {
     const rows = db.prepare("SELECT id,dim FROM proactive WHERE agent_id=? AND state='delivered' AND answered=0 AND ignored=0 AND delivered_at<?").all(aid, cutoff)
     for (const r of rows) {
       const dim = r.dim || 'R'
-      db.prepare('UPDATE proactive SET ignored=1 WHERE id=?').run(r.id)
+      markIgnored(db, r.id)
       bumpStat(db, aid, dim, 'ignored')
       const s = db.prepare('SELECT * FROM proactive_stats WHERE agent_id=? AND dim=?').get(aid, dim)
       if (s && Number(s.ignored) >= 2 && Number(s.answered) === 0) {
@@ -122,6 +123,6 @@ export function proactiveStats(db, aid) {
 export function ackProactive(db, aid, pid) {
   const r = db.prepare('SELECT * FROM proactive WHERE id=? AND agent_id=?').get(pid, aid)
   if (!r) err(404, 'NOT_FOUND', '这条主动消息不存在')
-  db.prepare("UPDATE proactive SET state='dismissed' WHERE id=?").run(pid)
+  dismissProactive(db, pid)
   return { id: pid, state: 'dismissed' }
 }

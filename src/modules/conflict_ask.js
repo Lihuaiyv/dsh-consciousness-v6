@@ -11,6 +11,7 @@
 
 import { now } from '../db.js'
 import { nid, event, getParam } from '../kernel.js'
+import { enqueueProactive } from './proactive.js'
 
 /** 摘要里的「1. 用户的事实：…」剥成一句人话，别把编号和栏目名一起念出来。 */
 export function claimLine(text) {
@@ -97,9 +98,7 @@ export function askAboutConflict(db, aid, { cid, aId, bId, aText, bText }) {
       const nText = normClaim(text)
       if (asked.some((r) => sameClaim(normClaim(r.text), nText))) return null
     } catch { /* 去重查不动就照常问，不能因为查重失败把话说没 */ }
-    const id = nid('prc_')
-    db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
-      .run(id, aid, text, 'conflict:' + cid, 'R', 'pending', now(), null)
+    const id = enqueueProactive(db, aid, { text, reason: 'conflict:' + cid, dim: 'R' })
     try { event(db, aid, 'proactive.queued', { dim: 'R', source: 'conflict', conflict_id: cid }) } catch { /* 记账失败不影响问 */ }
     return { id, text }
   } catch {

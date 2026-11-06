@@ -12,7 +12,10 @@
  */
 export const WRITES = Object.freeze({
   loops: ['open_loops'],
-  memory: ['memory_items', 'memory_fts', 'proactive', 'alerts', 'conflicts'],
+  queue: ['proactive'],
+  speak: ['proactive_decisions', 'proactive_stats'],
+  expression: [],
+  memory: ['memory_items', 'memory_fts', 'alerts', 'conflicts'],
   timeline: ['memory_timeline', 'memory_items', 'flags'],
   layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
   persona: ['persona', 'relations', 'preferences', 'taboos'],
@@ -76,6 +79,30 @@ export const OWNERSHIP = {
     tables: ['open_loops'],
     reads: [],
   },
+  queue: {
+    // 待发消息队列：proactive 只由 modules/proactive.js 写。开口、冲突提问、投递、作废都调它的公开函数。
+    files: ['modules/proactive.js'],
+    tables: ['proactive'],
+    reads: [],
+  },
+  speak: {
+    // 主动开口：判断 + 生成 + 记判决。读情绪 / 驱力 / 人格 / 记忆 / 开环；只写自己的两张账表。
+    files: [
+      'parts/speak/index.js', 'parts/speak/prefs.js', 'parts/speak/budget.js', 'parts/speak/trigger.js',
+      'parts/speak/judge.js', 'parts/speak/store.js', 'parts/speak/compose.js', 'parts/speak/hooks.js',
+    ],
+    tables: [
+      'proactive', 'proactive_decisions', 'proactive_stats', 'flags',
+      'agents', 'memory_items', 'affect_state', 'drive_state',
+    ],
+    reads: [],
+  },
+  expression: {
+    // 说话分寸：只算档位和句子多少，不碰表。
+    files: ['algo/expression.js', 'modules/expression_state.js'],
+    tables: [],
+    reads: [],
+  },
   surfacing: {
     // 浮现观测：注入 / 用上，只写自己的表
     files: ['modules/surfacing.js'],
@@ -106,7 +133,8 @@ export const OWNERSHIP = {
   relations: {
     // 人物账本：rel_event 是主数据，其余都是可重放投影。
     // 名单里的 relations（旧表）只读，用于一次性迁移；v2 不写它。
-    files: ['modules/relations.js'],
+    // reldyn / desensitize 是纯函数（不碰表），登记在这里让界桩扫得到零件文件。
+    files: ['modules/relations.js', 'algo/reldyn.js', 'algo/desensitize.js'],
     tables: [
       'rel_event', 'rel_tier', 'rel_person', 'rel_edge', 'rel_mention', 'rel_evidence',
       'rel_channel', 'rel_extract_queue', 'rel_review', 'rel_habit', 'rel_violation',
@@ -202,7 +230,7 @@ export const OWNERSHIP = {
     // fact_archive：原地改写的旧句留底（`<id>:hist:<version>`）
     // memory_pair_judge：窄门判定的缓存表（pair_judge 负责读写），gate 只把 applied 标成 0/1——
     // 登记在这里是为了让这次跨模块写可见，不是把表从 pair_judge 抢过来。
-    files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js'],
+    files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js', 'modules/memory_source.js'],
     tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive', 'memory_pair_judge'],
   },
   timeline: {

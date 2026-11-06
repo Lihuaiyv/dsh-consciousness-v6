@@ -44,7 +44,7 @@ let voiceIdx = 0
 const complete = async (messages) => {
   const sys = String(messages && messages[0] && messages[0].content || '')
   if (sys.includes('两版')) return '{"pick":"B","why":"更像","confidence":0.6}'
-  if (sys.includes('只输出一行中文')) return VOICE_POOL[voiceIdx++ % VOICE_POOL.length]
+  if (sys.includes('"line"')) return JSON.stringify({ line: VOICE_POOL[voiceIdx++ % VOICE_POOL.length] })
   // 影子判断：故意爱往上抬，好检验「低落不许被抬」
   const m = /档位 (quiet|brief|normal|warm)/.exec(String(messages[1] && messages[1].content || ''))
   const up = { quiet: 'normal', brief: 'normal', normal: 'warm', warm: 'warm' }

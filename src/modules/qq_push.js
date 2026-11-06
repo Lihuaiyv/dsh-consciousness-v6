@@ -13,6 +13,7 @@
  */
 import { now } from '../db.js'
 import { event } from '../kernel.js'
+import { markDelivered } from './proactive.js'
 
 /** 私聊 chatKey：桥的格式是 `u:<QQ号>`。 */
 export function ownerChatKey(qq) {
@@ -57,7 +58,7 @@ export async function pushProactiveToQQ({ db, aid, api, chatKey, line, proactive
     return { ok: false, reason: 'send_failed', error: String((e && e.message) || e) }
   }
   try {
-    db.prepare("UPDATE proactive SET state='delivered', delivered_at=NULL WHERE id=? AND state='pending'").run(proactiveId)
+    markDelivered(db, proactiveId)
   } catch { /* 标不上下一次还会发；宁可不标，也不能因为记账失败把话弄丢 */ }
   try { event(db, aid, 'proactive.qq_pushed', { id: proactiveId, chatKey, at: now() }) } catch { /* 记账失败不影响 */ }
   // 发出去的话也要在本地账本里留一条：不然只能在手机上看，回看时不知道自己说过。
