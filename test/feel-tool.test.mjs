@@ -43,6 +43,8 @@ const r1 = await feel.execute({ text: '手指停在半空，\n又怕显得急' }
 check('记下了', r1.ok === true, r1)
 check('返回值没有 undefined 键（宿主的 lossless JSON 会拒）',
   Object.values(r1).every((v) => v !== undefined) && !Object.prototype.hasOwnProperty.call(r1, 'hint'), r1)
+check('成功回执不带落点字段（不留监工）',
+  !Object.prototype.hasOwnProperty.call(r1, 'anchor') && !Object.prototype.hasOwnProperty.call(r1, 'hint'), Object.keys(r1))
 check('换行被折成一行', r1.text === '手指停在半空， 又怕显得急', r1.text)
 const row = db.prepare('SELECT * FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
 check('库里有一条', !!row, row)
@@ -96,28 +98,32 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   check('三个字也收（手在抖就是一句）', okThree.ok === true, okThree)
 }
 
-// ---------- 三之三、换落点：连着几条都是手，就提一句（不拦） ----------
+// ---------- 三之三、换落点：只落库，不回执 ----------
 {
   check('落点分类：话', feelAnchorOf('那句话还在耳朵里') === '话', feelAnchorOf('那句话还在耳朵里'))
   check('落点分类：物', feelAnchorOf('桌上那杯水凉了') === '物', feelAnchorOf('桌上那杯水凉了'))
   check('落点分类：什么都沾不上', feelAnchorOf('什么都没有') === 'none', feelAnchorOf('什么都没有'))
   const evBefore = db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n
   const a1 = recordFeel(db, aid, { text: '视线钉在屏幕上', at: T0 + 300000 })
-  check('第一条：视线，不提示', a1.ok === true && a1.anchor === '视' && !a1.hint, a1)
+  check('第一条：视线，回执干净', a1.ok === true && Object.keys(a1).every((k) => k !== 'anchor' && k !== 'hint'), a1)
   const a2 = recordFeel(db, aid, { text: '手压着桌沿没松', at: T0 + 312000 })
-  check('第二条：换成身体，从头数，不提示', a2.ok === true && a2.anchor === '身' && !a2.hint, a2)
+  check('第二条：换成身体，从头数', a2.ok === true, a2)
   const a3 = recordFeel(db, aid, { text: '指节蹭了一下', at: T0 + 324000 })
-  check('第三条：同类才两条，还没到数', a3.ok === true && !a3.hint, a3)
+  check('第三条：同类才两条，还没到数', a3.ok === true, a3)
   const a4 = recordFeel(db, aid, { text: '喉咙里顶着一口气', at: T0 + 336000 })
-  check('连着三条同类：提一句换落点', a4.ok === true && /换一样/.test(a4.hint || ''), a4)
-  check('带提示时 hint 是字符串（不是 undefined）', typeof a4.hint === 'string' && Object.values(a4).every((v) => v !== undefined), a4)
-  check('提示归提示，句子照样进库',
+  check('连着三条同类：回执也不提（只落库）', a4.ok === true && !('hint' in a4) && !('anchor' in a4), a4)
+  const evMid = db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n
+  check('同一时刻，库里留下了痕', evMid > evBefore, { evBefore, evMid })
+  check('回执不提，句子照样进库',
     (db.prepare('SELECT text FROM affect_feel WHERE agent_id=? AND at=?').get(aid, new Date(T0 + 336000).toISOString()) || {}).text === '喉咙里顶着一口气')
   const a5 = recordFeel(db, aid, { text: '那句话还在耳朵里', at: T0 + 348000 })
-  check('换到「话」：连续断了', a5.ok === true && !a5.hint, a5)
-  const evAfter = db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n
-  check('换落点的提示留了痕（不靠猜）', evAfter > evBefore, { evBefore, evAfter })
-  check('渲染会把提示带出来，但先是一句确认', feel.output.render({}, a4).map((x) => x.text).join('').startsWith('记下了。'), feel.output.render({}, a4))
+  check('换到「话」：能记', a5.ok === true, a5)
+  const a6 = recordFeel(db, aid, { text: '手冷', at: T0 + 360000 })
+  check('两个字也收（那一刻本来就不完整）', a6.ok === true && a6.text === '手冷', a6)
+  const a7 = recordFeel(db, aid, { text: '嗯', at: T0 + 372000 })
+  check('一个字还是不收（说不清是哪一下）', a7.ok === false && a7.issue === 'too-short', a7)
+  check('成功回执永远只有一句「记下了。」',
+    feel.output.render({}, a4).map((x) => x.text).join('') === '记下了。', feel.output.render({}, a4))
 }
 
 // ---------- 四、注入 ----------

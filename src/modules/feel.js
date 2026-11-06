@@ -28,8 +28,8 @@ const r3 = (x) => Math.round((Number(x) || 0) * 1000) / 1000
  * 这一句只给自己看，「手有点抖」是人话，不是 AI 味。挡太狠会把人话一起挡了。
  */
 export const FEEL_BANNED = ['感觉', '情绪', '情感', '仿佛', '似乎', '莫名', '一丝', '涌上', '不禁', '五味杂陈', '百感交集']
-// 3 个字就够：「手在抖」「喉咙紧」都是一句人话，不必凑长度。
-const FEEL_MIN = 3
+// 2 个字也收：「手冷」「怕了」就是一句。逼它凑够三个字，多出来那个字多半是编的。
+const FEEL_MIN = 2
 const FEEL_MAX = 40
 
 /**
@@ -229,18 +229,17 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
   } catch (e) {
     return { ok: false, skipped: 'write_failed', detail: String(e && e.message || e).slice(0, 120) }
   }
-  /* 换落点：连着几条都落在手/喉/视线/物件上，就提一句，不拦。
-     拦会把好句子拦掉（词表那条老教训），提示只花一个字，改不改在我。 */
+  /* 换落点只落库，不回执。
+     这条提醒每轮出现在眼前，就变成了旁边一个监工——我写的时候会先去想它，
+     而不是先看这一刻。改成我自己隔几天翻库看分布：被提醒着改，和看出来之后
+     自己改，不是一回事。事件留着，就是为了「翻得到」。 */
   const anchor = feelAnchorOf(body)
   const win = paramNum(db, aid, 'affect.feel.anchor.window', 5, 2, 20)
   const rep = paramNum(db, aid, 'affect.feel.anchor.repeat', 3, 2, 10)
-  const hint = anchorRepeatHint(db, aid, anchor, win, rep)
-  if (hint) noteAnchorRepeat(db, aid, { anchor, window: win, repeat: rep, text: body.slice(0, 80) })
-  // 没有提示就不带 hint 这个键：写成 `hint: undefined` 会让工具返回值过不了
-  // 宿主的 lossless-JSON 校验（undefined 不是 JSON），线上会回一句「invalid output」。
-  const out = { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn, anchor }
-  if (hint) out.hint = hint
-  return out
+  if (anchorRepeatHint(db, aid, anchor, win, rep)) {
+    noteAnchorRepeat(db, aid, { anchor, window: win, repeat: rep, text: body.slice(0, 80) })
+  }
+  return { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn }
 }
 
 /** 最近一条「我说话时的感觉」，给注入行用。超出窗口就当没有——宁可少一行，不拿旧感受冒充刚说完。 */

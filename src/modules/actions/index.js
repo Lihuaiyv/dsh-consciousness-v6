@@ -501,10 +501,12 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         text: str('一句话：这一秒的样子（手 / 视线 / 物件 / 那句话，挑一样；第一人称，不写数字和原因）'),
       }, ['text']),
       output: {
-        schema: { type: 'object', properties: { ok: { type: 'boolean' }, skipped: { type: 'string' }, hint: { type: 'string' }, anchor: { type: 'string' }, text: { type: 'string' }, at: { type: 'string' } } },
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, skipped: { type: 'string' }, hint: { type: 'string' }, text: { type: 'string' }, at: { type: 'string' } } },
+        // 成功只回一句「记下了。」：落点、换不换落点这些都不往回收。
+        // 回执每轮多说一句「你又写手了」，就变成旁边一个监工；那部分我自己翻库看。
         render: (_a, v) => TEXT(
           v && v.ok
-            ? ('记下了。' + (v.hint ? '（' + v.hint + '）' : ''))
+            ? '记下了。'
             : ('没记：' + ((v && v.skipped) || '原因不明') + (v && v.hint ? '（' + v.hint + '）' : '')),
         ),
       },
