@@ -1029,9 +1029,13 @@ export function extractMentions(db, aid, text) {
   const found = []
   const seen = new Set()
   const persons = db.prepare("SELECT id,name,aliases FROM rel_person WHERE agent_id=? AND status<>'archived'").all(aid)
+  // 她自己的名字不是「一个人」：句子里出现「小汐」不该建出关系卡
+  let selfName = ''
+  try { selfName = normalizeName((db.prepare('SELECT name FROM agents WHERE id=?').get(aid) || {}).name || '') } catch { /* 老库没有 agents */ }
   const push = (surface, how, personId, score, create, tier) => {
     const normalized = normalizeName(surface)
     if (!normalized || seen.has(normalized)) return null
+    if (selfName && normalized === selfName) return null
     seen.add(normalized)
     const item = { surface: String(surface).trim(), normalized, how, personId: personId || null, score: score || null }
     if (create) { item.create = true; item.tier = tier || 'stranger' }

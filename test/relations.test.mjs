@@ -85,6 +85,16 @@ const ownAliased = R.ownerPerson(db, aid)
 const ownAliasList = JSON.parse(ownAliased.aliases || '[]')
 check('入账：主人自报姓名记成别名', ownAliasList.includes('李怀玉'), ownAliasList)
 check('入账：主人自报姓名不另建卡', !R.listPersons(db, aid, {}).some((p) => p.name === '李怀玉' && p.id !== ownAliased.id))
+// 她自己的名字不是人：句子里出现「小汐」不该建关系卡
+{
+  const aidMe = 'agt_me_test'
+  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,?)')
+    .run(aidMe, '小汐', 'chat', 'active', now(), 13)
+  const m = R.extractMentions(db, aidMe, '小汐是我朋友')
+  check('抽取：自己的名字不当人建卡', m.filter((x) => x.create).length === 0, m)
+  const m2 = R.extractMentions(db, aidMe, '小汐今天在吗')
+  check('抽取：提到自己也不建卡', m2.length === 0, m2)
+}
 check('抽取：宿主通报不入账', R.ingest(db, aid, { text: 'background job pwsh-123 finished', sessionId: 's9', turnId: 't9' }).skipped === 'system-message')
 check('抽取：审批样板不入账', R.ingest(db, aid, { text: 'Approval prompts are disabled in this session: actions that require approval are rejected automatically — do not request sandbox escalation (do not set `sandbox_permissions`).', sessionId: 's10', turnId: 't11' }).skipped === 'system-message')
 check('抽取：子代理完工通报不入账', R.ingest(db, aid, { text: 'Background subagent 17e3c487-467e-4992-aaa0-b3d50bec22b5 finished and will do no further work unless you send it more.', sessionId: 's11', turnId: 't12' }).skipped === 'system-message')
