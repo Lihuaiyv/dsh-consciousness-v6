@@ -75,6 +75,10 @@ check('抽取：「我朋友是 X」认得出名字', roleIs.some((m) => m.surfa
 const four = R.extractMentions(db, aid, '我兄弟小小尼姑')
 check('抽取：四字昵称不被截断（小小尼姑）', four.some((m) => m.surface === '小小尼姑'), four)
 check('抽取：界面词不当人名（叫手动添加关系）', R.extractMentions(db, aid, '叫手动添加关系').length === 0)
+// 活库里真建出来过的怪东西：句子里的动词短语 / 零件名 / 页面名，不是人
+check('抽取：「妻子能够运行」不建人', R.extractMentions(db, aid, '让妻子能够运行的更久').filter((m) => m.create).length === 0)
+check('抽取：「我朋友是驾驶舱页」不建人', R.extractMentions(db, aid, '我朋友是驾驶舱页').filter((m) => m.create).length === 0)
+check('抽取：「我兄弟是成它」不建人', R.extractMentions(db, aid, '我兄弟是成它').filter((m) => m.create).length === 0)
 check('抽取：宿主通报不入账', R.ingest(db, aid, { text: 'background job pwsh-123 finished', sessionId: 's9', turnId: 't9' }).skipped === 'system-message')
 check('抽取：审批样板不入账', R.ingest(db, aid, { text: 'Approval prompts are disabled in this session: actions that require approval are rejected automatically — do not request sandbox escalation (do not set `sandbox_permissions`).', sessionId: 's10', turnId: 't11' }).skipped === 'system-message')
 check('抽取：子代理完工通报不入账', R.ingest(db, aid, { text: 'Background subagent 17e3c487-467e-4992-aaa0-b3d50bec22b5 finished and will do no further work unless you send it more.', sessionId: 's11', turnId: 't12' }).skipped === 'system-message')

@@ -984,12 +984,21 @@ function stripNameLead(raw) {
 }
 
 /** 名字里出现这些字，多半是「我朋友很忙」而不是一个人。 */
-const NOT_NAME_CHARS = new Set(Array.from('很挺也都说是 在不没有会要想让把帮给跟和这那他她我你们个就又才已刚今昨明上下前后里外家去来最更好多太真然呢啊吧呀哦嗯吗与对被其该每各另某表堂亲们些的什么谁哪咋啥'))
+const NOT_NAME_CHARS = new Set(Array.from('很挺也都说是 在不没有会要想让把帮给跟和这那他她我你们个就又才已刚今昨明上下前后里外家去来最更好多太真然呢啊吧呀哦嗯吗与对被其该每各另某表堂亲们些的什么谁哪咋啥能够了着过舱页库助它'))
 /** 界面词/疑问词不是人：「叫手动添加关系」「我叫什么来着」都不该建出人来。 */
 const NOT_PERSON_WORDS = /添加|删除|关系|菜单|设置|功能|页面|按钮|下拉|收起|展开|导入|导出|刷新|保存|取消|什么|谁|咋|啥|怎样|怎么|干嘛|干吗|来着/
+/** 整词黑名单：零件名、页面名、句子里的动词短语——看着像名字，其实不是人。 */
+const NON_PERSON_PHRASES = new Set([
+  '能够运行', '复活了', '驾驶舱', '驾驶舱页', '驾驶舱界', '开环', '成它', '知识库助手', '机器人妻子',
+  '注入', '召回', '认人', '零件', '零件册', '说话分寸', '记忆衰减', '情绪评价', '关系动力', '驱力缺口', '记忆写入闸',
+])
 
 function looksLikeName(s) {
-  const chars = Array.from(String(s || ''))
+  const t = String(s || '')
+  if (NON_PERSON_PHRASES.has(t)) return false
+  // 前缀也挡：「驾驶舱页」被截成「驾驶」时同样是假名字
+  for (const bad of NON_PERSON_PHRASES) if (bad.startsWith(t) || t.startsWith(bad)) return false
+  const chars = Array.from(t)
   if (chars.length < 2 || chars.length > 4) return false
   return chars.every((c) => /[\u4e00-\u9fa5]/.test(c) && !NOT_NAME_CHARS.has(c))
 }
