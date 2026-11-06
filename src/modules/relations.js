@@ -13,6 +13,11 @@ import { now } from '../db.js'
 import { err, nid, agent, active, tx } from '../kernel.js'
 import { applyEvent, habitOf, weightOf, stimulusKey, repairTrust, REL_DEFAULTS } from '../algo/reldyn.js'
 import { feelIdIn } from './feel.js'
+// 认人：谁在说话只走这一条（通道优先 → 主人兜底）。人物行 / 通道查询也随它走，
+// 这里往回转出同名函数，别处照旧从关系域拿。
+import { whoIsSpeaking, ownerPerson, personByChannel } from './who.js'
+
+export { ownerPerson, personByChannel }
 
 /** 三档策略表：代码是唯一来源，启动时 upsert（用户改值会在下次启动被覆盖）。 */
 export const TIERS = Object.freeze([
@@ -581,8 +586,7 @@ export function promptBlock(db, aid, opts = {}) {
   if (opts.personId) {
     try { person = getPerson(db, aid, opts.personId) } catch { person = null }
   }
-  if (!person) person = personByChannel(db, aid, { channel: opts.channel || 'ui', handle: opts.handle || 'local' })
-  if (!person) person = ownerPerson(db, aid)
+  if (!person) person = whoIsSpeaking(db, aid, { channel: opts.channel, handle: opts.handle })
   if (!person) return ''
   const tier = tierRow(db, person.tier)
   const limit = Math.max(40, Number(opts.maxChars) || (person.tier === 'owner' ? 120 : person.tier === 'acquaintance' ? 70 : 40))
@@ -617,16 +621,7 @@ export function promptBlock(db, aid, opts = {}) {
 }
 
 // ---------------- 人物 / 边 / 提及 查询 ----------------
-
-export function ownerPerson(db, aid) {
-  return db.prepare("SELECT * FROM rel_person WHERE agent_id=? AND tier='owner' AND status='active'").get(aid) || null
-}
-
-export function personByChannel(db, aid, { channel = 'ui', handle = 'local' } = {}) {
-  const row = db.prepare(`SELECT p.* FROM rel_channel c JOIN rel_person p ON p.id=c.person_id
-    WHERE c.agent_id=? AND c.channel=? AND c.handle=?`).get(aid, String(channel), String(handle))
-  return row || null
-}
+// ownerPerson / personByChannel 现在在 who.js（认人零件），上面已经转出。
 
 export function listPersons(db, aid, opts = {}) {
   const where = ['agent_id=?']
@@ -1128,7 +1123,7 @@ export function ingest(db, aid, opts = {}) {
   seedTiers(db)
   const speaker = opts.speaker
     ? getPerson(db, aid, opts.speaker)
-    : (personByChannel(db, aid, { channel: opts.channel || 'ui', handle: opts.handle || 'local' }) || ownerPerson(db, aid))
+    : whoIsSpeaking(db, aid, { channel: opts.channel || 'ui', handle: opts.handle || 'local' })
   const muts = []
   if (speaker) muts.push({ op: 'person.touch', person_id: speaker.id, at: opts.at })
   const mentions = extractMentions(db, aid, text)
@@ -1439,11 +1434,11 @@ export function bumpRelation(db, aid, {
   source = 'chat', reason = '', at = Date.now(),
 } = {}) {
   agent(db, aid)
-  let p = personId ? getPerson(db, aid, personId) : (ownerPerson(db, aid) || personByChannel(db, aid))
+  let p = personId ? getPerson(db, aid, personId) : whoIsSpeaking(db, aid)
   // 懒启动：新实例可能还没打开过关系页，账本里还没主人。第一次动关系时补种一次。
   if (!p && !personId) {
     try { bootstrap(db, aid) } catch { /* 种不出来就算了 */ }
-    p = ownerPerson(db, aid) || personByChannel(db, aid)
+    p = whoIsSpeaking(db, aid)
   }
   if (!p) return { changed: [], skipped: 'no-person' }
   const vv = Math.max(-1, Math.min(1, Number(v) || 0))

@@ -99,9 +99,10 @@ export const OWNERSHIP = {
     reads: [],
   },
   who: {
-    // 认人：只回答「谁在说话」。不写库，读人物行 / 通道都走 relations 的公开函数。
+    // 认人：只回答「谁在说话」。不写库；自己读两张账本表（通道登记 / 主人卡），
+    // 这样「谁在说话」只有一份实现，关系动力也调它。
     files: ['modules/who.js'],
-    tables: [],
+    tables: ['rel_person', 'rel_channel'],
     reads: [],
   },
   expression: {

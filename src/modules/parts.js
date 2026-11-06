@@ -245,10 +245,10 @@ export const PARTS = [
     owner: 'src/modules/who.js · whoIsSpeaking',
     files: ['src/modules/who.js'],
     entry: 'whoIsSpeaking（src/modules/who.js）；宿主接线：features.js / parts/speak/judge.js 调它',
-    exam: { file: 'test/exam-who.test.mjs', score: '11/11', note: '通道优先 / 主人兜底 / 没有就 null / 句柄与通道精确匹配 / 两个 agent 不串，11 道' },
+    exam: { file: 'test/exam-who.test.mjs', score: '14/14', note: '通道优先 / 主人兜底 / 没有就 null / 句柄与通道精确匹配 / 两个 agent 不串 / 入账和动力也不各写一份，14 道' },
     assert: "表：无；读：whoIsSpeaking；回退：who-before-part",
     swaps: [],
-    rollback: { pointer: 'who-before-part', note: '回退 = git checkout who-before-part -- src/modules/who.js src/modules/parts.js src/features.js src/parts/speak/judge.js test/exam-who.test.mjs' },
+    rollback: { pointer: 'who-before-part', note: '回退 = git checkout who-before-part -- src/modules/who.js src/modules/relations.js src/modules/parts.js src/ports/ownership.js src/features.js src/parts/speak/judge.js test/exam-who.test.mjs' },
   },
 ]
 

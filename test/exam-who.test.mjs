@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
-import { bootstrap, commit, ownerPerson } from '../src/modules/relations.js'
+import { bootstrap, commit, ownerPerson, ingest, bumpRelation } from '../src/modules/relations.js'
 import { whoIsSpeaking } from '../src/modules/who.js'
 
 let pass = 0
@@ -86,6 +86,42 @@ commit(db, AID, {
 {
   const C = mkAgent()
   check('没有人物时返回 null', whoIsSpeaking(db, C) === null)
+}
+
+// ---------------- 7 关系入账 / 关系动力也走这一条 ----------------
+// 以前这两处各写一份：入账先通道后主人，动力兜底反过来先主人；
+// 这条钉住的是「问谁在说话的地方只剩一处」。
+{
+  const D = mkAgent()
+  bootstrap(db, D)
+  const oD = ownerPerson(db, D)
+  commit(db, D, {
+    kind: 'seed', source: 'system', text: 'wz-d', fingerprint: 'who:test:wzd',
+    mutations: [{ op: 'person.create', person: { name: '文钊丙', tier: 'acquaintance', graph_visible: true, closeness: 0.3, trust: 0.4, dependence: 0.05 } }],
+  })
+  const wz3 = db.prepare("SELECT * FROM rel_person WHERE agent_id=? AND name='文钊丙'").get(D)
+  commit(db, D, {
+    kind: 'seed', source: 'system', text: 'wz-d ch', fingerprint: 'who:test:wzd:ch',
+    mutations: [{ op: 'channel.register', person_id: wz3.id, channel: 'qq', handle: '456', confidence: 0.9 }],
+  })
+
+  // 入账：QQ 456 说的这一句，touch 落文钊丙，不落主人
+  ingest(db, D, { text: '今天有点累', channel: 'qq', handle: '456' })
+  const wz3a = db.prepare('SELECT * FROM rel_person WHERE id=?').get(wz3.id)
+  const oDa = db.prepare('SELECT * FROM rel_person WHERE id=?').get(oD.id)
+  check('入账按通道记到文钊丙', !!wz3a.last_talk_at && !oDa.last_talk_at, { wz: wz3a.last_talk_at, owner: oDa.last_talk_at })
+
+  // 动力记账：不传人时也先看通道（以前这里主人优先，正好反了）
+  commit(db, D, {
+    kind: 'seed', source: 'system', text: 'wz-d ui', fingerprint: 'who:test:wzd:ui',
+    mutations: [{ op: 'channel.register', person_id: wz3.id, channel: 'ui', handle: 'local', confidence: 0.9 }],
+  })
+  const c0 = Number(wz3a.closeness)
+  const rel = bumpRelation(db, D, { v: 0.8, kind: 'praise', label: 'joy', reason: '考卷：不传人' })
+  const wz3b = db.prepare('SELECT * FROM rel_person WHERE id=?').get(wz3.id)
+  const oDb = db.prepare('SELECT * FROM rel_person WHERE id=?').get(oD.id)
+  check('动力记账不传人：先看通道，记给文钊丙', rel && rel.person_id === wz3.id && Number(wz3b.closeness) > c0, rel)
+  check('主人没被顺手加亲近', Number(oDb.closeness) === Number(oD.closeness), { was: oD.closeness, now: oDb.closeness })
 }
 
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))
