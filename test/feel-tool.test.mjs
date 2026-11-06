@@ -41,6 +41,8 @@ check('描述里说清「不写数字、不进正文」', /不写数字/.test(fe
 const before = db.prepare('SELECT slow, fast, total FROM affect_v3 WHERE agent_id=?').get(aid)
 const r1 = await feel.execute({ text: '手指停在半空，\n又怕显得急' }, { agent: { id: 'sess_qq_owner' } })
 check('记下了', r1.ok === true, r1)
+check('返回值没有 undefined 键（宿主的 lossless JSON 会拒）',
+  Object.values(r1).every((v) => v !== undefined) && !Object.prototype.hasOwnProperty.call(r1, 'hint'), r1)
 check('换行被折成一行', r1.text === '手指停在半空， 又怕显得急', r1.text)
 const row = db.prepare('SELECT * FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
 check('库里有一条', !!row, row)
@@ -108,6 +110,7 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   check('第三条：同类才两条，还没到数', a3.ok === true && !a3.hint, a3)
   const a4 = recordFeel(db, aid, { text: '喉咙里顶着一口气', at: T0 + 336000 })
   check('连着三条同类：提一句换落点', a4.ok === true && /换一样/.test(a4.hint || ''), a4)
+  check('带提示时 hint 是字符串（不是 undefined）', typeof a4.hint === 'string' && Object.values(a4).every((v) => v !== undefined), a4)
   check('提示归提示，句子照样进库',
     (db.prepare('SELECT text FROM affect_feel WHERE agent_id=? AND at=?').get(aid, new Date(T0 + 336000).toISOString()) || {}).text === '喉咙里顶着一口气')
   const a5 = recordFeel(db, aid, { text: '那句话还在耳朵里', at: T0 + 348000 })

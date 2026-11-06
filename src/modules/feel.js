@@ -236,7 +236,11 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
   const rep = paramNum(db, aid, 'affect.feel.anchor.repeat', 3, 2, 10)
   const hint = anchorRepeatHint(db, aid, anchor, win, rep)
   if (hint) noteAnchorRepeat(db, aid, { anchor, window: win, repeat: rep, text: body.slice(0, 80) })
-  return { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn, anchor, hint: hint || undefined }
+  // 没有提示就不带 hint 这个键：写成 `hint: undefined` 会让工具返回值过不了
+  // 宿主的 lossless-JSON 校验（undefined 不是 JSON），线上会回一句「invalid output」。
+  const out = { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn, anchor }
+  if (hint) out.hint = hint
+  return out
 }
 
 /** 最近一条「我说话时的感觉」，给注入行用。超出窗口就当没有——宁可少一行，不拿旧感受冒充刚说完。 */
