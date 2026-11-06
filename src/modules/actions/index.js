@@ -57,7 +57,8 @@ export async function executeSend(db, agentId, args = {}) {
   budgetConsume(db, agentId, 'disturb', 1)
   const out = await sendMessage(db, agentId, { channel, target, text })
   const actionId = logAction(db, agentId, 'send_message', { channel, target, len: text.length }, out, out.status)
-  rememberSent(db, agentId, out, text, actionId)
+  // 只有真发出去才落账：dry-run 是「演练」，记成说过就骗以后的自己了。
+  if (out.status === 'sent') rememberSent(db, agentId, out, text, actionId)
   return {
     ok: true,
     channel: out.channel,
