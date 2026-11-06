@@ -197,15 +197,17 @@ const COMPARE_SYS = '你在比较两版「她这一轮会怎么说」的推断�
   + '只输出 JSON，不要解释、不要代码围栏：{"pick":"A|B|same","why":"十个字以内","confidence":0~1}。'
   + '两版没有对错，只问「哪版更像人」；分不出来就 same。'
 
-/** 把两版分寸排成 A/B（默认 A=规则、B=模型）。 */
-export function buildComparePrompt({ rule = {}, suggest = {}, label = 'calm', intensity = 0.4, lastUser = '', lastReply = '' } = {}) {
+/** 把两版分寸排成 A/B（默认 A=规则、B=模型；swap=true 时对调，用来抵消位置偏好）。 */
+export function buildComparePrompt({ rule = {}, suggest = {}, swap = false, label = 'calm', intensity = 0.4, lastUser = '', lastReply = '' } = {}) {
   const fmt = (x) => '档位 ' + String(x.level) + '，' + String(x.sentences) + ' 句，主动 ' + String(x.proactive) + '，语气 ' + String(x.tone)
+  const first = swap ? suggest : rule
+  const second = swap ? rule : suggest
   const state = '状态：' + String(label) + '，强度 ' + (Math.round(num(intensity, 0.4) * 100) / 100)
   const usr = String(lastUser || '').slice(0, 100)
   const rep = String(lastReply || '').slice(0, 100)
   return [
     { role: 'system', content: COMPARE_SYS },
-    { role: 'user', content: [state, usr ? '对方刚说：' + usr : '', rep ? '她刚回：' + rep : '', 'A：' + fmt(rule), 'B：' + fmt(suggest)].filter(Boolean).join('\n') },
+    { role: 'user', content: [state, usr ? '对方刚说：' + usr : '', rep ? '她刚回：' + rep : '', 'A：' + fmt(first), 'B：' + fmt(second)].filter(Boolean).join('\n') },
   ]
 }
 
@@ -239,9 +241,11 @@ export async function judgeCompare(opt = {}) {
     return { ok: false, reason: String((e && e.message) || '') === 'timeout' ? 'timeout' : 'model-error', raw, ms: Date.now() - t0 }
   }
   const parsed = parseCompare(raw)
-  return parsed.ok
-    ? { ok: true, pick: parsed.pick, why: parsed.why, confidence: parsed.confidence, raw: String(raw || '').slice(0, 300), ms: Date.now() - t0 }
-    : { ok: false, reason: parsed.reason, raw: String(raw || '').slice(0, 300), ms: Date.now() - t0 }
+  if (!parsed.ok) return { ok: false, reason: parsed.reason, raw: String(raw || '').slice(0, 300), ms: Date.now() - t0 }
+  // A/B 是排过的：swap 时 A=模型版、B=规则版，要换回来再记
+  const pick = parsed.pick === 'same' ? 'same'
+    : opt.swap ? (parsed.pick === 'rule' ? 'model' : 'rule') : parsed.pick
+  return { ok: true, pick, why: parsed.why, confidence: parsed.confidence, raw: String(raw || '').slice(0, 300), ms: Date.now() - t0 }
 }
 
 /** 影子/评委没跑成的落账：只记原因和一小截原文，方便事后查「为什么一条都没有」。 */
@@ -266,14 +270,15 @@ export function toModelRequest(messages) {
   return { system: String((sys && sys.content) || ''), text: rest.join('\n') }
 }
 
-/** 评委落账：只写事件。 */
-export function recordCompare(db, aid, { rule = {}, suggest = {}, pick = 'same', why = '', confidence = null, ms = 0, at = Date.now() } = {}) {
+/** 评委落账：只写事件。independent=false 表示是同一个模型自评，别当真。 */
+export function recordCompare(db, aid, { rule = {}, suggest = {}, pick = 'same', why = '', confidence = null, ms = 0, independent = false, judge = null, swap = false, at = Date.now() } = {}) {
   try {
     const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
     const payload = JSON.stringify({
       rule: { level: rule.level, sentences: rule.sentences },
       suggest: { level: suggest.level, sentences: suggest.sentences },
       pick, why: String(why || '').slice(0, 80), confidence, ms: Math.round(num(ms, 0)),
+      independent: !!independent, judge: judge || null, swap: !!swap,
     })
     db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(id, aid, 'expr.judge', payload, new Date(at).toISOString())
     return { id, payload }

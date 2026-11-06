@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
-import { attachHostLlm } from './src/model.js'
+import { attachHostLlm, createJudgeModel } from './src/model.js'
 import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences, attachContextBlock, closingIntentOf } from './src/features.js'
 // 主动开口零件入口：心跳只认这一个口，不直接碰零件内部
 import { runSpeakTick } from './src/parts/speak/index.js'
@@ -499,6 +499,10 @@ const loopCache = new Map()
 const subtextCache = new Map()
 /** 上一轮的表达档：档位要变时先看慢情绪挪了多少，避免在阈值上忽冷忽热。 */
 const levelCache = new Map()
+/** 独立评委的客户端：undefined = 还没建；null = 没配（别每轮重读配置文件）。 */
+let judgeModelCache
+/** 「没配独立评委」只提醒一次，免得每轮刷一条 miss。 */
+let judgeMissingWarned = false
 /** 鑷彂娴幇涔熶竴鍒嗛挓鍐呭鐢細涓€娆″璇濋噷妯″瀷鍙兘澶氭鎷兼彁绀猴紝鍒妸闃熷垪鎶藉共銆?*/
 const spontaneousCache = new Map()
 /** 感受快照的探针去重：同一条样本只记一次，不然每轮都刷一条 event。 */
@@ -1255,20 +1259,38 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
           if (judged.ok) {
             recordShadow(db, aid, { rule: exprForResidue, verdict: judged.verdict, ms: judged.ms, model: 'host' })
             /* 评委：两版分寸（规则/模型）哪版更像她。只写事件，同样不生效。
-               注意：评委和出建议的是同一个模型，天然偏向 B（模型版），所以只当参考，不当判决。 */
+               auto = 有独立评委就用独立的，没有就**不评**（宁可没有信号，也不拿同一个模型自评冒充）；
+               same = 明确要求用宿主模型自评（会标独立=false，只当参考）；off = 关。
+               A/B 顺序按时间交替，抵消位置偏好。 */
             try {
-              if (String(getParam(db, aid, 'affect.speech.judge') || 'on') !== 'off') {
-                const cmp = await judgeCompare({
-                  complete: (m) => model.complete(toModelRequest(m)),
-                  rule: exprForResidue,
-                  suggest: judged.verdict,
-                  label: (ar && ar.primary_label) || 'calm',
-                  intensity: Number(ar && ar.intensity) || 0.4,
-                  lastUser: u,
-                  lastReply: aText,
-                })
-                if (cmp.ok) recordCompare(db, aid, { rule: exprForResidue, suggest: judged.verdict, pick: cmp.pick, why: cmp.why, confidence: cmp.confidence, ms: cmp.ms })
-                else recordMiss(db, aid, { kind: 'judge', reason: cmp.reason, raw: cmp.raw })
+              const judgeMode = String(getParam(db, aid, 'affect.speech.judge') || 'auto')
+              if (judgeMode !== 'off') {
+                const useHost = judgeMode === 'same'
+                const judgeClient = useHost ? null : (judgeModelCache === undefined ? (judgeModelCache = createJudgeModel()) : judgeModelCache)
+                const completeJudge = useHost
+                  ? ((m) => model.complete(toModelRequest(m)))
+                  : (judgeClient ? ((m) => judgeClient.complete(toModelRequest(m))) : null)
+                if (!completeJudge) {
+                  // 只提醒一次，免得每轮都刷屏
+                  if (!judgeMissingWarned) {
+                    judgeMissingWarned = true
+                    recordMiss(db, aid, { kind: 'judge', reason: 'no-independent-judge', raw: '配 DSHC_JUDGE_URL/KEY/NAME 或 model.json 的 judge 段' })
+                  }
+                } else {
+                  const swap = Date.now() % 2 === 0
+                  const cmp = await judgeCompare({
+                    complete: completeJudge,
+                    swap,
+                    rule: exprForResidue,
+                    suggest: judged.verdict,
+                    label: (ar && ar.primary_label) || 'calm',
+                    intensity: Number(ar && ar.intensity) || 0.4,
+                    lastUser: u,
+                    lastReply: aText,
+                  })
+                  if (cmp.ok) recordCompare(db, aid, { rule: exprForResidue, suggest: judged.verdict, pick: cmp.pick, why: cmp.why, confidence: cmp.confidence, ms: cmp.ms, independent: !useHost, judge: useHost ? 'host' : judgeClient.name, swap })
+                  else recordMiss(db, aid, { kind: 'judge', reason: cmp.reason, raw: cmp.raw })
+                }
               }
             } catch { /* 评委失败不影响对话 */ }
           } else {

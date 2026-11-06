@@ -12,6 +12,7 @@ import {
   LEVEL_ORDER, TONES, parseJudge, clampProposal, buildPrompt, judgeSpeech, recordShadow,
   parseCompare, buildComparePrompt, judgeCompare, recordCompare, recordMiss, toModelRequest,
 } from '../src/modules/speech_judge.js'
+import { createJudgeModel } from '../src/model.js'
 
 let pass = 0
 let fail = 0
@@ -161,6 +162,27 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
   const hang = await judgeCompare({ complete: () => new Promise(() => {}), timeoutMs: 200, rule: rule('normal') })
   check('评委超时会断开', !hang.ok && hang.reason === 'timeout', hang)
 
+  // 位置偏好：swap 时 A=模型版，选 A 要记成「模型版更像」
+  const swapped = await judgeCompare({ complete: async () => '{"pick":"A"}', swap: true, rule: rule('normal'), suggest: { level: 'warm' } })
+  check('swap 时 A/B 会换回来', swapped.ok && swapped.pick === 'model', swapped)
+  const pSwapped = buildComparePrompt({ swap: true, rule: rule('brief'), suggest: { level: 'warm', sentences: 4, proactive: 2, tone: 'warm' } })
+  check('swap 后 A 行是模型版', pSwapped[1].content.indexOf('warm') < pSwapped[1].content.indexOf('brief'), pSwapped[1].content)
+
+  // 独立评委：没配就不评；配了才建
+  const savedHome = process.env.DSH_HOME
+  const savedUrl = process.env.DSHC_JUDGE_URL
+  try {
+    process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-judge-home-'))
+    delete process.env.DSHC_JUDGE_URL
+    check('没配独立评委就不建（宁可没信号也别自评）', createJudgeModel() === null)
+    process.env.DSHC_JUDGE_URL = 'http://127.0.0.1:9'
+    const jm = createJudgeModel()
+    check('配了地址就建一个独立评委', !!jm && /^judge:/.test(jm.name), jm && jm.name)
+  } finally {
+    if (savedHome === undefined) delete process.env.DSH_HOME; else process.env.DSH_HOME = savedHome
+    if (savedUrl === undefined) delete process.env.DSHC_JUDGE_URL; else process.env.DSHC_JUDGE_URL = savedUrl
+  }
+
   // 线上踩过的接口错位：直接丢 messages 数组给 model.complete，它解构不到 system/text
   const req = toModelRequest([{ role: 'system', content: 'S' }, { role: 'user', content: 'U1' }, { role: 'user', content: 'U2' }])
   check('消息数组要转成宿主认的 {system,text}', req.system === 'S' && req.text === 'U1\nU2', req)
@@ -171,10 +193,11 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
   const aid2 = 'agt_compare'
   db2.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,?)')
     .run(aid2, '评委', 'daily', 'active', now(), 13)
-  recordCompare(db2, aid2, { rule: rule('brief', 2, 0, 'cool'), suggest: { level: 'normal', sentences: 3 }, pick: 'rule', why: '更收', confidence: 0.7, ms: 90 })
+  recordCompare(db2, aid2, { rule: rule('brief', 2, 0, 'cool'), suggest: { level: 'normal', sentences: 3 }, pick: 'rule', why: '更收', confidence: 0.7, ms: 90, independent: true, judge: 'judge:x', swap: true })
   const jr = db2.prepare("SELECT payload FROM events WHERE agent_id=? AND type='expr.judge'").get(aid2)
   const jp = jr ? JSON.parse(jr.payload) : {}
   check('评委结论落一条事件', !!jr && jp.pick === 'rule', jp)
+  check('事件标明是不是独立评委', jp.independent === true && jp.judge === 'judge:x' && jp.swap === true, jp)
   check('事件里两版都在', jp.rule && jp.suggest && jp.rule.level === 'brief' && jp.suggest.level === 'normal', jp)
 
   // 没跑成也要留痕：不然「一条都没有」只能靠猜

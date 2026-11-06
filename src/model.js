@@ -810,13 +810,17 @@ class ChainAdapter {
   }
 }
 
-export function createModel() {
-  const rules = new RulesAdapter()
-  let fileCfg = {}
+function readModelCfg() {
   try {
     const p = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'model.json')
-    if (fs.existsSync(p)) fileCfg = JSON.parse(fs.readFileSync(p, 'utf8'))
-  } catch { fileCfg = {} }
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8')) || {}
+  } catch { /* 坏文件当没配 */ }
+  return {}
+}
+
+export function createModel() {
+  const rules = new RulesAdapter()
+  let fileCfg = readModelCfg()
   const url = process.env.DSHC_MODEL_URL || fileCfg.url || ''
   const key = process.env.DSHC_MODEL_KEY || fileCfg.key || ''
   const model = process.env.DSHC_MODEL_NAME || fileCfg.model || 'deepseek-chat'
@@ -840,4 +844,25 @@ export function createModel() {
   }) : null
   const chain = new ChainAdapter([external, embedAdapter, new HostLlmAdapter()])
   return new ModelPort(chain, rules)
+}
+
+/**
+ * 独立评委：另配一个模型，专门用来盲评（不能和出建议的是同一个，否则它天然选自己）。
+ * 配法：环境变量 DSHC_JUDGE_URL / DSHC_JUDGE_KEY / DSHC_JUDGE_NAME，
+ * 或 ~/.dsh/consciousness/model.json 里加一段 `"judge": { "url": "...", "key": "...", "model": "..." }`。
+ * 没配就返回 null——调用方应当宁可「不评」，也别拿同一个模型自评冒充独立信号。
+ */
+export function createJudgeModel() {
+  let fileCfg = readModelCfg()
+  const j = (fileCfg && fileCfg.judge) || {}
+  const url = String(process.env.DSHC_JUDGE_URL || j.url || '').replace(/\/$/, '')
+  if (!url) return null
+  const key = process.env.DSHC_JUDGE_KEY || j.key || ''
+  const model = process.env.DSHC_JUDGE_NAME || j.model || 'deepseek-chat'
+  const adapter = new OpenAIAdapter({ url, key, model, timeout: Number(j.timeout || 8000) })
+  if (!adapter.available()) return null
+  return {
+    name: 'judge:' + model,
+    complete: (req) => adapter.complete(req),
+  }
 }
