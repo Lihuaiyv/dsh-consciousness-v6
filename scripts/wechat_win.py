@@ -29,13 +29,48 @@ def _exe():
     return ''
 
 
+def _login_window():
+    """微信是不是停在登录窗（mmui::LoginWindow / ...Login...）。"""
+    try:
+        import uiautomation as auto  # 随包一起装的
+        for w in auto.GetRootControl().GetChildren():
+            try:
+                cls = str(getattr(w, 'ClassName', '') or '')
+                nm = str(getattr(w, 'Name', '') or '')
+                if 'Login' in cls or ('登录' in nm and '微信' in nm):
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def _running():
+    """Weixin.exe 在不在跑（在跑就绝不能再去 start 一个：第二实例会弹登录窗）。"""
+    try:
+        r = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq Weixin.exe'],
+                           capture_output=True, text=True, encoding='gbk', errors='replace', timeout=10)
+        return 'Weixin.exe' in (r.stdout or '')
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def ensure_gui(timeout=25):
     """返回一个能用的 WeChatGUI；实在起不来就把最后一次异常抛出去。"""
     from wechatauto import WeChatGUI  # type: ignore
 
+    # 登录窗也是「窗口」：WeChatGUI() 会把它当主窗收下，然后发消息发进登录框里。
+    # 所以先看一眼，停在登录窗就直接说清楚，别硬起进程。
+    if _login_window():
+        raise RuntimeError('微信停在登录窗（mmui::LoginWindow）：手机上确认登录后再试')
+
     try:
         return WeChatGUI()
     except Exception as first:  # noqa: BLE001
+        # 关键：进程在、只是窗口缩在托盘里时，再 start 一次等于开第二个实例——那会弹登录窗。
+        if _running():
+            raise RuntimeError('微信进程在，但主窗口打不开（缩在托盘里）；点开托盘图标再试，别重启进程')
         exe = _exe()
         if not exe:
             raise first
