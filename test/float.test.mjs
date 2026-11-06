@@ -275,7 +275,8 @@ const T0 = Date.parse('2026-03-01T09:00:00+08:00')
     12, '记忆改造', '在讨论记忆怎么自己浮上来，说好先做开环表', '["记忆"]', '["把配额制写完"]', 'rules', '2026-03-01T21:00:00.000Z')
   const bridge = sessionBridge(db, aid5, { today: '2026-03-02' })
   check('P5 续接：隔天带上上次聊到哪', /上次（2026-03-01）/.test(bridge) && /开环表/.test(bridge), bridge)
-  check('P5 续接：带没说完的事', /配额制/.test(bridge), bridge)
+  check('P5 续接：不再念「还没收尾的」（那个名单没有 id，关不掉，念了就是假账）',
+    !/配额制/.test(bridge) && !/还没收尾/.test(bridge), bridge)
   check('P5 续接：同一天不重复说', sessionBridge(db, aid5, { today: '2026-03-01' }) === '')
   check('P5 续接：没纪要就空着', sessionBridge(db, 'agt_none', { today: '2026-03-05' }) === '')
 }
