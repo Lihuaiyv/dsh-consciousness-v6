@@ -57,15 +57,25 @@ export function describeGap(ms, at = Date.now()) {
   return '上次说话是好久以前了'
 }
 
-/** 最近一条对话（用户或她自己）。 */
+/** 网页会话在 chat_turns.conversation_id 里的键。QQ 用 qq:… 自己的键，两边别混。 */
+export function webConversationId(sessionId) {
+  const s = sessionId == null ? '' : String(sessionId).trim()
+  return s ? 'dsh:' + s : null
+}
+
+/** 最近一条对话（用户或她自己）。给 opt.conversationId 时只在这一段里找。 */
 export function lastTurnOf(db, aid, opt = {}) {
   try {
-    const row = db.prepare(`SELECT role, text, created_at FROM chat_turns
-      WHERE agent_id=? ORDER BY created_at DESC LIMIT 1`).get(aid)
+    const conv = opt.conversationId == null ? null : String(opt.conversationId)
+    const row = conv
+      ? db.prepare(`SELECT role, text, created_at, conversation_id FROM chat_turns
+        WHERE agent_id=? AND conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(aid, conv)
+      : db.prepare(`SELECT role, text, created_at, conversation_id FROM chat_turns
+        WHERE agent_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(aid)
     if (!row || !row.created_at) return null
     const at = Date.parse(row.created_at)
     if (!Number.isFinite(at)) return null
-    return { at, role: row.role, text: String(row.text || ''), raw: row.created_at }
+    return { at, role: row.role, text: String(row.text || ''), raw: row.created_at, conversationId: row.conversation_id || null }
   } catch { return null }
 }
 
@@ -81,11 +91,14 @@ const clip = (s, n) => {
 export function presenceLine(db, aid, opt = {}) {
   const at = opt.at != null ? new Date(opt.at) : new Date()
   const part = partOfDay(at)
-  let last = opt.last !== undefined ? opt.last : lastTurnOf(db, aid)
-  if (!last) return { line: '现在：' + part + '。还没跟他说过话。', gapMs: null, phrase: '', last: null }
+  const conv = opt.conversationId == null ? null : String(opt.conversationId)
+  const last = opt.last !== undefined ? opt.last : lastTurnOf(db, aid)
+  if (!last) return { line: '现在：' + part + '。还没跟他说过话。', gapMs: null, phrase: '', last: null, here: null }
   const gapMs = Math.max(0, at.getTime() - last.at)
   const phrase = describeGap(gapMs, at)
-  const mine = last.role === 'agent'
-  const tail = last.text ? '；' + (mine ? '我' : '你') + '上一句说的是「' + clip(last.text, 36) + '」' : ''
-  return { line: '现在：' + part + '；' + phrase + tail + '。', gapMs, phrase, last }
+  // 引用只认这一段：本段没有上一句就只留时间距离，不拿别段的话冒充。
+  const here = conv ? lastTurnOf(db, aid, { conversationId: conv }) : last
+  const mine = here && here.role === 'agent'
+  const tail = here && here.text ? '；' + (mine ? '我' : '你') + '上一句说的是「' + clip(here.text, 36) + '」' : ''
+  return { line: '现在：' + part + '；' + phrase + tail + '。', gapMs, phrase, last, here: here || null }
 }

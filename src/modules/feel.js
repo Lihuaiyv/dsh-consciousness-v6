@@ -244,10 +244,14 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
   return { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn }
 }
 
-/** 最近一条「我说话时的感觉」，给注入行用。超出窗口就当没有——宁可少一行，不拿旧感受冒充刚说完。 */
-export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480 } = {}) {
+/** 最近一条「我说话时的感觉」，给注入行用。超出窗口就当没有——宁可少一行，不拿旧感受冒充刚说完。
+ *  给 sessionId 时只取这一段自己写的：feel 是「我上一句之前」，跨会话那条不是这一段的上一句。 */
+export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480, sessionId = null } = {}) {
   try {
-    const row = db.prepare('SELECT * FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
+    const sid = sessionId == null || String(sessionId).trim() === '' ? null : String(sessionId)
+    const row = sid
+      ? db.prepare('SELECT * FROM affect_feel WHERE agent_id=? AND session_id=? ORDER BY at DESC LIMIT 1').get(aid, sid)
+      : db.prepare('SELECT * FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
     if (!row || !row.at) return null
     const age = (Number(at) - Date.parse(row.at)) / 60000
     if (!Number.isFinite(age) || age < 0 || age > maxAgeMin) return null

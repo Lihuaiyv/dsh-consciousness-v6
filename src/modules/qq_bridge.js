@@ -277,7 +277,12 @@ export function attachQQFeelProvider(opts = {}) {
       let personaText = ''
       try {
         if (typeof persona === 'function') {
-          const popt = (isGroup || !isOwner) ? { audience: 'stranger', snap: 'off' } : { snap: 'on' }
+          // 这一段自己的键：人格包里的「上一句 / feel / 快照」只认这条线，不串到网页或别的群。
+          let convKey = null
+          try { convKey = conversationIdOf(String(context.key || '')) || null } catch { convKey = null }
+          const popt = (isGroup || !isOwner)
+            ? { audience: 'stranger', snap: 'off', sessionId, conversationId: convKey }
+            : { snap: 'on', sessionId, conversationId: convKey }
           personaText = String(persona(db, aid, popt) || '')
         }
       } catch (e) {

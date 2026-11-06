@@ -112,7 +112,7 @@ function pickPair(evs, sms) {
   return { ev: evs[0] || null, sm: sms[0] || null, paired: false }
 }
 
-export function feltSnapshot(db, aid, { at = Date.now(), maxAgeMin = MAX_AGE_MIN } = {}) {
+export function feltSnapshot(db, aid, { at = Date.now(), maxAgeMin = MAX_AGE_MIN, conversationId = null } = {}) {
   const span = Math.max(1, Number(maxAgeMin) || MAX_AGE_MIN)
   const cutoff = at - span * 60000
 
@@ -160,7 +160,20 @@ export function feltSnapshot(db, aid, { at = Date.now(), maxAgeMin = MAX_AGE_MIN
 
   /* 原话要过两道尺：机器消息不能念，路径 / URL / token 也不能念。
      humanQuote 返回 null 时就只给数——配对成功、锚点留着，只是不引用那句话。 */
-  const cause = paired && ev ? humanQuote(ev.cause) : null
+  let cause = paired && ev ? humanQuote(ev.cause) : null
+  /* 有这一段自己的键时，先核对「上一句」是不是这一段的最后一句：
+     对不上就是另一段发生的，别搬来当这一段的上一句——宁可这轮不显示。 */
+  if (conversationId) {
+    let ok = false
+    try {
+      const lastUser = db.prepare(`SELECT text FROM chat_turns
+        WHERE agent_id=? AND role='user' AND conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+        .get(aid, String(conversationId))
+      const u = lastUser && String(lastUser.text || '').trim()
+      if (cause && u) ok = u === cause || u.includes(cause) || cause.includes(u)
+    } catch { ok = false }
+    if (!ok) return null
+  }
 
   const word = LABEL_WORD[String(label || '')] || null
   const bits = []

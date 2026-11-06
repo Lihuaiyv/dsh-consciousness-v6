@@ -28,7 +28,7 @@ import { pushProactiveLine } from './src/push.js'
 import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_push.js'
 import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
-import { presenceLine } from './src/modules/presence.js'
+import { presenceLine, webConversationId } from './src/modules/presence.js'
 import { selfNoteLines as notesForPrompt } from './src/modules/selfnote.js'
 import { memoryTag, ageDays } from './src/modules/memory_tag.js'
 import { fadeText, shouldFade, rehearseAdjustedAge } from './src/modules/memory_fade.js'
@@ -654,6 +654,9 @@ export function subtextForTurn(db, aid, opts = {}) {
 export function consciousnessBlock(db, aid, opts) {
   // 同一个拼装器，两个读者：主人看到全部；不熟的人只看到「她是谁、现在什么样、怎么说话」。
   const stranger = !!(opts && opts.audience === 'stranger')
+  // 这一段对话的键：presence / feel / 快照只认这一段，不拿别的会话的上一句冒充。
+  const sessionId = opts && opts.sessionId ? String(opts.sessionId) : null
+  const conversationId = opts && opts.conversationId ? String(opts.conversationId) : null
   // 先拼装、后落账：开的默认是新路；off 时逐字回旧版（取到即记）。
   const commitMode = String(getParam(db, aid, 'memory.inject.commit_after_pack') || 'on') !== 'off'
   const a = db.prepare('SELECT * FROM agents WHERE id=?').get(aid)
@@ -904,7 +907,7 @@ const injectWeight = (() => {
     const snapOff = !!(opts && opts.snap === 'off')
     if (!stranger && snapOn && !snapOff) {
       const hours = Number(getParam(db, aid, 'affect.inject.snapshot.hours')) || 12
-      snap = feltSnapshot(db, aid, { maxAgeMin: Math.max(1, hours) * 60 })
+      snap = feltSnapshot(db, aid, { maxAgeMin: Math.max(1, hours) * 60, conversationId })
     }
   } catch { snap = null }
   /* 「我上一句说出来之前，心里是什么样」——feel 工具写的，第一人称。
@@ -914,7 +917,7 @@ const injectWeight = (() => {
     const feelOn = String(getParam(db, aid, 'affect.feel.inject') || 'on') !== 'off'
     if (!stranger && feelOn && !(opts && opts.snap === 'off')) {
       const feelHours = Number(getParam(db, aid, 'affect.feel.hours')) || 2
-      ownFeel = latestFeel(db, aid, { maxAgeMin: Math.max(1, feelHours) * 60 })
+      ownFeel = latestFeel(db, aid, { maxAgeMin: Math.max(1, feelHours) * 60, sessionId })
     }
   } catch { ownFeel = null }
   // 收尾倾向：深夜 + 今天聊够了 + 对方没在提问。只读 chat_turns，不写状态。
@@ -1007,7 +1010,7 @@ let styleLines = []
   // 「现在什么情况」：给她时间、时间距离和上下文，而不是命令她用什么分寸。
   // 命令只能管住长度，管不住姿态；材料才能让她自己判断这句该怎么说。
   let nowText = ''
-  try { nowText = presenceLine(db, aid).line } catch { nowText = '' }
+  try { nowText = presenceLine(db, aid, { conversationId }).line } catch { nowText = '' }
   // 她自己生活里做的一件事（24h 内最多一行；不是「被问才想起来」的档案）
   let lifeText = ''
   try { lifeText = lifeLine(db, aid) } catch { lifeText = '' }
@@ -1225,7 +1228,7 @@ function commitTurn(db, aid, sid) {
   const at = now()
   const qc = qqContextOf(sid)
   const stranger = !!(qc && !qc.isOwner && !qc.ownerUnset)
-  const conv = qc && qc.conversationId ? qc.conversationId : null
+  const conv = qc && qc.conversationId ? qc.conversationId : webConversationId(sid)
   try {
     // 这一轮她说话时的情绪标签。以前这里写 null，下一轮就读不到「我上一句是什么调子说的」。
     writeChatTurn(db, aid, 'user', u, at, conv)
@@ -2111,7 +2114,9 @@ function hostSpec() {
           // 感受快照带主人原话：QQ 上只给主人。这里不传 audience（那会连带改日记/开环/主动句，
           // 是另一件事），只把「快照」这一行按 isOwner 关掉。
           const snapOpt = qq && qq.isQQ && qq.isOwner === false ? 'off' : 'on'
-          const base = id ? consciousnessBlock(d, id, { snap: snapOpt }) : ''
+          // 这一段对话的键：网页用 dsh:<会话id>，QQ 用它自己的 conversation_id。
+          const conversationId = qq && qq.isQQ && qq.conversationId ? qq.conversationId : webConversationId(sid)
+          const base = id ? consciousnessBlock(d, id, { snap: snapOpt, sessionId: sid, conversationId }) : ''
           // 状态行（上下文水位 / 复盘欠债）：只给主人看；客人或不认识的通道不透露私事。
           let stateLine = ''
           try {
