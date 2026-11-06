@@ -128,6 +128,10 @@ function check(name, ok, detail) {
   const without = feltLine({ label: 'confused', intensity: 0.4 })
   check('没有生成句就退回模板', without.includes('脑子有点绕'), without)
 
+  // 线上真踩过：生成句自带句号，拼完变成「…同一行字。，愿意多说两句」
+  const punct = feltLine({ label: 'confused', intensity: 0.4, slow: 0.4, phrase: '手指停在半空，视线来回扫了两遍同一行字。' })
+  check('生成句尾巴的句号会被剪掉，不撞标点', !punct.includes('。，') && !punct.includes('。；'), punct)
+
   const st = expressionState({
     affect: { primary_label: 'confused', intensity: 0.4, v3: { slow: 0, total: 0 } },
     phrase: '刚才那句我看了两遍',

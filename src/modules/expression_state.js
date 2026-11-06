@@ -66,7 +66,9 @@ export function feltLine({ label, intensity, slow, mood, weight = 0.35, phrase =
   const arr = PHRASE[String(label || 'calm')] || PHRASE.calm
   /* 有人给她生成过一句人话（speech_words），就用那句；没有才退回 24 句模板。
      模板是兜底，不是答案——同一句用久了就是口癖。 */
-  const gen = String(phrase || '').trim()
+  /* 生成句自己常带句号（线上真出现过「…同一行字。」后面又接「，愿意多说两句」）。
+     拼之前先把尾巴上的标点剪掉，别让两个标点撞在一起。 */
+  const gen = String(phrase || '').trim().replace(/[。！？!?，,；;：:]+$/u, '').trim()
   const bits = [gen || arr[intensityBand(intensity)]]
   const s = clamp(num(slow, 0), -1, 1)
   if (s <= -0.2) bits.push('不太想多说')
