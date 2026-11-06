@@ -46,7 +46,9 @@ const server = http.createServer((req, res) => {
     try { env = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') } catch { env = {} }
     const out = await handle(db, env)
     const body = JSON.stringify(out.body)
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) })
+    // 每个响应都关连接：中间用 spawnSync 跑 CI 检查会阻塞几秒，keep-alive 连接会被回收，
+    // 下一个请求就 ECONNRESET——后面半套测试会被静默跳过（只剩 380/380），看着全绿其实没跑。
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), Connection: 'close' })
     res.end(body)
   })
 })
