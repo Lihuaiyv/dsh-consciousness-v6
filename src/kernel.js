@@ -1,4 +1,4 @@
-﻿import { now } from './db.js'
+import { now } from './db.js'
 import { createModel } from './model.js'
 import { bootstrapAlgos } from './algo/index.js'
 
@@ -320,6 +320,11 @@ export const PARAMS = {
   // 慢情绪能离水位多远（硬限幅）：0 = 不限。0.2 = 再高兴/再难受，也不许离开水位超过两格十分之一，
   // 免得一串密集对话把它灌成一根柱子。
   'affect.slow.band': ['C4', 0.2],
+  // 说话分寸的模型判断（影子）：off = 完全不问模型，逐字回到只有规则档的时候。
+  'affect.speech.shadow': ['C4', 'on'],
+  // 感受行的词表生成：off = 用回那 24 句模板；voice_hours = 一句生成的话保鲜多久（小时内不重复生成）。
+  'affect.speech.voice': ['C4', 'on'],
+  'affect.speech.voice_hours': ['C4', 12],
   // 咽回去的那半句（P3）：影子期只落库、不回读。off = 不落库。
   'affect.unsaid': ['C4', 'on'],
   'affect.mapping': ['C3', 'v1'],

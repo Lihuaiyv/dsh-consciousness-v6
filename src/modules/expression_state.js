@@ -62,9 +62,12 @@ export function moodWord(v) {
  * @param {object} p
  * @param {number} [p.weight] 0~1；<0.5 时句尾加一句免责，提醒这不是命令
  */
-export function feltLine({ label, intensity, slow, mood, weight = 0.35 } = {}) {
+export function feltLine({ label, intensity, slow, mood, weight = 0.35, phrase = '' } = {}) {
   const arr = PHRASE[String(label || 'calm')] || PHRASE.calm
-  const bits = [arr[intensityBand(intensity)]]
+  /* 有人给她生成过一句人话（speech_words），就用那句；没有才退回 24 句模板。
+     模板是兜底，不是答案——同一句用久了就是口癖。 */
+  const gen = String(phrase || '').trim()
+  const bits = [gen || arr[intensityBand(intensity)]]
   const s = clamp(num(slow, 0), -1, 1)
   if (s <= -0.2) bits.push('不太想多说')
   else if (s >= 0.25) bits.push('愿意多说两句')
@@ -167,7 +170,7 @@ export function shadowLevel(baseLevel, { fast = 0, slow = 0 } = {}) {
  * @param {object} [p.relation] 关系三轴 {closeness,trust,kind,warmth,formality,disclosure,initiative}
  * @param {number} [p.ei] 外向度 0..1
  */
-export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35, prev = null } = {}) {
+export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35, prev = null, phrase = '' } = {}) {
   const slow = clamp(num(affect && affect.v3 ? affect.v3.slow : 0, 0), -1, 1)
   const fast = clamp(num(affect && affect.v3 ? affect.v3.fast : 0, 0), -1, 1)
   const intensity = clamp01(num(affect ? affect.intensity : 0.4, 0.4))
@@ -208,7 +211,7 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
     formality: Math.round(relFormality * 100) / 100,
     disclosure: Math.round(relDisclosure * 100) / 100,
     initiative: Math.round(initiative * 100) / 100,
-    felt: feltLine({ label: affect && affect.primary_label, intensity, slow, mood: total, weight }),
+    felt: feltLine({ label: affect && affect.primary_label, intensity, slow, mood: total, weight, phrase }),
     wish: wishLine({ level }),
     style: styleLine({ level }),
   }

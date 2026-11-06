@@ -32,6 +32,7 @@ import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
 import { judgeSpeech, recordShadow } from './src/modules/speech_judge.js'
+import { latestVoice, recentVoices, generateVoice, recordVoice } from './src/modules/speech_words.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
 import { appendTurn, buildEpisode, recentDiaryLines, migrateArchive, backfillFactArchive, sessionBridge } from './src/modules/archive.js'
@@ -842,6 +843,15 @@ const injectWeight = (() => {
     return Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0.35
   })()
   const prevExpr = levelCache.get(aid) || null
+  /* 感受行优先用「生成的那一句」（speech_words），没有才退回 24 句模板。
+     只读最近一条还在保鲜期内的，不在拼提示词的时候调模型。 */
+  const voiceForLine = (() => {
+    try {
+      if (String(getParam(db, aid, 'affect.speech.voice') || 'on') === 'off') return null
+      const hours = Number(getParam(db, aid, 'affect.speech.voice_hours')) || 12
+      return latestVoice(db, aid, { hours })
+    } catch { return null }
+  })()
   const expr = affect
     ? expressionState({
       affect,
@@ -851,6 +861,7 @@ const injectWeight = (() => {
       ei: axisVals && axisVals.ei != null ? axisVals.ei : 0.6,
       weight: injectWeight,
       prev: prevExpr,
+      phrase: voiceForLine ? voiceForLine.text : '',
     })
     : null
   // 记下这一轮算出的档位，给下一轮做迟滞；同一轮多次拼装时结果稳定，不会互相污染
@@ -1244,6 +1255,26 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
           if (judged.ok) recordShadow(db, aid, { rule: exprForResidue, verdict: judged.verdict, ms: judged.ms, model: 'host' })
         }
       } catch { /* 影子失败不影响对话 */ }
+      /* 感受行的词表：保鲜期内没有一句生成的话，就在后台要一句（不许重样、不许 AI 味词）。
+         拿到就落一条 expr.phrase，下一轮拼提示词时用；失败就继续用模板。 */
+      try {
+        const voiceOn = String(getParam(db, aid, 'affect.speech.voice') || 'on') !== 'off'
+        if (!stranger && voiceOn && model.status().primary === 'ok') {
+          const hours = Number(getParam(db, aid, 'affect.speech.voice_hours')) || 12
+          if (!latestVoice(db, aid, { hours })) {
+            const ar2 = db.prepare('SELECT primary_label, intensity FROM affect_state WHERE agent_id=?').get(aid)
+            const v3 = db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(aid)
+            const gen = await generateVoice({
+              complete: (m) => model.complete(m),
+              recent: recentVoices(db, aid),
+              label: (ar2 && ar2.primary_label) || 'calm',
+              intensity: Number(ar2 && ar2.intensity) || 0.4,
+              slow: Number(v3 && v3.slow) || 0,
+            })
+            if (gen.ok) recordVoice(db, aid, { text: gen.text })
+          }
+        }
+      } catch { /* 词表失败继续用模板 */ }
       // 关系余量：她自己的回话偏离当轮表达基准时留一笔；下一轮只影响语气，夜里才可能结算。
       try {
         const expr = exprForResidue
