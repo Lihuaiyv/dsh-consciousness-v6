@@ -122,5 +122,61 @@ function boost(w, textLike, { hits = 4, lastHit = at - 3600000, mark = 'normal',
   } finally { w.close() }
 }
 
+// ---- 9. 文本自己说「没变」，就不算变淡
+{
+  const w = makeWorld()
+  try {
+    boost(w, '%喝咖啡%', { created: at - 20 * 86400000 })
+    w.db.prepare('INSERT INTO affect_samples(id,agent_id,at,label,intensity,fast,slow) VALUES(?,?,?,?,?,?,?)')
+      .run('as_before_9', w.aid, new Date(at - 19 * 86400000).toISOString(), 'sad', 0.8, '0', '0')
+    w.db.prepare('UPDATE affect_state SET primary_label=?, intensity=? WHERE agent_id=?').run('calm', 0.2, w.aid)
+    const out = await reappraiseTick(w.db, w.aid, { at, model: { chat: async () => '现在再看，还是有点烦，那股劲儿没散。' } })
+    check('写明「还是」→ 不算变淡（强度降了也不算）', out.ok === true && out.changed === false, out)
+    check('没变淡就不往提示词里贴', reappraiseLine(w.db, w.aid, at) === '')
+  } finally { w.close() }
+}
+
+// ---- 10. 一天只贴一次，同一条最多贴两天
+{
+  const w = makeWorld()
+  try {
+    const id = boost(w, '%喝咖啡%')
+    w.db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
+      .run('evt_r_10', w.aid, 'memory.reappraise', JSON.stringify({ memory_id: id, text: '淡了点，但还记得', changed: true }), new Date(at - 3600000).toISOString())
+    const l1 = reappraiseLine(w.db, w.aid, at)
+    check('第一天：贴一次', l1.includes('淡了点'), l1)
+    check('同一天再问：不重复贴（不然一句刷几百遍）', reappraiseLine(w.db, w.aid, at + 60000) === '')
+    const l2 = reappraiseLine(w.db, w.aid, at + 86400000)
+    check('第二天：还能贴一次', l2.includes('淡了点'), l2)
+    check('第三天：两天够了，不再贴', reappraiseLine(w.db, w.aid, at + 2 * 86400000) === '')
+  } finally { w.close() }
+}
+
+// ---- 11. 已经贴过两天的记忆，即使事件还在窗口里也不再贴
+{
+  const w = makeWorld()
+  try {
+    const id = boost(w, '%喝咖啡%')
+    w.db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
+      .run('evt_r_11', w.aid, 'memory.reappraise', JSON.stringify({ memory_id: id, text: '早就过去了', changed: true }), new Date(at - 3600000).toISOString())
+    for (const d of [2, 1]) {
+      w.db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
+        .run('shown_r_11_' + d, w.aid, 'memory.reappraise.shown', JSON.stringify({ memory_id: id }), new Date(at - d * 86400000).toISOString())
+    }
+    check('贴满两天：不再贴', reappraiseLine(w.db, w.aid, at) === '')
+  } finally { w.close() }
+}
+
+// ---- 12. 摊了三天的旧账不再翻出来
+{
+  const w = makeWorld()
+  try {
+    const id = boost(w, '%喝咖啡%')
+    w.db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
+      .run('evt_r_12', w.aid, 'memory.reappraise', JSON.stringify({ memory_id: id, text: '三天前那笔', changed: true }), new Date(at - 3 * 86400000).toISOString())
+    check('三天前的：不贴（窗口从 7 天收到 2 天）', reappraiseLine(w.db, w.aid, at) === '')
+  } finally { w.close() }
+}
+
 console.log(`\n通过 ${pass} / ${pass + fail}`)
 if (fail) process.exit(1)

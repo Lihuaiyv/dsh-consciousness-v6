@@ -21,8 +21,14 @@ export const REAP = Object.freeze({
   cooldownDays: 30,
   spiralLimit: 2,
   spiralDays: 90,
-  lineDays: 7,
+  // 贴到提示词里的那一行：只播两天，而且一天只播一次。
+  // 原来是 7 天 × 每一轮，一句话能连播几百次，久了就成了背景音。
+  lineDays: 2,
+  lineMax: 2,
 })
+
+/** 这句话本身在说「没变」。强度降了也不能算变淡——宁可漏报，不要谎报我变了。 */
+const UNCHANGED_RE = /还是|依旧|仍然|照旧|老样子|没变|没淡|没怎么变/
 
 function flagOn(db, aid, key, dflt = 'on') {
   try {
@@ -136,7 +142,9 @@ export async function reappraiseTick(db, aid, { at = Date.now(), model = null } 
   if (!text) return { ok: false, skipped: 'empty' }
 
   const after = currentAffect(db, aid)
-  const changed = before && after ? after.intensity < before.intensity * 0.75 : null
+  // 只比强度不够：模型可能明写「还是有点烦」，强度却因为整体平了下去而算「变淡」。
+  // 文本自己说没变，就以文本为准。
+  const changed = before && after ? (after.intensity < before.intensity * 0.75 && !UNCHANGED_RE.test(text)) : null
   try {
     event(db, aid, 'memory.reappraise', {
       memory_id: m.id,
@@ -150,7 +158,40 @@ export async function reappraiseTick(db, aid, { at = Date.now(), model = null } 
   return { ok: true, memory_id: m.id, text, before, after, changed }
 }
 
-/** 注入一行：最近 7 天「后来再看」里，只取变淡的那一条。 */
+/** 这条记忆已经贴过几天了（按天去重，不是按次）。 */
+function shownDays(db, aid, memoryId) {
+  try {
+    const rows = db.prepare("SELECT created_at FROM events WHERE agent_id=? AND type='memory.reappraise.shown' AND payload LIKE ?")
+      .all(aid, '%"memory_id":"' + memoryId + '"%')
+    return new Set(rows.map((r) => String(r.created_at || '').slice(0, 10))).size
+  } catch { return 0 }
+}
+
+function shownToday(db, aid, memoryId, at) {
+  const day = new Date(at).toISOString().slice(0, 10)
+  try {
+    return !!db.prepare("SELECT 1 FROM events WHERE agent_id=? AND type='memory.reappraise.shown' AND created_at>=? AND payload LIKE ?")
+      .get(aid, day + 'T00:00:00.000Z', '%"memory_id":"' + memoryId + '"%')
+  } catch { return false }
+}
+
+/** 记「今天已经贴过」：一天一条，不是一轮一条——不然同一句又会刷几百遍。 */
+function markShown(db, aid, memoryId, at) {
+  try {
+    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
+    const day = new Date(at).toISOString().slice(0, 10)
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)')
+      .run(id, aid, 'memory.reappraise.shown', JSON.stringify({ memory_id: memoryId, day }), new Date(at).toISOString())
+  } catch { /* 记不上就不算贴过：下次再说 */ }
+}
+
+/**
+ * 注入一行：最近两天里「后来再看」、且真判过变淡的那一条。
+ * 一天只贴一次，同一条最多贴两天。
+ *
+ * 原来是一周 × 每一轮：一句话连播几百次，就不再是「我变了」，是背景音——
+ * 而且那句可能是「还是有点烦」，本来就没变。
+ */
 export function reappraiseLine(db, aid, at = Date.now()) {
   if (!flagOn(db, aid, 'reappraise.enabled')) return ''
   try {
@@ -158,7 +199,11 @@ export function reappraiseLine(db, aid, at = Date.now()) {
       .all(aid, new Date(at - REAP.lineDays * DAY).toISOString())
     for (const r of rows) {
       const p = parsePayload(r.payload)
-      if (p.changed === true && p.text) return '有件事我后来再看：' + oneLine(p.text, 60)
+      if (p.changed !== true || !p.text || !p.memory_id) continue
+      if (shownDays(db, aid, p.memory_id) >= REAP.lineMax) continue
+      if (shownToday(db, aid, p.memory_id, at)) continue
+      markShown(db, aid, p.memory_id, at)
+      return '有件事我后来再看：' + oneLine(p.text, 60)
     }
   } catch { /* ignore */ }
   return ''
