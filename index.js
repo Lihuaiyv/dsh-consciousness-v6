@@ -728,7 +728,8 @@ let bridgeText = ''
     try {
       const b = sessionBridge(db, aid, { allowToday: true })
       // 它本来就是「开场接一句」，不是每轮复读：一天只说一次，隔天回来才再说。
-      bridgeText = b && canSayOnce(db, aid, 'bridge', { maxDays: 1 }) ? b : ''
+      // 只限「今天说过没有」，别传 maxDays —— 传了就是「这辈子只活在一天」。
+      bridgeText = b && canSayOnce(db, aid, 'bridge') ? b : ''
     } catch { bridgeText = '' }
   }
 
@@ -1018,7 +1019,9 @@ let styleLines = []
   try {
     if (affect && Number(affect.intensity) >= 0.4) {
       const t = trendOf(db, aid)
-      if (t && canSayOnce(db, aid, 'trend.' + t.dir, { maxDays: 3 })) trendLine = '（' + t.text + '。）'
+      // 同一方向说满三天就收声。窗口必须给：不传窗口时 maxDays 会算成
+      // 「这辈子一共说过三天」，一个月后再往下掉就永远不会再开口。
+      if (t && canSayOnce(db, aid, 'trend.' + t.dir, { maxDays: 3, withinDays: 10 })) trendLine = '（' + t.text + '。）'
     }
   } catch { trendLine = '' }
 

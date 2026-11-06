@@ -26,15 +26,28 @@ try {
   check('同一天再说：不给', canSayOnce(db, aid, 'bridge') === false)
   check('另一个 key 不受影响', canSayOnce(db, aid, 'trend.down') === true)
 
-  // maxDays：已经说过两天，明天也不开口了
+  // maxDays 必须有窗口：窗口内说满就收声，窗口外的旧账不再压着今天
   for (const d of [1, 2]) {
     db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
       .run('evt_once_' + d, aid, 'say.once', JSON.stringify({ key: 'trend.down', day: '' }), new Date(Date.now() - d * 86400000).toISOString())
   }
   check('说过三天', saidDays(db, aid, 'trend.down') === 3)
-  check('maxDays=3 到了：不再说', canSayOnce(db, aid, 'trend.down', { maxDays: 3 }) === false)
+  check('窗口内说满三天：不再说', canSayOnce(db, aid, 'trend.down', { maxDays: 3, withinDays: 10 }) === false)
   check('没设 maxDays：还能说（只看今天）', canSayOnce(db, aid, 'trend.up') === true)
-  check('bridge 只许说一天：明天也不说', canSayOnce(db, aid, 'bridge', { maxDays: 1 }) === false)
+
+  // 回归（11-06 查出来的两个 bug）：
+  // 1) bridge 不能传 maxDays：传了就等于「这辈子只活一天」
+  db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
+    .run('evt_bridge_yday', aid, 'say.once', JSON.stringify({ key: 'bridge_next_day', day: '' }), new Date(Date.now() - 86400000).toISOString())
+  check('bridge 昨天说过：今天照样能说（一天一次，不是只活一天）', canSayOnce(db, aid, 'bridge_next_day') === true, saidDays(db, aid, 'bridge_next_day'))
+  // 2) trend 的旧账要能过期：三个月前那三天不该压着今天
+  for (const d of [80, 81, 82]) {
+    db.prepare("INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)")
+      .run('evt_old_' + d, aid, 'say.once', JSON.stringify({ key: 'trend.old', day: '' }), new Date(Date.now() - d * 86400000).toISOString())
+  }
+  check('窗口只管窗口内：总数仍是三天', saidDays(db, aid, 'trend.old') === 3, saidDays(db, aid, 'trend.old'))
+  check('窗口内不计旧账', saidDays(db, aid, 'trend.old', { withinDays: 10 }) === 0, saidDays(db, aid, 'trend.old', { withinDays: 10 }))
+  check('三个月前的三天不算数：今天还能说', canSayOnce(db, aid, 'trend.old', { maxDays: 3, withinDays: 10 }) === true)
 } finally {
   w.close && w.close()
 }
