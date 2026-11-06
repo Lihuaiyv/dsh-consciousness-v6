@@ -225,6 +225,25 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'inject-before-part', note: '回退 = git checkout inject-before-part -- src/modules/parts.js docs/给人看的/零件-注入.md，再删 test/exam-inject.test.mjs' },
   },
+  {
+    id: 'expression',
+    name: '表达',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/algo/expression.js · expressionFrom',
+    files: [
+      'src/algo/expression.js',
+      'src/modules/expression_state.js',
+    ],
+    entry: 'expressionFrom（src/algo/expression.js）；expressionState / shadowLevel / feltLine（src/modules/expression_state.js）',
+    exam: { file: 'test/exam-expression.test.mjs', score: '52/52', note: '慢情绪定档 / 强度压上限 / 性格半句 / 边界兜底 / 影子档 / 合成（温度·主动·迟滞）/ 软愿望与潜台词，52 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'expression-before-part', note: '回退 = git checkout expression-before-part -- src/modules/parts.js docs/给人看的/零件-表达.md，再删 test/exam-expression.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

@@ -126,6 +126,24 @@ const CASES = [
     importFrom: "'../src/modules/pack.js'",
     importTo: "'../src/modules/pack.sabotage-11.js'",
   },
+  {
+    name: '表达：低落压不过外向（低落也多说一句）',
+    impl: 'src/algo/expression.js',
+    exam: 'test/exam-expression.test.mjs',
+    from: "if (e >= 0.65 && sentences < 4 && i <= 0.6 && level !== 'quiet') sentences += 1",
+    to: 'if (e >= 0.65 && sentences < 4 && i <= 0.6) sentences += 1',
+    importFrom: "'../src/algo/expression.js'",
+    importTo: "'../src/algo/expression.sabotage-12.js'",
+  },
+  {
+    name: '表达：迟滞失效（慢情绪一动就换脸）',
+    impl: 'src/modules/expression_state.js',
+    exam: 'test/exam-expression.test.mjs',
+    from: 'if (Math.abs(slow - Number(prev.slow)) < 0.08) level = prev.level',
+    to: 'if (Math.abs(slow - Number(prev.slow)) < 0) level = prev.level',
+    importFrom: "'../src/modules/expression_state.js'",
+    importTo: "'../src/modules/expression_state.sabotage-13.js'",
+  },
 ]
 
 let pass = 0
