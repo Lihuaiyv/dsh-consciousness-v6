@@ -37,7 +37,7 @@ export const WRITES = Object.freeze({
   algo: ['algo_bindings'],
   kernel: ['agent_params'],
   selfhood: [],
-  selfread: ['affect_v3'],
+  selfread: [],
   poisons: [],
   values: ['persona_values'],
   // 搬库 / 编排：ops 清库和导入、host 导入导出和接线。它们可以写别的域的表，
@@ -321,8 +321,7 @@ export const WRITE_SPLIT = Object.freeze({
   memory_items: ['memory', 'timeline'],
   // persona：人格模块写整行；selfmod 回滚时只按 changes.before 写回 style.* 那几个键。
   persona: ['persona', 'selfmod'],
-  // affect_v3：情绪模块写整行；selfread 回读时只改快情绪那几个字段（慢情绪不碰）。
-  affect_v3: ['affect', 'selfread'],
+  // affect_v3 不再分写：情绪动力是唯一写手；自我回读改走它的公开写口 writeFastOnly。
 })
 
 export function tablesForFile(relPosix) {

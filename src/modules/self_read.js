@@ -18,6 +18,7 @@
  */
 
 import { getParam } from '../kernel.js'
+import { writeFastOnly } from '../parts/affect/index.js'
 
 const CLAMP = (x, lo, hi) => Math.max(lo, Math.min(hi, Number(x) || 0))
 const r3 = (x) => Math.round(CLAMP(x, -1, 1) * 1000) / 1000
@@ -74,9 +75,8 @@ export function applySelfRead(db, aid, text, { at = Date.now() } = {}) {
   const nextFast = r3(fast + delta)
   const total = r3(slow + 0.35 * nextFast)
   try {
-    /* 只写快情绪：慢情绪和 slow_at 一概不碰 */
-    db.prepare('UPDATE affect_v3 SET fast=?, total=?, fast_at=? WHERE agent_id=?')
-      .run(nextFast, total, new Date(at).toISOString(), aid)
+    /* 只写快情绪：慢情绪和 slow_at 一概不碰；表归情绪动力，走它的窄写口 */
+    writeFastOnly(db, aid, nextFast, total, at)
   } catch { return { observed: r.warmth, warmth: r.warmth, delta: 0, applied: false, reason: 'write_failed' } }
   return { observed: r.warmth, warmth: r.warmth, delta, applied: true, fast: nextFast }
 }

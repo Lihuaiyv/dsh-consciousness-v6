@@ -21,6 +21,16 @@ import { classifyGap, decayCurve, wakeReset, localHour } from '../../algo/sleep.
 import { stepWalk } from '../../algo/walk.js'
 import { significanceOf, gateOf, labelMargin, socialFloorOf, GATE } from '../../algo/gate.js'
 
+/**
+ * 只写快情绪一列，给「自我回读」用：fast / total / fast_at，慢情绪与 slow_at 一概不碰。
+ * 为什么要有这个口：affect_v3 归情绪动力管，别的零件不许直接 SQL 它；
+ * 回读要挪一点点快情绪，就只能走这里。
+ */
+export function writeFastOnly(db, aid, fast, total, at = Date.now()) {
+  db.prepare('UPDATE affect_v3 SET fast=?, total=?, fast_at=? WHERE agent_id=?')
+    .run(fast, total, new Date(at).toISOString(), aid)
+}
+
 const HOUR_MS = 3600000
 
 export function seedAffect(db, aid) {

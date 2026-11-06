@@ -280,7 +280,7 @@ export const PARTS = [
     exam: { file: 'test/exam-affect-apply.test.mjs', score: '13/13', note: '界内与有限数 / 正价压负价 / 两小时后回落 / 没情绪数据返回 null / 衰减不涨 / 不碰记忆，13 道' },
     assert: '表：affect_state / affect_v3 / affect_samples / affect_episodes；读：getAffect；回退：affect-apply-before-part',
     swaps: [],
-    rollback: { pointer: 'affect-apply-before-part', note: '回退 = git checkout affect-apply-before-part -- src/parts/affect/ src/modules/parts.js test/exam-affect-apply.test.mjs docs/给人看的/零件-情绪动力.md' },
+    rollback: { pointer: 'affect-apply-before-part', note: '回退 = git checkout affect-apply-before-part -- src/parts/affect/ src/modules/parts.js test/exam-affect-apply.test.mjs docs/给人看的/零件-情绪动力.md；注意自我回读 import 了 writeFastOnly，回退前要先把它改回直写或一并退自我回读' },
   },
   {
     id: 'feel',
