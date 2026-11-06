@@ -1294,6 +1294,7 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
               slow: Number(v3 && v3.slow) || 0,
             })
             if (gen.ok) recordVoice(db, aid, { text: gen.text })
+            else recordMiss(db, aid, { kind: 'phrase', reason: gen.reason, raw: (gen.tried || []).join(' | ') })
           }
         }
       } catch { /* 词表失败继续用模板 */ }

@@ -53,6 +53,8 @@ function check(name, ok, detail) {
   check('剥掉代码围栏', parseVoice('```text\n刚才那句我看了两遍\n```') === '刚才那句我看了两遍')
   check('只留第一行', parseVoice('刚才那句我看了两遍\n多余的解释') === '刚才那句我看了两遍')
   check('空就是空', parseVoice('') === '')
+  check('JSON 的 line 也认（这个模型吃 JSON 更稳）', parseVoice('{"line":"刚才那句我看了两遍"}') === '刚才那句我看了两遍', parseVoice('{"line":"刚才那句我看了两遍"}'))
+  check('带围栏的 JSON 也认', parseVoice('```json\n{"line":"话到嘴边没多说一句"}\n```') === '话到嘴边没多说一句')
 
   check('完全一样算重复', isRepeat('刚才那句我看了两遍', ['刚才那句我看了两遍']) === true)
   check('去掉标点也一样算重复', isRepeat('刚才那句我看了两遍。', ['刚才那句我看了两遍']) === true)

@@ -55,19 +55,29 @@ export function isRepeat(text, recent = []) {
   return false
 }
 
-/** 模型给的那一句：剥引号 / 代码围栏，只留第一行。 */
+/** 模型给的那一句：优先认 JSON 的 line 字段（影子那边证明这个模型吃 JSON 更稳），再退回纯文本第一行。 */
 export function parseVoice(out) {
   let t = String(out == null ? '' : out).trim()
   if (!t) return ''
-  t = t.replace(/^```(?:text|markdown)?\s*/i, '').replace(/```\s*$/, '').trim()
+  t = t.replace(/^```(?:json|text|markdown)?\s*/i, '').replace(/```\s*$/, '').trim()
+  const a = t.indexOf('{')
+  const b = t.lastIndexOf('}')
+  if (a >= 0 && b > a) {
+    try {
+      const obj = JSON.parse(t.slice(a, b + 1))
+      const line = String((obj && (obj.line || obj.text || obj.utterance)) || '').trim()
+      if (line) return line.replace(/^["'「『]+/, '').replace(/["'」』]+$/, '').trim()
+    } catch { /* 不是 JSON，往下走 */ }
+  }
   t = t.split('\n').map((x) => x.trim()).filter(Boolean)[0] || ''
   t = t.replace(/^["'「『]+/, '').replace(/["'」』]+$/, '').trim()
   return t
 }
 
-const VOICE_SYS = '只输出一行中文，不要解释、不要引号、不要代码围栏。'
-  + '写她此刻的状态或刚才那句话在她身上的样子，8~24 字，第一人称或省略主语都行；'
-  + '只写能核对的动作、事实、身体感，不要用「感觉 / 情绪 / 情感 / 有点」，不要写「她」，不要重复示例。'
+/* 用 JSON 格式问（影子那边验证过：这个模型对「只输出 JSON」比对「只输出一行」听话得多）。 */
+const VOICE_SYS = '只输出 JSON，不要解释、不要代码围栏，格式：{"line":"一行中文"}。'
+  + 'line 写她此刻的状态或刚才那句话在她身上的样子，8~24 字，第一人称或省略主语都行；'
+  + '只写能核对的动作、事实、身体感，不要用「感觉 / 情绪 / 情感 / 有点」，不要写「她」，不要重复给过的句子。'
 
 /** 给模型：这一刻的数 + 最近用过的句子（免得又给同一句）。 */
 export function buildVoicePrompt({ label = 'calm', intensity = 0.4, slow = 0, mood = null, recent = [] } = {}) {
