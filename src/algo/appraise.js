@@ -15,13 +15,17 @@ function rulesV1(text) {
   const critic = negated || ['讨厌', '烦', '错', '差', '生气', '不想', '别'].some((w) => t.includes(w))
   const uncertain = ['?', '？', '可能', '也许', '不知道'].some((w) => t.includes(w))
   const threat = ['危险', '删', '泄露', '密码', '越权'].some((w) => t.includes(w))
+  // 威胁要有它自己的价：以前只给了标签 lost，goal_congruence 还是 0，
+  // 于是「被威胁」在情绪上几乎不响（强度压在底噪 0.2，敏感和钝感一个样）。
+  // 冲我来的算重一点，只是提到危险信息的算轻一点。
+  const threatNeg = threat ? (directed ? -0.6 : -0.3) : 0
   // 反应语义：只有冲我来的批评/夸奖才算影响我；用户自述心情只进 user_label
   const neg = directed && critic && !praise
   const pos = directed && praise && !critic
   const label = threat ? 'lost' : neg ? 'irritated' : pos ? 'joy' : uncertain ? 'curious' : 'calm'
   return {
     goal_relevance: t ? 0.8 : 0,
-    goal_congruence: pos ? 0.6 : neg ? -0.6 : 0,
+    goal_congruence: pos ? 0.6 : neg ? -0.6 : threatNeg,
     agency: t.includes('你') ? 'other' : 'self',
     certainty: uncertain ? 0.3 : 0.8,
     novelty: uncertain ? 0.6 : 0.3,
