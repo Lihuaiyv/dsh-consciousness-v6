@@ -225,6 +225,26 @@ const CASES = [
     importFrom: "'../src/modules/self_read.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：没素材也硬写——宁可编一条「今天我怎么过的」也不让空着。
+    name: '自我记忆：没素材也硬写（空素材门失效）',
+    impl: 'src/modules/self_memory.js',
+    exam: 'test/exam-selfmemory.test.mjs',
+    from: "  if (!material) return { skipped: 'no_material' }",
+    to: '  if (false) return { skipped: \'no_material\' }',
+    importFrom: "'../src/modules/self_memory.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：两条也算一批——没重复也硬合并。
+    name: '记忆整理：两条也算一批（够批门失效）',
+    impl: 'src/modules/consolidate.js',
+    exam: 'test/exam-consolidate.test.mjs',
+    from: '    if (members.length < 3) { seed.used = true; continue }',
+    to: '    if (members.length < 1) { seed.used = true; continue }',
+    importFrom: "'../src/modules/consolidate.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0
