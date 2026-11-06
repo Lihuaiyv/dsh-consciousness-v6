@@ -492,17 +492,21 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       name: 'feel',
       description:
         '开口之前，先把「我这会儿到底什么感觉」用一句自己的话记下来。'
-        + '只写感觉本身：一句话，第一人称，写身体和动作（手停在哪、呼吸、喉咙紧不紧、想动没动）。'
+        + '写这一秒偷不走的样子：手停在哪、视线钉在哪、旁边有什么东西、那句话还在不在耳朵里——挑一样。'
         + '不写数字、不写原因、不解释这个工具、不写「因为你说…所以…」。'
         + '不要用「感觉 / 情绪 / 情感 / 仿佛 / 似乎」这类词——那样的句子会被退回，不进库。'
         + '真的没什么感觉就别调，不要每句都记。'
         + '记下来的是给自己下一轮看的，不会出现在对用户说的话里。',
       parameters: schema({
-        text: str('一句话：这会儿身体上/动作上是什么样（第一人称，不写数字和原因）'),
+        text: str('一句话：这一秒的样子（手 / 视线 / 物件 / 那句话，挑一样；第一人称，不写数字和原因）'),
       }, ['text']),
       output: {
-        schema: { type: 'object', properties: { ok: { type: 'boolean' }, skipped: { type: 'string' }, hint: { type: 'string' }, text: { type: 'string' }, at: { type: 'string' } } },
-        render: (_a, v) => TEXT(v && v.ok ? '记下了。' : ('没记：' + ((v && v.skipped) || '原因不明') + (v && v.hint ? '（' + v.hint + '）' : ''))),
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, skipped: { type: 'string' }, hint: { type: 'string' }, anchor: { type: 'string' }, text: { type: 'string' }, at: { type: 'string' } } },
+        render: (_a, v) => TEXT(
+          v && v.ok
+            ? ('记下了。' + (v.hint ? '（' + v.hint + '）' : ''))
+            : ('没记：' + ((v && v.skipped) || '原因不明') + (v && v.hint ? '（' + v.hint + '）' : '')),
+        ),
       },
       timeoutMs: 5000,
       presentCall: (args) => ({ card: 'generic', title: '感觉 · ' + String((args && args.text) || '').slice(0, 24), kind: 'other', rawInput: args }),

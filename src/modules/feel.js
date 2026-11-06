@@ -51,7 +51,7 @@ export function feelFlavorIssue(text) {
 /** 给调用方的改法提示（会出现在工具返回里，让人/模型知道下一句怎么改）。 */
 export function feelFlavorHint(issue) {
   if (!issue) return ''
-  if (issue.reason === 'ai-word') return '别用「' + issue.word + '」这类词；写身体和动作'
+  if (issue.reason === 'ai-word') return '别用「' + issue.word + '」这类词；写这一秒的样子（手、视线、物件、那句话，挑一样）'
   if (issue.reason === 'explains') return '别解释原因（「' + issue.word + '」），只写那一下'
   if (issue.reason === 'too-short') return '太短了（' + issue.len + ' 字），写清是哪一下'
   if (issue.reason === 'too-long') return '太长了（' + issue.len + ' 字），一句就够'
@@ -59,10 +59,69 @@ export function feelFlavorHint(issue) {
 }
 
 /**
+ * 这条 feel 的「落点」落在哪：身 / 视 / 物 / 话 / 无。
+ *
+ * 为什么要有这个：把「必须写身体」当规矩之后，记下来的十几条全落在手上
+ * （「手指停在…」「指节蹭了一下」）。那不是更真，是换了一种整齐的假法——
+ * 闸在推着走：写身体最容易过闸，也最容易批量生产。
+ *
+ * 所以判据从「是不是身体」换成「这一秒偷不走」：手、视线、旁边的物件、
+ * 还挂在耳朵里的那句话，都算。这里只做粗分类，判错了不拦，只用来提醒换落点。
+ * 取「最先出现」的那一类——判的是第一下落在哪，不是句子里有没有手。
+ */
+const FEEL_ANCHOR_RE = [
+  ['身', /手|指|喉|咽|呼吸|肩|背|胸|心口|胃|眼|脚|腿|颈|牙|唇|眉|头|脸/g],
+  ['视', /视线|目光|盯|扫|看/g],
+  ['物', /桌|杯|屏幕|窗|笔|门|椅|灯|纸|键盘|手机|光/g],
+  ['话', /那句话|话|字|问|声音|耳朵/g],
+]
+const FEEL_ANCHOR_NAME = { 身: '身体', 视: '视线', 物: '物件', 话: '话' }
+
+/** 返回 '身' | '视' | '物' | '话' | 'none'。 */
+export function feelAnchorOf(text) {
+  const t = String(text == null ? '' : text)
+  let best = null
+  for (const [k, re] of FEEL_ANCHOR_RE) {
+    re.lastIndex = 0
+    const m = re.exec(t)
+    if (!m) continue
+    if (!best || m.index < best.idx) best = { k, idx: m.index }
+  }
+  return best ? best.k : 'none'
+}
+
+/** 连续几条都落在同一个落点上 → 给一句换法。只是提示，不拦、不改库里的句子。 */
+function anchorRepeatHint(db, aid, cls, window, repeat) {
+  if (!cls || cls === 'none') return null
+  try {
+    const rows = db.prepare('SELECT text FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT ?').all(aid, window)
+    let streak = 0
+    for (const r of rows) {
+      if (feelAnchorOf(r.text) !== cls) break
+      streak++
+    }
+    if (streak >= repeat) {
+      return '最近几条都落在' + (FEEL_ANCHOR_NAME[cls] || cls) + '上，换一样（视线、物件、那句话都行）'
+    }
+  } catch { /* 读不到就不提示 */ }
+  return null
+}
+
+/** 换落点的提示只落库，不改提示词——和 feel.miss 一个道理：能查，不要靠猜。 */
+function noteAnchorRepeat(db, aid, payload) {
+  try {
+    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)')
+      .run(id, aid, 'feel.anchor.repeat', JSON.stringify(payload).slice(0, 900), new Date().toISOString())
+    return id
+  } catch { return null }
+}
+
+/**
  * 开口前「先记一句」的指引。宿主提示词（网页）和 QQ 通道段共用同一句，
  * 免得两边味道不一样。
  */
-export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先用 feel 记一句「我现在是什么感觉」——一句话，第一人称，写身体和动作（手、呼吸、喉咙、想动没动），不写数字、不写为什么、不用「感觉 / 情绪 / 仿佛」这类词。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。'
+export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先用 feel 记一句这一秒的样子——手停在哪、视线钉在哪、旁边有什么东西、那句话还在不在耳朵里，挑一样。一句，第一人称，不写数字、不写为什么、不用「感觉 / 情绪 / 仿佛」这类词。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。'
 
 /** 去掉换行和多余空白、掐长度。空 / 只有标点 → 返回 null。 */
 export function cleanFeelText(raw, max = MAX_LEN) {
@@ -170,7 +229,14 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
   } catch (e) {
     return { ok: false, skipped: 'write_failed', detail: String(e && e.message || e).slice(0, 120) }
   }
-  return { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn }
+  /* 换落点：连着几条都落在手/喉/视线/物件上，就提一句，不拦。
+     拦会把好句子拦掉（词表那条老教训），提示只花一个字，改不改在我。 */
+  const anchor = feelAnchorOf(body)
+  const win = paramNum(db, aid, 'affect.feel.anchor.window', 5, 2, 20)
+  const rep = paramNum(db, aid, 'affect.feel.anchor.repeat', 3, 2, 10)
+  const hint = anchorRepeatHint(db, aid, anchor, win, rep)
+  if (hint) noteAnchorRepeat(db, aid, { anchor, window: win, repeat: rep, text: body.slice(0, 80) })
+  return { ok: true, at: stamp, text: body, fast, slow, total, label, turn_id: turn, anchor, hint: hint || undefined }
 }
 
 /** 最近一条「我说话时的感觉」，给注入行用。超出窗口就当没有——宁可少一行，不拿旧感受冒充刚说完。 */

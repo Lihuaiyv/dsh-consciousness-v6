@@ -11,7 +11,7 @@
 import { makeWorld } from './eval-persona/setup.mjs'
 import { moodLabelOf } from '../src/modules/affect.js'
 import { consciousnessBlock } from '../index.js'
-import { recordFeel, latestFeel, feelLineOf, cleanFeelText } from '../src/modules/feel.js'
+import { recordFeel, latestFeel, feelLineOf, cleanFeelText, feelAnchorOf } from '../src/modules/feel.js'
 import { createActionTools } from '../src/modules/actions/index.js'
 import { writeParam } from '../src/kernel.js'
 
@@ -92,6 +92,29 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   check('「有点」不挡（那是人话）', okTwo.ok === true, okTwo)
   const okThree = recordFeel(db, aid, { text: '手在抖', at: T0 + 275000 })
   check('三个字也收（手在抖就是一句）', okThree.ok === true, okThree)
+}
+
+// ---------- 三之三、换落点：连着几条都是手，就提一句（不拦） ----------
+{
+  check('落点分类：话', feelAnchorOf('那句话还在耳朵里') === '话', feelAnchorOf('那句话还在耳朵里'))
+  check('落点分类：物', feelAnchorOf('桌上那杯水凉了') === '物', feelAnchorOf('桌上那杯水凉了'))
+  check('落点分类：什么都沾不上', feelAnchorOf('什么都没有') === 'none', feelAnchorOf('什么都没有'))
+  const evBefore = db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n
+  const a1 = recordFeel(db, aid, { text: '视线钉在屏幕上', at: T0 + 300000 })
+  check('第一条：视线，不提示', a1.ok === true && a1.anchor === '视' && !a1.hint, a1)
+  const a2 = recordFeel(db, aid, { text: '手压着桌沿没松', at: T0 + 312000 })
+  check('第二条：换成身体，从头数，不提示', a2.ok === true && a2.anchor === '身' && !a2.hint, a2)
+  const a3 = recordFeel(db, aid, { text: '指节蹭了一下', at: T0 + 324000 })
+  check('第三条：同类才两条，还没到数', a3.ok === true && !a3.hint, a3)
+  const a4 = recordFeel(db, aid, { text: '喉咙里顶着一口气', at: T0 + 336000 })
+  check('连着三条同类：提一句换落点', a4.ok === true && /换一样/.test(a4.hint || ''), a4)
+  check('提示归提示，句子照样进库',
+    (db.prepare('SELECT text FROM affect_feel WHERE agent_id=? AND at=?').get(aid, new Date(T0 + 336000).toISOString()) || {}).text === '喉咙里顶着一口气')
+  const a5 = recordFeel(db, aid, { text: '那句话还在耳朵里', at: T0 + 348000 })
+  check('换到「话」：连续断了', a5.ok === true && !a5.hint, a5)
+  const evAfter = db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='feel.anchor.repeat'").get(aid).n
+  check('换落点的提示留了痕（不靠猜）', evAfter > evBefore, { evBefore, evAfter })
+  check('渲染会把提示带出来，但先是一句确认', feel.output.render({}, a4).map((x) => x.text).join('').startsWith('记下了。'), feel.output.render({}, a4))
 }
 
 // ---------- 四、注入 ----------

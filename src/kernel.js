@@ -313,6 +313,10 @@ export const PARAMS = {
   // inject=off 就逐字回到没有这条通路的时候；min.gap 是两次记录之间最少隔几秒（防流水账）。
   'affect.feel.inject': ['C4', 'on'],
   'affect.feel.min.gap': ['C4', 12],
+  // 换落点：最近几条 feel 的落点（身体/视线/物件/话）连着落在同一类，就提一句换一样。
+  // window = 往回看几条；repeat = 连续几条同类才提示。只提示，不拦。
+  'affect.feel.anchor.window': ['C4', 5],
+  'affect.feel.anchor.repeat': ['C4', 3],
   // 多旧就不带了：超过这个钟点（默认 2）算「上回」，不再冒充「我刚说完」。
   'affect.feel.hours': ['C4', 2],
   // 记忆出生时挂最近一条 feel 的窗口（分钟）：超窗不挂，免得把很久以前的感觉追认给这条记忆。
