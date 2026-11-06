@@ -48,7 +48,7 @@ db.prepare('INSERT OR REPLACE INTO agent_params(agent_id,key,value,updated_at) V
   .run(aid, 'affect.feel.min.gap', '0', new Date().toISOString())
 
 // 显式 turnId：around 按轮取 A，不按时间窗
-const r1 = recordFeel(db, aid, { text: '心里有点紧', sessionId: 's1', turnId: 'turnA', at: Date.now() - 55000 })
+const r1 = recordFeel(db, aid, { text: '手指扣在桌沿上', sessionId: 's1', turnId: 'turnA', at: Date.now() - 55000 })
 check('显式 turnId 写入成功', r1.ok && r1.turn_id === 'turnA', r1)
 
 // 不传 turnId：自动解析最近一条 user 行（此时最近是 turnA）
@@ -61,13 +61,13 @@ db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,t
 db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   .run('raw_a2', aid, 's1', 'turnB', 4, 'assistant', 'B 轮的回复', null, null, iso(-18), '2026-11-05')
 
-const r3 = recordFeel(db, aid, { text: '这会儿松了一点', sessionId: 's1', at: Date.now() - 15000 })
+const r3 = recordFeel(db, aid, { text: '这会儿肩膀落下来了', sessionId: 's1', at: Date.now() - 15000 })
 check('新一轮的 feel 挂到 turnB', r3.ok && r3.turn_id === 'turnB', r3)
 
 // ---------- 4. around 精确对轮 ----------
 const list = listFeels(db, aid, { limit: 20 })
-const f1 = list.find((f) => f.text === '心里有点紧')
-const f3 = list.find((f) => f.text === '这会儿松了一点')
+const f1 = list.find((f) => f.text === '手指扣在桌沿上')
+const f3 = list.find((f) => f.text === '这会儿肩膀落下来了')
 check('feel1 按 turnA 取 user', f1 && f1.around && f1.around.user === 'A 轮那句', f1 && f1.around)
 check('feel1 按 turnA 取 agent', f1 && f1.around && f1.around.agent === 'A 轮的回复', f1 && f1.around)
 check('feel3 按 turnB 取 user', f3 && f3.around && f3.around.user === 'B 轮那句', f3 && f3.around)

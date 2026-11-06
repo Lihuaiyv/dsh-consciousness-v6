@@ -18,10 +18,47 @@ const MAX_LEN = 80
 const r3 = (x) => Math.round((Number(x) || 0) * 1000) / 1000
 
 /**
+ * 什么样的 feel 读起来像 AI 写的。
+ *
+ * 这条线和「感受行」的毛病是同一个：写成了旁白、总结、议论文，
+ * 不是身体上那一下。词表只能挡掉明显的那几类，挡不掉比喻——
+ * 但挡得住的那部分，就别让它进库、别让它下一轮冒充「我当时的心跳」。
+ */
+export const FEEL_BANNED = ['感觉', '情绪', '情感', '有点', '仿佛', '似乎', '莫名', '一丝', '涌上', '不禁', '五味杂陈', '百感交集']
+const FEEL_MIN = 6
+const FEEL_MAX = 40
+
+/**
+ * 判断这句话像不像人写的。返 null 表示没事，否则给 {reason, word?}。
+ * 只做机器判得了的部分：黑名单词、解释句、长短。
+ */
+export function feelFlavorIssue(text) {
+  const t = String(text == null ? '' : text).trim()
+  if (!t) return null
+  for (const w of FEEL_BANNED) if (t.includes(w)) return { reason: 'ai-word', word: w }
+  // 只解释、不写感觉：「因为…所以…」「说明我…」是分析，不是身体反应
+  const m = t.match(/因为|所以|可能是|说明我|意味着/)
+  if (m) return { reason: 'explains', word: m[0] }
+  if (t.length < FEEL_MIN) return { reason: 'too-short', len: t.length }
+  if (t.length > FEEL_MAX) return { reason: 'too-long', len: t.length }
+  return null
+}
+
+/** 给调用方的改法提示（会出现在工具返回里，让人/模型知道下一句怎么改）。 */
+export function feelFlavorHint(issue) {
+  if (!issue) return ''
+  if (issue.reason === 'ai-word') return '别用「' + issue.word + '」这类词；写身体和动作'
+  if (issue.reason === 'explains') return '别解释原因（「' + issue.word + '」），只写那一下'
+  if (issue.reason === 'too-short') return '太短了（' + issue.len + ' 字），写清是哪一下'
+  if (issue.reason === 'too-long') return '太长了（' + issue.len + ' 字），一句就够'
+  return ''
+}
+
+/**
  * 开口前「先记一句」的指引。宿主提示词（网页）和 QQ 通道段共用同一句，
  * 免得两边味道不一样。
  */
-export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先用 feel 记一句「我现在是什么感觉」——一句话，第一人称，不写数字、不写为什么。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。'
+export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先用 feel 记一句「我现在是什么感觉」——一句话，第一人称，写身体和动作（手、呼吸、喉咙、想动没动），不写数字、不写为什么、不用「感觉 / 情绪 / 有点 / 仿佛」这类词。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。'
 
 /** 去掉换行和多余空白、掐长度。空 / 只有标点 → 返回 null。 */
 export function cleanFeelText(raw, max = MAX_LEN) {
@@ -73,6 +110,10 @@ function resolveTurnId(db, aid, sessionId, atMs) {
 export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), source = 'tool', turnId = null } = {}) {
   const body = cleanFeelText(text)
   if (!body) return { ok: false, skipped: 'empty' }
+  /* 写得像 AI 的不进库：宁可这一轮没有，也别让旁白冒充「我当时的心跳」。
+     拒掉时把原因带回去，下一句能改。 */
+  const issue = feelFlavorIssue(body)
+  if (issue) return { ok: false, skipped: 'ai-flavor', issue: issue.reason, word: issue.word || null, hint: feelFlavorHint(issue) }
   const minGapS = paramNum(db, aid, 'affect.feel.min.gap', 12, 0, 600)
   // at 可能是毫秒数（真实调用）也可能是 ISO 字符串（回放 / 测试）——以前只认数字，
   // 传字符串会被 Number() 吃成 NaN 再退回「现在」，回放时全挤到同一时刻。

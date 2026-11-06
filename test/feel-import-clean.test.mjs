@@ -32,7 +32,7 @@ const aidA = 'agt_impa'
 dbA.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
   .run(aidA, '源', 'daily', 'active', new Date().toISOString())
 attachDb(dbA)
-const f = recordFeel(dbA, aidA, { text: '导入源里的一条感觉' })
+const f = recordFeel(dbA, aidA, { text: '导入前手停在按钮上' })
 const fRow = dbA.prepare('SELECT id FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aidA)
 const fid = fRow && fRow.id
 check('源库 feel 写入', f.ok && !!fid, f)
@@ -51,7 +51,7 @@ const aidB = 'agt_impb'
 dbB.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
   .run(aidB, '目标', 'daily', 'active', new Date().toISOString())
 attachDb(dbB)
-const ownFeel = recordFeel(dbB, aidB, { text: '目标库自己的感觉' })
+const ownFeel = recordFeel(dbB, aidB, { text: '目标库自己那条还热着' })
 const ownRow = dbB.prepare('SELECT id FROM affect_feel WHERE agent_id=?').get(aidB)
 const res = importMemory(dbB, aidB, { zip_base64: out.zip_base64 })
 check('导入成功', res && res.memory >= 1, res)

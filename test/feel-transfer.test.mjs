@@ -32,7 +32,7 @@ dbA.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) V
   .run(aidA, '源', 'daily', 'active', new Date().toISOString())
 attachDb(dbA)
 
-const f = recordFeel(dbA, aidA, { text: '导出的时候心里有点舍不得', sessionId: null, source: 'tool' })
+const f = recordFeel(dbA, aidA, { text: '导出的时候攥着鼠标没松', sessionId: null, source: 'tool' })
 check('feel 写入成功', f.ok, f)
 const m = addMemory(dbA, aidA, { text: '这条记忆带着感觉，要一起搬走。', type: 'fact', source: 'manual' })
 const factRow = dbA.prepare('SELECT feel_id FROM fact_archive WHERE memory_id=?').get(m.id)
@@ -56,13 +56,13 @@ const nB = dbB.prepare('SELECT COUNT(*) c FROM affect_feel WHERE agent_id=?').ge
 check('导入后 feel 条数一致', nB === nA && nB >= 1, { nA, nB })
 
 const feelB = dbB.prepare('SELECT text, at, turn_id FROM affect_feel WHERE agent_id=? LIMIT 1').get(aidB)
-check('导入后 feel 正文一致', feelB && feelB.text === '导出的时候心里有点舍不得', feelB)
+check('导入后 feel 正文一致', feelB && feelB.text === '导出的时候攥着鼠标没松', feelB)
 
 // ---------- 引用不再悬空 ----------
 const memB = dbB.prepare('SELECT id, text, feel_id FROM memory_items WHERE agent_id=? AND text LIKE ?').get(aidB, '%这条记忆带着感觉%')
 check('导入后记忆还在', !!memB, memB)
 const map = feelsByIds(dbB, [memB && memB.feel_id])
-check('导入后记忆的 feel 能翻到正文', memB && map.get(memB.feel_id) && map.get(memB.feel_id).text === '导出的时候心里有点舍不得', memB && map.get(memB.feel_id))
+check('导入后记忆的 feel 能翻到正文', memB && map.get(memB.feel_id) && map.get(memB.feel_id).text === '导出的时候攥着鼠标没松', memB && map.get(memB.feel_id))
 
 const factB = dbB.prepare('SELECT feel_id FROM fact_archive WHERE agent_id=? AND text LIKE ?').get(aidB, '%这条记忆带着感觉%')
 check('导入后存根的 feel 能翻到正文', factB && feelsByIds(dbB, [factB.feel_id]).get(factB.feel_id), factB)
