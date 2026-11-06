@@ -46,6 +46,68 @@ def _login_window():
     return False
 
 
+def _restore_from_tray(timeout=15):
+    """微信缩在托盘里（进程在、没窗口）时，点托盘图标把它叫回来。
+
+    实测可行：任务栏「显示隐藏的图标」→ 浮层里的「微信」→ 点一下，窗口就回来了。
+    窗口回来之后 WeChatGUI 才认得出主窗；这一步不需要重新登录。
+    """
+    try:
+        import uiautomation as auto
+        import time as _t
+    except Exception:  # noqa: BLE001
+        return False
+
+    def find_by_name(root, pred, depth=12):
+        """广度优先找名字符合的元素（托盘按钮的名字常带前后空白，不能精确比）。"""
+        stack = [(root, 0)]
+        while stack:
+            c, d = stack.pop(0)
+            if d > depth:
+                continue
+            try:
+                if c is not root and pred(str(c.Name or '')):
+                    return c
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                for k in c.GetChildren():
+                    stack.append((k, d + 1))
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    try:
+        desk = auto.GetRootControl()
+        tray = desk.Control(searchDepth=2, ClassName='Shell_TrayWnd')
+        if not tray or not tray.Exists(1):
+            return False
+        more = find_by_name(tray, lambda n: n.strip() == '显示隐藏的图标', depth=6)
+        if not more:
+            return False
+        more.Click(simulateMove=False)
+        _t.sleep(0.8)
+        fly = desk.Control(searchDepth=2, ClassName='TopLevelWindowForOverflowXamlIsland')
+        if not fly or not fly.Exists(1):
+            return False
+        icon = find_by_name(fly, lambda n: n.strip().startswith('微信'), depth=8)
+        if not icon:
+            return False
+        icon.Click(simulateMove=False)
+        t0 = _t.time()
+        while _t.time() - t0 < timeout:
+            _t.sleep(0.5)
+            from wechatauto import WeChatGUI  # type: ignore
+            try:
+                WeChatGUI()
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def _running():
     """Weixin.exe 在不在跑（在跑就绝不能再去 start 一个：第二实例会弹登录窗）。"""
     try:
@@ -69,8 +131,14 @@ def ensure_gui(timeout=25):
         return WeChatGUI()
     except Exception as first:  # noqa: BLE001
         # 关键：进程在、只是窗口缩在托盘里时，再 start 一次等于开第二个实例——那会弹登录窗。
+        # 正确做法是点托盘图标把它叫回来（不需要重新登录），叫不回来才报错。
         if _running():
-            raise RuntimeError('微信进程在，但主窗口打不开（缩在托盘里）；点开托盘图标再试，别重启进程')
+            if _restore_from_tray():
+                try:
+                    return WeChatGUI()
+                except Exception:  # noqa: BLE001
+                    pass
+            raise RuntimeError('微信进程在，但主窗口叫不回来（缩在托盘里）；点开托盘图标再试，别重启进程')
         exe = _exe()
         if not exe:
             raise first
