@@ -70,8 +70,8 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
 // ---------- 三之二、写得像 AI 的退回（和感受行同一把尺） ----------
 {
   const beforeN = db.prepare('SELECT COUNT(*) n FROM affect_feel WHERE agent_id=?').get(aid).n
-  const ai1 = recordFeel(db, aid, { text: '心里有点说不上来的感觉', at: T0 + 200000 })
-  check('带「感觉 / 有点」的：退回', ai1.ok === false && ai1.skipped === 'ai-flavor' && ai1.issue === 'ai-word', ai1)
+  const ai1 = recordFeel(db, aid, { text: '心里说不上来的那种感觉', at: T0 + 200000 })
+  check('带「感觉」的：退回', ai1.ok === false && ai1.skipped === 'ai-flavor' && ai1.issue === 'ai-word', ai1)
   check('退回时告诉哪句不要用', /别用「/.test(ai1.hint || ''), ai1.hint)
   const ai2 = recordFeel(db, aid, { text: '因为他夸我，所以我想笑', at: T0 + 210000 })
   check('解释原因的：退回', ai2.ok === false && ai2.skipped === 'ai-flavor' && ai2.issue === 'explains', ai2)
@@ -87,6 +87,11 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   check('miss 里带着原文，能看出改哪', String(missP.text || '').length > 0, missP)
   const okOne = recordFeel(db, aid, { text: '猛地一下没接住气', at: T0 + 240000 })
   check('写得白的话照样能记', okOne.ok === true, okOne)
+  // 别挡太狠：「有点」在人话里太常见，三个字的短句也是一句话
+  const okTwo = recordFeel(db, aid, { text: '手有点抖', at: T0 + 255000 })
+  check('「有点」不挡（那是人话）', okTwo.ok === true, okTwo)
+  const okThree = recordFeel(db, aid, { text: '手在抖', at: T0 + 275000 })
+  check('三个字也收（手在抖就是一句）', okThree.ok === true, okThree)
 }
 
 // ---------- 四、注入 ----------
