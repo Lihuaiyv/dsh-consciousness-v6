@@ -55,7 +55,8 @@
     "exam:tiers": "node test/exam-tiers.test.mjs",
     "exam:drive": "node test/exam-drive.test.mjs",
     "exam:relation": "node test/exam-relation.test.mjs",
-    "exam:wgate": "node test/exam-writegate.test.mjs"
+    "exam:wgate": "node test/exam-writegate.test.mjs",
+    "exam:inject": "node test/exam-inject.test.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",

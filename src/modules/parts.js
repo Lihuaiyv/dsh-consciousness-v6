@@ -206,6 +206,25 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'wgate-before-part', note: '回退 = git checkout wgate-before-part -- src/modules/parts.js src/modules/memory_source.js src/features.js docs/给人看的/零件-记忆写入闸.md，再删 test/exam-writegate.test.mjs' },
   },
+  {
+    id: 'inject',
+    name: '注入',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/pack.js · packInjection',
+    files: [
+      'src/modules/pack.js',
+      'src/features.js',
+    ],
+    entry: 'packInjection / oneLine / dedupe / isSameText（src/modules/pack.js）；clampInjection（src/features.js）',
+    exam: { file: 'test/exam-inject.test.mjs', score: '49/49', note: '估算 / 一行裁剪与软收口 / 去重 / 装箱顺序·配额·丢弃次序·标记·模糊 / 硬上限：先丢记忆不丢情绪、削短、截断、key 落账，49 道' },
+    assert: null,
+    swaps: [],
+    rollback: { pointer: 'inject-before-part', note: '回退 = git checkout inject-before-part -- src/modules/parts.js docs/给人看的/零件-注入.md，再删 test/exam-inject.test.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

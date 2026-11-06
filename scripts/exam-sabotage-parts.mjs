@@ -108,6 +108,24 @@ const CASES = [
     importFrom: "'../src/modules/memory_source.js'",
     importTo: "'../src/modules/memory_source.sabotage-9.js'",
   },
+  {
+    name: '注入：丢弃次序反过来（先丢最保的）',
+    impl: 'src/modules/pack.js',
+    exam: 'test/exam-inject.test.mjs',
+    from: "const DROP_ORDER = ['T4', 'T2', 'T3', 'T1', 'buffer']",
+    to: "const DROP_ORDER = ['buffer', 'T1', 'T3', 'T2', 'T4']",
+    importFrom: "'../src/modules/pack.js'",
+    importTo: "'../src/modules/pack.sabotage-10.js'",
+  },
+  {
+    name: '注入：软收口失效（一律硬切加省略号）',
+    impl: 'src/modules/pack.js',
+    exam: 'test/exam-inject.test.mjs',
+    from: 'if (SOFT_BOUNDARY.test(chars[i])) { cut = i; break }',
+    to: 'if (false) { cut = i; break }',
+    importFrom: "'../src/modules/pack.js'",
+    importTo: "'../src/modules/pack.sabotage-11.js'",
+  },
 ]
 
 let pass = 0
