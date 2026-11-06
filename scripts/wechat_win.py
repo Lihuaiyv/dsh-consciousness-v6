@@ -52,3 +52,14 @@ def ensure_gui(timeout=25):
             except Exception as e:  # noqa: BLE001
                 last = e
         raise last
+
+
+if __name__ == '__main__':
+    # 开机预热：没人催的时候先把微信窗口拉起来，之后回话就不用现拉（那一下要几十秒）。
+    import sys as _sys
+    try:
+        ensure_gui()
+        _sys.stdout.write('ok')
+    except Exception as e:  # noqa: BLE001
+        _sys.stderr.write(str(e)[:300])
+        _sys.exit(1)

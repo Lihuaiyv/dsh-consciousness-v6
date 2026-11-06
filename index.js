@@ -13,6 +13,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
 import { attachHostLlm, createHostJudgeModel, hostTalkModel } from './src/model.js'
@@ -2079,6 +2081,42 @@ function startWeChatInboxWorker() {
   // 30 秒一轮：60 秒一轮的话，主人发一句要等半分钟才开始回，体感就是「不理我」。
   wechatInboxTimer = setInterval(() => { wechatInboxTick('tick').catch(() => {}) }, 30 * 1000)
   if (wechatInboxTimer.unref) wechatInboxTimer.unref()
+  // 开机预热微信窗口：没人催的时候先拉起来，回话时就不用现等那几十秒。
+  const warm = setTimeout(() => { wakeWeChatOnce().catch(() => {}) }, 45 * 1000)
+  if (warm.unref) warm.unref()
+}
+
+const WECHAT_WIN_SCRIPT = fileURLToPath(new URL('./scripts/wechat_win.py', import.meta.url))
+let wechatWakeBusy = false
+
+/** 把微信窗口先拉起来（开机预热）。已经开着就是一次快速探测，不打扰。 */
+async function wakeWeChatOnce() {
+  if (wechatWakeBusy) return
+  wechatWakeBusy = true
+  try {
+    if (!fs.existsSync(WECHAT_WIN_SCRIPT)) return
+    const py = await detectPython()
+    if (!py.ok) return
+    await new Promise((resolve) => {
+      let child = null
+      try {
+        child = spawn(py.cmd, [...py.pre, WECHAT_WIN_SCRIPT], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      } catch { resolve(); return }
+      let out = ''
+      let err = ''
+      child.stdout.on('data', (b) => { if (out.length < 200) out += b.toString('utf8') })
+      child.stderr.on('data', (b) => { if (err.length < 200) err += b.toString('utf8') })
+      child.on('error', () => resolve())
+      child.on('close', (code) => {
+        __probe('wechat-wake exit=' + code + (out.trim() ? ' ' + out.trim() : '') + (err.trim() ? ' err=' + err.trim().slice(0, 120) : ''))
+        resolve()
+      })
+    })
+  } catch (e) {
+    __probe('wechat-wake-err ' + (e && e.message))
+  } finally {
+    wechatWakeBusy = false
+  }
 }
 
 /** 宿主有没有「往会话里推一条消息」的口子（sessionController.prompt）。 */
