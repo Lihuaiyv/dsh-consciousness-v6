@@ -314,6 +314,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'life-before-part', note: '回退 = git checkout life-before-part -- src/modules/parts.js test/exam-life.test.mjs docs/给人看的/零件-生活流.md scripts/exam-sabotage-parts.mjs' },
   },
+  {
+    id: 'selfread',
+    name: '自我回读',
+    role: '器官',
+    chain: '链上',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/self_read.js · applySelfRead',
+    files: ['src/modules/self_read.js'],
+    entry: 'applySelfRead / readReplyTone（src/modules/self_read.js）；宿主接线：index.js 在回复后调 applySelfRead',
+    exam: { file: 'test/exam-selfread.test.mjs', score: '28/28', note: '字面温度 / 太短不动 / 关掉 / 没状态 / 只挪快情绪且 ≤0.02 / 慢与 slow_at 不动 / 总数重算，28 道' },
+    assert: '表：affect_v3；读：readReplyTone / applySelfRead；回退：selfread-before-part',
+    swaps: [],
+    rollback: { pointer: 'selfread-before-part', note: '回退 = git checkout selfread-before-part -- src/modules/parts.js src/kernel.js test/exam-selfread.test.mjs docs/给人看的/零件-自我回读.md scripts/exam-sabotage-parts.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

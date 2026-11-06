@@ -215,6 +215,16 @@ const CASES = [
     importFrom: "'../src/modules/life.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：单次改动上限放到 0.5——语气一暖就把快情绪推得很高。
+    name: '自我回读：单次改动的上限失守（越暖推得越狠）',
+    impl: 'src/modules/self_read.js',
+    exam: 'test/exam-selfread.test.mjs',
+    from: 'delta = Math.round(CLAMP(delta, -0.02, 0.02) * 1000) / 1000',
+    to: 'delta = Math.round(CLAMP(delta, -0.5, 0.5) * 1000) / 1000',
+    importFrom: "'../src/modules/self_read.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0
