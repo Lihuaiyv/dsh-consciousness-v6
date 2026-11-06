@@ -10,6 +10,7 @@ import { makeWorld } from './eval-persona/setup.mjs'
 import { presenceLine, lastTurnOf, webConversationId } from '../src/modules/presence.js'
 import { latestFeel, recordFeel } from '../src/modules/feel.js'
 import { feltSnapshot } from '../src/modules/felt_snapshot.js'
+import { closingIntentOf, recentUserContext } from '../src/features.js'
 import { consciousnessBlock } from '../index.js'
 
 let pass = 0
@@ -113,6 +114,30 @@ function addTurn(id, role, text, at, conv) {
   const b = consciousnessBlock(db, aid, { sessionId: 'session-b', conversationId: 'dsh:session-b' })
   check('A 段提示词只带 A 的最后一句', a.includes('A 段最后一句') && !a.includes('B 段最后一句'), a.slice(-400))
   check('B 段提示词只带 B 的最后一句', b.includes('B 段最后一句') && !b.includes('A 段最后一句'), b.slice(-400))
+}
+
+// ---- 六、短句上下文 / 收尾倾向：别被别段的聊天量带跑
+{
+  clearTurns()
+  const night = new Date()
+  night.setHours(23, 40, 0, 0)
+  const at = night.getTime()
+  // B 段聊了很多（今天 10 句）；A 段只有两句
+  for (let i = 0; i < 10; i++) {
+    addTurn('cht_close_b' + i, i % 2 ? 'agent' : 'user', 'B 段第' + i + '句', at - (i + 1) * 60000, 'dsh:session-b')
+  }
+  addTurn('cht_close_a1', 'user', 'A 段更早一句', at - 120000, 'dsh:session-a')
+  addTurn('cht_close_a0', 'user', 'A 段就一句', at - 60000, 'dsh:session-a')
+
+  const ca = closingIntentOf(db, aid, { at, conversationId: 'dsh:session-a' })
+  const cb = closingIntentOf(db, aid, { at, conversationId: 'dsh:session-b' })
+  check('A 段聊得少，不因 B 段聊够了而想收尾', ca === null, ca)
+  check('B 段自己聊够了才想收尾', !!cb, cb)
+
+  const ctxA = recentUserContext(db, aid, 'A 段就一句', 'dsh:session-a')
+  check('短句上下文只取本段的上一句', ctxA.includes('A 段更早一句') && !ctxA.includes('B 段'), ctxA)
+  const ctxAll = recentUserContext(db, aid, '', null)
+  check('不带会话时仍能取（旧行为/修复 at 列）', ctxAll.includes('B 段'), ctxAll)
 }
 
 console.log(`\n通过 ${pass} / ${pass + fail}`)

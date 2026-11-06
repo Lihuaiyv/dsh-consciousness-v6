@@ -924,7 +924,7 @@ const injectWeight = (() => {
   let closingLine = ''
   try {
     if (!stranger && String(getParam(db, aid, 'life.closing') || 'on') !== 'off') {
-      const c = closingIntentOf(db, aid, { level: expr && expr.level })
+      const c = closingIntentOf(db, aid, { level: expr && expr.level, conversationId })
       if (c && c.line) closingLine = '（你有点想收尾了：' + c.line + '可以自然地说一句，不用拖着。）'
     }
   } catch { closingLine = '' }
@@ -1269,7 +1269,7 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
     const learning = getParam(db, aid, 'memory.auto') !== false
     Promise.resolve().then(async () => {
       let res = null
-      try { res = await appraiseWithEdges(db, aid, u) } catch { /* 情绪失败不影响回复 */ }
+      try { res = await appraiseWithEdges(db, aid, u, { conversationId: conv }) } catch { /* 情绪失败不影响回复 */ }
       // 回读：她刚说出来的那句跟当下慢情绪对一对，差得远才小步挪（不是一句话定情绪）
       try { applySelfRead(db, aid, aText) } catch { /* 回读失败不影响对话 */ }
       /* 说话分寸的影子：按这一刻的状态问一次模型「该怎么说」，建议只夹在规则档允许的范围内，

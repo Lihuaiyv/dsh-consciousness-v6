@@ -280,9 +280,11 @@ export function attachQQFeelProvider(opts = {}) {
           // 这一段自己的键：人格包里的「上一句 / feel / 快照」只认这条线，不串到网页或别的群。
           let convKey = null
           try { convKey = conversationIdOf(String(context.key || '')) || null } catch { convKey = null }
+          // 认不出 key 时给一个不会撞上任何记录的键：宁可这轮不引用，也不退回整只意识体的上一句。
+          const convForPrompt = convKey || (sessionId ? 'qq:session:' + sessionId : null)
           const popt = (isGroup || !isOwner)
-            ? { audience: 'stranger', snap: 'off', sessionId, conversationId: convKey }
-            : { snap: 'on', sessionId, conversationId: convKey }
+            ? { audience: 'stranger', snap: 'off', sessionId, conversationId: convForPrompt }
+            : { snap: 'on', sessionId, conversationId: convForPrompt }
           personaText = String(persona(db, aid, popt) || '')
         }
       } catch (e) {

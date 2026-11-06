@@ -962,11 +962,15 @@ export function computeMetrics(db, aid) {
   }
 }
 
-/** 最近两句用户话（不含当前这句）：短句要靠上下文才判得准（「我真是服了」） */
-function recentUserContext(db, aid, text) {
+/** 最近两句用户话（不含当前这句）：短句要靠上下文才判得准（「我真是服了」）
+ *  给 conversationId 时只取这一段：别段的上一句不是这一段的上下文。 */
+export function recentUserContext(db, aid, text, conversationId = null) {
   try {
     const cur = String(text || '').trim()
-    const rows = db.prepare("SELECT text FROM chat_turns WHERE agent_id=? AND role='user' ORDER BY at DESC LIMIT 8").all(aid)
+    const conv = conversationId == null || String(conversationId).trim() === '' ? null : String(conversationId)
+    const rows = conv
+      ? db.prepare("SELECT text FROM chat_turns WHERE agent_id=? AND role='user' AND conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT 8").all(aid, conv)
+      : db.prepare("SELECT text FROM chat_turns WHERE agent_id=? AND role='user' ORDER BY created_at DESC, rowid DESC LIMIT 8").all(aid)
     const out = []
     for (const r of rows) {
       const t = String(r.text || '').trim()
@@ -978,8 +982,8 @@ function recentUserContext(db, aid, text) {
   } catch { return '' }
 }
 
-/** 编排层：注入关系边偏置后再评价 */
-export async function appraiseWithEdges(db, aid, text) {
+/** 编排层：注入关系边偏置后再评价。opt.conversationId：只拿这一段的上一句当短句上下文。 */
+export async function appraiseWithEdges(db, aid, text, opt = {}) {
   const axes = readAxes(db, aid)
   const mode = String(getParam(db, aid, 'persona.axes.mode') || 'on')
   // 关系偏置：优先读人物账本（rel_person），退回旧表
@@ -1008,7 +1012,7 @@ export async function appraiseWithEdges(db, aid, text) {
   // 口径由 affect.appraise.formula 决定：v1=旧（任务相关性），concern=关切（P1）。
   let hint = null
   const appraiseFormula = String(getParam(db, aid, 'affect.appraise.formula') || 'v1')
-  try { hint = await kernelModel.appraise(text, appraiseFormula, recentUserContext(db, aid, text)) } catch { hint = null }
+  try { hint = await kernelModel.appraise(text, appraiseFormula, recentUserContext(db, aid, text, opt && opt.conversationId)) } catch { hint = null }
   const appraisalForS = hint && hint.label ? hint : rulesAppraise(text)
   const edgeBias = computeEdgeBias({
     sigma: axes.sensitivity, axes, text, appraisal: appraisalForS, mode,
@@ -1704,7 +1708,7 @@ export async function chatReply(db, aid, body) {
   // 多轮上下文：这一段会话自己说过的话，主人带满，陌生人只带两句
   const history = recentHistory(db, aid, conv, canLearn ? historyTurns(db) : 2)
   let affect = null
-  try { affect = await appraiseWithEdges(db, aid, text) } catch { affect = getAffect(db, aid) }
+  try { affect = await appraiseWithEdges(db, aid, text, { conversationId: conv }) } catch { affect = getAffect(db, aid) }
   let drive = null
   try { drive = getDrive(db, aid) } catch { drive = null }
   const style = personaStyle(db, aid)
@@ -1902,14 +1906,17 @@ const CLOSING_ALREADY = /(睡了|先这样|明天再说|不聊了|先收一收|�
  * 只读 chat_turns，不写任何状态；返回 { line } 或 null。
  * 这是「给她一个念头」，不是命令；她可以不说。
  */
-export function closingIntentOf(db, aid, { at = Date.now(), level = '' } = {}) {
+export function closingIntentOf(db, aid, { at = Date.now(), level = '', conversationId = null } = {}) {
   const d = new Date(at)
   const mins = d.getHours() * 60 + d.getMinutes()
   if (!(mins >= 23 * 60 + 30 || mins < 6 * 60)) return null
   const day = localDay(d)
+  const conv = conversationId == null || String(conversationId).trim() === '' ? null : String(conversationId)
   let rows = []
   try {
-    rows = db.prepare('SELECT role, text, created_at FROM chat_turns WHERE agent_id=? ORDER BY created_at DESC LIMIT 30').all(aid)
+    rows = conv
+      ? db.prepare('SELECT role, text, created_at FROM chat_turns WHERE agent_id=? AND conversation_id=? ORDER BY created_at DESC LIMIT 30').all(aid, conv)
+      : db.prepare('SELECT role, text, created_at FROM chat_turns WHERE agent_id=? ORDER BY created_at DESC LIMIT 30').all(aid)
   } catch { return null }
   const today = rows.filter((r) => r.created_at && localDay(new Date(r.created_at)) === day)
   if (today.length < 8) return null
