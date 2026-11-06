@@ -266,6 +266,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'diary-before-part', note: '回退 = git checkout diary-before-part -- src/modules/diary.js src/modules/parts.js test/exam-diary.test.mjs docs/给人看的/零件-日记.md' },
   },
+  {
+    id: 'affect',
+    name: '情绪动力',
+    role: '器官',
+    chain: '链上',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/parts/affect/ · applyEmotionV3',
+    files: ['src/parts/affect/index.js'],
+    entry: 'applyEmotionV3 / decayAffect（src/parts/affect/index.js）；宿主接线：features 的 appraiseWithEdges 调它，index.js 心跳里走衰减',
+    exam: { file: 'test/exam-affect-apply.test.mjs', score: '13/13', note: '界内与有限数 / 正价压负价 / 两小时后回落 / 没情绪数据返回 null / 衰减不涨 / 不碰记忆，13 道' },
+    assert: '表：affect_state / affect_v3 / affect_samples / affect_episodes；读：getAffect；回退：affect-apply-before-part',
+    swaps: [],
+    rollback: { pointer: 'affect-apply-before-part', note: '回退 = git checkout affect-apply-before-part -- src/parts/affect/ src/modules/parts.js test/exam-affect-apply.test.mjs docs/给人看的/零件-情绪动力.md' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
