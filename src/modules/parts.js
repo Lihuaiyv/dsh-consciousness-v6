@@ -227,7 +227,7 @@ export const PARTS = [
   },
   {
     id: 'expression',
-    name: '表达',
+    name: '说话分寸',
     role: '器官',
     chain: '链上',
     judge: '机器',
@@ -242,7 +242,7 @@ export const PARTS = [
     exam: { file: 'test/exam-expression.test.mjs', score: '52/52', note: '慢情绪定档 / 强度压上限 / 性格半句 / 边界兜底 / 影子档 / 合成（温度·主动·迟滞）/ 软愿望与潜台词，52 道' },
     assert: null,
     swaps: [],
-    rollback: { pointer: 'expression-before-part', note: '回退 = git checkout expression-before-part -- src/modules/parts.js docs/给人看的/零件-表达.md，再删 test/exam-expression.test.mjs' },
+    rollback: { pointer: 'expression-before-part', note: '回退 = git checkout expression-before-part -- src/modules/parts.js docs/给人看的/零件-说话分寸.md，再删 test/exam-expression.test.mjs' },
   },
 ]
 

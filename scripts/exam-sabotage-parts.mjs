@@ -127,7 +127,7 @@ const CASES = [
     importTo: "'../src/modules/pack.sabotage-11.js'",
   },
   {
-    name: '表达：低落压不过外向（低落也多说一句）',
+    name: '说话分寸：低落压不过外向（低落也多说一句）',
     impl: 'src/algo/expression.js',
     exam: 'test/exam-expression.test.mjs',
     from: "if (e >= 0.65 && sentences < 4 && i <= 0.6 && level !== 'quiet') sentences += 1",
@@ -136,7 +136,7 @@ const CASES = [
     importTo: "'../src/algo/expression.sabotage-12.js'",
   },
   {
-    name: '表达：迟滞失效（慢情绪一动就换脸）',
+    name: '说话分寸：迟滞失效（慢情绪一动就换脸）',
     impl: 'src/modules/expression_state.js',
     exam: 'test/exam-expression.test.mjs',
     from: 'if (Math.abs(slow - Number(prev.slow)) < 0.08) level = prev.level',
