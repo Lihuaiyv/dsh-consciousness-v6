@@ -410,6 +410,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'send-before-part', note: '回退 = git checkout send-before-part -- src/modules/parts.js src/ports/ownership.js test/exam-send.test.mjs docs/给人看的/零件-发信.md scripts/exam-sabotage-parts.mjs' },
   },
+  {
+    id: 'inbox',
+    name: '收信·认件',
+    role: '四肢',
+    chain: '链外',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/host/events.js · readEvent',
+    files: ['src/host/events.js'],
+    entry: 'readEvent / messageText（src/host/events.js）；宿主接线：src/host/dsh.js 只转出，index.js 调它',
+    exam: { file: 'test/exam-inbox.test.mjs', score: '12/12', note: '事件名认得 / 消息体字符串与块数组 / 坏块跳过 / 空与异常形状不炸，12 道' },
+    assert: '表：无；读：readEvent / messageText；回退：inbox-before-part',
+    swaps: [],
+    rollback: { pointer: 'inbox-before-part', note: '回退 = git checkout inbox-before-part -- src/modules/parts.js src/host/dsh.js src/ports/ownership.js test/exam-inbox.test.mjs docs/给人看的/零件-收信·认件.md scripts/exam-sabotage-parts.mjs，再删 src/host/events.js' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

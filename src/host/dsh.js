@@ -25,40 +25,12 @@
  * 再按报告里的 seam 改这一个文件；改完再跑一次就够。
  */
 
-/** 本插件消费的宿主事件名。宿主改名时只改这里。 */
-export const HOST_EVENTS = Object.freeze({
-  userMessage: 'user/message',
-  assistantMessage: 'assistant/message',
-  preStep: 'agent/pre-step',
-})
+/** 收信的认件逻辑搬到 host/events.js（立成零件）；这里只转出，保持老 import 不变。 */
+import { HOST_EVENTS } from './events.js'
+export { HOST_EVENTS, messageText, readEvent } from './events.js'
 
 /** 六个接缝的 id，顺序即报告顺序。 */
 export const SEAMS = Object.freeze(['systemPrompt', HOST_EVENTS.preStep, 'session/event', 'webServer', 'tools', 'commands'])
-
-/** 从一条会话消息里取出纯文本：content 可能是字符串，也可能是 block 数组。 */
-export function messageText(message) {
-  if (!message) return ''
-  const c = message.content
-  if (typeof c === 'string') return c.trim()
-  if (!Array.isArray(c)) return ''
-  return c
-    .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
-    .map((b) => b.text)
-    .join('\n')
-    .trim()
-}
-
-/**
- * 把一条 session/event 归一成 { kind, text }。
- * 事件名和 data 形状都只在这里出现：user/message 的 data 就是消息本身，
- * assistant/message 的 data 是 { turn, step, message, usage?, stream? }。
- */
-export function readEvent(event) {
-  const type = event && typeof event.type === 'string' ? event.type : ''
-  if (type === HOST_EVENTS.userMessage) return { kind: 'user', text: messageText(event.data) }
-  if (type === HOST_EVENTS.assistantMessage) return { kind: 'assistant', text: messageText(event.data && event.data.message) }
-  return { kind: 'other', text: '' }
-}
 
 function errorText(e) {
   return String((e && e.message) || e || 'unknown error')

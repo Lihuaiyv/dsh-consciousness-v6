@@ -275,6 +275,16 @@ const CASES = [
     importFrom: "'../src/modules/actions/channels.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：块数组里只认非文本块——文字全被跳过。
+    name: '收信·认件：只认非文本块（文本块被跳过）',
+    impl: 'src/host/events.js',
+    exam: 'test/exam-inbox.test.mjs',
+    from: "    .filter((b) => b && b.type === 'text' && typeof b.text === 'string')",
+    to: "    .filter((b) => b && b.type !== 'text' && typeof b.text === 'string')",
+    importFrom: "'../src/host/events.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

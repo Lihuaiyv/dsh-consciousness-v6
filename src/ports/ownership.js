@@ -133,6 +133,11 @@ export const OWNERSHIP = {
     files: ['modules/actions/channels.js'],
     tables: ['action_config', 'action_ports'],
   },
+  inbox: {
+    // 收信·认件：只认平台递进来的事件，不碰库。
+    files: ['host/events.js'],
+    tables: [],
+  },
   algo: {
     files: [
       'algo/active.js', 'algo/registry.js', 'algo/index.js',
