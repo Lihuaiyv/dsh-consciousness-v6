@@ -95,6 +95,17 @@ check('入账：主人自报姓名不另建卡', !R.listPersons(db, aid, {}).som
   const m2 = R.extractMentions(db, aidMe, '小汐今天在吗')
   check('抽取：提到自己也不建卡', m2.length === 0, m2)
 }
+// 归档 = 「别再提这个人了」：自动抽词（模型/规则）不许复活，手动可以加回来
+{
+  R.remember(db, aid, { name: '阿昆' }, { source: 'ui' })
+  const aq = R.listPersons(db, aid, {}).find((p) => p.name === '阿昆')
+  R.removePerson(db, aid, aq.id, { source: 'ui' })
+  const auto = R.remember(db, aid, { name: '阿昆', summary: '又说起了' }, { source: 'auto' })
+  const row = db.prepare('SELECT status FROM rel_person WHERE id=?').get(aq.id)
+  check('自动抽词不复活归档的人', auto.skipped === 'archived' && row.status === 'archived', { auto, row })
+  const manual = R.remember(db, aid, { name: '阿昆' }, { source: 'ui' })
+  check('手动可以把他加回来', manual.ok !== false && db.prepare('SELECT status FROM rel_person WHERE id=?').get(aq.id).status === 'active')
+}
 check('抽取：宿主通报不入账', R.ingest(db, aid, { text: 'background job pwsh-123 finished', sessionId: 's9', turnId: 't9' }).skipped === 'system-message')
 check('抽取：审批样板不入账', R.ingest(db, aid, { text: 'Approval prompts are disabled in this session: actions that require approval are rejected automatically — do not request sandbox escalation (do not set `sandbox_permissions`).', sessionId: 's10', turnId: 't11' }).skipped === 'system-message')
 check('抽取：子代理完工通报不入账', R.ingest(db, aid, { text: 'Background subagent 17e3c487-467e-4992-aaa0-b3d50bec22b5 finished and will do no further work unless you send it more.', sessionId: 's11', turnId: 't12' }).skipped === 'system-message')

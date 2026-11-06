@@ -784,6 +784,10 @@ export function remember(db, aid, body = {}, meta = {}) {
   const found = db.prepare('SELECT * FROM rel_person WHERE agent_id=? AND status<>\'archived\'').all(aid)
     .find((p) => [p.name, ...JSON.parse(p.aliases || '[]')].some((n) => normalizeName(n) === normalizeName(name)))
   const gone = found ? null : archivedByName(db, aid, name)
+  // 归档是「别再提这个人了」：自动抽词（模型/规则）不许把人复活，只有手动/界面/确认过的工具能加回来
+  const src = String(meta.source || 'ui')
+  const manualish = src === 'ui' || src === 'manual' || src === 'tool'
+  if (gone && !manualish) return { ok: false, skipped: 'archived', id: gone.id }
   // 主人不能被手记改层：否则「添加同名的人」会把它从主人列里挪走
   if (found && found.tier === 'owner' && body.tier && body.tier !== 'owner') {
     err(409, 'RED_LINE', '主人不能在列表里被改写；先降旧主人，再提升新的')
@@ -836,6 +840,8 @@ function ensurePerson(db, aid, name, meta = {}) {
   if (row) return row.id
   const gone = archivedByName(db, aid, n)
   if (gone) {
+    const src = String(meta.source || 'ui')
+    if (src !== 'ui' && src !== 'manual' && src !== 'tool') return gone.id // 自动路径不复活归档的人
     commit(db, aid, {
       kind: 'manual', source: meta.source || 'ui', text: n + '|revive',
       mutations: [{ op: 'person.update', person_id: gone.id, patch: { status: 'active' } }],
