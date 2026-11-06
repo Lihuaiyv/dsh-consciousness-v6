@@ -4,7 +4,8 @@
  *
  * 管的是「这一行本身登记得对不对」：字段齐、id 唯一、文件存在、状态不说谎。
  * 换零件之前要过的那张考卷是另一回事，在零件自己名下（exam.file）。
- * 以后接进 check:arch 时，这里就是界桩的三条：文件存在、考卷存在、可换要三样齐。
+ * 以后接进 check:arch 时，这里就是界桩的三条：文件存在、考卷存在、可换要四样齐
+ * （这里查考卷和回退点；独立性界桩在 check-parts-independence）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -46,8 +47,8 @@ for (const p of PARTS) {
   check(tag + '：rollback 是对象', p.rollback && typeof p.rollback === 'object', p.rollback)
   check(tag + '：swaps 是数组', Array.isArray(p.swaps), p.swaps)
   if (p.status === '可换') {
-    check(tag + '：可换要三样齐（考卷）', !!(p.exam && p.exam.file), p.exam)
-    check(tag + '：可换要三样齐（回退点）', !!(p.rollback && p.rollback.pointer), p.rollback)
+    check(tag + '：可换要四样齐（考卷）', !!(p.exam && p.exam.file), p.exam)
+    check(tag + '：可换要四样齐（回退点）', !!(p.rollback && p.rollback.pointer), p.rollback)
   }
 }
 

@@ -22,6 +22,7 @@ export const WRITES = Object.freeze({
   persona: ['persona', 'relations', 'preferences', 'taboos'],
   selfmod: ['metric_samples', 'persona', 'proposals', 'rule_artifacts', 'rule_versions', 'agent_bindings', 'change_journal', 'inbox_items'],
   affect: ['affect_baseline', 'affect_episodes', 'affect_events', 'affect_review', 'affect_samples', 'affect_state', 'affect_trigger', 'affect_user_read', 'affect_v3'],
+  feel: ['affect_feel'],
   drive: ['action_log', 'action_ports', 'budgets', 'cooldowns', 'drive_state'],
   relations: ['rel_channel', 'rel_edge', 'rel_evidence', 'rel_habit', 'rel_mention', 'rel_person', 'rel_tier', 'rel_violation'],
   sangguan: [
@@ -165,6 +166,17 @@ export const OWNERSHIP = {
     // affect_events：P0 影子闸门，每条消息一行，只记录「会不会成为事件」
     // affect_review / affect_trigger：事后复查 + 触发词学习，本来就是它自己的两张表，之前漏登记
     tables: ['affect_state', 'affect_episodes', 'affect_samples', 'affect_v3', 'affect_baseline', 'affect_user_read', 'affect_events', 'affect_review', 'affect_trigger'],
+  },
+  feel: {
+    // 感受（feel）：立零件时补的域。只写 affect_feel；读的情绪/对话/记忆只读。
+    files: ['modules/feel.js'],
+    tables: [
+      'affect_feel',
+      // 只读：拼「这一秒」时要带当时的快/慢和标签
+      'affect_v3', 'affect_state', 'affect_events',
+      // 只读：回顾时顺带同时段的对话与当天日记
+      'raw_turns', 'chat_turns', 'memory_items', 'diaries',
+    ],
   },
   drive: {
     files: ['modules/drive.js'],

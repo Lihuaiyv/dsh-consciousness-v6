@@ -282,6 +282,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'affect-apply-before-part', note: '回退 = git checkout affect-apply-before-part -- src/parts/affect/ src/modules/parts.js test/exam-affect-apply.test.mjs docs/给人看的/零件-情绪动力.md' },
   },
+  {
+    id: 'feel',
+    name: '感受',
+    role: '器官',
+    chain: '链上',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/feel.js · recordFeel',
+    files: ['src/modules/feel.js'],
+    entry: 'recordFeel / latestFeel / feelRecall（src/modules/feel.js）；工具注册在 src/modules/actions/index.js，提示词里的「我上一句说出来之前」那行在 index.js 拼',
+    exam: { file: 'test/feel-tool.test.mjs', score: '60/60', note: 'AI 味与长度 / 频率与重复 / 落点提示不拦 / 不动情绪 / 注入窗口 / 回顾与对照，60 道' },
+    assert: '表：affect_feel；读：latestFeel / listFeels；回退：feel-before-part',
+    swaps: [],
+    rollback: { pointer: 'feel-before-part', note: '回退 = git checkout feel-before-part -- src/modules/parts.js src/ports/ownership.js docs/给人看的/零件-感受.md scripts/exam-sabotage-parts.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
