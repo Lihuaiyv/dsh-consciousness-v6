@@ -120,8 +120,9 @@ function check(name, ok, detail) {
   check('认不出的档位落到正常档', wishLine({ level: 'x' }) === wishLine({ level: 'normal' }))
 
   const f = feltLine({ label: 'joy', intensity: 0.8, slow: 0.3, mood: 0.4, weight: 0.6 })
-  check('感受行是推测口吻（权重低才说「感觉现在大概」）', feltLine({ label: 'joy', intensity: 0.8, weight: 0.3 }).startsWith('感觉现在大概：')
+  check('感受行是推测口吻（权重低才说「这会儿大概」）', feltLine({ label: 'joy', intensity: 0.8, weight: 0.3 }).startsWith('这会儿大概：')
     && f.startsWith('现在：'), f)
+  check('抬头本身也不带 AI 味词', !/感觉|情绪|有点/.test(feltLine({ label: 'joy', intensity: 0.8, weight: 0.3 })), feltLine({ label: 'joy', intensity: 0.8, weight: 0.3 }))
   check('低落时感受里带「不太想多说」', feltLine({ label: 'calm', intensity: 0.4, slow: -0.3 }).includes('不太想多说'))
   check('偏高时感受里带「愿意多说两句」', feltLine({ label: 'calm', intensity: 0.4, slow: 0.3 }).includes('愿意多说两句'))
 

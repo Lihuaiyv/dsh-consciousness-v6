@@ -2351,8 +2351,10 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('表达：心情好愿意多说', high.level === 'warm' && high.sentences >= 3 && high.proactive >= 1, high)
 
   const felt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3 })
-  check('感受是推测口吻', felt.startsWith('感觉现在大概'), felt)
-  check('感受不写命令、不带生硬免责', felt.startsWith('感觉现在大概') && !/只说|语气|句数|必须|不许|不用照着演|底子/.test(felt), felt)
+  // 抬头从「感觉现在大概：」换成「这会儿大概：」——同样推测口吻，但去掉「感觉」这个模板腔
+  check('感受是推测口吻', felt.startsWith('这会儿大概'), felt)
+  check('感受不写命令、不带生硬免责', felt.startsWith('这会儿大概') && !/只说|语气|句数|必须|不许|不用照着演|底子/.test(felt), felt)
+  check('感受行不带 AI 味词', !/感觉|情绪|有点/.test(felt), felt)
   check('感受只说整体心情、不说底色', felt.includes('整体心情偏负面') && !felt.includes('底色'), felt)
   const strongFelt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3, weight: 0.7 })
   check('权重大时改成陈述口吻', strongFelt.startsWith('现在：'), strongFelt)

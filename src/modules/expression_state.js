@@ -72,7 +72,9 @@ export function feltLine({ label, intensity, slow, mood, weight = 0.35, phrase =
   if (s <= -0.2) bits.push('不太想多说')
   else if (s >= 0.25) bits.push('愿意多说两句')
   const mw = moodWord(mood)
-  const head = Number(weight) >= 0.5 ? '现在：' : '感觉现在大概：'
+  /* 抬头也去 AI 味：「感觉现在大概：」里的「感觉」本身就是模板腔，还正好是词表闸禁的词。
+     换成「这会儿大概：」——同样是推测口吻，但不像在写情绪报告。 */
+  const head = Number(weight) >= 0.5 ? '现在：' : '这会儿大概：'
   return head + bits.join('，') + (mw ? '；整体心情' + mw : '') + '。'
 }
 

@@ -239,7 +239,7 @@ export const PARTS = [
       'src/modules/expression_state.js',
     ],
     entry: 'expressionFrom（src/algo/expression.js）；expressionState / shadowLevel / feltLine（src/modules/expression_state.js）',
-    exam: { file: 'test/exam-expression.test.mjs', score: '52/52', note: '慢情绪定档 / 强度压上限 / 性格半句 / 边界兜底 / 影子档 / 合成（温度·主动·迟滞）/ 软愿望与潜台词，52 道' },
+    exam: { file: 'test/exam-expression.test.mjs', score: '53/53', note: '慢情绪定档 / 强度压上限 / 性格半句 / 边界兜底 / 影子档 / 合成（温度·主动·迟滞）/ 软愿望与潜台词 / 抬头去 AI 味，53 道' },
     assert: null,
     swaps: [],
     rollback: { pointer: 'expression-before-part', note: '回退 = git checkout expression-before-part -- src/modules/parts.js docs/给人看的/零件-说话分寸.md，再删 test/exam-expression.test.mjs' },
