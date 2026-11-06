@@ -17,6 +17,7 @@ import {
   searchFactArchive, buildEpisode, listEpisodes, getDiary, recentDiaryLines,
   rebuildRawFts, rebuildFactFts,
 } from '../src/modules/archive.js'
+import { setEpisodePoignancy } from '../src/modules/episode_fields.js'
 
 let pass = 0
 let fail = 0
@@ -90,6 +91,8 @@ const iso = (ms) => new Date(ms).toISOString()
   check('再压一次：更新同一条，不新建', again.updated === true && again.id === ep.id, again)
   check('纪要列表里只有一条', listEpisodes(db, aid).filter((e) => e.session_id === 's1').length === 1)
   check('没给 day / session：抛错', (() => { try { buildEpisode(db, aid, {}); return false } catch { return true } })())
+  setEpisodePoignancy(db, aid, ep.id, 0.66)
+  check('窄写口：只改戳心度这一列', Number(db.prepare('SELECT poignancy FROM episodes WHERE id=?').get(ep.id).poignancy) === 0.66)
 }
 
 // ================================================================ T3 日记：读口

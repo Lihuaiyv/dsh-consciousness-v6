@@ -14,6 +14,7 @@ import { now, localDay, localDayBounds } from '../db.js'
 import { nid, getParam, model } from '../kernel.js'
 import { foldValueWeights } from './sangguan/vweights.js'
 import { feelIdsOnDay } from './feel.js'
+import { setEpisodePoignancy } from './episode_fields.js'
 
 const DAY_MS = 86400000
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -627,11 +628,11 @@ export async function selectForDay(db, aid, day, cands, opt = {}) {
     try { picked = await modelSelect(db, aid, day, scored, { ...opt, params, name: opt.name }) } catch { picked = null }
   }
   if (!picked) picked = ruleSelect(db, aid, cands, params, ctx)
-  // 把分写回 episodes（只写有变化的，失败静默）
+  // 把分写回 episodes（只写有变化的，失败静默）；表和写口归归档，这里只调它
   for (const s of picked.scenes) {
     if (s.kind !== 'ep' || s.virtual) continue
     try {
-      db.prepare('UPDATE episodes SET poignancy=? WHERE id=? AND agent_id=?').run(Number(s.score) || 0, s.id, aid)
+      setEpisodePoignancy(db, aid, s.id, s.score)
     } catch { /* 老库没有列 */ }
   }
   return picked

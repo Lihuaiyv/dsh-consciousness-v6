@@ -231,7 +231,8 @@ export const OWNERSHIP = {
   layers: {
     // 分层记忆：原文 / 纪要 / 日记 / 事实存根 / 热度账本 / 会话缓冲 / 检索骨架 / 回放日志 / 夜间巩固
     // modules/diary.js：日记原来是这层里的散件，立成零件后文件仍在 layers 名下（写 diaries / diary_pending）
-    files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js', 'modules/diary.js'],
+    // modules/episode_fields.js：纪要的窄写口（戳心度），日记只调它，episodes 仍只有归档一个写手
+    files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js', 'modules/diary.js', 'modules/episode_fields.js'],
     tables: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
       // 累计重要性 → 反思的游标（consolidate.js 读写）
       'reflect_cursor',

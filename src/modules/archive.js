@@ -487,6 +487,9 @@ const AFFECT_ZH = {
  * 写一天的日记（对外入口）。
  * v2（默认）：挑 1–2 个场景、拿原话成文；写不成进待补，不落模板。
  * v1：整包纪要 + 模板兜底。memory.diary.v2=off 或调用方明确要 v1 时走这条。
+ *
+ * 注：生产环境写 diaries 的主力是 diary.js 的 v2；这里保留的 v1 是回放 / 对照路径
+ * （diary-replay、feel 脚本、老测试在用），不是第二个生产写手。
  */
 export async function buildDiary(db, aid, day, opt = {}) {
   const useV1 = opt.v1 === true || !diaryParams(db, aid).v2
