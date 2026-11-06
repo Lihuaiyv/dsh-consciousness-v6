@@ -10,7 +10,7 @@ import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 import {
   LEVEL_ORDER, TONES, parseJudge, clampProposal, buildPrompt, judgeSpeech, recordShadow,
-  parseCompare, buildComparePrompt, judgeCompare, recordCompare, recordMiss,
+  parseCompare, buildComparePrompt, judgeCompare, recordCompare, recordMiss, toModelRequest,
 } from '../src/modules/speech_judge.js'
 
 let pass = 0
@@ -160,6 +160,11 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
 
   const hang = await judgeCompare({ complete: () => new Promise(() => {}), timeoutMs: 200, rule: rule('normal') })
   check('评委超时会断开', !hang.ok && hang.reason === 'timeout', hang)
+
+  // 线上踩过的接口错位：直接丢 messages 数组给 model.complete，它解构不到 system/text
+  const req = toModelRequest([{ role: 'system', content: 'S' }, { role: 'user', content: 'U1' }, { role: 'user', content: 'U2' }])
+  check('消息数组要转成宿主认的 {system,text}', req.system === 'S' && req.text === 'U1\nU2', req)
+  check('已经是对象就原样（不二次包）', toModelRequest({ system: 'a', text: 'b' }).text === 'b')
 
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-compare-'))
   const db2 = openDb(path.join(dir2, 'app.db'))

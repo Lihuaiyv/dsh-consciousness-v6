@@ -31,7 +31,7 @@ import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
-import { judgeSpeech, recordShadow, judgeCompare, recordCompare, recordMiss } from './src/modules/speech_judge.js'
+import { judgeSpeech, recordShadow, judgeCompare, recordCompare, recordMiss, toModelRequest } from './src/modules/speech_judge.js'
 import { latestVoice, recentVoices, generateVoice, recordVoice } from './src/modules/speech_words.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
@@ -1244,7 +1244,7 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
         if (!stranger && shadowOn && exprForResidue && model.status().primary === 'ok') {
           const ar = db.prepare('SELECT primary_label, intensity FROM affect_state WHERE agent_id=?').get(aid)
           const judged = await judgeSpeech({
-            complete: (m) => model.complete(m),
+            complete: (m) => model.complete(toModelRequest(m)),
             rule: exprForResidue,
             label: (ar && ar.primary_label) || 'calm',
             intensity: Number(ar && ar.intensity) || 0.4,
@@ -1259,7 +1259,7 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
             try {
               if (String(getParam(db, aid, 'affect.speech.judge') || 'on') !== 'off') {
                 const cmp = await judgeCompare({
-                  complete: (m) => model.complete(m),
+                  complete: (m) => model.complete(toModelRequest(m)),
                   rule: exprForResidue,
                   suggest: judged.verdict,
                   label: (ar && ar.primary_label) || 'calm',
@@ -1287,7 +1287,7 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
             const ar2 = db.prepare('SELECT primary_label, intensity FROM affect_state WHERE agent_id=?').get(aid)
             const v3 = db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(aid)
             const gen = await generateVoice({
-              complete: (m) => model.complete(m),
+              complete: (m) => model.complete(toModelRequest(m)),
               recent: recentVoices(db, aid),
               label: (ar2 && ar2.primary_label) || 'calm',
               intensity: Number(ar2 && ar2.intensity) || 0.4,

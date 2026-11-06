@@ -254,6 +254,18 @@ export function recordMiss(db, aid, { kind = 'shadow', reason = '', raw = '', at
   } catch { return null }
 }
 
+/**
+ * 把 [{role,content}] 转成宿主模型认的形状 `{ system, text }`。
+ * 线上真踩过：直接把 messages 数组丢给 model.complete，它解构不到 system/text，
+ * 拿到的是空提示——于是影子永远 bad-json，词表只会回一句 "How can I help you?"。
+ */
+export function toModelRequest(messages) {
+  if (!Array.isArray(messages)) return messages
+  const sys = messages.find((m) => m && m.role === 'system')
+  const rest = messages.filter((m) => m && m.role !== 'system').map((m) => String(m.content || '')).filter(Boolean)
+  return { system: String((sys && sys.content) || ''), text: rest.join('\n') }
+}
+
 /** 评委落账：只写事件。 */
 export function recordCompare(db, aid, { rule = {}, suggest = {}, pick = 'same', why = '', confidence = null, ms = 0, at = Date.now() } = {}) {
   try {
