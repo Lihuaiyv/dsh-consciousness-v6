@@ -1087,6 +1087,15 @@ export function extractMentions(db, aid, text) {
     if (badName(name)) continue
     push(name, 'role', null, 0.5)
   }
+  // 7) 「我叫李怀玉」：这是说话人自己的名字，不是新认识的人——交给入账层记成别名
+  const selfPattern = /我(?:叫|的名字是|的名字叫)\s*([\u4e00-\u9fa5A-Za-z]{2,4})/g
+  const selfNames = new Set()
+  for (const m of s.matchAll(selfPattern)) selfNames.add(normalizeName(m[1]))
+  if (selfNames.size) {
+    for (const it of found) {
+      if (selfNames.has(it.normalized)) { it.self = true; it.create = false }
+    }
+  }
   return found
 }
 
@@ -1115,6 +1124,15 @@ export function ingest(db, aid, opts = {}) {
   const mentions = extractMentions(db, aid, text)
   for (const m of mentions) {
     let pid = m.personId
+    // 「我叫李怀玉」：说话人自报姓名，记成他自己的别名，不另建一张卡
+    if (!pid && m.self && speaker) {
+      let list = []
+      try { list = JSON.parse(speaker.aliases || '[]') } catch { list = [] }
+      if (!Array.isArray(list)) list = []
+      if (!list.map(normalizeName).includes(m.normalized)) list.push(m.surface)
+      pid = speaker.id
+      muts.push({ op: 'person.update', person_id: pid, patch: { aliases: list.slice(0, 8) } })
+    }
     if (!pid && m.create) {
       // 删过的人又被提起：复用原来那张卡，别再建一个同名的
       const gone = archivedByName(db, aid, m.surface)
