@@ -43,25 +43,70 @@ export function dayOfRow(row = {}) {
   return m ? m[1] : dayOf(row.created_at)
 }
 
+/** 「我今天干了啥」的工作流水：那是日志，不是我这个人的形状。 */
+const FLOW_WORDS = /测试|提交|代码|脚本|函数|参数|配置|模块|文件|仓库|接口|体检|建表|表结构|回滚|部署|重构/
+
 /** 最近 windowDays 天里她自己写的事，按「日期 · 正文」排；同时给出覆盖到几个不同日期。 */
 export function patternMaterial(db, aid, windowDays = 30) {
   const n = Math.max(7, Math.min(180, Number(windowDays) || 30))
   const since = new Date(Date.now() - n * DAY_MS).toISOString()
   const bits = []
   const days = new Set()
+  let rows = []
   try {
-    const rows = db.prepare(`SELECT text, created_at, fact_key FROM memory_items
+    rows = db.prepare(`SELECT text, created_at, fact_key FROM memory_items
       WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND source='self' AND created_at>=?
-      ORDER BY created_at DESC LIMIT 160`).all(aid, since)
-    for (const r of rows) {
-      const d = dayOfRow(r)
-      if (!d) continue
-      days.add(d)
-      bits.push(d + ' · ' + String(r.text || '').slice(0, 100))
-    }
-  } catch { /* 读不到就当没有素材 */ }
-  return { text: bits.join('\n').slice(0, 2400), days }
+      ORDER BY created_at DESC LIMIT 4000`).all(aid, since)
+  } catch { return { text: '', days } }
+
+  // 一天最多取几条：某一天写了两百条干活记录，也不许把别的日子挤出窗口。
+  // 上一版按最新的 160 条取，一天就把窗口刷满了，攒日子的门槛永远过不去。
+  const PER_DAY = 6
+  const seen = new Map()
+  const flow = []
+  const take = (d, text) => {
+    const c = seen.get(d) || 0
+    if (c >= PER_DAY) return
+    seen.set(d, c + 1)
+    days.add(d)
+    bits.push(d + ' · ' + text)
+  }
+  for (const r of rows) {
+    const d = dayOfRow(r)
+    if (!d) continue
+    const text = String(r.text || '').slice(0, 100)
+    // 夜里那三条（今天怎么过的、想明白的、认自己）本来就是「我」，不用过滤。
+    const nightly = /^self\.(day|insight|pattern)\.\d{4}-\d{2}-\d{2}/.test(String(r.fact_key || ''))
+      || String(r.fact_key || '').startsWith('self.pattern.')
+    if (!nightly && FLOW_WORDS.test(text)) { flow.push({ d, text }); continue }
+    take(d, text)
+  }
+  // 滤完太薄了才把流水放回来兜底——宁可素材糙一点，也别一条都不给。
+  if (days.size < 3) for (const x of flow) take(x.d, x.text)
+  return { text: bits.join('\n').slice(0, 1600), days }
 }
+
+/**
+ * 模型给的 JSON 常裹一层 ``` 围栏，或者前后多一句解释。
+ * 先剥围栏，再退一步从第一个 { 截到最后一个 }；两下都不行才算真坏。
+ */
+function parseJsonLoose(out) {
+  const raw = String(out || '').trim()
+  if (!raw) return null
+  const bare = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()
+  try { return JSON.parse(bare) } catch { /* 往下试一步 */ }
+  const a = bare.indexOf('{')
+  const b = bare.lastIndexOf('}')
+  if (a >= 0 && b > a) {
+    try { return JSON.parse(bare.slice(a, b + 1)) } catch { /* 真坏了 */ }
+  }
+  return null
+}
+
+/** 第一次没给成 JSON 时的第二次请求：别的都不要，只要 JSON。 */
+const JSON_ONLY_SYS = '只输出 JSON，不要任何解释、不要代码围栏。'
+  + '格式：{"patterns":[{"key":"2~12字的动作短语","text":"一句第一人称的话","days":["YYYY-MM-DD"]}]}。'
+  + '没有确定的就输出 {"patterns":[]}。'
 
 /** key 归一化成 fact_key 的一段：只留中英文数字，长度封顶。 */
 export function normKey(s) {
@@ -123,10 +168,23 @@ export async function writeSelfPattern(db, aid, opt = {}) {
     out = await chat([
       { role: 'system', content: sys },
       { role: 'user', content: '最近我写过的事：\n' + mat.text },
-    ], { maxTokens: 420, json: true, temperature: 0.5 })
+    ], { maxTokens: 2000, json: true, temperature: 0.5 })
   } catch { return { skipped: 'model_failed' } }
-  let parsed = null
-  try { parsed = typeof out === 'string' ? JSON.parse(out) : out } catch { return { skipped: 'bad_json' } }
+  let parsed = typeof out === 'string' ? parseJsonLoose(out) : out
+  // 解析不了，多半是输出被截断、或者先写了一串说明：再要一次，这次只要 JSON。
+  if (parsed === null) {
+    let again = ''
+    try {
+      again = await chat([
+        { role: 'system', content: JSON_ONLY_SYS },
+        { role: 'user', content: '最近我写过的事：\n' + mat.text },
+      ], { maxTokens: 2000, json: true, temperature: 0.3 })
+    } catch { /* 按坏 JSON 处理 */ }
+    parsed = typeof again === 'string' ? parseJsonLoose(again) : again
+    if (parsed === null && again) out = again
+  }
+  // raw 一定带上：上一版这里是空的，日志只看得到「坏 JSON」，看不出是回了一句空话。
+  if (parsed === null) return { skipped: 'bad_json', raw: String(out || '').slice(0, 160), empty: String(out || '').trim() === '' }
   const list = Array.isArray(parsed && parsed.patterns) ? parsed.patterns : []
   const written = []
   const merged = []

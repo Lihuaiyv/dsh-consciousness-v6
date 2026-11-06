@@ -79,7 +79,7 @@ const hit = (w, id) => ({ ...rowOf(w, id), partition: 'T1' })
     writeParam(w.db, w.aid, 'memory.judge.timeout_ms', 2000)
     const old = addMemory(w.db, w.aid, { text: '检索方案还在比较甲和乙两种做法', type: 'appraisal', fact_key: '用户.检索M.方案' })
     w.db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(ago(3), old.id)
-    const out = applyWrite(w.db, w.aid, { text: '检索最后定成乙了', fact_key: '用户.检索M.定稿' }, (c) => addMemory(w.db, w.aid, {
+    const out = applyWrite(w.db, w.aid, { text: '检索最后定成乙方案，下周开始执行', fact_key: '用户.检索M.定稿' }, (c) => addMemory(w.db, w.aid, {
       text: c.text, type: 'appraisal', fact_key: c.fact_key || c.key || '',
     }), { complete: async () => '取代' })
     await flushJudges()
@@ -100,7 +100,7 @@ const hit = (w, id) => ({ ...rowOf(w, id), partition: 'T1' })
     writeParam(w.db, w.aid, 'memory.judge.min_interval_ms', 0)
     const old = addMemory(w.db, w.aid, { text: '检索方案还在比较甲和乙两种做法', type: 'appraisal', fact_key: '用户.检索N.方案' })
     w.db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(ago(3), old.id)
-    const out = applyWrite(w.db, w.aid, { text: '检索最后定成乙了', fact_key: '用户.检索N.定稿' }, (c) => addMemory(w.db, w.aid, {
+    const out = applyWrite(w.db, w.aid, { text: '检索最后定成乙方案，下周开始执行', fact_key: '用户.检索N.定稿' }, (c) => addMemory(w.db, w.aid, {
       text: c.text, type: 'appraisal', fact_key: c.fact_key || c.key || '',
     }), { complete: async () => '取代' })
     await flushJudges()

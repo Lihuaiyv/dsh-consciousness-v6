@@ -223,7 +223,7 @@ export async function runNightly(db, aid, opt = {}) {
   // ⑤d 认自己：把最近反复出现的形状攒成「我好像就是这样」。
   try {
     const sp = await writeSelfPattern(db, aid, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
-    push('self_pattern', { ok: !!sp.ok, written: sp.written || 0, merged: sp.merged || 0, skipped: sp.skipped || null })
+    push('self_pattern', { ok: !!sp.ok, written: sp.written || 0, merged: sp.merged || 0, skipped: sp.skipped || null, raw: sp.raw || null, empty: sp.empty === true, days: sp.days || null, need: sp.need || null })
   } catch (e) {
     push('self_pattern', { ok: false, error: String(e && e.message) })
   }

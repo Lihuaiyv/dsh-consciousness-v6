@@ -258,7 +258,7 @@ export { dayOf as dayLabel, subjectOf }
  * @returns {Promise<{verdict:string, reason:string, cached:boolean, ms:number, model:string|null, confidence:number|null}>}
  */
 export async function judgePair(opt = {}) {
-  const { db, aid, oldRow, newerRow, complete, timeoutMs = 3000, via = 'script', skipRules = false, useCache = true, uncertainDays = 7 } = opt
+  const { db, aid, oldRow, newerRow, complete, timeoutMs = 6000, via = 'script', skipRules = false, useCache = true, uncertainDays = 7 } = opt
   const t0 = Date.now()
   const fail = (reason, extra = {}) => ({ verdict: 'uncertain', reason, cached: false, ms: Date.now() - t0, model: null, confidence: null, ...extra })
   if (!oldRow || !newerRow || !oldRow.id || !newerRow.id) return fail('bad-input')
@@ -282,9 +282,14 @@ export async function judgePair(opt = {}) {
     return { ...rec, cached: false, ms: Date.now() - t0 }
   }
 
-  // 同 fact_key 完全相等：槽位取值变了，规则就能定，不花模型。
-  if (String(old.fact_key || '').trim() && String(old.fact_key) === String(newer.fact_key)) {
-    return save({ verdict: 'supersede', reason: 'same-fact-key', model: 'rule', confidence: 0.95 })
+  // 以前这里「同 fact_key 直接判 supersede」。真数据打脸：同 key 只说明是同一个槽，
+  // 不说明值变了（「允许我决定怎么称呼他」vs「我更习惯被叫小汐」被硬判成取代，4/4 全错）。
+  // 现在同 key 也只当候选，交给下面的模型判。
+
+  // 太短的对没有上下文，模型也容易乱判（「嗯嗯很好了」被判成取代）。
+  // 直接标 uncertain 并缓存：不值得花模型，7 天内也不再问。
+  if (String(old.text || '').trim().length < 12 || String(newer.text || '').trim().length < 12) {
+    return save({ verdict: 'uncertain', reason: 'too-short', model: 'rule', confidence: 0.3 })
   }
 
   // 规则闸（专名撞车）
@@ -303,6 +308,16 @@ export async function judgePair(opt = {}) {
   }
   if (!looksLikeJudgement(raw)) return fail('bad-shape')
   const verdict = parseVerdict(raw)
+  // supersede 是唯一会真改记忆的档：判一次不够，再问一次，两次一致才认。
+  // 不一致 / 复核失败 → uncertain，不缓存（下次重判）。宁可不改，也不误改。
+  if (verdict === 'supersede') {
+    let raw2 = ''
+    try { raw2 = await withTimeout(complete({ system: JUDGE_SYS, text: buildUser(old, newer) }), timeoutMs) }
+    catch { return save({ verdict: 'uncertain', reason: 'verify-failed', model: 'host', confidence: 0.3 }) }
+    if (parseVerdict(raw2) !== 'supersede') {
+      return save({ verdict: 'uncertain', reason: 'supersede-unconfirmed', model: 'host', confidence: 0.3 })
+    }
+  }
   // 模型自己说「不确定」才允许缓存 7 天；解析不出/格式坏的不缓存（下次还要问）
   const cacheable = verdict !== 'uncertain' || /不确定/.test(String(raw))
   return save({
@@ -329,7 +344,7 @@ const defaultSleep = (ms) => new Promise((r) => setTimeout(r, Math.max(0, Number
  *                    byVerdict:object, errors:number, ms:number}>}
  */
 export async function judgeDay(opt = {}) {
-  const { db, aid, day, complete, limit = 40, timeoutMs = 3000, minIntervalMs = 800, via = 'nightly' } = opt
+  const { db, aid, day, complete, limit = 40, timeoutMs = 6000, minIntervalMs = 800, via = 'nightly' } = opt
   const sleep = typeof opt.sleep === 'function' ? opt.sleep : defaultSleep
   const t0 = Date.now()
   const out = { rows: 0, pairs: 0, judged: 0, cached: 0, byVerdict: {}, errors: 0, ms: 0 }

@@ -73,7 +73,7 @@ const judgeEvents = (w) => w.db.prepare("SELECT * FROM events WHERE agent_id=? A
     check('shadow：写入动作是 new', out.action === 'new', out)
     await flushJudges()
     const evs = judgeEvents(w)
-    check('shadow：调了一次模型', calls === 1, calls)
+    check('shadow：supersede 判了两次（判 + 复核）', calls === 2, calls)
     check('shadow：写了判定事件', evs.length === 1, evs)
     const p = evs[0] ? JSON.parse(evs[0].payload) : {}
     check('shadow：事件判决是 supersede', p.verdict === 'supersede', p)

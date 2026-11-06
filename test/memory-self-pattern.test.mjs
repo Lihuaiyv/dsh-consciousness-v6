@@ -67,6 +67,27 @@ const pm2 = patternMaterial(db, aid, 30)
 check('跨午夜补写按 fact_key 记日期', pm2.days.has(y6), [...pm2.days])
 check('不会错记到写入那天', !pm2.days.has(new Date().toISOString().slice(0, 10)), [...pm2.days])
 
+// ---- 某一天刷满流水，不许把别的日子挤出窗口 ----
+// 上一版按最新的 160 条取，一天写两百条干活记录就把前两天全挤掉了，门槛永远过不去。
+const floodDay = dAgo(8)
+for (let i = 0; i < 40; i++) {
+  const m = addMemory(db, aid, { text: '我跑了第 ' + i + ' 轮测试，全绿，又改了配置', type: 'episode', source: 'self' })
+  db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(floodDay + 'T10:00:00.000Z', m.id)
+}
+const pm3 = patternMaterial(db, aid, 30)
+check('刷屏那天不会挤掉别的日子', pm3.days.size >= 4, [...pm3.days])
+check('工作流水不进素材', !pm3.text.includes('又改了配置'), pm3.text.slice(0, 200))
+
+// 夜里写的那三条本来就是「我」，哪怕提到代码也不用过滤。
+const nightDay = dAgo(9)
+const nd = addMemory(db, aid, {
+  text: '今天我在改代码的时候心里有点急，改完反而空了',
+  type: 'episode', source: 'self', fact_key: 'self.day.' + nightDay,
+})
+db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(nightDay + 'T10:00:00.000Z', nd.id)
+const pm4 = patternMaterial(db, aid, 30)
+check('夜里写的日记提到代码也进素材', pm4.days.has(nightDay), [...pm4.days])
+
 // ---- 闸门 ----
 const badKey = await writeSelfPattern(db, aid, { chat: chat({ patterns: [{ ...P1, key: '用户总道歉' }] }) })
 check('key 含「用户」被挡', badKey.skipped === 'no_pattern', badKey)
@@ -114,6 +135,30 @@ setParam(db, aid, 'memory.self.pattern', { value: 'off' })
 check('开关关掉', (await writeSelfPattern(db, aid, { chat: chat({ patterns: [P2] }) })).skipped === 'off')
 setParam(db, aid, 'memory.self.pattern', { value: 'on' })
 check('没有模型跳过', (await writeSelfPattern(db, aid, { chat: null })).skipped === 'no_model')
+
+// ---- 模型爱给 ``` 围栏：剥掉再解析，别当坏 JSON ----
+const fenced = await writeSelfPattern(db, aid, {
+  chat: async () => '```json\n' + JSON.stringify({ patterns: [P2] }) + '\n```',
+})
+check('围栏里的 JSON 也认', !!fenced.ok, fenced)
+const chatty = await writeSelfPattern(db, aid, {
+  chat: async () => '好的，我看了一下：\n' + JSON.stringify({ patterns: [P2] }) + '\n以上。',
+})
+check('前后带解释的 JSON 也认', !!chatty.ok, chatty)
+
+// 第一次给的压根不像 JSON：再要一次，第二次给成了就不算坏。
+let calls = 0
+const retryJson = await writeSelfPattern(db, aid, {
+  chat: async () => (++calls === 1 ? '我先想了想，好像有几个……' : JSON.stringify({ patterns: [P2] })),
+})
+check('第一次坏 JSON 会再要一次', !!retryJson.ok && calls === 2, { retryJson, calls })
+
+let calls2 = 0
+const stillBad = await writeSelfPattern(db, aid, {
+  chat: async () => { calls2++; return '还是不像 JSON' },
+})
+check('两次都不像就记坏 JSON', stillBad.skipped === 'bad_json' && calls2 === 2, { stillBad, calls2 })
+check('坏 JSON 时留下原文片段', typeof stillBad.raw === 'string' && stillBad.raw.length > 0, stillBad)
 
 // ---- 注入 ----
 check('patternCandidates 能取到', patternCandidates(db, aid, 1).length === 1)

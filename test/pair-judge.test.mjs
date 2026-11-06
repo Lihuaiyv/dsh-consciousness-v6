@@ -155,14 +155,30 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
   const w = makeWorld()
   makeCacheTable(w.db)
   try {
-    // （a）同 fact_key：规则直接判取代，不调模型（历史脏数据才会出现两条 active 同 key）
+    // （a）同 fact_key 不再规则直判：交给模型，且 supersede 要两次一致
     let calls = 0
-    insertRaw(w.db, w.aid, { id: 'mem_k_old', text: '用户咖啡偏好是冰美式', fact_key: '用户.咖啡.偏好', created_at: ago(120) })
-    insertRaw(w.db, w.aid, { id: 'mem_k_new', text: '用户咖啡偏好改成手冲', fact_key: '用户.咖啡.偏好', created_at: ago(5) })
+    insertRaw(w.db, w.aid, { id: 'mem_k_old', text: '用户咖啡偏好一直是冰美式，不加糖', fact_key: '用户.咖啡.偏好', created_at: ago(120) })
+    insertRaw(w.db, w.aid, { id: 'mem_k_new', text: '用户咖啡偏好现在改成手冲，不加糖', fact_key: '用户.咖啡.偏好', created_at: ago(5) })
     const a = { old: w.db.prepare('SELECT * FROM memory_items WHERE id=?').get('mem_k_old'), newer: w.db.prepare('SELECT * FROM memory_items WHERE id=?').get('mem_k_new') }
-    const r1 = await judgePair({ db: w.db, aid: w.aid, oldRow: a.old, newerRow: a.newer, complete: async () => { calls++; return '无关' }, via: 'test' })
-    check('同 key → supersede', r1.verdict === 'supersede', r1)
-    check('同 key 不调模型', calls === 0, calls)
+    const r1 = await judgePair({ db: w.db, aid: w.aid, oldRow: a.old, newerRow: a.newer, complete: async () => { calls++; return '取代' }, via: 'test' })
+    check('同 key 交给模型 → 取代', r1.verdict === 'supersede', r1)
+    check('同 key 不再规则直判（判 + 复核两次）', calls === 2, calls)
+
+    // （a2）复核不一致 → uncertain，宁可不改
+    calls = 0
+    const r1b = await judgePair({ db: w.db, aid: w.aid, oldRow: a.old, newerRow: a.newer, useCache: false, complete: async () => { calls++; return calls === 1 ? '取代' : '补充' }, via: 'test' })
+    check('复核不一致 → uncertain', r1b.verdict === 'uncertain' && r1b.reason === 'supersede-unconfirmed', r1b)
+
+    // （a3）同 key 没模型 → uncertain
+    const r1c = await judgePair({ db: w.db, aid: w.aid, oldRow: a.old, newerRow: a.newer, useCache: false, complete: null, via: 'test' })
+    check('同 key 没模型 → uncertain', r1c.verdict === 'uncertain' && r1c.reason === 'no-model', r1c)
+
+    // （a4）短文本不花模型（真数据里「嗯嗯很好了」被判成取代）
+    const short = makePair(w, { oldText: '嗯嗯很好了', newText: '这样是不是有点暴力了', oldKey: '用户.评价.短', newKey: '用户.评价.质疑', oldType: 'appraisal', newType: 'appraisal' })
+    let shortCalls = 0
+    const r1d = await judgePair({ db: w.db, aid: w.aid, oldRow: short.old, newerRow: short.newer, complete: async () => { shortCalls++; return '取代' }, via: 'test' })
+    check('短文本 → uncertain(too-short)', r1d.verdict === 'uncertain' && r1d.reason === 'too-short', r1d)
+    check('短文本不调模型', shortCalls === 0, shortCalls)
 
     // （b）专名闸：不调模型直接 unrelated
     calls = 0
@@ -179,7 +195,7 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
     const c = makePair(w, { oldText: '检索算法效果，有没有更好的方案', newText: '关注检索算法表现，问能否升级', oldKey: '用户.检索.方案', newKey: '用户.检索.升级', oldType: 'appraisal', newType: 'appraisal' })
     const r3 = await judgePair({ db: w.db, aid: w.aid, oldRow: c.old, newerRow: c.newer, complete: async () => { calls++; return '取代' }, via: 'test' })
     check('模型判取代', r3.verdict === 'supersede', r3)
-    check('模型判取代调了一次', calls === 1, calls)
+    check('模型判取代调了两次（判 + 复核）', calls === 2, calls)
 
     // （d）缓存命中：同一对再判不再调模型
     calls = 0
@@ -188,7 +204,7 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
     check('命中缓存不再调模型', calls === 0, calls)
 
     // （e）模型不可用 → uncertain，且不写缓存（下次还会问）
-    const d = makePair(w, { oldText: '用户提到想学游泳', newText: '用户报了游泳班', oldKey: '用户.游泳.计划', newKey: '用户.游泳.进展', oldType: 'appraisal', newType: 'appraisal' })
+    const d = makePair(w, { oldText: '用户提到想学游泳，但一直没找到合适的班', newText: '用户已经报了游泳班，下周三开始上课', oldKey: '用户.游泳.计划', newKey: '用户.游泳.进展', oldType: 'appraisal', newType: 'appraisal' })
     const r4 = await judgePair({ db: w.db, aid: w.aid, oldRow: d.old, newerRow: d.newer, complete: null, via: 'test' })
     check('没模型 → uncertain', r4.verdict === 'uncertain' && r4.reason === 'no-model', r4)
     const k4 = pairKey(w.aid, d.old, d.newer)
@@ -204,12 +220,12 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
     check('超时 → uncertain', r6.verdict === 'uncertain' && /timeout/.test(r6.reason), r6)
 
     // （h）入参时间顺序反了也能纠正
-    const e = makePair(w, { oldText: '用户说特效要红色', newText: '用户说特效先别改', oldKey: '用户.特效.颜色', newKey: '用户.特效.颜色' })
-    const r7 = await judgePair({ db: w.db, aid: w.aid, oldRow: e.newer, newerRow: e.old, complete: null, via: 'test' })
+    const e = makePair(w, { oldText: '用户说特效要改成红色，再亮一点', newText: '用户说特效先别改，等这版定下来再说', oldKey: '用户.特效.颜色', newKey: '用户.特效.颜色' })
+    const r7 = await judgePair({ db: w.db, aid: w.aid, oldRow: e.newer, newerRow: e.old, complete: async () => '取代', via: 'test' })
     check('时间顺序颠倒也能判取代', r7.verdict === 'supersede', r7)
 
     // （i）模型自己说「不确定」→ 缓存 7 天
-    const f = makePair(w, { oldText: '用户提过导出功能', newText: '用户说导出先不做', oldKey: '用户.导出.想法', newKey: '用户.导出.决定', oldType: 'appraisal', newType: 'appraisal' })
+    const f = makePair(w, { oldText: '用户提过导出功能，但没说什么时候要', newText: '用户说导出先不做，等前端稳定了再排', oldKey: '用户.导出.想法', newKey: '用户.导出.决定', oldType: 'appraisal', newType: 'appraisal' })
     const r8 = await judgePair({ db: w.db, aid: w.aid, oldRow: f.old, newerRow: f.newer, complete: async () => '不确定', via: 'test' })
     check('模型不确定 → uncertain', r8.verdict === 'uncertain', r8)
     const cacheRow = readJudgement(w.db, w.aid, pairKey(w.aid, f.old, f.newer))
@@ -222,7 +238,7 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
     // P2 之后新库一建就带表；这里手动删掉，模拟「老库还没升级 / 表被删」的容错路径。
     w2.db.exec('DROP TABLE IF EXISTS memory_pair_judge')
     try {
-      const g = makePair(w2, { oldText: '用户喜欢猫', newText: '用户养了一只猫', oldKey: '用户.宠物.偏好', newKey: '用户.宠物.现状', oldType: 'appraisal', newType: 'appraisal' })
+      const g = makePair(w2, { oldText: '用户喜欢猫，家里养了两只橘猫', newText: '用户家里已经养了一只猫，叫年糕', oldKey: '用户.宠物.偏好', newKey: '用户.宠物.现状', oldType: 'appraisal', newType: 'appraisal' })
       const r9 = await judgePair({ db: w2.db, aid: w2.aid, oldRow: g.old, newerRow: g.newer, complete: async () => '补充', via: 'test' })
       check('没缓存表也能判', r9.verdict === 'supplement', r9)
       check('没缓存表 readJudgement 返回 null', readJudgement(w2.db, w2.aid, 'whatever') === null)

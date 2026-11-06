@@ -221,7 +221,7 @@ export const PARAMS = {
   // 每天最多判多少对（成本闸）。
   'memory.judge.daily_max': ['C4', 40],
   // 写入门控单次超时（毫秒）：判不出来就退回现状，不阻塞写入。
-  'memory.judge.timeout_ms': ['C4', 3000],
+  'memory.judge.timeout_ms': ['C4', 6000],
   // 两次模型调用之间的最小间隔（毫秒）：抽取高峰时别把宿主模型打满。
   'memory.judge.min_interval_ms': ['C4', 800],
   // 模糊最多用几档：1 只删括号 / 2 再删数字 / 3 再删引号原话。默认 3（到头）。
