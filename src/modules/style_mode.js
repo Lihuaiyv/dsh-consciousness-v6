@@ -66,6 +66,32 @@ export function styleInjection({ mode = 'chat', level = 'normal', guard = 'soft'
   return g ? [g] : []
 }
 
+/**
+ * 通道默认要不要颜文字：QQ 要，微信 / 电脑端先不要。
+ * 按会话键前缀判——'qq:p:10001' 是 QQ；'wechat:张三' 和空（网页）都不是。
+ */
+export function kaomojiDefault(conversationId) {
+  return /^qq:/i.test(String(conversationId || '')) ? 'on' : 'off'
+}
+
+/**
+ * 这一轮颜文字怎么带。
+ *
+ * 主人 2026-11-07 定的：电脑端默认干净，QQ 默认有。
+ * 所以 auto 按通道走；on / off 是显式覆盖（哪天真想全开/全关就改这一个参数）。
+ * 返回 '' 表示这一轮别提（参数写了个不认识的值时，宁可不说）。
+ */
+export function kaomojiLine({ conversationId, setting = 'auto' } = {}) {
+  const v = String(setting || 'auto').toLowerCase()
+  const off = '这一轮不用颜文字。'
+  if (v === 'off') return off
+  if (v === 'on') return '颜文字：这一轮可以带一两个，挑跟当下那句搭的，别堆、别每段都放。'
+  if (v !== 'auto') return ''
+  return kaomojiDefault(conversationId) === 'on'
+    ? '颜文字：这一轮可以带一两个，挑跟当下那句搭的，别堆、别每段都放。'
+    : off
+}
+
 /** 与 expression_state.cardLine 同义（同一份文案，别在这里再抄一遍）。 */
 export function styleText(level) {
   return cardLine({ level })

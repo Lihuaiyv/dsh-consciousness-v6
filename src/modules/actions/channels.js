@@ -20,14 +20,17 @@ export const DEFAULTS = {
   'wechat.allow_keys_fallback': false,
   'wechat.launch': true,
   'wechat.dry_run': false,
-  // 发消息的顺位：auto 时从前往后试，前一条不通就换下一条。微信第一（2026-11-07 起）。
-  'send.order': 'wechat,wecom,qq',
-  // 收信（只读本地库，不动窗口）：默认开；skip 里的会话不记（微信团队这类服务号）。
-  'wechat.inbox.enable': true,
+  // 发消息的顺位：auto 时从前往后试，前一条不通就换下一条。
+  // 2026-11-07 起主力回到 QQ：微信走窗口自动化，一条要一两分钟，先封存；
+  // 「封存」只把它从 auto 顺位里拿掉，显式 channel=wechat 照样能发。
+  'send.order': 'qq,wecom,wechat',
+  'wechat.sealed': true,
+  // 收信（只读本地库，不动窗口）：封存期间默认关；skip 里的会话不记（微信团队这类服务号）。
+  'wechat.inbox.enable': false,
   'wechat.inbox.skip': 'weixin',
   'wechat.inbox.limit': 40,
   // 回话前先「正在输入」：真在她的输入框里打草稿，写好再整句覆盖发送。lead 是回车前停多久。
-  'wechat.typing.enable': true,
+  'wechat.typing.enable': false,
   'wechat.typing.lead_ms': 1200,
   'qq.mode': 'onebot',
   'qq.base_url': 'http://127.0.0.1:3000',
@@ -41,7 +44,7 @@ export const DEFAULTS = {
   'research.seen_days': 60,
 }
 
-const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable', 'wechat.typing.enable'])
+const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable', 'wechat.typing.enable', 'wechat.sealed'])
 const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days', 'wechat.inbox.limit', 'wechat.typing.lead_ms'])
 const ENUMS = {
   'wechat.mode': ['uia', 'wecom', 'auto'],
@@ -314,6 +317,26 @@ async function sendThrough(cfg, channel, { target, text }) {
  * 显式通道就是显式：说发微信就发微信，不再因为「模式配了企业微信」被偷偷改道。
  * auto 才按顺位挨个试：缺配置的跳过，发失败的换下一条，全都不通才报错。
  */
+/**
+ * auto 的实发顺位。
+ *
+ * 三层叠加，顺序就是优先级：
+ *   1) send.order（用户自己排的）；
+ *   2) wechat.mode=wecom 时把 wecom 提到最前（「我这儿的微信其实走企业微信」）；
+ *   3) 封存的微信拿掉（封存不是删掉，显式 channel=wechat 照发）。
+ * 一条不剩就明确报错，不去偷偷退回某个通道。
+ */
+export function autoOrder(cfg) {
+  const c = cfg || {}
+  let order = channelOrder(c)
+  if (c['wechat.mode'] === 'wecom') order.sort((a, b) => (a === 'wecom' ? -1 : b === 'wecom' ? 1 : 0))
+  if (c['wechat.sealed']) order = order.filter((ch) => ch !== 'wechat')
+  // channelOrder 会把没写的通道补在后面，所以这里几乎不会真的空；
+  // 留这一道是为了「哪天顺位表被人改坏」时不至于拿一条不存在的通道去发。
+  if (!order.length) throw new Error('没有可用的发送通道（微信被封存，顺位里也没有别的）')
+  return order
+}
+
 export async function sendMessage(db, agentId, req) {
   const cfg = getConfig(db, agentId)
   const text = String(req.text || '')
@@ -326,10 +349,7 @@ export async function sendMessage(db, agentId, req) {
     return { ...out, channel, conversationId: conversationIdOfSend(channel, out.target, cfg) }
   }
 
-  const order = channelOrder(cfg)
-  // wechat.mode=wecom 的意思是「我这儿的微信其实走企业微信」：那就把 wecom 提到最前，
-  // 顺位表其余部分不动——用户自己排的顺序还是要认。
-  if (cfg['wechat.mode'] === 'wecom') order.sort((a, b) => (a === 'wecom' ? -1 : b === 'wecom' ? 1 : 0))
+  const order = autoOrder(cfg)
   const tried = []
   let lastErr = null
   for (const ch of order) {

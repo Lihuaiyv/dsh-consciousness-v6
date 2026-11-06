@@ -40,7 +40,7 @@ import { presenceLine, webConversationId } from './src/modules/presence.js'
 import { selfNoteLines as notesForPrompt } from './src/modules/selfnote.js'
 import { memoryTag, ageDays } from './src/modules/memory_tag.js'
 import { fadeText, shouldFade, rehearseAdjustedAge } from './src/modules/memory_fade.js'
-import { detectMode, resolveMode, styleInjection } from './src/modules/style_mode.js'
+import { detectMode, resolveMode, styleInjection, kaomojiLine } from './src/modules/style_mode.js'
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
@@ -1017,6 +1017,23 @@ let styleLines = []
     })
   } catch { styleLines = [] }
 
+  // 颜文字（主人 2026-11-07）：QQ 默认带，电脑端/微信默认不带；style.kaomoji 可覆盖。
+  let kaoLine = ''
+  try {
+    kaoLine = kaomojiLine({
+      conversationId,
+      setting: String(getParam(db, aid, 'style.kaomoji') || 'auto'),
+    })
+  } catch { kaoLine = '' }
+
+  // 表情包（只在 QQ）：桥只肯发「可发目录」里的图，所以那边那份在 ~/.dsh/qq-bridge/stickers/whale，
+  // 仓库里留一份源（assets/stickers/whale）和台词表。电脑端没有这条通路，不写。
+  let stickerLine = ''
+  if (/^qq:/i.test(String(conversationId || ''))) {
+    stickerLine = '表情：可发目录里有一组鲸鱼娘表情（stickers/whale/ 下的 010–123.webp，台词表是同目录 README.md），'
+      + '想发一张就调 qq_send_image 传相对路径；别每轮都发，也别连发。'
+  }
+
   // 「现在什么情况」：给她时间、时间距离和上下文，而不是命令她用什么分寸。
   // 命令只能管住长度，管不住姿态；材料才能让她自己判断这句该怎么说。
   let nowText = ''
@@ -1088,6 +1105,8 @@ let styleLines = []
     ...selfNoteLines,
     expr ? '我想怎么说：' + cardLine({ level: expr.level }) : '',
     ...styleLines,
+    kaoLine,
+    stickerLine,
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
       + (userEmotion.raw_label ? '（我按你以前的纠正改的：我一开始读成' + userEmotion.raw_label + '）' : '')
       + '。' : '',
@@ -2034,7 +2053,7 @@ async function wechatInboxTick(reason) {
     for (const aid of aids) {
       let cfg = null
       try { cfg = getActionConfig(d, aid) } catch { cfg = null }
-      if (!cfg || !cfg['wechat.inbox.enable']) continue
+      if (!cfg || cfg['wechat.sealed'] || !cfg['wechat.inbox.enable']) continue
       try {
         // 先找一个真装了 wechatauto 的解释器（机器上可能 3.14 在 PATH 前面、包在 3.12）。
         const py = await detectPython()
@@ -2082,7 +2101,16 @@ function startWeChatInboxWorker() {
   wechatInboxTimer = setInterval(() => { wechatInboxTick('tick').catch(() => {}) }, 30 * 1000)
   if (wechatInboxTimer.unref) wechatInboxTimer.unref()
   // 开机预热微信窗口：没人催的时候先拉起来，回话时就不用现等那几十秒。
-  const warm = setTimeout(() => { wakeWeChatOnce().catch(() => {}) }, 45 * 1000)
+  // 封存期间不预热——不然半夜自己把一个登录窗弹到主人屏幕上。
+  const warm = setTimeout(() => {
+    try {
+      const d = ensureDb()
+      const aid = defaultAgentId(d)
+      const cfg = aid ? getActionConfig(d, aid) : null
+      if (!cfg || cfg['wechat.sealed']) return
+    } catch { return }
+    wakeWeChatOnce().catch(() => {})
+  }, 45 * 1000)
   if (warm.unref) warm.unref()
 }
 

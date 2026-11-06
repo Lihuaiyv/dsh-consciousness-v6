@@ -233,6 +233,9 @@ export const PARAMS = {
   'style.mode': ['C4', 'auto'],
   // 文体清单：off 不写、soft 三条（默认）、strong 再加顺序词和小节标题。
   'style.guard': ['C4', 'soft'],
+  // 颜文字口径：auto = 按通道（QQ 带，电脑端/微信不带）；on / off 强制。
+  // 主人 2026-11-07 定的：电脑端先默认干净，QQ 默认有。
+  'style.kaomoji': ['C4', 'auto'],
   // 冲突开案后要不要真的开口问：on = 排一条主动消息问「到底是哪个」；off = 只记进面板。
   'memory.conflict.ask': ['C4', 'on'],
   // 「浮上来」三条通道（配额制）：相关度照旧，额外给重要度锚点 / 24h 新近 / 开环固定名额。

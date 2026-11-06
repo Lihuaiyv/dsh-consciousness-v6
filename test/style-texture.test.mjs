@@ -6,7 +6,7 @@ import { styleLine, wishLine, expressionState, feltLine, cardLine } from '../src
 import { expressionFrom } from '../src/algo/expression.js'
 import { clampInjection } from '../src/features.js'
 import { examplesBlock } from '../src/modules/examples.js'
-import { detectMode, resolveMode, guardBlock, styleInjection, styleText } from '../src/modules/style_mode.js'
+import { detectMode, resolveMode, guardBlock, styleInjection, styleText, kaomojiLine } from '../src/modules/style_mode.js'
 import { noteStyleMode, styleModeCache } from '../index.js'
 
 let pass = 0
@@ -112,6 +112,19 @@ function check(name, ok, detail) {
   check('noteStyleMode 返回并记住', noteStyleMode('agt_1', '改一下 src/a.js') === 'work' && styleModeCache.get('agt_1') === 'work')
   check('下一句改回闲聊', noteStyleMode('agt_1', '今天好累') === 'chat' && styleModeCache.get('agt_1') === 'chat')
   check('不同实例互不串台', noteStyleMode('agt_2', 'pnpm test') === 'work' && styleModeCache.get('agt_1') === 'chat')
+}
+
+// ---- 颜文字：按通道默认（QQ 带，电脑端 / 微信不带），参数可覆盖
+{
+  const qq = kaomojiLine({ conversationId: 'qq:p:3192248859', setting: 'auto' })
+  const desk = kaomojiLine({ conversationId: null, setting: 'auto' })
+  const wx = kaomojiLine({ conversationId: 'wechat:主人', setting: 'auto' })
+  check('颜文字：QQ 默认带', /颜文字/.test(qq) && !/不用颜文字/.test(qq), qq)
+  check('颜文字：电脑端默认不带', /不用颜文字/.test(desk), desk)
+  check('颜文字：微信默认不带', /不用颜文字/.test(wx), wx)
+  check('颜文字：on 强制带（电脑端也带）', !/不用颜文字/.test(kaomojiLine({ conversationId: null, setting: 'on' })))
+  check('颜文字：off 强制不带（QQ 也不带）', /不用颜文字/.test(kaomojiLine({ conversationId: 'qq:p:1', setting: 'off' })))
+  check('颜文字：写错的值宁可不说', kaomojiLine({ conversationId: 'qq:p:1', setting: '乱写' }) === '')
 }
 
 console.log(`\n通过 ${pass} / ${pass + fail}`)

@@ -13,7 +13,7 @@ import path from 'node:path'
 import { openDb } from '../src/db.js'
 import {
   getConfig, saveConfig, publicConfig, sendWecom, sendOneBot, onebotEndpoint, sendMessage, DEFAULTS,
-  channelOrder, conversationIdOfSend,
+  channelOrder, autoOrder, conversationIdOfSend,
 } from '../src/modules/actions/channels.js'
 
 let pass = 0
@@ -147,15 +147,26 @@ const base = `http://127.0.0.1:${server.address().port}`
   check('显式 wechat + 没目标：报缺收件人', await rejects(() => sendMessage(db, aid, { text: 'x', channel: 'wechat' }), /没有给微信收件人/))
 }
 
-// ================================================================ 顺位：默认微信第一
+// ================================================================ 顺位：默认 QQ 第一，微信封存
 {
   saveConfig(db, aid, { 'wechat.default_target': '文件传输助手', 'qq.base_url': base, 'qq.default_target': '12345', 'qq.default_target_type': 'private' })
   const order = channelOrder(getConfig(db, aid))
-  check('默认顺位：微信第一', order.join(',') === 'wechat,wecom,qq', order)
+  check('默认顺位：QQ 第一', order.join(',') === 'qq,wecom,wechat', order)
+  check('默认封存：微信是封着的', getConfig(db, aid)['wechat.sealed'] === true, getConfig(db, aid)['wechat.sealed'])
 
   const custom = saveConfig(db, aid, { 'send.order': 'wecom,qq,乱写' })
   check('顺位：写错的名字丢掉，没写的补在后面', channelOrder(custom).join(',') === 'wecom,qq,wechat', channelOrder(custom))
-  check('顺位：空配置回默认，不会一条都不剩', channelOrder({}).join(',') === 'wechat,wecom,qq', channelOrder({}))
+  check('顺位：空配置回默认，不会一条都不剩', channelOrder({}).join(',') === 'qq,wecom,wechat', channelOrder({}))
+
+  // 封存 = 只从 auto 顺位里拿掉：显式点名照样发，auto 不偷偷退回微信。
+  // 这里只考顺位（autoOrder），不真去调微信窗口——那张考卷在 exam-wechat，别在这耗两分钟。
+  const sealedCfg = { ...getConfig(db, aid), 'wechat.sealed': true, 'send.order': 'wechat,qq,wecom' }
+  check('封存：auto 顺位里没有微信', autoOrder(sealedCfg).join(',') === 'qq,wecom', autoOrder(sealedCfg))
+  const openCfg = { ...sealedCfg, 'wechat.sealed': false }
+  check('解封：微信回到 auto 顺位', autoOrder(openCfg)[0] === 'wechat', autoOrder(openCfg))
+  let allSealed = null
+  try { autoOrder({ 'send.order': 'wechat', 'wechat.sealed': true }) } catch (e) { allSealed = e }
+  check('封存：只排了微信时顺位仍会补出别的通道（channelOrder 会补齐）', !allSealed && autoOrder({ 'send.order': 'wechat', 'wechat.sealed': true }).join(',') === 'wecom,qq', allSealed && allSealed.message)
 
   // 顺位第一是企业微信、但没配 webhook：跳过，换下一条
   saveConfig(db, aid, { 'wechat.wecom_webhook': null, 'send.order': 'wecom,qq,wechat' })
