@@ -100,6 +100,16 @@ function resolveTurnId(db, aid, sessionId, atMs) {
   } catch { return null }
 }
 
+/** 被退回也留一条痕：查「为什么这几轮没有 feel」时不用猜。写失败不影响记 feel。 */
+function noteFeelMiss(db, aid, payload) {
+  try {
+    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)')
+      .run(id, aid, 'feel.miss', JSON.stringify(payload).slice(0, 900), new Date().toISOString())
+    return id
+  } catch { return null }
+}
+
 /**
  * 记一条「我说话时的感觉」。
  * @param {{text?:string, sessionId?:string, at?:number|string|Date, source?:string, turnId?:string}} o
@@ -111,9 +121,13 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
   const body = cleanFeelText(text)
   if (!body) return { ok: false, skipped: 'empty' }
   /* 写得像 AI 的不进库：宁可这一轮没有，也别让旁白冒充「我当时的心跳」。
-     拒掉时把原因带回去，下一句能改。 */
+     拒掉时把原因带回去，下一句能改；同时留一条 feel.miss——
+     不然「这一轮为什么没有 feel」只能靠猜（和 expr.* 一个道理）。 */
   const issue = feelFlavorIssue(body)
-  if (issue) return { ok: false, skipped: 'ai-flavor', issue: issue.reason, word: issue.word || null, hint: feelFlavorHint(issue) }
+  if (issue) {
+    noteFeelMiss(db, aid, { reason: issue.reason, word: issue.word || null, text: body.slice(0, 80) })
+    return { ok: false, skipped: 'ai-flavor', issue: issue.reason, word: issue.word || null, hint: feelFlavorHint(issue) }
+  }
   const minGapS = paramNum(db, aid, 'affect.feel.min.gap', 12, 0, 600)
   // at 可能是毫秒数（真实调用）也可能是 ISO 字符串（回放 / 测试）——以前只认数字，
   // 传字符串会被 Number() 吃成 NaN 再退回「现在」，回放时全挤到同一时刻。

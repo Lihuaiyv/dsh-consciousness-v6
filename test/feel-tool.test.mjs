@@ -80,6 +80,11 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   const ai4 = recordFeel(db, aid, { text: '啊'.repeat(200), at: T0 + 230000 })
   check('太长（流水账）：退回，不硬截断', ai4.ok === false && ai4.issue === 'too-long', ai4)
   check('被退回的一条都没进库', db.prepare('SELECT COUNT(*) n FROM affect_feel WHERE agent_id=?').get(aid).n === beforeN)
+  // 退回不是静默的：库里留 feel.miss，查「这几轮为什么没有 feel」不用猜
+  const misses = db.prepare("SELECT payload FROM events WHERE agent_id=? AND type='feel.miss'").all(aid).map((r) => JSON.parse(r.payload))
+  const missP = misses.find((m) => m.reason === 'ai-word') || {}
+  check('被退回时留一条 feel.miss', misses.length >= 3 && missP.reason === 'ai-word', misses.map((m) => m.reason))
+  check('miss 里带着原文，能看出改哪', String(missP.text || '').length > 0, missP)
   const okOne = recordFeel(db, aid, { text: '猛地一下没接住气', at: T0 + 240000 })
   check('写得白的话照样能记', okOne.ok === true, okOne)
 }
