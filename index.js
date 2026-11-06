@@ -29,6 +29,7 @@ import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_
 import { getConfig as getActionConfig, sendMessage as sendViaChannel } from './src/modules/actions/channels.js'
 import { detectPython } from './src/modules/actions/wechat.js'
 import { pollWeChatInbox } from './src/modules/wechat_inbox.js'
+import { defaultAgentId } from './src/modules/conversations.js'
 import { chatReply } from './src/features.js'
 import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
@@ -1999,7 +2000,11 @@ async function wechatInboxTick(reason) {
   if (Date.now() < wechatInboxBackoffUntil) return
   let d
   try { d = ensureDb() } catch { return }
-  const aids = enabledAgentIds(d)
+  // 微信只有一个号：只让「默认实例」收。别的实例也是 active（知识库助手就是），
+  // 一起轮询 = 同一句话被两个实例各回一遍。
+  const all = enabledAgentIds(d)
+  const ownerAid = defaultAgentId(d)
+  const aids = ownerAid ? all.filter((x) => x === ownerAid) : all.slice(0, 1)
   if (!aids.length) return
   wechatInboxBusy = true
   try {

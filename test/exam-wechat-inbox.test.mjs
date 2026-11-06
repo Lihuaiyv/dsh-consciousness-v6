@@ -135,7 +135,10 @@ const msg = (seq, text, extra = {}) => ({
 
 // ================================================================ 主人号：交给回调，不记两遍
 {
-  setOwnerHandle(db, 'wxid_owner')
+  // 主人的号可以有多个（QQ 一个、微信一个）：逗号分隔，认人按「任意一个」判
+  setOwnerHandle(db, '3192248859, wxid_owner')
+  const { isOwner: isO } = await import('../src/modules/conversations.js')
+  check('主人号可以有好几个：逗号分隔，任意一个都算', isO(db, 'wxid_owner') && isO(db, '3192248859') && !isO(db, 'wxid_stranger'))
   const calls = []
   const hook = async (m) => { calls.push(m.text); return true }
   const conv = 'wechat:主人'
