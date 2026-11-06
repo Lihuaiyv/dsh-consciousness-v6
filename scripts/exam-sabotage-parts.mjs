@@ -245,6 +245,16 @@ const CASES = [
     importFrom: "'../src/modules/consolidate.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：完全重复也新建——同一个抽屉里塞两条一样的话。
+    name: '记忆存储：重复也新建（去重门失效）',
+    impl: 'src/modules/memory.js',
+    exam: 'test/exam-memorystore.test.mjs',
+    from: "  if (kind === 'duplicate') {",
+    to: '  if (false) {',
+    importFrom: "'../src/modules/memory.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

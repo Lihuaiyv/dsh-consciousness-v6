@@ -362,6 +362,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'consolidate-before-part', note: '回退 = git checkout consolidate-before-part -- src/modules/parts.js test/exam-consolidate.test.mjs docs/给人看的/零件-记忆整理.md scripts/exam-sabotage-parts.mjs；注意这个 tag 与自我记忆同点，只想退这一件时，先删 parts.js 里 consolidate 那一段，别整文件 checkout' },
   },
+  {
+    id: 'memorystore',
+    name: '记忆存储',
+    role: '骨架',
+    chain: '链外',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/memory.js · addMemory',
+    files: ['src/modules/memory.js'],
+    entry: 'addMemory / softDelete / restoreMemory / listActiveMemories / memoryStats（src/modules/memory.js）；宿主接线：features 与 api 调它',
+    exam: { file: 'test/exam-memorystore.test.mjs', score: '36/36', note: '入口校验 / 写入字段与检索卡 / 出生照与事件 / 去重 / 同键取代 / 冷层 / 软删恢复 / 标记与实体连边 / feel 挂载 / 冲突开案，36 道' },
+    assert: '表：memory_items / memory_fts / conflicts / fact_archive / memory_links；读：listActiveMemories / memoryStats；回退：memorystore-before-part',
+    swaps: [],
+    rollback: { pointer: 'memorystore-before-part', note: '回退 = git checkout memorystore-before-part -- src/modules/parts.js test/exam-memorystore.test.mjs docs/给人看的/零件-记忆存储.md scripts/exam-sabotage-parts.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
