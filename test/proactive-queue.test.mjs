@@ -114,5 +114,16 @@ const row = (id) => db.prepare('SELECT * FROM proactive WHERE id=?').get(id)
   check('撤销只动自己 agent 的', row(mine) != null)
 }
 
+// ---------------- 9 迁移断言：搬家前的旧行，新入口读得出、也改得动 ----------------
+{
+  const oldId = 'prc_old_row_1'
+  // 照搬家前 index.js 里那条 INSERT 原样写一行，模拟旧数据
+  db.prepare('INSERT INTO proactive(id,agent_id,text,reason,dim,state,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?)')
+    .run(oldId, AID, '搬家前排队的一句', 'share:old', 'R', 'pending', '2026-11-01T00:00:00.000Z', null)
+  const r = row(oldId)
+  check('旧行读得出（字段没漂）', r && r.state === 'pending' && r.text === '搬家前排队的一句' && r.reason === 'share:old', r)
+  check('旧行能被新入口标投递', markDelivered(db, oldId) === 1 && row(oldId).state === 'delivered')
+}
+
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))
 if (fail) process.exitCode = 1
