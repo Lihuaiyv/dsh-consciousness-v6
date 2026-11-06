@@ -283,7 +283,8 @@ async function sendThrough(cfg, channel, { target, text }) {
       launch: cfg['wechat.launch'] !== false,
       allowKeysFallback: cfg['wechat.allow_keys_fallback'] === true,
       dryRun: cfg['wechat.dry_run'] === true,
-      timeoutMs: 65000,
+      // 微信被关到托盘时要先把它拉起来（最多 25 秒）再发；65 秒会把这种正常情况掐死。
+      timeoutMs: 150000,
     })
     if (!out.ok) throw new Error(out.message || ('微信发送失败：' + (out.code || 'UNKNOWN')))
     return {

@@ -2073,10 +2073,11 @@ async function wechatInboxTick(reason) {
 }
 
 function startWeChatInboxWorker() {
-  // 启动后先等 1 分钟：让迁移、补写、桥都先跑完，别在开机那一堆活里再插一个 Python。
-  const boot = setTimeout(() => { wechatInboxTick('boot').catch(() => {}) }, 60 * 1000)
+  // 启动后先等半分钟：让迁移、补写、桥都先跑完，别在开机那一堆活里再插一个 Python。
+  const boot = setTimeout(() => { wechatInboxTick('boot').catch(() => {}) }, 30 * 1000)
   if (boot.unref) boot.unref()
-  wechatInboxTimer = setInterval(() => { wechatInboxTick('tick').catch(() => {}) }, 60 * 1000)
+  // 30 秒一轮：60 秒一轮的话，主人发一句要等半分钟才开始回，体感就是「不理我」。
+  wechatInboxTimer = setInterval(() => { wechatInboxTick('tick').catch(() => {}) }, 30 * 1000)
   if (wechatInboxTimer.unref) wechatInboxTimer.unref()
 }
 
