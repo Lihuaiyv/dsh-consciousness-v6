@@ -47,6 +47,12 @@ export function saidToday(db, aid, key, at = Date.now()) {
 export function canSayOnce(db, aid, key, { at = Date.now(), maxDays = 0, withinDays = 0 } = {}) {
   if (maxDays > 0 && saidDays(db, aid, key, { at, withinDays }) >= maxDays) return false
   if (saidToday(db, aid, key, at)) return false
-  try { event(db, aid, 'say.once', { key, day: dayOf(at) }) } catch { /* 记不上就照常说，别把话吞了 */ }
+  /* 按「决定说这句话的时刻」记，不用 event()——它固定写 now()，
+     回放/模拟时几天的话会全挤在今天，闸就废了。 */
+  try {
+    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
+    db.prepare('INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)')
+      .run(id, aid, 'say.once', JSON.stringify({ key, day: dayOf(at) }), new Date(at).toISOString())
+  } catch { /* 记不上就照常说，别把话吞了 */ }
   return true
 }
