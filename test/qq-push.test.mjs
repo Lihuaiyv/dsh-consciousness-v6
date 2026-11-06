@@ -65,6 +65,9 @@ check('记了一条推送事件', ev === 1, ev)
 const turn = db.prepare("SELECT role, text, conversation_id FROM chat_turns WHERE agent_id=? ORDER BY created_at DESC LIMIT 1").get(aid)
 check('本地账本也留了一条', turn && turn.role === 'agent' && String(turn.text).includes('有点想你了'), turn)
 check('账本的 conversation_id 对得上', turn && turn.conversation_id === 'qq:p:3192248859', turn && turn.conversation_id)
+const raw = db.prepare("SELECT text, role, turn_id FROM raw_turns WHERE agent_id=? AND session_id=?").all(aid, 'push:u:3192248859')
+check('原文层也留了一条（她翻得到）', raw.length === 1 && raw[0].role === 'assistant' && String(raw[0].text).includes('有点想你了'), raw)
+check('原文按同一条去重（turn_id 是 proactive id）', raw[0] && raw[0].turn_id === 'proactive:' + okId, raw)
 
 // 同一条不会再发（state 不是 pending 了）
 const r2 = await pushProactiveToQQ({ db, aid, api, chatKey: 'u:3192248859', line: '主人，有点想你了，最近还好吗？', proactiveId: okId })

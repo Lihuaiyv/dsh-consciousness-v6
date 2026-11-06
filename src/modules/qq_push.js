@@ -14,6 +14,7 @@
 import { now } from '../db.js'
 import { event } from '../kernel.js'
 import { markDelivered } from './proactive.js'
+import { appendTurn } from './archive.js'
 
 /** 私聊 chatKey：桥的格式是 `u:<QQ号>`。 */
 export function ownerChatKey(qq) {
@@ -72,5 +73,16 @@ export async function pushProactiveToQQ({ db, aid, api, chatKey, line, proactive
       )
     }
   } catch { /* 写不进账本不影响消息已经发出去 */ }
+  // 原文层（T4）也留一条：主动推出去的话，她自己的「翻得到」靠的是这里。
+  // 用 push:<chatKey> 当这段的标记，不去冒充某段真实会话；同一轮只记一次。
+  try {
+    appendTurn(db, aid, {
+      sessionId: 'push:' + chatKey,
+      role: 'assistant',
+      text,
+      turnId: 'proactive:' + proactiveId,
+      at: now(),
+    })
+  } catch { /* 原文失败不影响消息已经发出去 */ }
   return { ok: true }
 }
