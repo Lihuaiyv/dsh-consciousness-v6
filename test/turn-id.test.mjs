@@ -96,6 +96,15 @@ const tid = makeTurnId()
   check('原文一个字没动', txt && txt.text === '主人今天在改接线，说要先跑一遍', txt)
 }
 
+// ---- 同一句话在两轮里说过：两句都要留（别按文本去重）
+{
+  const one = appendTurn(db, aid, { sessionId: 'dup', role: 'user', text: '好', turnId: 't_dup_1' })
+  const two = appendTurn(db, aid, { sessionId: 'dup', role: 'user', text: '好', turnId: 't_dup_2' })
+  check('两轮说了同样的话：都留下', one.id !== two.id && two.duplicate === false, { one, two })
+  const again = appendTurn(db, aid, { sessionId: 'dup', role: 'user', text: '好', turnId: 't_dup_1' })
+  check('同一轮重放：只算一条', again.id === one.id && again.duplicate === true, again)
+}
+
 // ---- 历史回溯：已有的原话配成「一轮」
 {
   const t = (n) => new Date(Date.now() - n * 60000).toISOString()

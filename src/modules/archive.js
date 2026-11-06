@@ -81,13 +81,22 @@ export function appendTurn(db, aid, input = {}) {
   if (!text.trim()) return { id: null, seq: 0, duplicate: false }
   const at = String(input.at || now())
   const turnId = input.turnId || null
-  const fingerprint = [aid, sessionId, role, turnId || '', text, at].join('\u0001')
+  const fingerprint = [aid, sessionId, role, turnId || '', text, turnId ? '' : at].join('\u0001')
   const id = 'raw_' + crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 20)
-  // 同一句在 3 秒内重复到达（重放 / 重复事件）只算一次；隔了很久的同一句话是真说过两次，要留。
-  const since = new Date(Date.parse(at) - 3000).toISOString()
-  const near = db.prepare(`SELECT id,seq FROM raw_turns WHERE session_id=? AND role=? AND text=? AND created_at>=?
-    ORDER BY created_at DESC LIMIT 1`).get(sessionId, role, text, since)
-  if (near) return { id: near.id, seq: Number(near.seq), duplicate: true }
+  if (turnId) {
+    // 有轮次号：同一轮同一角色只算一条。重放同一轮时轮次号不变，id 也稳。
+    // 不能按文本去重——问答里「好」「嗯」这种话，前后两轮说得一模一样是常事，
+    // 按文本去重会把真说过的第二句吃掉（conversations-p5 那条 4/6 就是这么来的）。
+    const same = db.prepare('SELECT id,seq FROM raw_turns WHERE session_id=? AND role=? AND turn_id=?')
+      .get(sessionId, role, turnId)
+    if (same) return { id: same.id, seq: Number(same.seq), duplicate: true }
+  } else {
+    // 老调用方没给轮次号：沿用「同会话同角色同文本 3 秒内算重放」的老办法。
+    const since = new Date(Date.parse(at) - 3000).toISOString()
+    const near = db.prepare(`SELECT id,seq FROM raw_turns WHERE session_id=? AND role=? AND text=? AND created_at>=?
+      ORDER BY created_at DESC LIMIT 1`).get(sessionId, role, text, since)
+    if (near) return { id: near.id, seq: Number(near.seq), duplicate: true }
+  }
   const old = db.prepare('SELECT id,seq FROM raw_turns WHERE id=?').get(id)
   if (old) return { id, seq: Number(old.seq), duplicate: true }
   const seq = Number(db.prepare('SELECT COALESCE(MAX(seq),0)+1 n FROM raw_turns WHERE session_id=?').get(sessionId).n)

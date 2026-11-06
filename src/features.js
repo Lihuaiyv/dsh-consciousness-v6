@@ -1751,9 +1751,11 @@ export async function chatReply(db, aid, body) {
     try { learning = learnFromTurn(db, aid, text, affect) } catch { learning = null }
     try { addMemory(db, aid, { text, type: 'episode', mark: 'normal', ...turnSeed(text, 'episode') }) } catch { /* 合并失败不影响回复 */ }
     // 原文层：网页那边也是这句先落 raw_turns，日记/纪要才取得到料
+    // 一轮一个轮次号：一进一回答回同一个号，重放时也认得出是同一轮（别按文本去重，见 archive.appendTurn）
     const sess = conv || ('qq:' + (speakerHandle || 'local'))
-    try { appendTurn(db, aid, { sessionId: sess, role: 'user', text, at }) } catch { /* 原文失败不影响回复 */ }
-    try { appendTurn(db, aid, { sessionId: sess, role: 'assistant', text: reply, at: now() }) } catch { /* 原文失败不影响回复 */ }
+    const turnId = nid('turn_')
+    try { appendTurn(db, aid, { sessionId: sess, role: 'user', text, at, turnId }) } catch { /* 原文失败不影响回复 */ }
+    try { appendTurn(db, aid, { sessionId: sess, role: 'assistant', text: reply, at: now(), turnId }) } catch { /* 原文失败不影响回复 */ }
     // 关系账本：聊到谁就认谁（以前 QQ 完全没走这一步，关系图不会长人）
     try { R.ingest(db, aid, { text, sessionId: sess, source: 'qq' }) } catch { /* 关系记账失败不影响回复 */ }
     try { enqueueRelationRead(db, aid, { text }) } catch { /* 入队失败下次再说 */ }
