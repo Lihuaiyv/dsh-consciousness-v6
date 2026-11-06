@@ -1,0 +1,15 @@
+﻿const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync(process.env.USERPROFILE + '\\.dsh\\consciousness\\app.db', { readOnly: true });
+const one = (s,...a)=>db.prepare(s).get(...a);
+const all = (s,...a)=>db.prepare(s).all(...a);
+const c=(k,v)=>console.log(k, JSON.stringify(v));
+c('active', one("SELECT COUNT(*) n FROM memory_items WHERE status='active' AND invalid_at IS NULL"));
+c('invalid', one("SELECT COUNT(*) n FROM memory_items WHERE invalid_at IS NOT NULL"));
+c('active_factkey', one("SELECT COUNT(*) n FROM memory_items WHERE status='active' AND invalid_at IS NULL AND fact_key IS NOT NULL AND fact_key<>''"));
+c('active_entity', one("SELECT COUNT(*) n FROM memory_items WHERE status='active' AND invalid_at IS NULL AND entity_id IS NOT NULL"));
+c('timeline', one("SELECT COUNT(*) n FROM memory_timeline"));
+c('timeline_add_vf', one("SELECT COUNT(*) n FROM memory_timeline WHERE op='ADD' AND valid_from IS NOT NULL"));
+c('superseded_by', one("SELECT COUNT(*) n FROM memory_items WHERE superseded_by IS NOT NULL"));
+c('top_agent', one("SELECT agent_id FROM memory_items GROUP BY agent_id ORDER BY COUNT(*) DESC LIMIT 1"));
+c('keys_sample', all("SELECT fact_key FROM memory_items WHERE fact_key IS NOT NULL AND fact_key<>'' ORDER BY created_at DESC LIMIT 6"));
+c('events', all("SELECT name, COUNT(*) n FROM events WHERE name LIKE 'memory.stale%' OR name LIKE 'memory.fact_superseded' GROUP BY name"));

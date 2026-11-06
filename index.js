@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
-import { attachHostLlm, createJudgeModel } from './src/model.js'
+import { attachHostLlm, createHostJudgeModel, hostTalkModel } from './src/model.js'
 import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences, attachContextBlock, closingIntentOf } from './src/features.js'
 // 主动开口零件入口：心跳只认这一个口，不直接碰零件内部
 import { runSpeakTick } from './src/parts/speak/index.js'
@@ -499,10 +499,12 @@ const loopCache = new Map()
 const subtextCache = new Map()
 /** 上一轮的表达档：档位要变时先看慢情绪挪了多少，避免在阈值上忽冷忽热。 */
 const levelCache = new Map()
-/** 独立评委的客户端：undefined = 还没建；null = 没配（别每轮重读配置文件）。 */
-let judgeModelCache
+/** 评委客户端缓存：{ key: 模型名, client }。没配就是 null，别每轮重读配置。 */
+let judgeModelCache = null
 /** 「没配独立评委」只提醒一次，免得每轮刷一条 miss。 */
 let judgeMissingWarned = false
+/** 上次真正评的时间：独立评委很慢，默认 3 分钟才评一次。 */
+let lastJudgeAt = 0
 /** 鑷彂娴幇涔熶竴鍒嗛挓鍐呭鐢細涓€娆″璇濋噷妯″瀷鍙兘澶氭鎷兼彁绀猴紝鍒妸闃熷垪鎶藉共銆?*/
 const spontaneousCache = new Map()
 /** 感受快照的探针去重：同一条样本只记一次，不然每轮都刷一条 event。 */
@@ -1266,7 +1268,14 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
               const judgeMode = String(getParam(db, aid, 'affect.speech.judge') || 'auto')
               if (judgeMode !== 'off') {
                 const useHost = judgeMode === 'same'
-                const judgeClient = useHost ? null : (judgeModelCache === undefined ? (judgeModelCache = createJudgeModel()) : judgeModelCache)
+                /* 评委走 DSH 自己的模型服务，不再占本机算力。
+                   judge.model 里写了另一个模型 → 才真叫独立；
+                   没写、或写的跟回话那个一样 → 这一票是自评，标 independent=false 只当参考。 */
+                const wantModel = String(getParam(db, aid, 'affect.speech.judge.model') || '').trim()
+                const judgeClient = useHost ? null
+                  : (judgeModelCache && judgeModelCache.key === wantModel
+                    ? judgeModelCache.client
+                    : (judgeModelCache = { key: wantModel, client: createHostJudgeModel(wantModel) }).client)
                 const completeJudge = useHost
                   ? ((m) => model.complete(toModelRequest(m)))
                   : (judgeClient ? ((m) => judgeClient.complete(toModelRequest(m))) : null)
@@ -1274,22 +1283,33 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
                   // 只提醒一次，免得每轮都刷屏
                   if (!judgeMissingWarned) {
                     judgeMissingWarned = true
-                    recordMiss(db, aid, { kind: 'judge', reason: 'no-independent-judge', raw: '配 DSHC_JUDGE_URL/KEY/NAME 或 model.json 的 judge 段' })
+                    recordMiss(db, aid, { kind: 'judge', reason: 'no-judge-model', raw: '宿主 llm 不可用；评委要有一个能调用的 DSH 模型' })
                   }
                 } else {
-                  const swap = Date.now() % 2 === 0
-                  const cmp = await judgeCompare({
-                    complete: completeJudge,
-                    swap,
-                    rule: exprForResidue,
-                    suggest: judged.verdict,
-                    label: (ar && ar.primary_label) || 'calm',
-                    intensity: Number(ar && ar.intensity) || 0.4,
-                    lastUser: u,
-                    lastReply: aText,
-                  })
-                  if (cmp.ok) recordCompare(db, aid, { rule: exprForResidue, suggest: judged.verdict, pick: cmp.pick, why: cmp.why, confidence: cmp.confidence, ms: cmp.ms, independent: !useHost, judge: useHost ? 'host' : judgeClient.name, swap })
-                  else recordMiss(db, aid, { kind: 'judge', reason: cmp.reason, raw: cmp.raw })
+                  /* 节流：评委一轮一次太耗，默认 3 分钟才评一次。 */
+                  const gapMin = Math.max(0, Number(getParam(db, aid, 'affect.speech.judge.min_gap_min')) || 3)
+                  if (Date.now() - lastJudgeAt < gapMin * 60000) {
+                    /* 还没到点，这轮不评 */
+                  } else {
+                    lastJudgeAt = Date.now()
+                    const swap = Date.now() % 2 === 0
+                    const cmp = await judgeCompare({
+                      complete: completeJudge,
+                      swap,
+                      rule: exprForResidue,
+                      suggest: judged.verdict,
+                      label: (ar && ar.primary_label) || 'calm',
+                      intensity: Number(ar && ar.intensity) || 0.4,
+                      lastUser: u,
+                      lastReply: aText,
+                    })
+                    // 评委和出建议的是不是同一个模型：同就是自评，标出来，别当独立信号看。
+                    const talkName = hostTalkModel()
+                    const judgeId = useHost ? talkName : (judgeClient.model || '')
+                    const independent = !!judgeId && !!talkName && judgeId !== talkName
+                    if (cmp.ok) recordCompare(db, aid, { rule: exprForResidue, suggest: judged.verdict, pick: cmp.pick, why: cmp.why, confidence: cmp.confidence, ms: cmp.ms, independent, judge: useHost ? 'host' : judgeClient.name, swap })
+                    else recordMiss(db, aid, { kind: 'judge', reason: cmp.reason, raw: cmp.raw })
+                  }
                 }
               }
             } catch { /* 评委失败不影响对话 */ }

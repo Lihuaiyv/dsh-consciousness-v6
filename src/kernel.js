@@ -325,8 +325,12 @@ export const PARAMS = {
   // 感受行的词表生成：off = 用回那 24 句模板；voice_hours = 一句生成的话保鲜多久（小时内不重复生成）。
   'affect.speech.voice': ['C4', 'on'],
   'affect.speech.voice_hours': ['C4', 12],
-  // 两版分寸的盲评（规则 vs 模型）：auto = 有独立评委才评（默认）；same = 用宿主模型自评（标独立=false，只当参考）；off = 不评。
+  // 两版分寸的盲评（规则 vs 模型）：auto = 走 DSH 的模型服务（默认）；same = 用回话那个模型自评（标独立=false，只当参考）；off = 不评。
   'affect.speech.judge': ['C4', 'auto'],
+  // 评委用 DSH 的哪个模型。留空 = 跟当前默认模型一样（等于自评）；写另一个模型 id 才是真独立。
+  'affect.speech.judge.model': ['C4', ''],
+  // 评委两次之间至少隔几分钟（别一轮一问）。
+  'affect.speech.judge.min_gap_min': ['C4', 3],
   // 咽回去的那半句（P3）：影子期只落库、不回读。off = 不落库。
   'affect.unsaid': ['C4', 'on'],
   'affect.mapping': ['C3', 'v1'],

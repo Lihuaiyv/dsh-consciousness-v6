@@ -1,0 +1,58 @@
+{
+  "name": "dsh-consciousness-v6",
+  "version": "0.6.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/run-tests.mjs",
+    "test:actions": "node test/actions.test.mjs",
+    "test:memory": "node test/memory-settings.test.mjs",
+    "test:relations": "node test/relations.test.mjs",
+    "sim:days": "node scripts/sim-memory-days.mjs",
+    "sim:affect": "node scripts/sim-affect-v2.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "check:ownership": "node scripts/check-ownership.mjs",
+    "check:deps": "node scripts/dep-graph.mjs",
+    "check:inv10": "node scripts/check-ownership.mjs && node scripts/dep-graph.mjs",
+    "check:inv9": "node scripts/check-inv9.mjs",
+    "check:params": "node scripts/check-params.mjs",
+    "check:host": "node scripts/check-host.mjs",
+    "check:dead": "node scripts/dead-code-audit.mjs",
+    "replay:drive": "node scripts/replay-drive.mjs",
+    "sim:emotion": "node scripts/sim-emotion-memory.mjs",
+    "smoke:injection": "node scripts/smoke-injection.mjs",
+    "eval:recall": "node test/eval-recall.mjs --fixture",
+    "backfill:cards": "node scripts/backfill-cards.mjs",
+    "backfill:vectors": "node scripts/backfill-vectors.mjs",
+    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs"
+  },
+  "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "src",
+    "scripts/wechat-send.ps1",
+    "scripts/wechat-send.py"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}

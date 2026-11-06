@@ -229,10 +229,10 @@ export function parseCompare(out) {
   return { ok: true, pick, why: String(obj.why || '').slice(0, 80), confidence: clamp(num(obj.confidence, 0.5), 0, 1) }
 }
 
-/** 问一次评委；失败一律 ok:false（调用方当没这回事）。 */
+/** 问一次评委；失败一律 ok:false（调用方当没这回事）。独立评委可能是本机大模型：冷启动要加载几十秒，默认给 120 秒。 */
 export async function judgeCompare(opt = {}) {
   const t0 = Date.now()
-  const { complete, timeoutMs = 6000 } = opt
+  const { complete, timeoutMs = 120000 } = opt
   if (typeof complete !== 'function') return { ok: false, reason: 'no-model', ms: 0 }
   let raw = ''
   try {

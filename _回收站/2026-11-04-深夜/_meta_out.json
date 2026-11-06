@@ -1,0 +1,24 @@
+{
+ "title": "未归档对话数量统计疑问",
+ "sessionListMetadata": {
+  "ver": 1,
+  "seq": 841,
+  "val": {
+   "blank": false,
+   "lastPromptAt": 1793772214524
+  }
+ },
+ "turnBoundary": {
+  "ver": 2,
+  "seq": 841,
+  "val": {
+   "openTurnStartSeq": null,
+   "lastStepStartSeq": 836,
+   "lastStepBoundary": {
+    "kind": "end",
+    "seq": 840
+   },
+   "lastTurn": 8
+  }
+ }
+}

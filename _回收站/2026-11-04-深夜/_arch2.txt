@@ -1,0 +1,80 @@
+
+> dsh-consciousness-v6@0.6.2 check:arch
+> node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs
+
+inv9 ok — 业务源码无厂商名
+params ok — 无 PARAMS[k][1] 读写
+ownership ok — 94 files, shared=[agents,events,journal,idempotency,sqlite_master]
+dep-graph ok — asof → binding → conflict → conversations → enrich → entity_resolve → episode_distill → eval → examples → expand → heartbeat → judge → life → loops → memory_fade → memory_tag → nightly → poisons → presence → pulse → reappraise → relations_extract → relations_tools → remember_tool → selfmod_drivers → selfview → self_author → self_read → study → style_mode → vault → vector_index → recall_tool → timeparse → llm_budget → ops → selfnote → retrieval_log → extract_queue → consolidate → self_scan → persona_probe → surfacing → gate → memory_source → relations → thoughts → values → worldview → lifeview → expression_state → pack → retrieve → vector → selfmod → persona_judge → buffer → entities → fingerprint → memory → persona → chat → selfmod_targets → tiers → archive → timeline → terms → contradict → conflict_ask → negation → affect → persona_dims → artifacts → temps → drive → edges → selfmod_store → proxies → browse → axis_evidence → rope → traits
+  affect → drive, traits
+  artifacts → edges
+  asof → retrieve, archive, recall_tool, timeparse, timeline, retrieval_log
+  axis_evidence → traits, rope
+  browse → axis_evidence
+  consolidate → memory
+  drive → selfmod_store, proxies
+  edges → traits
+  enrich → memory
+  entity_resolve → entities, llm_budget
+  episode_distill → gate, memory, entities, llm_budget, archive
+  eval → memory, persona, ops, edges, traits, artifacts
+  expand → terms
+  gate → conflict_ask, contradict, memory, negation, timeline
+  life → memory, pack
+  lifeview → persona, persona_dims
+  memory → tiers, archive, timeline, terms, contradict, conflict_ask, negation
+  nightly → selfnote, worldview, lifeview, archive, tiers, temps, retrieval_log, extract_queue, surfacing, consolidate, axis_evidence, self_scan, persona_judge, persona_probe, timeline
+  ops → drive, affect, selfmod, memory, archive
+  persona → affect, drive, artifacts, traits, persona_dims
+  persona_judge → traits, axis_evidence, rope
+  persona_probe → traits
+  poisons → affect, drive
+  proxies → browse
+  pulse → surfacing
+  reappraise → pack
+  recall_tool → retrieve, archive, vector
+  relations_extract → relations
+  relations_tools → relations
+  remember_tool → gate, memory, entities, memory_source
+  retrieval_log → timeline
+  retrieve → buffer, archive, entities, fingerprint, tiers, terms
+  rope → traits
+  self_author → persona, selfmod
+  self_scan → axis_evidence, persona_judge, rope
+  selfmod → memory, drive, persona, chat, selfmod_store, artifacts, selfmod_targets
+  selfmod_drivers → drive
+  selfmod_targets → artifacts
+  selfview → persona, relations, affect, drive, thoughts, values, worldview, lifeview, traits
+  study → tiers
+  style_mode → expression_state
+  thoughts → persona, affect, drive
+  tiers → temps
+  values → persona
+  vault → pack
+  worldview → persona, persona_dims
+宿主契约自检（mock 宿主，不需要 DSH / 数据库）
+PASS 六个接缝都 ok 时 status=ok
+PASS section 字段按真实契约送：name/order/text + interpolate:false
+PASS 宿主没有 systemPrompt 服务 → 只丢这一项（absent），其余照旧
+PASS 服务在但 section() 改名 → degraded，报告里带原因
+PASS section() 抛错 → error，且不影响另外三个接缝
+PASS 没有 ctx.on → 两个监听接缝都是 absent
+PASS 服务直接挂在 ctx 上（无 inject）→ 走直连路径也能装上
+PASS mount 不返回 disposer → 仍算 ok，只是标注 disposable=false
+PASS 空 ctx + 空配置 → 六个 skipped，status=off
+PASS 空 ctx + 完整配置 → 六个都装不上，status=broken
+PASS inject 抛错 → 记成 error 而不是把异常扔出去
+PASS 事件归一：user/message、assistant/message、其他类型
+PASS 业务事件处理抛错不会冒泡到宿主，只累计 handler_errors
+PASS pre-step：装上了会真被调用，hits 是链路的活证据
+PASS pre-step：业务忘了返回 next() 也会被兜底续上链路
+PASS pre-step：业务抛错仍返回 next()，不卡住这一轮
+PASS cordis 代理：读未声明服务会抛，适配层应压成 undefined 并走 inject
+PASS pre-step：handler 自己调了 next() 再返回 undefined，不会续两次
+PASS pre-step：async handler reject 也会续链路
+PASS 工具契约：按 ToolDefinition 注册，守卫单独挂，disposer 全部可调
+PASS 工具定义不合法 → 只丢这一个，接缝记 degraded 并写原因
+PASS 命令契约：按 {name,description,input,handler} 注册，handler 直接返回结果
+PASS 宿主没有 tools/commands 服务 → 只丢这两项，其它四项照旧
+
+通过 23 / 23

@@ -310,8 +310,15 @@ class OpenAIAdapter {
       : (userScores ? KEYS.reduce((best, k) => (userScores[k] > userScores[best] ? k : best), 'calm') : null)
     return { ...d, scores, label, user_label: userLabel, user_scores: userScores, raw_name: unknown ? String(d.raw || d.name || '') : undefined, source: 'model' }
   }
-  async complete({ system, text }) {
-    return this.chat([{ role: 'system', content: system }, { role: 'user', content: text }], 500, true)
+  /**
+   * 单轮问一句、要 JSON。
+   * maxTokens 可以由调用方给：本地推理模型（如 gemma）会先写一大段 reasoning，
+   * 500 的额度全被 reasoning 吃掉，content 回来是空串——实测 finish_reason=length、
+   * 50 秒白等。评委这种「想得久」的调用必须自己带额度。
+   */
+  async complete({ system, text, maxTokens }) {
+    const mt = Number(maxTokens)
+    return this.chat([{ role: 'system', content: system }, { role: 'user', content: text }], Number.isFinite(mt) && mt > 0 ? mt : 500, true)
   }
   /** 向量：OpenAI 兼容的 /embeddings。批量优先，失败按批退给上层重试。 */
   async embed(texts) {
@@ -654,15 +661,20 @@ export function finalizeAppraisal(d) {
 }
 
 class HostLlmAdapter {
-  constructor() { this.name = 'dsh_llm' }
+  constructor(fixed) {
+    this.name = 'dsh_llm'
+    // fixed = { provider?, model? }：评委要指定成另一个模型，回话则跟着当前选择走。
+    this.fixed = fixed || null
+  }
   _ctx() { try { return hostLlmGetter ? hostLlmGetter() : null } catch { return null } }
   available() {
     const ctx = this._ctx()
     if (!ctx) return false
     try { return typeof ctx.get('llm')?.stream === 'function' } catch { return false }
   }
-  async complete({ system, text }) {
-    return this._chat(system, text, 500, 0.3)
+  async complete({ system, text, maxTokens }) {
+    const mt = Number(maxTokens)
+    return this._chat(system, text, Number.isFinite(mt) && mt > 0 ? mt : 500, 0.3)
   }
   async summarize(turns) {
     const list = Array.isArray(turns) ? turns : []
@@ -695,6 +707,9 @@ class HostLlmAdapter {
       provider = sel?.provider || sel?.route?.provider || ''
       model = sel?.model || sel?.modelId || ''
     } catch { /* ignore */ }
+    // 指定了就用指定的：评委要跟回话那个分开，才不是自己给自己判卷。
+    if (this.fixed && this.fixed.provider) provider = this.fixed.provider
+    if (this.fixed && this.fixed.model) model = this.fixed.model
     if (!provider) {
       const ps = llm.listProviders?.() || []
       provider = ps[0]?.id || ''
@@ -813,7 +828,12 @@ class ChainAdapter {
 function readModelCfg() {
   try {
     const p = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'model.json')
-    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8')) || {}
+    if (fs.existsSync(p)) {
+      // Windows 记事本 / PowerShell 写的 JSON 常带 BOM，JSON.parse 会直接报 Unexpected token。
+      // 线上真踩过：judge 段写进去了却读成空配置，独立评委永远是 null。
+      const raw = fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '')
+      return JSON.parse(raw) || {}
+    }
   } catch { /* 坏文件当没配 */ }
   return {}
 }
@@ -861,8 +881,41 @@ export function createJudgeModel() {
   const model = process.env.DSHC_JUDGE_NAME || j.model || 'deepseek-chat'
   const adapter = new OpenAIAdapter({ url, key, model, timeout: Number(j.timeout || 8000) })
   if (!adapter.available()) return null
+  // 评委要的是「想清楚再给结论」，本地推理模型的 reasoning 会先吃掉额度：
+  // 实测 gemma4:12b 用 500 会 finish_reason=length、content 空；2000 才吐得出 JSON。
+  const maxTokens = Number(j.max_tokens || j.maxTokens || 2000)
   return {
     name: 'judge:' + model,
+    complete: (req) => adapter.complete({ ...req, maxTokens }),
+  }
+}
+
+/**
+ * 回话那个模型叫什么（只拿来做「评委是不是自己」的对照）。
+ * 拿不到就返回空串，调用方按「不知道」处理，别硬猜。
+ */
+export function hostTalkModel() {
+  const ctx = (() => { try { return hostLlmGetter ? hostLlmGetter() : null } catch { return null } })()
+  if (!ctx) return ''
+  try {
+    const sel = ctx.get('agentDefaultModel')?.currentSelection?.()
+    return String(sel?.model || sel?.modelId || '')
+  } catch { return '' }
+}
+
+/**
+ * 评委：直接用 DSH 自己的模型服务（宿主 llm），不占本机算力、不用另配 URL。
+ * modelId 传了就指定用哪个模型；不传就跟着当前默认走。
+ * 注意：如果它和回话那个是同一个模型，这一票是「自己给自己判卷」——
+ * 调用方会把 independent 标成 false，只当参考，不当独立信号。
+ */
+export function createHostJudgeModel(modelId) {
+  const id = String(modelId || '').trim()
+  const adapter = new HostLlmAdapter(id ? { model: id } : null)
+  if (!adapter.available()) return null
+  return {
+    name: 'dsh:' + (id || 'default'),
+    model: id,
     complete: (req) => adapter.complete(req),
   }
 }
