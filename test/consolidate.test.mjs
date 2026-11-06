@@ -65,7 +65,7 @@ const keepFact = addMemory(db, aid, { text: '用户喜欢美式咖啡不加糖',
   check('解析失败不写也不退场', after === before && out.failed >= 1, { before, after, out })
 }
 
-// ---- 模型说没价值：不写合并稿，但整批软删（别占坑）
+// ---- 模型说没价值：不写合并稿，旧条也不动（这一批先留着，由人决定退不退）
 {
   stub('{"keep":false,"reason":"都是流水账"}')
   const out = await consolidatePending(db, aid, { limit: 1 })
@@ -74,7 +74,7 @@ const keepFact = addMemory(db, aid, { text: '用户喜欢美式咖啡不加糖',
   check('keep=false 不写合并稿', mergedNone === 0, mergedNone)
   const deadish = db.prepare(`SELECT id, status, invalid_at FROM memory_items WHERE id IN (${ids.map(() => '?').join(',')})`).all(...ids)
   const gone = deadish.filter((r) => r.status === 'soft_deleted' || r.invalid_at)
-  check('keep=false 整批退场', gone.length >= 3, deadish)
+  check('keep=false 旧条也不动（代码与文件头：说空话这一批不动）', gone.length === 0, deadish)
 }
 
 // ---- 正常合并（重新塞一批同义自省）
