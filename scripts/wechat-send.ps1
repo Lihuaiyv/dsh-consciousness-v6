@@ -104,7 +104,9 @@ $hwnd = [IntPtr]$proc.MainWindowHandle
 
 function Get-WindowEl([uint32]$processId) {
   $root = $AE::RootElement
-  $cond = New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, $processId)
+  # UIA 的 ProcessIdProperty 只认 Int32：传 [uint32] 会在 ctor 里抛
+  # 「PropertyCondition 值必须为 Int32」，自动化第一步就整条炸掉（2026-11-07 实测）。
+  $cond = New-Object System.Windows.Automation.PropertyCondition($AE::ProcessIdProperty, [int]$processId)
   $w = $root.FindFirst($TS::Children, $cond)
   if ($w) { return $w }
   $all = $root.FindAll($TS::Children, [System.Windows.Automation.Condition]::TrueCondition)

@@ -405,7 +405,7 @@ export const PARTS = [
     owner: 'src/modules/actions/channels.js · sendMessage',
     files: ['src/modules/actions/channels.js'],
     entry: 'sendMessage / sendWecom / sendOneBot（src/modules/actions/channels.js）；宿主接线：actions/index.js 与 api 调它',
-    exam: { file: 'test/exam-send.test.mjs', score: '28/28', note: '配置默认与打码 / 企业微信分片与失败 / OneBot 私聊群聊与鉴权 / 统一入口通道选择，28 道' },
+    exam: { file: 'test/exam-send.test.mjs', score: '38/38', note: '配置默认与打码 / 空串不抹密钥、null 才清空 / 企业微信分片与失败 / OneBot 私聊群聊与鉴权 / 统一入口通道选择 / 顺位与换道 / 会话 id，38 道' },
     assert: '表：action_config；读：getConfig / publicConfig；回退：send-before-part',
     swaps: [],
     rollback: { pointer: 'send-before-part', note: '回退 = git checkout send-before-part -- src/modules/parts.js src/ports/ownership.js test/exam-send.test.mjs docs/给人看的/零件-发信.md scripts/exam-sabotage-parts.mjs' },

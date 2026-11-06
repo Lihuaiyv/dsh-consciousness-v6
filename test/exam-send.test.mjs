@@ -13,6 +13,7 @@ import path from 'node:path'
 import { openDb } from '../src/db.js'
 import {
   getConfig, saveConfig, publicConfig, sendWecom, sendOneBot, onebotEndpoint, sendMessage, DEFAULTS,
+  channelOrder, conversationIdOfSend,
 } from '../src/modules/actions/channels.js'
 
 let pass = 0
@@ -135,15 +136,51 @@ const base = `http://127.0.0.1:${server.address().port}`
   const q = await sendMessage(db, aid, { text: 'QQ 消息', channel: 'qq' })
   check('qq：走 OneBot，用默认收件人', q.channel === 'qq' && q.ok === true && hits[0].url === '/send_private_msg' && hits[0].body.user_id === 12345, q)
 
-  // 显式 wechat + 模式是 wecom：现在会按模式改道企业微信（和代码注释「显式 wechat 不改道」不一致，先按现状考）
-  saveConfig(db, aid, { 'wechat.mode': 'wecom', 'wechat.wecom_webhook': base + '/wecom' })
+  // 显式 wechat 就是微信：模式配了企业微信也不改道，缺收件人就报错（2026-11-07 起）
+  saveConfig(db, aid, { 'wechat.mode': 'wecom', 'wechat.wecom_webhook': base + '/wecom', 'wechat.default_target': '' })
   hits.length = 0
-  const reroute = await sendMessage(db, aid, { text: 'x', channel: 'wechat' })
-  check('显式 wechat + wecom 模式：按现状改道企业微信', reroute.channel === 'wecom' && reroute.ok === true, reroute)
+  const noReroute = await rejects(() => sendMessage(db, aid, { text: 'x', channel: 'wechat' }), /没有给微信收件人/)
+  check('显式 wechat + wecom 模式：不改道，缺收件人就报错', noReroute && hits.length === 0, { noReroute, hits: hits.length })
 
-  // 模式 auto、显式 wechat、默认收件人也清空：报缺收件人
+  // 显式 wechat + 模式 auto + 没目标：同样报缺收件人
   saveConfig(db, aid, { 'wechat.mode': 'auto', 'wechat.default_target': '' })
   check('显式 wechat + 没目标：报缺收件人', await rejects(() => sendMessage(db, aid, { text: 'x', channel: 'wechat' }), /没有给微信收件人/))
+}
+
+// ================================================================ 顺位：默认微信第一
+{
+  saveConfig(db, aid, { 'wechat.default_target': '文件传输助手', 'qq.base_url': base, 'qq.default_target': '12345', 'qq.default_target_type': 'private' })
+  const order = channelOrder(getConfig(db, aid))
+  check('默认顺位：微信第一', order.join(',') === 'wechat,wecom,qq', order)
+
+  const custom = saveConfig(db, aid, { 'send.order': 'wecom,qq,乱写' })
+  check('顺位：写错的名字丢掉，没写的补在后面', channelOrder(custom).join(',') === 'wecom,qq,wechat', channelOrder(custom))
+  check('顺位：空配置回默认，不会一条都不剩', channelOrder({}).join(',') === 'wechat,wecom,qq', channelOrder({}))
+
+  // 顺位第一是企业微信、但没配 webhook：跳过，换下一条
+  saveConfig(db, aid, { 'wechat.wecom_webhook': null, 'send.order': 'wecom,qq,wechat' })
+  check('密钥：要清空得传 null（空串=这次没改）', String(getConfig(db, aid)['wechat.wecom_webhook']) === '', getConfig(db, aid)['wechat.wecom_webhook'])
+  hits.length = 0
+  const skip = await sendMessage(db, aid, { text: '换道' })
+  check('auto：wecom 没配 webhook → 跳过，落到 qq', skip.channel === 'qq' && skip.tried[0] && skip.tried[0].reason === 'no_webhook', skip)
+
+  // 全都不通：报顺位 + 每条的原因，不装作发过了
+  saveConfig(db, aid, { 'send.order': 'qq,wecom,wechat', 'qq.default_target': '', 'wechat.default_target': '' })
+  let allDead = null
+  try { await sendMessage(db, aid, { text: 'x' }) } catch (e) { allDead = e }
+  check('auto：全都不通 → 报顺位与每条的原因',
+    !!allDead && /没有一条通道发得出去/.test(String(allDead.message)) && /qq：没有收件人/.test(String(allDead.message)),
+    allDead && allDead.message)
+}
+
+// ================================================================ 会话记账 id：发出去的话回看得见
+{
+  check('会话 id：微信按联系人', conversationIdOfSend('wechat', '张三', {}) === 'wechat:张三', conversationIdOfSend('wechat', '张三', {}))
+  check('会话 id：企业微信是群', conversationIdOfSend('wecom', '', {}) === 'wecom:group', conversationIdOfSend('wecom', '', {}))
+  check('会话 id：QQ 私聊 / 群各用前缀',
+    conversationIdOfSend('qq', 'qq:10001', { 'qq.default_target_type': 'private' }) === 'qq:p:10001'
+    && conversationIdOfSend('qq', '10002', { 'qq.default_target_type': 'group' }) === 'qq:g:10002')
+  check('会话 id：没目标就空着（不编一段假会话）', conversationIdOfSend('wechat', '', {}) === '', conversationIdOfSend('wechat', '', {}))
 }
 
 server.close()

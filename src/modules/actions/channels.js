@@ -13,13 +13,15 @@ import * as wechat from './wechat.js'
 import { biliStatus } from './bilibili.js'
 
 export const DEFAULTS = {
-  'wechat.mode': 'uia', // uia | wecom | auto
+  'wechat.mode': 'uia', // uia | wecom | auto（只管 auto 时 wecom 要不要排到最前）
   'wechat.backend': 'auto', // auto | wechatauto | uia
   'wechat.default_target': '文件传输助手',
   'wechat.wecom_webhook': '',
   'wechat.allow_keys_fallback': false,
   'wechat.launch': true,
   'wechat.dry_run': false,
+  // 发消息的顺位：auto 时从前往后试，前一条不通就换下一条。微信第一（2026-11-07 起）。
+  'send.order': 'wechat,wecom,qq',
   'qq.mode': 'onebot',
   'qq.base_url': 'http://127.0.0.1:3000',
   'qq.token': '',
@@ -68,10 +70,16 @@ export function getConfig(db, agentId) {
   return out
 }
 
+/** 密钥类配置：界面拿到的是打码值，保存回来的空串不能当「清空」。 */
+const SECRET_KEYS = new Set(['wechat.wecom_webhook', 'qq.token', 'bili.cookie'])
+
 export function saveConfig(db, agentId, patch) {
   const clean = {}
   for (const [k, v] of Object.entries(patch || {})) {
     if (!(k in DEFAULTS)) continue
+    // 空串 = 这次没改（设置页回传的常常是打码值或空），否则改一次别的项就把密钥抹了；
+    // 真要清空，传 null。
+    if (SECRET_KEYS.has(k) && v !== null && String(v == null ? '' : v).trim() === '') continue
     clean[k] = coerce(k, v)
   }
   const stmt = db.prepare('INSERT OR REPLACE INTO action_config(agent_id,key,value,updated_at) VALUES(?,?,?,?)')
@@ -213,33 +221,56 @@ export async function onebotProbe({ baseUrl, token }, { timeout = 4000 } = {}) {
 
 // ---------------- 统一入口 ----------------
 
+/** 三条通道的固定名字。`send.order` 只能调顺序，不能凭空造通道。 */
+export const CHANNELS = ['wechat', 'wecom', 'qq']
+
 /**
- * @param {{channel?:'wechat'|'wecom'|'qq'|'auto', target?:string, text:string}} req
+ * 发送顺位：`send.order` 里写到的按顺序用，没写到的补在后面，写错的直接丢掉
+ * ——配置坏了也不能把消息发到没人看的地方去。
  */
-export async function sendMessage(db, agentId, req) {
-  const cfg = getConfig(db, agentId)
-  const text = String(req.text || '')
-  if (!text.trim()) throw new Error('要发的内容是空的')
-  let channel = String(req.channel || 'auto').toLowerCase()
-  if (!['wechat', 'wecom', 'qq', 'auto'].includes(channel)) throw new Error('不认识的通道：' + channel)
+export function channelOrder(cfg) {
+  const raw = String((cfg && cfg['send.order']) || DEFAULTS['send.order'])
+  const list = raw.split(/[,，;；\s]+/).map((s) => s.trim().toLowerCase()).filter((s) => CHANNELS.includes(s))
+  for (const c of CHANNELS) if (!list.includes(c)) list.push(c)
+  return [...new Set(list)]
+}
 
-  const mode = cfg['wechat.mode']
-  if (channel === 'auto') {
-    channel = mode === 'wecom' ? 'wecom' : 'wechat'
+/**
+ * 这条发送落在账本里的 conversation_id（和 QQ 桥 / 微信同口径）。
+ * 发出去的话要能回看：光存在对方手机上等于她这边没说过。
+ */
+export function conversationIdOfSend(channel, target, cfg = {}) {
+  const to = String(target || '').trim()
+  if (channel === 'wechat') return to ? 'wechat:' + to : ''
+  if (channel === 'wecom') return 'wecom:group'
+  if (channel === 'qq') {
+    const id = to.replace(/^qq:/i, '')
+    if (!id) return ''
+    return cfg['qq.default_target_type'] === 'group' ? 'qq:g:' + id : 'qq:p:' + id
   }
-  if (channel === 'wechat' && mode === 'wecom') channel = 'wecom'
+  return ''
+}
 
-  if (channel === 'wecom' || channel === 'wechat') {
-    const webhook = cfg['wechat.wecom_webhook']
-    // 只有明确走企业微信才发群机器人；显式的 wechat 不会被「配置了 webhook」偷偷改道
-    if (channel === 'wecom') {
-      const out = await sendWecom(webhook, text)
-      return { ...out, channel: 'wecom', target: '企业微信群' }
-    }
-    const target = String(req.target || cfg['wechat.default_target'] || '').trim()
-    if (!target) throw new Error('没有给微信收件人')
+/** 缺收件人：auto 时这不是「发失败」，是「这条通道没配好」，应该换下一条。 */
+function noTarget(msg) {
+  const e = new Error(msg)
+  e.noTarget = true
+  return e
+}
+
+const REASON_TEXT = { no_webhook: '没配企业微信 webhook', no_target: '没有收件人' }
+
+/** 把一句话交给某一条通道。失败就抛，由 sendMessage 决定要不要换下一条。 */
+async function sendThrough(cfg, channel, { target, text }) {
+  if (channel === 'wecom') {
+    const out = await sendWecom(cfg['wechat.wecom_webhook'], text)
+    return { ...out, target: '企业微信群' }
+  }
+  if (channel === 'wechat') {
+    const to = String(target || cfg['wechat.default_target'] || '').trim()
+    if (!to) throw noTarget('没有给微信收件人')
     const out = await wechat.send({
-      target,
+      target: to,
       text,
       backend: cfg['wechat.backend'] || 'auto',
       launch: cfg['wechat.launch'] !== false,
@@ -250,24 +281,75 @@ export async function sendMessage(db, agentId, req) {
     if (!out.ok) throw new Error(out.message || ('微信发送失败：' + (out.code || 'UNKNOWN')))
     return {
       ok: true,
-      channel: 'wechat',
-      target,
+      target: to,
       status: out.sent ? 'sent' : 'dry-run',
       detail: out.message,
       mode: out.mode,
       steps: out.steps,
     }
   }
-
-  const target = String(req.target || cfg['qq.default_target'] || '').trim()
+  const to = String(target || cfg['qq.default_target'] || '').trim()
+  if (!to) throw noTarget('没有给 QQ 收件人')
   const out = await sendOneBot({
     baseUrl: cfg['qq.base_url'],
     token: cfg['qq.token'],
     targetType: cfg['qq.default_target_type'],
-    target,
+    target: to,
     text,
   })
-  return { ...out, channel: 'qq', target }
+  return { ...out, target: to }
+}
+
+/**
+ * @param {{channel?:'wechat'|'wecom'|'qq'|'auto', target?:string, text:string}} req
+ *
+ * 显式通道就是显式：说发微信就发微信，不再因为「模式配了企业微信」被偷偷改道。
+ * auto 才按顺位挨个试：缺配置的跳过，发失败的换下一条，全都不通才报错。
+ */
+export async function sendMessage(db, agentId, req) {
+  const cfg = getConfig(db, agentId)
+  const text = String(req.text || '')
+  if (!text.trim()) throw new Error('要发的内容是空的')
+  const channel = String(req.channel || 'auto').toLowerCase()
+  if (!['wechat', 'wecom', 'qq', 'auto'].includes(channel)) throw new Error('不认识的通道：' + channel)
+
+  if (channel !== 'auto') {
+    const out = await sendThrough(cfg, channel, { target: req.target, text })
+    return { ...out, channel, conversationId: conversationIdOfSend(channel, out.target, cfg) }
+  }
+
+  const order = channelOrder(cfg)
+  // wechat.mode=wecom 的意思是「我这儿的微信其实走企业微信」：那就把 wecom 提到最前，
+  // 顺位表其余部分不动——用户自己排的顺序还是要认。
+  if (cfg['wechat.mode'] === 'wecom') order.sort((a, b) => (a === 'wecom' ? -1 : b === 'wecom' ? 1 : 0))
+  const tried = []
+  let lastErr = null
+  for (const ch of order) {
+    if (ch === 'wecom' && !String(cfg['wechat.wecom_webhook'] || '').trim()) {
+      tried.push({ channel: ch, ok: false, reason: 'no_webhook' })
+      continue
+    }
+    try {
+      const out = await sendThrough(cfg, ch, { target: req.target, text })
+      return {
+        ...out,
+        channel: ch,
+        conversationId: conversationIdOfSend(ch, out.target, cfg),
+        tried,
+      }
+    } catch (e) {
+      if (e && e.noTarget) {
+        tried.push({ channel: ch, ok: false, reason: 'no_target' })
+        continue
+      }
+      tried.push({ channel: ch, ok: false, error: String((e && e.message) || e).slice(0, 160) })
+      lastErr = e
+    }
+  }
+  const why = tried.map((t) => t.channel + '：' + (t.reason ? (REASON_TEXT[t.reason] || t.reason) : t.error || '失败')).join('；')
+  const err = new Error('没有一条通道发得出去（顺位 ' + order.join(' → ') + '）：' + why)
+  if (lastErr) err.cause = lastErr
+  throw err
 }
 
 // ---------------- 体检 ----------------

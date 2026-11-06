@@ -11,6 +11,7 @@ import { getConfig, saveConfig, publicConfig, sendMessage, status as channelStat
 import { searchVideos, popular, recommend, videoDetail, comments, postComment, biliStatus } from './bilibili.js'
 import { runResearch, listRuns, getRun } from './research.js'
 import { budgetConsume } from '../drive.js'
+import { appendTurn } from '../archive.js'
 import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
 import { ingestBrowse } from '../browse.js'
@@ -55,15 +56,43 @@ export async function executeSend(db, agentId, args = {}) {
   // 打扰预算：默认每天 3 条，和旧接口共用同一本账
   budgetConsume(db, agentId, 'disturb', 1)
   const out = await sendMessage(db, agentId, { channel, target, text })
-  logAction(db, agentId, 'send_message', { channel, target, len: text.length }, out, out.status)
+  const actionId = logAction(db, agentId, 'send_message', { channel, target, len: text.length }, out, out.status)
+  rememberSent(db, agentId, out, text, actionId)
   return {
     ok: true,
     channel: out.channel,
     target: out.target,
     status: out.status,
     detail: out.detail || '',
+    conversation_id: out.conversationId || '',
     at: new Date().toISOString(),
   }
+}
+
+/**
+ * 发出去的话要落回她自己的账本：chat_turns（这段会话的账）+ raw_turns（原文层）。
+ *
+ * 只推到对方手机上、本地一句不留，回看时就不知道自己说过什么——2026-11-07 修了两处，
+ * 一处是主动推 QQ（qq_push），一处就是这里（工具发信）。两处都记成 role='agent'，
+ * conversation_id 按通道前缀（wechat:张三 / qq:p:10001 / wecom:group），和 QQ 桥同口径。
+ */
+function rememberSent(db, agentId, out, text, actionId) {
+  const conv = String((out && out.conversationId) || '')
+  if (!conv) return
+  const at = now()
+  try {
+    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
+      .run('cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10), agentId, 'agent', text, '[]', null, at, conv)
+  } catch { /* 账本写不进不影响消息已经发出去 */ }
+  try {
+    appendTurn(db, agentId, {
+      sessionId: conv,
+      role: 'assistant',
+      text,
+      turnId: 'send:' + (actionId || conv + ':' + at),
+      at,
+    })
+  } catch { /* 原文失败同上 */ }
 }
 
 // ---------------- 浏览 ----------------
@@ -357,9 +386,10 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       description:
         '真正发一条消息出去（微信 / 企业微信 / QQ）。只有用户在设置里打开「发消息」接口后才能用。'
         + 'channel：wechat=个人微信（在本机微信窗口里操作，需要已登录）、wecom=企业微信群机器人、'
-        + 'qq=QQ（走本机 OneBot 网关，target 填 QQ 号或群号）、auto=按设置里的默认通道。'
+        + 'qq=QQ（走本机 OneBot 网关，target 填 QQ 号或群号）、'
+        + 'auto=按设置里的顺位（默认 微信 → 企业微信 → QQ，前一条不通就换下一条）。'
         + 'target 是联系人/群名；个人微信会要求在搜索结果里看到完全同名的联系人才发，避免发错人。'
-        + '发之前先确认收件人和内容，不确定就问用户，不要猜。',
+        + '发之前先确认收件人和内容，不确定就问用户，不要猜。发出的话会记进自己的聊天记录，回看得到。',
       parameters: schema({
         channel: { type: 'string', enum: ['wechat', 'wecom', 'qq', 'auto'], description: '通道' },
         target: str('收件人：微信联系人名 / QQ 号 / QQ 群号；wecom 可省略'),
