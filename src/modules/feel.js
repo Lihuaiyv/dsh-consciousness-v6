@@ -11,7 +11,7 @@
  *   2. 不写数字、不写原因（提示词里说，这里只做长度和空白的基本清理）。
  *   3. 有频率闸：太密就跳过，免得它每说半句都记一笔，把表灌成流水账。
  */
-import { getParam, nid } from '../kernel.js'
+import { event, getParam, nid } from '../kernel.js'
 import { localDay } from '../db.js'
 
 const MAX_LEN = 80
@@ -112,10 +112,8 @@ function anchorRepeatHint(db, aid, cls, window, repeat) {
 /** 换落点的提示只落库，不改提示词——和 feel.miss 一个道理：能查，不要靠猜。 */
 function noteAnchorRepeat(db, aid, payload) {
   try {
-    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
-    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)')
-      .run(id, aid, 'feel.anchor.repeat', JSON.stringify(payload).slice(0, 900), new Date().toISOString())
-    return id
+    event(db, aid, 'feel.anchor.repeat', payload)
+    return true
   } catch { return null }
 }
 
@@ -168,10 +166,8 @@ function resolveTurnId(db, aid, sessionId, atMs) {
 /** 被退回也留一条痕：查「为什么这几轮没有 feel」时不用猜。写失败不影响记 feel。 */
 function noteFeelMiss(db, aid, payload) {
   try {
-    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
-    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)')
-      .run(id, aid, 'feel.miss', JSON.stringify(payload).slice(0, 900), new Date().toISOString())
-    return id
+    event(db, aid, 'feel.miss', payload)
+    return true
   } catch { return null }
 }
 
