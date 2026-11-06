@@ -26,7 +26,10 @@ function check(name, ok, detail) {
 }
 
 const DAY = 86400000
-const at = Date.parse('2026-11-05T12:00:00.000Z')
+/* 别把「现在」写死成某一天：bandOf 拿的是真 Date.now()，
+   写死 2026-11-05 之后，过了 11-06 中午「两天内一律短期」就会自己变红
+   （11-06 20:39 那次搬家验收撞上的就是这个，不是搬坏了）。 */
+const at = Date.now()
 const daysAgo = (n) => new Date(at - n * DAY).toISOString()
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-tiers-'))
