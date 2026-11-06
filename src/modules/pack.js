@@ -114,6 +114,7 @@ export function dedupe(items = []) {
  * @returns {{text:string, tokens:number, lines:Array, dropped:Array}}
  */
 export function packInjection(input = {}, opt = {}) {
+  input = input || {}
   const budget = Math.max(60, Number(opt.budget) || TOTAL_BUDGET)
   const quota = { ...QUOTA, ...(opt.quota || {}) }
   const items = dedupe(input.items || [])
