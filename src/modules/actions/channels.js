@@ -26,6 +26,9 @@ export const DEFAULTS = {
   'wechat.inbox.enable': true,
   'wechat.inbox.skip': 'weixin',
   'wechat.inbox.limit': 40,
+  // 回话前先「正在输入」：真在她的输入框里打草稿，写好再整句覆盖发送。lead 是回车前停多久。
+  'wechat.typing.enable': true,
+  'wechat.typing.lead_ms': 1200,
   'qq.mode': 'onebot',
   'qq.base_url': 'http://127.0.0.1:3000',
   'qq.token': '',
@@ -38,8 +41,8 @@ export const DEFAULTS = {
   'research.seen_days': 60,
 }
 
-const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable'])
-const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days', 'wechat.inbox.limit'])
+const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable', 'wechat.typing.enable'])
+const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days', 'wechat.inbox.limit', 'wechat.typing.lead_ms'])
 const ENUMS = {
   'wechat.mode': ['uia', 'wecom', 'auto'],
   'wechat.backend': ['auto', 'wechatauto', 'uia'],

@@ -35,6 +35,12 @@ def main():
     }
 
     try:
+        # 微信关到托盘时自动化读不到主窗口：先兜一下，把客户端拉起来再发。
+        import os
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from wechat_win import ensure_gui  # noqa: E402
+        ensure_gui()
         from wechatauto.guia import quick_send  # type: ignore
     except Exception as e:  # noqa: BLE001
         out['code'] = 'WECHATAUTO_MISSING'

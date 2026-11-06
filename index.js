@@ -29,6 +29,7 @@ import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_
 import { getConfig as getActionConfig, sendMessage as sendViaChannel } from './src/modules/actions/channels.js'
 import { detectPython } from './src/modules/actions/wechat.js'
 import { pollWeChatInbox } from './src/modules/wechat_inbox.js'
+import { startWeChatTyping } from './src/modules/wechat_typing.js'
 import { defaultAgentId } from './src/modules/conversations.js'
 import { chatReply } from './src/features.js'
 import { claimLine } from './src/modules/conflict_ask.js'
@@ -1959,13 +1960,6 @@ function startGrowPrefsWorker() {
 }
 
 /**
- * 微信收信：每 60 秒读一次本地库（只读、不动窗口），把新消息记进聊天账本 + 原文层。
- *
- * 为什么是轮询而不是事件：微信没有像 QQ 桥那样的推送口子，本地库只能自己看。
- * 一分钟一次、每次只读「有消息的会话」，成本很低；读库由 Python 那侧缓存解密结果。
- * 第一次见到的会话只落水位（不灌历史）——接上的那天不该把几年的旧消息吞进她的记忆。
- */
-/**
  * 主人在微信上说话：走完整条回复管线（召回 → 情绪 → 回一句 → 记账），再把这句话发回微信。
  *
  * 为什么用 chatReply：它已经把「记对话、写原文、认关系、压纪要」全做完了，
@@ -1973,13 +1967,40 @@ function startGrowPrefsWorker() {
  * 发不出去只能吞掉（话已经记了），下一条再说——别因为一次窗口卡住就把这轮拆成两条。
  */
 async function wechatOwnerTurn({ db, aid, name, username, text }) {
-  const r = await chatReply(db, aid, {
-    text,
-    speaker: { channel: 'wechat', handle: username },
-    conversation_id: 'wechat:' + name,
-  })
+  // 先起「正在输入」：对面从这一刻就该看到她在打字，而不是干等她想了十几秒。
+  let py = null
+  let cfg = null
+  try { cfg = getActionConfig(db, aid) } catch { cfg = null }
+  try { py = await detectPython() } catch { py = null }
+  const wantTyping = !!(cfg && cfg['wechat.typing.enable'] && py && py.ok)
+  const typing = wantTyping
+    ? startWeChatTyping({ target: name, python: py.cmd, pre: py.pre, leadMs: cfg['wechat.typing.lead_ms'] })
+    : null
+
+  let r = null
+  try {
+    r = await chatReply(db, aid, {
+      text,
+      speaker: { channel: 'wechat', handle: username },
+      conversation_id: 'wechat:' + name,
+    })
+  } catch (e) {
+    if (typing) typing.cancel()
+    throw e
+  }
   const reply = String((r && r.reply) || '').trim()
-  if (!reply) return false
+  if (!reply) { if (typing) typing.cancel(); return false }
+
+  if (typing) {
+    const out = await typing.finish(reply)
+    if (out && out.ok) {
+      __probe('wechat-typed-reply(' + name + ') sent=' + !!out.sent + ' waited=' + (out.waited_ms || 0) + 'ms chars=' + reply.length)
+      return true
+    }
+    // 打字那条不成就退回普通发送：别为了「像在打字」把这话丢了
+    __probe('wechat-typing-fallback(' + name + '): ' + (out && out.code) + ' ' + String((out && out.message) || '').slice(0, 120))
+  }
+
   try {
     const out = await sendViaChannel(db, aid, { channel: 'wechat', target: name, text: reply })
     __probe('wechat-reply(' + name + ') ' + (out && out.status) + ' chars=' + reply.length)
