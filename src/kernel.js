@@ -325,6 +325,8 @@ export const PARAMS = {
   // 感受行的词表生成：off = 用回那 24 句模板；voice_hours = 一句生成的话保鲜多久（小时内不重复生成）。
   'affect.speech.voice': ['C4', 'on'],
   'affect.speech.voice_hours': ['C4', 12],
+  // 两版分寸的盲评（规则 vs 模型）：off = 不请评委，只留影子对照。
+  'affect.speech.judge': ['C4', 'on'],
   // 咽回去的那半句（P3）：影子期只落库、不回读。off = 不落库。
   'affect.unsaid': ['C4', 'on'],
   'affect.mapping': ['C3', 'v1'],

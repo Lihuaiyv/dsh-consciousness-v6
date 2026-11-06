@@ -10,6 +10,7 @@ import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 import {
   LEVEL_ORDER, TONES, parseJudge, clampProposal, buildPrompt, judgeSpeech, recordShadow,
+  parseCompare, buildComparePrompt, judgeCompare, recordCompare,
 } from '../src/modules/speech_judge.js'
 
 let pass = 0
@@ -132,6 +133,39 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
         && r.verdict.sentences === c.want.sentences && r.verdict.proactive === c.want.proactive, r.verdict)
     }
   }
+}
+
+// ================================================================ 评委：两版哪版更像
+{
+  check('A 记成规则版', parseCompare('{"pick":"A","why":"更像","confidence":0.6}').pick === 'rule', parseCompare('{"pick":"A"}'))
+  check('B 记成模型版', parseCompare('{"pick":"B"}').pick === 'model')
+  check('same 就是分不出来', parseCompare('{"pick":"same"}').pick === 'same')
+  check('带围栏也能读', parseCompare('```json\n{"pick":"B"}\n```').pick === 'model')
+  check('乱选算坏', parseCompare('{"pick":"C"}').reason === 'bad-pick')
+  check('不是 JSON 算坏', parseCompare('都差不多').reason === 'bad-json')
+
+  const p = buildComparePrompt({ rule: rule('brief', 2, 0, 'cool'), suggest: { level: 'normal', sentences: 3, proactive: 1, tone: 'plain' }, label: 'tired', intensity: 0.3 })
+  check('两版都摆在提示里', p[1].content.includes('A：') && p[1].content.includes('B：'), p[1].content)
+
+  const cmp = await judgeCompare({ complete: async () => '{"pick":"A","why":"更收","confidence":0.7}', rule: rule('brief', 2, 0, 'cool'), suggest: { level: 'normal' } })
+  check('问一次就有选择', cmp.ok && cmp.pick === 'rule' && cmp.why === '更收', cmp)
+
+  const no = await judgeCompare({ rule: rule('normal') })
+  check('没模型就不评', !no.ok && no.reason === 'no-model')
+
+  const hang = await judgeCompare({ complete: () => new Promise(() => {}), timeoutMs: 200, rule: rule('normal') })
+  check('评委超时会断开', !hang.ok && hang.reason === 'timeout', hang)
+
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-compare-'))
+  const db2 = openDb(path.join(dir2, 'app.db'))
+  const aid2 = 'agt_compare'
+  db2.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,?)')
+    .run(aid2, '评委', 'daily', 'active', now(), 13)
+  recordCompare(db2, aid2, { rule: rule('brief', 2, 0, 'cool'), suggest: { level: 'normal', sentences: 3 }, pick: 'rule', why: '更收', confidence: 0.7, ms: 90 })
+  const jr = db2.prepare("SELECT payload FROM events WHERE agent_id=? AND type='expr.judge'").get(aid2)
+  const jp = jr ? JSON.parse(jr.payload) : {}
+  check('评委结论落一条事件', !!jr && jp.pick === 'rule', jp)
+  check('事件里两版都在', jp.rule && jp.suggest && jp.rule.level === 'brief' && jp.suggest.level === 'normal', jp)
 }
 
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))

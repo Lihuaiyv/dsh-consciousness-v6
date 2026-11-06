@@ -31,7 +31,7 @@ import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
-import { judgeSpeech, recordShadow } from './src/modules/speech_judge.js'
+import { judgeSpeech, recordShadow, judgeCompare, recordCompare } from './src/modules/speech_judge.js'
 import { latestVoice, recentVoices, generateVoice, recordVoice } from './src/modules/speech_words.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
@@ -1252,7 +1252,25 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
             lastUser: u,
             lastReply: aText,
           })
-          if (judged.ok) recordShadow(db, aid, { rule: exprForResidue, verdict: judged.verdict, ms: judged.ms, model: 'host' })
+          if (judged.ok) {
+            recordShadow(db, aid, { rule: exprForResidue, verdict: judged.verdict, ms: judged.ms, model: 'host' })
+            /* 评委：两版分寸（规则/模型）哪版更像她。只写事件，同样不生效。
+               注意：评委和出建议的是同一个模型，天然偏向 B（模型版），所以只当参考，不当判决。 */
+            try {
+              if (String(getParam(db, aid, 'affect.speech.judge') || 'on') !== 'off') {
+                const cmp = await judgeCompare({
+                  complete: (m) => model.complete(m),
+                  rule: exprForResidue,
+                  suggest: judged.verdict,
+                  label: (ar && ar.primary_label) || 'calm',
+                  intensity: Number(ar && ar.intensity) || 0.4,
+                  lastUser: u,
+                  lastReply: aText,
+                })
+                if (cmp.ok) recordCompare(db, aid, { rule: exprForResidue, suggest: judged.verdict, pick: cmp.pick, why: cmp.why, confidence: cmp.confidence, ms: cmp.ms })
+              }
+            } catch { /* 评委失败不影响对话 */ }
+          }
         }
       } catch { /* 影子失败不影响对话 */ }
       /* 感受行的词表：保鲜期内没有一句生成的话，就在后台要一句（不许重样、不许 AI 味词）。
