@@ -255,6 +255,16 @@ const CASES = [
     importFrom: "'../src/modules/memory.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：有轮次号也重放——同一轮同一角色写两条。
+    name: '归档：同一轮重放也新建（按轮去重失效）',
+    impl: 'src/modules/archive.js',
+    exam: 'test/exam-archive.test.mjs',
+    from: '    if (same) return { id: same.id, seq: Number(same.seq), duplicate: true }',
+    to: '    if (false) return { id: same.id, seq: Number(same.seq), duplicate: true }',
+    importFrom: "'../src/modules/archive.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

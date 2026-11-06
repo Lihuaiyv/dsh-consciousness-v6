@@ -378,6 +378,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'memorystore-before-part', note: '回退 = git checkout memorystore-before-part -- src/modules/parts.js test/exam-memorystore.test.mjs docs/给人看的/零件-记忆存储.md scripts/exam-sabotage-parts.mjs' },
   },
+  {
+    id: 'archive',
+    name: '归档',
+    role: '骨架',
+    chain: '链外',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/archive.js · appendTurn',
+    files: ['src/modules/archive.js'],
+    entry: 'appendTurn / archiveFact / buildEpisode / buildDiary（src/modules/archive.js）；宿主接线：features 与夜间整理调它',
+    exam: { file: 'test/exam-archive.test.mjs', score: '31/31', note: '原文按轮去重 / 出生照只拍一次 / 纪要重复跑是更新 / 日记读口 / 两个索引重建，31 道' },
+    assert: '表：raw_turns / raw_fts / fact_archive / fact_fts / episodes / diaries；读：listRaw / listFactArchive；回退：archive-before-part',
+    swaps: [],
+    rollback: { pointer: 'archive-before-part', note: '回退 = git checkout archive-before-part -- src/modules/parts.js test/exam-archive.test.mjs docs/给人看的/零件-归档.md scripts/exam-sabotage-parts.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
