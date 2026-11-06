@@ -26,6 +26,9 @@ import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
 import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_push.js'
+import { getConfig as getActionConfig } from './src/modules/actions/channels.js'
+import { detectPython } from './src/modules/actions/wechat.js'
+import { pollWeChatInbox } from './src/modules/wechat_inbox.js'
 import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
 import { presenceLine, webConversationId } from './src/modules/presence.js'
@@ -192,6 +195,8 @@ try { startNightlyWorker() } catch { /* 宸╁浐 worker 璧蜂笉鏉ヤ笉褰�
     try { startDiaryRetryWorker() } catch { /* diary retry worker unavailable */ }
     // 偏好自己长：10 分钟一次，够条件才真调模型；长出来的删不掉
     try { startGrowPrefsWorker() } catch { /* 闀垮亸濂?worker 璧蜂笉鏉ヤ笉褰卞搷鍚姩 */ }
+    // 微信收信：一分钟一次，只读本地库（不动窗口）；第一次见到的会话只落水位，不灌历史
+    try { startWeChatInboxWorker() } catch { /* 收信 worker 起不来不影响启动 */ }
     return db
   } catch (e) {
     dbError = e
@@ -1949,6 +1954,78 @@ function startGrowPrefsWorker() {
   if (boot.unref) boot.unref()
   growPrefsTimer = setInterval(() => { growPrefsTick('tick').catch(() => {}) }, 10 * 60 * 1000)
   if (growPrefsTimer.unref) growPrefsTimer.unref()
+}
+
+/**
+ * 微信收信：每 60 秒读一次本地库（只读、不动窗口），把新消息记进聊天账本 + 原文层。
+ *
+ * 为什么是轮询而不是事件：微信没有像 QQ 桥那样的推送口子，本地库只能自己看。
+ * 一分钟一次、每次只读「有消息的会话」，成本很低；读库由 Python 那侧缓存解密结果。
+ * 第一次见到的会话只落水位（不灌历史）——接上的那天不该把几年的旧消息吞进她的记忆。
+ */
+let wechatInboxTimer = null
+let wechatInboxBusy = false
+// 读不到（没装 Python 后端 / 微信没开 / 库没密钥）就退避 10 分钟，别每分钟刷一遍同样的错。
+let wechatInboxBackoffUntil = 0
+let wechatInboxFailLogged = false
+
+async function wechatInboxTick(reason) {
+  if (wechatInboxBusy) return
+  if (Date.now() < wechatInboxBackoffUntil) return
+  let d
+  try { d = ensureDb() } catch { return }
+  const aids = enabledAgentIds(d)
+  if (!aids.length) return
+  wechatInboxBusy = true
+  try {
+    for (const aid of aids) {
+      let cfg = null
+      try { cfg = getActionConfig(d, aid) } catch { cfg = null }
+      if (!cfg || !cfg['wechat.inbox.enable']) continue
+      try {
+        // 先找一个真装了 wechatauto 的解释器（机器上可能 3.14 在 PATH 前面、包在 3.12）。
+        const py = await detectPython()
+        if (!py.ok) {
+          if (!wechatInboxFailLogged) {
+            wechatInboxFailLogged = true
+            __probe('wechat-inbox-skip: 没找到能 import wechatauto 的 Python（' + py.error + '）')
+          }
+          wechatInboxBackoffUntil = Date.now() + 30 * 60 * 1000
+          continue
+        }
+        const out = await pollWeChatInbox({
+          db: d, aid,
+          skip: cfg['wechat.inbox.skip'],
+          limit: cfg['wechat.inbox.limit'],
+          python: py.cmd, pre: py.pre,
+        })
+        if (out.added) __probe('wechat-inbox(' + reason + ') aid=' + aid.slice(0, 8) + ' added=' + out.added + ' chats=' + out.chats.join(','))
+        if (out.seeded && out.seeded.length) __probe('wechat-inbox-seeded: ' + out.seeded.join(','))
+        if (!out.ok) {
+          if (!wechatInboxFailLogged) {
+            wechatInboxFailLogged = true
+            __probe('wechat-inbox-skip: ' + out.note + '（10 分钟后再试）')
+          }
+          wechatInboxBackoffUntil = Date.now() + 10 * 60 * 1000
+        } else {
+          wechatInboxFailLogged = false
+        }
+      } catch (e) {
+        __probe('wechat-inbox-err: ' + (e && e.message))
+        wechatInboxBackoffUntil = Date.now() + 10 * 60 * 1000
+      }
+    }
+  } finally {
+    wechatInboxBusy = false
+  }
+}
+
+function startWeChatInboxWorker() {
+  // 启动后先等 1 分钟：让迁移、补写、桥都先跑完，别在开机那一堆活里再插一个 Python。
+  const boot = setTimeout(() => { wechatInboxTick('boot').catch(() => {}) }, 60 * 1000)
+  if (boot.unref) boot.unref()
+  wechatInboxTimer = setInterval(() => { wechatInboxTick('tick').catch(() => {}) }, 60 * 1000)
+  if (wechatInboxTimer.unref) wechatInboxTimer.unref()
 }
 
 /** 宿主有没有「往会话里推一条消息」的口子（sessionController.prompt）。 */

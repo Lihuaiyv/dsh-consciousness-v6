@@ -61,6 +61,7 @@ export async function executeSend(db, agentId, args = {}) {
   if (out.status === 'sent') rememberSent(db, agentId, out, text, actionId)
   return {
     ok: true,
+    action_id: actionId,
     channel: out.channel,
     target: out.target,
     status: out.status,

@@ -115,43 +115,90 @@ export function probe(timeoutMs = 25000) {
 // 没装就退回 PowerShell 的 UIA（微信 3.9 / 登录窗可用）。
 
 let pyCheck = { at: 0, ok: false, error: '' }
+// 装了 wechatauto 的那个解释器。机器上常常有好几个 python（3.14 在前、包却装在 3.12），
+// 不能只认 PATH 里的 `python`——那样会「明明装了却说没装」，发信悄悄退回读不到控件的 UIA。
+let pyPick = { at: 0, cmd: '', pre: [], ok: false, error: '' }
 
-export async function wechatautoAvailable({ force = false } = {}) {
-  if (!force && Date.now() - pyCheck.at < 10 * 60 * 1000) return pyCheck.ok
+function pythonCandidates() {
+  const out = []
+  const push = (cmd, pre = []) => {
+    if (!cmd) return
+    if (out.some((c) => c.cmd === cmd && c.pre.join(' ') === pre.join(' '))) return
+    out.push({ cmd, pre })
+  }
+  push(process.env.DSHC_PYTHON)
+  const home = process.env.USERPROFILE || process.env.HOME || ''
+  if (home) {
+    for (const v of ['312', '313', '311', '310']) {
+      push(path.join(home, 'AppData', 'Local', 'Programs', 'Python', 'Python' + v, 'python.exe'))
+    }
+  }
+  push('python')
+  push('py', ['-3.12'])
+  return out
+}
+
+function checkImport({ cmd, pre }) {
   return new Promise((resolve) => {
     let child
-    const done = (ok, error = '') => {
-      pyCheck = { at: Date.now(), ok, error }
-      resolve(ok)
-    }
     try {
-      child = spawn(PYTHON, ['-c', 'import wechatauto, sys; sys.stdout.write("ok")'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      child = spawn(cmd, [...pre, '-c', 'import wechatauto, sys; sys.stdout.write("ok")'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (e) {
-      done(false, String((e && e.message) || e))
+      resolve({ ok: false, error: String((e && e.message) || e) })
       return
     }
     let out = ''
     let err = ''
+    let done = false
+    const finish = (r) => { if (done) return; done = true; resolve(r) }
     const timer = setTimeout(() => {
       try { child.kill() } catch { /* 已退出 */ }
-      done(false, 'import wechatauto 超时')
+      finish({ ok: false, error: 'import wechatauto 超时' })
     }, 9000)
     child.stdout.on('data', (b) => { if (out.length < 200) out += b.toString('utf8') })
     child.stderr.on('data', (b) => { if (err.length < 400) err += b.toString('utf8') })
-    child.on('error', (e) => { clearTimeout(timer); done(false, String((e && e.message) || e)) })
+    child.on('error', (e) => { clearTimeout(timer); finish({ ok: false, error: String((e && e.message) || e) }) })
     child.on('close', (code) => {
       clearTimeout(timer)
-      if (code === 0 && out.trim() === 'ok') done(true)
-      else done(false, err.trim().slice(0, 300) || ('import wechatauto 失败（exit=' + code + '）'))
+      if (code === 0 && out.trim() === 'ok') finish({ ok: true, error: '' })
+      else finish({ ok: false, error: err.trim().slice(0, 300) || ('import wechatauto 失败（exit=' + code + '）') })
     })
   })
 }
 
-export function pythonStatus() {
-  return { available: pyCheck.ok, at: pyCheck.at ? new Date(pyCheck.at).toISOString() : null, error: pyCheck.error }
+/** 找一个真能 import wechatauto 的解释器；找不到就如实说找不到（别假装有）。 */
+export async function detectPython({ force = false } = {}) {
+  if (!force && Date.now() - pyPick.at < 10 * 60 * 1000) return pyPick
+  let lastErr = '没有找到能 import wechatauto 的 Python'
+  for (const c of pythonCandidates()) {
+    const r = await checkImport(c)
+    if (r.ok) {
+      pyPick = { at: Date.now(), cmd: c.cmd, pre: c.pre, ok: true, error: '' }
+      pyCheck = { at: Date.now(), ok: true, error: '' }
+      return pyPick
+    }
+    lastErr = (c.cmd || 'python') + '：' + r.error
+  }
+  pyPick = { at: Date.now(), cmd: '', pre: [], ok: false, error: lastErr.slice(0, 400) }
+  pyCheck = { at: Date.now(), ok: false, error: pyPick.error }
+  return pyPick
 }
 
-function runPython(payload, timeoutMs) {
+export async function wechatautoAvailable({ force = false } = {}) {
+  const p = await detectPython({ force })
+  return !!p.ok
+}
+
+export function pythonStatus() {
+  return {
+    available: pyCheck.ok,
+    at: pyCheck.at ? new Date(pyCheck.at).toISOString() : null,
+    cmd: pyPick.cmd ? ([pyPick.cmd, ...pyPick.pre].join(' ')) : '',
+    error: pyCheck.error,
+  }
+}
+
+function runPython(payload, timeoutMs, py = null) {
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(PY_SCRIPT_PATH)) {
       reject(new WeChatError('WECHAT_PY_MISSING', '找不到 scripts/wechat-send.py：' + PY_SCRIPT_PATH))
@@ -161,9 +208,12 @@ function runPython(payload, timeoutMs) {
     const reqFile = path.join(dir, 'request.json')
     const outFile = path.join(dir, 'result.json')
     fs.writeFileSync(reqFile, JSON.stringify(payload), 'utf8')
+    // 用「真装了 wechatauto 的那个解释器」；没有就退回默认的 python（会明确报 WECHATAUTO_MISSING）。
+    const cmd = (py && py.ok && py.cmd) || PYTHON
+    const pre = (py && py.ok && Array.isArray(py.pre)) ? py.pre : []
     let child
     try {
-      child = spawn(PYTHON, [PY_SCRIPT_PATH, reqFile, outFile], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
+      child = spawn(cmd, [...pre, PY_SCRIPT_PATH, reqFile, outFile], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (e) {
       fs.rmSync(dir, { recursive: true, force: true })
       reject(new WeChatError('WECHAT_PY_SPAWN', '起不了 Python：' + String((e && e.message) || e)))
@@ -222,8 +272,8 @@ export function send(opts) {
   const backend = opts.backend || 'auto'
   return serial(async () => {
     if (backend !== 'uia') {
-      const has = await wechatautoAvailable()
-      if (has) return runPython(payload, timeoutMs)
+      const py = await detectPython()
+      if (py.ok) return runPython(payload, timeoutMs, py)
       if (backend === 'wechatauto') {
         throw new WeChatError('WECHATAUTO_MISSING',
           '没装 wechatauto-replica：pip install wechatauto-replica（另装 winsdk / pypinyin）。'

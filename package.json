@@ -61,7 +61,8 @@
     "exam:inject": "node test/exam-inject.test.mjs",
     "exam:expression": "node test/exam-expression.test.mjs",
     "test:speech": "node test/speech-judge.test.mjs && node test/speech-words.test.mjs",
-    "sim:speech": "node scripts/sim-speech.mjs"
+    "sim:speech": "node scripts/sim-speech.mjs",
+    "exam:wechat": "node test/exam-wechat-inbox.test.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",
@@ -80,10 +81,13 @@
     "icon.svg",
     "src",
     "scripts/wechat-send.ps1",
-    "scripts/wechat-send.py"
+    "scripts/wechat-send.py",
+    "scripts/wechat-inbox.py"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "inject": [

@@ -138,6 +138,12 @@ export const OWNERSHIP = {
     files: ['host/events.js'],
     tables: [],
   },
+  wechatinbox: {
+    // 微信收信：只读本地库，把新消息记进聊天账本；水位存 flags（键带域前缀）。
+    // 原文层不在这里写——交给 archive.appendTurn，一句话只记一次。
+    files: ['modules/wechat_inbox.js'],
+    tables: ['chat_turns', 'flags'],
+  },
   algo: {
     files: [
       'algo/active.js', 'algo/registry.js', 'algo/index.js',

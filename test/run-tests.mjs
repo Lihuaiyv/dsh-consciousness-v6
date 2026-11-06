@@ -64,12 +64,17 @@ const hook = http.createServer((req, res) => {
   req.on('data', (c) => chunks.push(c))
   req.on('end', () => {
     res.writeHead(200, { 'Content-Type': 'application/json' })
+    // 企业微信群机器人要 {errcode:0}，别的通道（旧 webhook）看 ok
+    if (String(req.url || '').startsWith('/wecom')) {
+      res.end(JSON.stringify({ errcode: 0, errmsg: 'ok' }))
+      return
+    }
     res.end(JSON.stringify({ ok: true, got: Buffer.concat(chunks).toString('utf8').slice(0, 200) }))
   })
 })
 await new Promise((r) => hook.listen(0, '127.0.0.1', r))
 const hookBase = `http://127.0.0.1:${hook.address().port}`
-process.env.DSHC_SEND_WEBHOOK = hookBase + '/send'
+// 发消息那条老 webhook（DSHC_SEND_WEBHOOK）已经拿掉：现在走真实通道，测试里指向 /wecom。
 process.env.DSHC_REMIND_WEBHOOK = hookBase + '/remind'
 const pass = []
 const fail = []
@@ -757,6 +762,13 @@ try {
 
   await api('PUT', `/v1/agents/${aid}/budget`, { disturb_limit: 3 }, { key: key() })
   await api('PUT', `/v1/agents/${aid}/action-ports/send_message`, { enabled: true }, { key: key() })
+  // 发消息现在只有一份实现（走真实通道）。测试里把顺位钉在企业微信，指向本地假 webhook，
+  // 别让它在 CI 里真去开微信窗口。
+  await api('PUT', `/v1/agents/${aid}/action-config`, {
+    'wechat.wecom_webhook': hookBase + '/wecom',
+    'send.order': 'wecom',
+    'wechat.mode': 'auto',
+  }, { key: key() })
   const ex = await api('POST', `/v1/agents/${aid}/actions`, { port: 'send_message', payload: { text: 'hi' } }, { key: key() })
   check('真实发消息', ex.status === 'sent', ex)
   await api('PUT', `/v1/agents/${aid}/action-ports/browse`, { enabled: true }, { key: key() })
@@ -866,7 +878,11 @@ try {
   check('对话有回复', typeof chat1.reply === 'string' && chat1.reply.length > 0, chat1)
   check('对话带注入', Array.isArray(chat1.pack), chat1.pack)
   const turns = await api('GET', `/v1/agents/${bid}/chat`)
-  check('对话落库', turns.length >= 2 && turns[0].role === 'user', turns.length)
+  // 发消息现在会把自己说的话也记进 chat_turns（2026-11-07 起），而这段实例是导入出来的，
+  // 可能带着别的会话的 agent 行。判据改成「这句 user 在，且紧跟一条 agent 回复」。
+  const ui = turns.findIndex((t) => t.role === 'user' && String(t.text).includes('小周'))
+  check('对话落库', turns.length >= 2 && ui >= 0 && turns[ui + 1] && turns[ui + 1].role === 'agent',
+    turns.map((t) => t.role + ':' + String(t.text).slice(0, 12)))
   await api('POST', `/v1/agents/${bid}/memory`, { text: '用户喜欢猫' }, { key: key() })
   const chat2 = await api('POST', `/v1/agents/${bid}/chat`, { text: '我喜欢什么？' }, { key: key() })
   check('问句能召回', chat2.pack.length >= 1, chat2.pack)

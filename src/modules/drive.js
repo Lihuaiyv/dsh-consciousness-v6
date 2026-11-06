@@ -582,11 +582,18 @@ export async function executeAction(db, aid, body) {
   let note = ''
 
   if (port === 'send_message') {
-    const url = process.env.DSHC_SEND_WEBHOOK
-    if (!url) err(409, 'ACTION_UNCONFIGURED', '未配置 DSHC_SEND_WEBHOOK，不能真实发消息')
-    result = await postWebhook(url, { agent_id: aid, text: payload.text || '', to: payload.to || null })
-    status = result.ok ? 'sent' : 'failed'
-    note = result.ok ? 'webhook 已接收' : 'webhook 返回 ' + result.status
+    // 发消息只有一份实现（tools 那条路用的 actions/index.executeSend）：
+    // 老的 DSHC_SEND_WEBHOOK 分支已删——两套手脚迟早一套没记账、一套不发微信/QQ。
+    // 动态 import 是为了躲开 drive ← actions（actions 要 budgetConsume）的循环依赖。
+    const { executeSend } = await import('./actions/index.js')
+    const out = await executeSend(db, aid, payload)
+    return {
+      id: out.action_id || null,
+      port,
+      status: out.status,
+      result: out,
+      note: (out.channel || '') + (out.target ? ' → ' + out.target : ''),
+    }
   } else if (port === 'browse') {
     const target = String(payload.url || '')
     let u

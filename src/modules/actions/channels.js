@@ -22,6 +22,10 @@ export const DEFAULTS = {
   'wechat.dry_run': false,
   // 发消息的顺位：auto 时从前往后试，前一条不通就换下一条。微信第一（2026-11-07 起）。
   'send.order': 'wechat,wecom,qq',
+  // 收信（只读本地库，不动窗口）：默认开；skip 里的会话不记（微信团队这类服务号）。
+  'wechat.inbox.enable': true,
+  'wechat.inbox.skip': 'weixin',
+  'wechat.inbox.limit': 40,
   'qq.mode': 'onebot',
   'qq.base_url': 'http://127.0.0.1:3000',
   'qq.token': '',
@@ -34,8 +38,8 @@ export const DEFAULTS = {
   'research.seen_days': 60,
 }
 
-const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run'])
-const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days'])
+const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable'])
+const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days', 'wechat.inbox.limit'])
 const ENUMS = {
   'wechat.mode': ['uia', 'wecom', 'auto'],
   'wechat.backend': ['auto', 'wechatauto', 'uia'],
