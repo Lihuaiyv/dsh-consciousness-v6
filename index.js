@@ -1,9 +1,15 @@
 /**
- * dsh-consciousness 鈥?鎰忚瘑浣擄細瀹夸富鍗娿€? *
+ * dsh-consciousness — 意识体：宿主半。
+ *
  * 数据库和业务都在插件进程内，界面是独立的 Client 半（client.js），
- * 閫氳繃 settings.section 娉ㄥ唽鎴愩€岃缃?鈫?鎰忚瘑銆嶄竴鏁撮〉锛屼笉寮€娴眰銆佷笉寮€ iframe銆? *
- * 鎺ュ彛锛歅OST /dsh-consciousness/api锛圝SON 淇″皝锛? * 鏁版嵁锛殈/.dsh/consciousness/app.db锛坣ode:sqlite锛? *
- * 璁板繂鏁寸悊锛堢敤妯″瀷鍚堝苟閲嶅鑷渷锛夛細POST /v1/agents/:id/memory/consolidate锛宒ry_run=1 鍙湅鏂规銆? * 瀛橀噺鍒嗙骇锛堟寜瑁佸垽鎶婁綆鍒嗚嚜鐪佹墦杩涘喎灞傦級锛歅OST /v1/agents/:id/memory/demote锛宒ry_run=1 鍙粺璁°€? */
+ * 通过 settings.section 注册成「设置 → 意识」一整页，不开浮层、不开 iframe。
+ *
+ * 接口：POST /dsh-consciousness/api（JSON 信封）
+ * 数据：~/.dsh/consciousness/app.db（node:sqlite）
+ *
+ * 记忆整理（用模型合并重复自省）：POST /v1/agents/:id/memory/consolidate，dry_run=1 只看方案。
+ * 存量分级（按裁判把低分自省打进冷层）：POST /v1/agents/:id/memory/demote，dry_run=1 只统计。
+ */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
