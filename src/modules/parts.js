@@ -262,7 +262,7 @@ export const PARTS = [
     files: ['src/modules/diary.js'],
     entry: 'buildDiaryV2 / prepareDiary / checkDiary / normalizeDiaryText（src/modules/diary.js）；宿主接线：src/modules/nightly.js 每晚 23:00 调，index.js 注册补写',
     exam: { file: 'test/exam-diary.test.mjs', score: '25/25', note: '日期头撕掉重补 / JSON·围栏·前缀收干净 / 抄提示词不算 / 质检五档 / 口吻由状态推，25 道' },
-    assert: '表：diaries / diary_pending；读：listDiary / pendingForDay；回退：diary-before-part',
+    assert: '表：diaries / diary_pending；读：buildDiaryV2 / pendingForDay；回退：diary-before-part',
     swaps: [],
     rollback: { pointer: 'diary-before-part', note: '回退 = git checkout diary-before-part -- src/modules/diary.js src/modules/parts.js test/exam-diary.test.mjs docs/给人看的/零件-日记.md' },
   },

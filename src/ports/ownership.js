@@ -18,7 +18,7 @@ export const WRITES = Object.freeze({
   who: [],
   memory: ['memory_items', 'memory_fts', 'alerts', 'conflicts'],
   timeline: ['memory_timeline', 'memory_items', 'flags'],
-  layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
+  layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
   persona: ['persona', 'relations', 'preferences', 'taboos'],
   selfmod: ['metric_samples', 'persona', 'proposals', 'rule_artifacts', 'rule_versions', 'agent_bindings', 'change_journal', 'inbox_items'],
   affect: ['affect_baseline', 'affect_episodes', 'affect_events', 'affect_review', 'affect_samples', 'affect_state', 'affect_trigger', 'affect_user_read', 'affect_v3'],
@@ -160,7 +160,8 @@ export const OWNERSHIP = {
     tables: ['persona_values', 'memory_items', 'affect_state', 'rel_person', 'relations'],
   },
   affect: {
-    files: ['modules/affect.js'],
+    // 情绪动力搬家：实现搬进 parts/affect/index.js，modules/affect.js 只留转发。
+    files: ['modules/affect.js', 'parts/affect/index.js'],
     // affect_events：P0 影子闸门，每条消息一行，只记录「会不会成为事件」
     // affect_review / affect_trigger：事后复查 + 触发词学习，本来就是它自己的两张表，之前漏登记
     tables: ['affect_state', 'affect_episodes', 'affect_samples', 'affect_v3', 'affect_baseline', 'affect_user_read', 'affect_events', 'affect_review', 'affect_trigger'],
@@ -217,12 +218,15 @@ export const OWNERSHIP = {
   },
   layers: {
     // 分层记忆：原文 / 纪要 / 日记 / 事实存根 / 热度账本 / 会话缓冲 / 检索骨架 / 回放日志 / 夜间巩固
-    files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js'],
-    tables: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
+    // modules/diary.js：日记原来是这层里的散件，立成零件后文件仍在 layers 名下（写 diaries / diary_pending）
+    files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js', 'modules/diary.js'],
+    tables: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
       // 累计重要性 → 反思的游标（consolidate.js 读写）
       'reflect_cursor',
       // 只读：写日记时快照状态、仓库统计体量、注入用量
       'persona', 'persona_values', 'drive_state', 'relations', 'preferences', 'taboos', 'metric_samples', 'conflicts',
+      // 只读：日记要写那天的心情，从情绪三张表取（affect_feel 是 feel 快照）
+      'affect_samples', 'affect_feel', 'affect_episodes',
       // 只读：检索时的实体扩散（entities）与同实体一跳（memory_links）
       'entities', 'memory_links',
       // 向量通道：检索读已存向量
