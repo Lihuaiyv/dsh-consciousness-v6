@@ -140,5 +140,48 @@ function addTurn(id, role, text, at, conv) {
   check('不带会话时仍能取（旧行为/修复 at 列）', ctxAll.includes('B 段'), ctxAll)
 }
 
+// ---- 七、多会话交错整体模拟：网页两段 + QQ 一段同时在线
+{
+  clearTurns()
+  try { db.prepare('DELETE FROM affect_feel WHERE agent_id=?').run(aid) } catch { /* 老库 */ }
+  const convs = [
+    { id: 'dsh:session-a', sid: 'session-a', tag: 'A' },
+    { id: 'dsh:session-b', sid: 'session-b', tag: 'B' },
+    { id: 'qq:p:9527', sid: 'session-qq', tag: 'Q' },
+  ]
+  const t0 = Date.now() - 30 * 60000
+  let missing = 0
+  let bleed = 0
+  const times = []
+  for (let round = 0; round < 10; round++) {
+    for (let ci = 0; ci < convs.length; ci++) {
+      const c = convs[ci]
+      const at = t0 + round * 60000 + ci * 5000
+      const mine = c.tag + '段第' + round + '句'
+      addTurn('cht_sim_' + c.tag + round, 'user', mine, at, c.id)
+      db.prepare('INSERT INTO affect_feel(id,agent_id,at,text,label,fast,slow,session_id,source,turn_id) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        .run('afe_sim_' + c.tag + round, aid, iso(at), c.tag + '段的手停在桌沿' + round, 'calm', 0.1, 0.1, c.sid, 'tool', null)
+    }
+    // 每一轮三段各拼一次（模拟三段同时在线）
+    for (const c of convs) {
+      const s = Date.now()
+      const block = consciousnessBlock(db, aid, { sessionId: c.sid, conversationId: c.id })
+      times.push(Date.now() - s)
+      if (!block.includes(c.tag + '段第' + round + '句')) missing++
+      for (const o of convs) {
+        if (o.tag === c.tag) continue
+        if (block.includes(o.tag + '段第' + round + '句')) bleed++
+      }
+    }
+  }
+  const oldStyle = presenceLine(db, aid).line
+  check('交错 30 轮：这段自己的上一句都在', missing === 0, missing)
+  check('交错 30 轮：别的段一句都没进来', bleed === 0, bleed)
+  check('旧口径（不带会话键）确实会串到最新那段——修前就是这样', oldStyle.includes('Q段第9句'), oldStyle)
+  const avg = times.reduce((a, b) => a + b, 0) / times.length
+  check('拼提示词不卡：平均 < 300ms', avg < 300, avg)
+  console.log('模拟：30 次拼装，平均 ' + avg.toFixed(1) + 'ms，最慢 ' + Math.max(...times) + 'ms')
+}
+
 console.log(`\n通过 ${pass} / ${pass + fail}`)
 if (fail) process.exit(1)

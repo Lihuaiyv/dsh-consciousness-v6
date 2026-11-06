@@ -179,6 +179,8 @@ CREATE TABLE IF NOT EXISTS chat_turns(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
   pack TEXT, mood TEXT, created_at TEXT NOT NULL, conversation_id TEXT);
 CREATE INDEX IF NOT EXISTS idx_chat_agent ON chat_turns(agent_id, created_at);
+-- 按会话取「这一段的上一句」：串会话修好之后，presence / 短句上下文 / 收尾倾向都按 conversation_id 查，别再全表扫。
+CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_turns(agent_id, conversation_id, created_at);
 -- 会话账（schema 13）：一段外部会话（QQ 私聊/群）归哪个意识体。
 -- 和 bindings 分开：bindings 管 DSH 网页会话，conversations 管外部通道；都不写死到配置里。
 CREATE TABLE IF NOT EXISTS conversations(
@@ -616,6 +618,8 @@ export function openDb(file) {
   // 老库补这一列：这条 feel 是哪一轮说的。没有就退回按时间配（旧行为，不报错）。
   try { db.exec('ALTER TABLE affect_feel ADD COLUMN turn_id TEXT') } catch { /* 已存在 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_feel_agent_at ON affect_feel(agent_id, at DESC)') } catch { /* 老库异常不影响启动 */ }
+  // 按会话取「这一段最后一条 feel」：和 presence 一样，别让注入行花在扫全表上。
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_feel_session_at ON affect_feel(agent_id, session_id, at DESC)') } catch { /* 老库异常不影响启动 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_feel_turn ON affect_feel(agent_id, turn_id)') } catch { /* 老库异常不影响启动 */ }
   // 其它层的「那时候什么感觉」：老库补列，没有就 null（不编）。
   try { db.exec('ALTER TABLE episodes ADD COLUMN feel_id TEXT') } catch { /* 已存在 */ }
