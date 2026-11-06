@@ -173,11 +173,11 @@ function pressureOld(block, budget) {
 }
 const pBefore = [200, 150, 120].map((b) => {
   const r = pressureOld(blockAfter, b)
-  return { budget: b, hasAffect: /感觉现在大概/.test(r.text), tokens: r.tokens }
+  return { budget: b, hasAffect: /这会儿大概|感觉现在大概/.test(r.text), tokens: r.tokens }
 })
 const pAfter = [200, 150, 120].map((b) => {
   const r = pressure(blockAfter, b)
-  return { budget: b, hasAffect: /感觉现在大概/.test(r.text), tokens: r.tokens }
+  return { budget: b, hasAffect: /这会儿大概|感觉现在大概/.test(r.text), tokens: r.tokens }
 })
 
 // ---------------------------------------------------------------- 5. 锚点轮转

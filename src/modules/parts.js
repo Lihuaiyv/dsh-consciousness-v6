@@ -26,7 +26,7 @@ export const PARTS = [
     role: '器官',
     chain: '链上',
     judge: '混合',
-    status: '在用',
+    status: '可换',
     version: 'v0.6.2',
     owner: 'src/parts/speak/ · runSpeakTick',
     files: [
@@ -65,7 +65,7 @@ export const PARTS = [
         why: '可插拔零件：输入输出明显、能单独喂数据测试；共享件只 import 不搬',
       },
     ],
-    rollback: { pointer: 'speak-before-swap', note: '回退 = git checkout speak-before-swap -- src/features.js' },
+    rollback: { pointer: 'speak-part-20261106', note: '回退 = git checkout speak-part-20261106 -- src/parts/speak/ src/modules/parts.js（11-06 独立性整改后的结构；旧的 speak-before-swap 指向搬家前，别再用它）' },
   },
   {
     id: 'loops',

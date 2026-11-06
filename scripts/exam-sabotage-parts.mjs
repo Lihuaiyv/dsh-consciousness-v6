@@ -144,6 +144,17 @@ const CASES = [
     importFrom: "'../src/modules/expression_state.js'",
     importTo: "'../src/modules/expression_state.sabotage-13.js'",
   },
+  {
+    // 主动开口的卷子从 features 拿全部名字；这里只换 decideSpeak 的来源，其余照旧。
+    // 变异点：气头门拆掉（气头上还开口）。
+    name: '主动开口：气头上也开口（气头门失效）',
+    impl: 'src/parts/speak/judge.js',
+    exam: 'test/exam-speak.test.mjs',
+    from: "const hot = !!af0 && ['irritated', 'frustrated'].includes(String(af0.primary_label)) && Number(af0.intensity) > 0.68",
+    to: 'const hot = false',
+    importFrom: "import { decideSpeak, proactiveTriggerOf, setProactivePrefs, budgetGet, proactiveSpend, addProactiveSpend } from '../src/features.js'",
+    importTo: "import { proactiveTriggerOf, setProactivePrefs, budgetGet, proactiveSpend, addProactiveSpend } from '../src/features.js'\nimport { decideSpeak } from '{MUTANT}'",
+  },
 ]
 
 let pass = 0
@@ -161,8 +172,10 @@ for (let i = 0; i < CASES.length; i++) {
   }
   const mutant = implPath.replace(/\.js$/, '.sabotage-' + i + '.js')
   const examCopy = examPath.replace(/\.test\.mjs$/, '.sabotage-' + i + '.test.mjs')
+  // {MUTANT}：从考卷目录出发的相对路径，给需要换单个函数来源的卷子用（比如开口从 features 拿一半名字）
+  const mutantRel = path.relative(path.dirname(examPath), mutant).replace(/\\/g, '/')
   fs.writeFileSync(mutant, implText.replace(c.from, c.to))
-  fs.writeFileSync(examCopy, examText.replace(c.importFrom, c.importTo))
+  fs.writeFileSync(examCopy, examText.replace(c.importFrom, String(c.importTo || '').replaceAll('{MUTANT}', mutantRel)))
   try {
     const r = spawnSync(process.execPath, [examCopy], { cwd: root, encoding: 'utf8', timeout: 120000 })
     const out = String(r.stdout || '') + String(r.stderr || '')
