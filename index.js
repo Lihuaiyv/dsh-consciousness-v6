@@ -31,6 +31,7 @@ import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
+import { judgeSpeech, recordShadow } from './src/modules/speech_judge.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
 import { appendTurn, buildEpisode, recentDiaryLines, migrateArchive, backfillFactArchive, sessionBridge } from './src/modules/archive.js'
@@ -1225,6 +1226,24 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
       try { res = await appraiseWithEdges(db, aid, u) } catch { /* 情绪失败不影响回复 */ }
       // 回读：她刚说出来的那句跟当下慢情绪对一对，差得远才小步挪（不是一句话定情绪）
       try { applySelfRead(db, aid, aText) } catch { /* 回读失败不影响对话 */ }
+      /* 说话分寸的影子：按这一刻的状态问一次模型「该怎么说」，建议只夹在规则档允许的范围内，
+         且**只写事件不生效**（affect.speech.shadow 关掉就完全不来）。失败不影响这一轮。 */
+      try {
+        const shadowOn = String(getParam(db, aid, 'affect.speech.shadow') || 'on') !== 'off'
+        if (!stranger && shadowOn && exprForResidue && model.status().primary === 'ok') {
+          const ar = db.prepare('SELECT primary_label, intensity FROM affect_state WHERE agent_id=?').get(aid)
+          const judged = await judgeSpeech({
+            complete: (m) => model.complete(m),
+            rule: exprForResidue,
+            label: (ar && ar.primary_label) || 'calm',
+            intensity: Number(ar && ar.intensity) || 0.4,
+            warmth: Number(exprForResidue.warmth) || 0.5,
+            lastUser: u,
+            lastReply: aText,
+          })
+          if (judged.ok) recordShadow(db, aid, { rule: exprForResidue, verdict: judged.verdict, ms: judged.ms, model: 'host' })
+        }
+      } catch { /* 影子失败不影响对话 */ }
       // 关系余量：她自己的回话偏离当轮表达基准时留一笔；下一轮只影响语气，夜里才可能结算。
       try {
         const expr = exprForResidue
