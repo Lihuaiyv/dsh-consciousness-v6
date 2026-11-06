@@ -36,22 +36,62 @@ export function parseJudge(out) {
     const b = bare.lastIndexOf('}')
     if (a >= 0 && b > a) obj = tryParse(bare.slice(a, b + 1))
   }
-  if (!obj || typeof obj !== 'object') return { ok: false, reason: 'bad-json' }
-  const level = LEVEL_ORDER.includes(String(obj.level || '')) ? String(obj.level) : null
-  if (!level) return { ok: false, reason: 'bad-level' }
-  const sentences = num(obj.sentences, null)
-  const proactive = num(obj.proactive, null)
-  const tone = TONES.includes(String(obj.tone || '')) ? String(obj.tone) : null
+  if (!obj || typeof obj !== 'object') obj = null
+  const level = obj && LEVEL_ORDER.includes(String(obj.level || '')) ? String(obj.level) : null
+  if (obj && level) {
+    const sentences = num(obj.sentences, null)
+    const proactive = num(obj.proactive, null)
+    const tone = TONES.includes(String(obj.tone || '')) ? String(obj.tone) : null
+    return {
+      ok: true,
+      lenient: false,
+      verdict: {
+        level,
+        sentences: sentences == null ? null : clamp(Math.round(sentences), 1, 4),
+        proactive: proactive == null ? null : clamp(Math.round(proactive), 0, 2),
+        tone,
+        why: String(obj.why || '').slice(0, 80),
+        confidence: clamp(num(obj.confidence, 0.5), 0, 1),
+      },
+    }
+  }
+  /* 模型没给 JSON（常见：直接拿中文回答）时的兜底：从文字里认档位。
+     线上真踩过：影子一条都没落，就是因为这里直接 return bad-level。宁可认个大概，也别整条丢掉。 */
+  const loose = looseJudge(raw)
+  if (loose) return { ok: true, lenient: true, verdict: loose }
+  return { ok: false, reason: obj ? 'bad-level' : 'bad-json' }
+}
+
+/** 从一段中文/英文里认出「档位 + 句数 + 语气」。认不出返回 null。 */
+export function looseJudge(raw) {
+  const t = String(raw || '')
+  const levelMap = [
+    ['安静', 'quiet'], ['一句', 'quiet'],
+    ['简短', 'brief'], ['两三句', 'brief'],
+    ['热乎', 'warm'], ['多说', 'warm'], ['愿意聊', 'warm'],
+    ['正常', 'normal'], ['照常', 'normal'],
+    ['quiet', 'quiet'], ['brief', 'brief'], ['warm', 'warm'], ['normal', 'normal'],
+  ]
+  let level = null
+  for (const [word, lv] of levelMap) {
+    if (t.includes(word)) { level = lv; break }
+  }
+  if (!level) return null
+  const s = /([一二三四1-4])\s*句/.exec(t)
+  const cn = { 一: 1, 二: 2, 三: 3, 四: 4 }
+  const sentences = s ? (cn[s[1]] || Number(s[1]) || null) : null
+  let tone = null
+  if (/冷|不想接/.test(t)) tone = 'cool'
+  else if (/暖|愿意/.test(t)) tone = 'warm'
+  else if (/短|一句/.test(t)) tone = 'short'
+  else if (/平|照常|正常/.test(t)) tone = 'plain'
   return {
-    ok: true,
-    verdict: {
-      level,
-      sentences: sentences == null ? null : clamp(Math.round(sentences), 1, 4),
-      proactive: proactive == null ? null : clamp(Math.round(proactive), 0, 2),
-      tone,
-      why: String(obj.why || '').slice(0, 80),
-      confidence: clamp(num(obj.confidence, 0.5), 0, 1),
-    },
+    level,
+    sentences: sentences == null ? null : clamp(sentences, 1, 4),
+    proactive: null,
+    tone,
+    why: 'loose',
+    confidence: 0.3,
   }
 }
 
@@ -202,6 +242,16 @@ export async function judgeCompare(opt = {}) {
   return parsed.ok
     ? { ok: true, pick: parsed.pick, why: parsed.why, confidence: parsed.confidence, raw: String(raw || '').slice(0, 300), ms: Date.now() - t0 }
     : { ok: false, reason: parsed.reason, raw: String(raw || '').slice(0, 300), ms: Date.now() - t0 }
+}
+
+/** 影子/评委没跑成的落账：只记原因和一小截原文，方便事后查「为什么一条都没有」。 */
+export function recordMiss(db, aid, { kind = 'shadow', reason = '', raw = '', at = Date.now() } = {}) {
+  try {
+    const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
+    const payload = JSON.stringify({ reason: String(reason || 'unknown').slice(0, 40), raw: String(raw || '').slice(0, 160) })
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(id, aid, 'expr.' + kind + '.miss', payload, new Date(at).toISOString())
+    return { id, payload }
+  } catch { return null }
 }
 
 /** 评委落账：只写事件。 */

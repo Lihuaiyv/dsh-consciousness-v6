@@ -35,6 +35,10 @@ function check(name, ok, detail) {
   check('多行拦', validateVoice('第一行\n第二行').reason === 'multiline')
   check('语气词开头拦', validateVoice('嗯那我就少说两句').reason === 'filler', validateVoice('嗯那我就少说两句'))
   check('空拦', validateVoice('').reason === 'empty')
+  // 线上真踩过：模型给回「How can I help you?」，当时被当感受行塞进了提示词
+  check('英文不许进（线上踩过）', validateVoice('How can I help you?').reason === 'not-chinese', validateVoice('How can I help you?'))
+  check('问句不许进', validateVoice('刚才那句要重说吗？').reason === 'question', validateVoice('刚才那句要重说吗？'))
+  check('中英夹着但主体是中文，可以', validateVoice('把 commit 又翻出来看了一遍').ok === true, validateVoice('把 commit 又翻出来看了一遍'))
   check('禁词表就是这四个', VOICE_BANNED.join(',') === '感觉,情绪,情感,有点', VOICE_BANNED)
   // 老模板：带「有点」的被禁词挡下；不带禁词的能过闸，但会被「不重样」挡——两条闸各管一件事
   const oldAI = ['有点想追问', '脑子有点绕，会先停一下']
@@ -101,6 +105,17 @@ function check(name, ok, detail) {
   recordVoice(db, aid, { text: '句子会比平时短一点', at: old })
   check('两小时窗口里查不到两天前的', !recentVoices(db, aid, { days: 0.08 }).includes('句子会比平时短一点'), recentVoices(db, aid, { days: 0.08 }))
   check('默认窗口里能查到', recentVoices(db, aid).includes('句子会比平时短一点'))
+
+  // 坏句子落库也读不出来：宁可用模板，也不把英文塞进提示词
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-voice2-'))
+  const db2 = openDb(path.join(dir2, 'app.db'))
+  const aid2 = 'agt_voice2'
+  db2.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,?)')
+    .run(aid2, '词表2', 'daily', 'active', now(), 13)
+  recordVoice(db2, aid2, { text: 'How can I help you?' })
+  check('英文句子不算「有新鲜句」', latestVoice(db2, aid2) === null, latestVoice(db2, aid2))
+  recordVoice(db2, aid2, { text: '把这件事在脑子里放了一会儿' })
+  check('后面补的合格句子能顶上', (latestVoice(db2, aid2) || {}).text === '把这件事在脑子里放了一会儿', latestVoice(db2, aid2))
 }
 
 // ================================================================ 用上：有生成句就用它，没有就退模板

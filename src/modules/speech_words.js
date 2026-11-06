@@ -29,6 +29,11 @@ export function validateVoice(text) {
   // 禁词先判：这样「有点想追问」报的是 banned，而不是 short——报错得指得准，改的人才知道往哪改
   for (const w of VOICE_BANNED) if (t.includes(w)) return { ok: false, reason: 'banned:' + w }
   const len = Array.from(t).length
+  /* 线上真踩过：模型给回一句英文「How can I help you?」，当时只看长度和禁词，就把它当感受行塞进了提示词。
+     现在要求：主体是中文（汉字至少占一半），而且不是问句——感受行不是拿来问「需要帮忙吗」的。 */
+  const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length
+  if (cjk < len * 0.5) return { ok: false, reason: 'not-chinese' }
+  if (/[?？]/.test(t)) return { ok: false, reason: 'question' }
   if (len < VOICE_MIN) return { ok: false, reason: 'short' }
   if (len > VOICE_MAX) return { ok: false, reason: 'long' }
   if (/^(嗯|啊|哦|好吧)/.test(t)) return { ok: false, reason: 'filler' }
@@ -130,13 +135,16 @@ export function recentVoices(db, aid, { days = 30, limit = 40 } = {}) {
   } catch { return [] }
 }
 
-/** 最近一条还在保鲜期内的句子（拼提示词用）。 */
+/** 最近一条还在保鲜期内的句子（拼提示词用）。坏句子直接跳过——宁可用模板，也不把英文/问句塞进提示词。 */
 export function latestVoice(db, aid, { hours = 12, at = Date.now() } = {}) {
   try {
     const since = new Date(num(at, Date.now()) - Math.max(1, num(hours, 12)) * 3600000).toISOString()
-    const row = db.prepare("SELECT payload, created_at FROM events WHERE agent_id=? AND type='expr.phrase' AND created_at>=? ORDER BY created_at DESC LIMIT 1").get(aid, since)
-    if (!row) return null
-    const text = String(JSON.parse(row.payload).text || '')
-    return text ? { text, at: row.created_at } : null
+    const rows = db.prepare("SELECT payload, created_at FROM events WHERE agent_id=? AND type='expr.phrase' AND created_at>=? ORDER BY created_at DESC LIMIT 8").all(aid, since)
+    for (const row of rows) {
+      let text = ''
+      try { text = String(JSON.parse(row.payload).text || '') } catch { continue }
+      if (text && validateVoice(text).ok) return { text, at: row.created_at }
+    }
+    return null
   } catch { return null }
 }

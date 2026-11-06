@@ -31,7 +31,7 @@ import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
-import { judgeSpeech, recordShadow, judgeCompare, recordCompare } from './src/modules/speech_judge.js'
+import { judgeSpeech, recordShadow, judgeCompare, recordCompare, recordMiss } from './src/modules/speech_judge.js'
 import { latestVoice, recentVoices, generateVoice, recordVoice } from './src/modules/speech_words.js'
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
@@ -1268,8 +1268,12 @@ const t = setTimeout(() => { runRelationReadTick() }, 1500)
                   lastReply: aText,
                 })
                 if (cmp.ok) recordCompare(db, aid, { rule: exprForResidue, suggest: judged.verdict, pick: cmp.pick, why: cmp.why, confidence: cmp.confidence, ms: cmp.ms })
+                else recordMiss(db, aid, { kind: 'judge', reason: cmp.reason, raw: cmp.raw })
               }
             } catch { /* 评委失败不影响对话 */ }
+          } else {
+            // 影子没跑成也留一条：不然「一条都没有」只能靠猜
+            recordMiss(db, aid, { kind: 'shadow', reason: judged.reason, raw: judged.raw })
           }
         }
       } catch { /* 影子失败不影响对话 */ }

@@ -10,7 +10,7 @@ import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 import {
   LEVEL_ORDER, TONES, parseJudge, clampProposal, buildPrompt, judgeSpeech, recordShadow,
-  parseCompare, buildComparePrompt, judgeCompare, recordCompare,
+  parseCompare, buildComparePrompt, judgeCompare, recordCompare, recordMiss,
 } from '../src/modules/speech_judge.js'
 
 let pass = 0
@@ -39,6 +39,11 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
   check('句数越界会被夹', parseJudge('{"level":"normal","sentences":9}').verdict.sentences === 4, parseJudge('{"level":"normal","sentences":9}').verdict)
   check('语气不认识就留空（后面回退规则档）', parseJudge('{"level":"normal","tone":"sad"}').verdict.tone === null)
   check('档位表只有四档', LEVEL_ORDER.join(',') === 'quiet,brief,normal,warm' && TONES.length === 4, LEVEL_ORDER)
+  // 模型没给 JSON、直接拿中文回答时的兜底（线上影子一条都没落，就是栽在这）
+  const loose = parseJudge('她觉得这时候该安静，大概一句就够')
+  check('中文回答也能认档位', loose.ok && loose.lenient === true && loose.verdict.level === 'quiet', loose)
+  check('中文回答里带句数也认', parseJudge('正常，三句').verdict.sentences === 3, parseJudge('正常，三句').verdict)
+  check('连档位都认不出才算坏', parseJudge('随便聊两句吧').ok === false, parseJudge('随便聊两句吧'))
 }
 
 // ================================================================ 夹边界：低落不许被抬
@@ -166,6 +171,12 @@ const rule = (level, sentences = 3, proactive = 1, tone = 'plain') => ({ level, 
   const jp = jr ? JSON.parse(jr.payload) : {}
   check('评委结论落一条事件', !!jr && jp.pick === 'rule', jp)
   check('事件里两版都在', jp.rule && jp.suggest && jp.rule.level === 'brief' && jp.suggest.level === 'normal', jp)
+
+  // 没跑成也要留痕：不然「一条都没有」只能靠猜
+  recordMiss(db2, aid2, { kind: 'shadow', reason: 'bad-json', raw: '随便聊两句吧' })
+  const mr = db2.prepare("SELECT payload FROM events WHERE agent_id=? AND type='expr.shadow.miss'").get(aid2)
+  const mp = mr ? JSON.parse(mr.payload) : {}
+  check('影子没跑成会留 miss 事件', !!mr && mp.reason === 'bad-json' && mp.raw.includes('随便聊两句'), mp)
 }
 
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))
