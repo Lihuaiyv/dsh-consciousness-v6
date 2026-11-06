@@ -122,7 +122,7 @@ export const PARTS = [
   },
   {
     id: 'tiers',
-    name: '记忆衰减与分层',
+    name: '冷暖',
     role: '器官',
     chain: '链上',
     judge: '机器',
@@ -138,7 +138,7 @@ export const PARTS = [
     exam: { file: 'test/exam-tiers.test.mjs', score: '69/69', note: '半衰期 / 热度五项 / 档位 / 可提取性 / 强化 / 冷热温度 / 迟滞 / 写入闸的冷不被年龄翻热，69 道' },
     assert: "表：memory_items / flags；读：heatOf；回退：tiers-before-part",
     swaps: [],
-    rollback: { pointer: 'tiers-before-part', note: '回退 = git checkout tiers-before-part -- src/modules/parts.js docs/给人看的/零件-记忆衰减与分层.md，再删 test/exam-tiers.test.mjs' },
+    rollback: { pointer: 'tiers-before-part', note: '回退 = git checkout tiers-before-part -- src/modules/parts.js docs/给人看的/零件-冷暖.md，再删 test/exam-tiers.test.mjs' },
   },
   {
     id: 'drive',
@@ -181,7 +181,7 @@ export const PARTS = [
   },
   {
     id: 'wgate',
-    name: '记忆写入闸',
+    name: '门卫',
     role: '器官',
     chain: '链上',
     judge: '机器',
@@ -195,7 +195,7 @@ export const PARTS = [
     exam: { file: 'test/exam-writegate.test.mjs', score: '53/53', note: '旁白 / 为什么被拦（含噪音次序）/ 三档 / 打分 / 判决 / 来源徽章 / 落热层·落冷层·不写库，53 道' },
     assert: "表：memory_items / entities / extract_queue；读：gateSelfText；回退：wgate-before-part",
     swaps: [],
-    rollback: { pointer: 'wgate-before-part', note: '回退 = git checkout wgate-before-part -- src/modules/parts.js src/modules/memory_source.js src/features.js docs/给人看的/零件-记忆写入闸.md，再删 test/exam-writegate.test.mjs' },
+    rollback: { pointer: 'wgate-before-part', note: '回退 = git checkout wgate-before-part -- src/modules/parts.js src/modules/memory_source.js src/features.js docs/给人看的/零件-门卫.md，再删 test/exam-writegate.test.mjs' },
   },
   {
     id: 'inject',
