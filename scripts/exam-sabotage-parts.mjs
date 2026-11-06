@@ -265,6 +265,16 @@ const CASES = [
     importFrom: "'../src/modules/archive.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：空文本也放行——没法发的空消息也去撞通道。
+    name: '发信：空文本也放行（空消息门失效）',
+    impl: 'src/modules/actions/channels.js',
+    exam: 'test/exam-send.test.mjs',
+    from: "  if (!text.trim()) throw new Error('要发的内容是空的')",
+    to: '  if (false) throw new Error(\'要发的内容是空的\')',
+    importFrom: "'../src/modules/actions/channels.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

@@ -40,6 +40,7 @@ export const WRITES = Object.freeze({
   selfread: [],
   poisons: [],
   values: ['persona_values'],
+  actions: ['action_config'],
   // 搬库 / 编排：ops 清库和导入、host 导入导出和接线。它们可以写别的域的表，
   // 但只许在本名单里——不是「想写哪张写哪张」。真正的进一步拆分要等把导入/导出/清库
   // 的代码抽成独立文件，那之前先按整域例外登记。
@@ -126,6 +127,11 @@ export const OWNERSHIP = {
     // 回读自己那句话：只改 affect_v3 的快情绪（fast / total / fast_at），慢情绪不碰
     files: ['modules/self_read.js'],
     tables: ['affect_v3'],
+  },
+  actions: {
+    // 发信：三路通道的配置和出口。只写自己的 action_config；action_ports 只读（看开关）。
+    files: ['modules/actions/channels.js'],
+    tables: ['action_config', 'action_ports'],
   },
   algo: {
     files: [

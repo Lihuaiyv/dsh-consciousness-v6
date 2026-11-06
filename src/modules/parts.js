@@ -394,6 +394,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'archive-before-part', note: '回退 = git checkout archive-before-part -- src/modules/parts.js src/modules/diary.js src/ports/ownership.js test/exam-archive.test.mjs docs/给人看的/零件-归档.md scripts/exam-sabotage-parts.mjs，再删 src/modules/episode_fields.js' },
   },
+  {
+    id: 'send',
+    name: '发信',
+    role: '四肢',
+    chain: '链外',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/actions/channels.js · sendMessage',
+    files: ['src/modules/actions/channels.js'],
+    entry: 'sendMessage / sendWecom / sendOneBot（src/modules/actions/channels.js）；宿主接线：actions/index.js 与 api 调它',
+    exam: { file: 'test/exam-send.test.mjs', score: '28/28', note: '配置默认与打码 / 企业微信分片与失败 / OneBot 私聊群聊与鉴权 / 统一入口通道选择，28 道' },
+    assert: '表：action_config；读：getConfig / publicConfig；回退：send-before-part',
+    swaps: [],
+    rollback: { pointer: 'send-before-part', note: '回退 = git checkout send-before-part -- src/modules/parts.js src/ports/ownership.js test/exam-send.test.mjs docs/给人看的/零件-发信.md scripts/exam-sabotage-parts.mjs' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
