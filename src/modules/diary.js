@@ -738,6 +738,8 @@ export function checkDiary(text, opt = {}) {
   const chars = body.replace(/\s/g, '').length
   // 只拦「这一篇根本不能算日记」的：空的、太短、太长、写成列表、漏了系统词、通篇汇报、短还断在半句。
   // 结尾想不想明天，不拦——那天要是真惦记着明天的事，写在结尾也是真的。
+  // 空的和「抄了提示词」不是一回事：空的应该报太短，别让它混进回声里查原因
+  if (!body) return { ok: false, reason: 'too_short', chars: 0 }
   if (isPromptEcho(body)) return { ok: false, reason: 'echo', head: body.slice(0, 60) || '(empty)' }
   if (chars < 120) return { ok: false, reason: 'too_short', chars }
   if (chars > 1200) return { ok: false, reason: 'too_long', chars }

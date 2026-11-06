@@ -250,6 +250,22 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'who-before-part', note: '回退 = git checkout who-before-part -- src/modules/who.js src/modules/relations.js src/modules/parts.js src/ports/ownership.js src/features.js src/parts/speak/judge.js test/exam-who.test.mjs' },
   },
+  {
+    id: 'diary',
+    name: '日记',
+    role: '器官',
+    chain: '链上',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/diary.js · buildDiaryV2',
+    files: ['src/modules/diary.js'],
+    entry: 'buildDiaryV2 / prepareDiary / checkDiary / normalizeDiaryText（src/modules/diary.js）；宿主接线：src/modules/nightly.js 每晚 23:00 调，index.js 注册补写',
+    exam: { file: 'test/exam-diary.test.mjs', score: '25/25', note: '日期头撕掉重补 / JSON·围栏·前缀收干净 / 抄提示词不算 / 质检五档 / 口吻由状态推，25 道' },
+    assert: '表：diaries / diary_pending；读：listDiary / pendingForDay；回退：diary-before-part',
+    swaps: [],
+    rollback: { pointer: 'diary-before-part', note: '回退 = git checkout diary-before-part -- src/modules/diary.js src/modules/parts.js test/exam-diary.test.mjs docs/给人看的/零件-日记.md' },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
