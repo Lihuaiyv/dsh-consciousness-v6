@@ -1030,7 +1030,7 @@ let styleLines = []
   // 仓库里留一份源（assets/stickers/whale）和台词表。电脑端没有这条通路，不写。
   let stickerLine = ''
   if (/^qq:/i.test(String(conversationId || ''))) {
-    stickerLine = '表情：可发目录里有一组鲸鱼娘表情（stickers/whale/ 下的 010–123.webp，台词表是同目录 README.md），'
+    stickerLine = '表情：可发目录里有一组鲸鱼娘表情（stickers/whale/ 下的 001–030.gif，台词表是同目录 README.md），'
       + '想发一张就调 qq_send_image 传相对路径；别每轮都发，也别连发。'
   }
 
@@ -1081,6 +1081,8 @@ let styleLines = []
     stranger ? '你还不认识对方，先不叫任何称呼，等对方自我介绍。'
       : (str(persona, 'style.address') ? '你称呼对方为「' + str(persona, 'style.address') + '」。' : ''),
     str(persona, 'style.catchphrase') ? '口头禅：' + str(persona, 'style.catchphrase') + '。' : '',
+    // 颜文字紧挨着语气/称呼：这层是「怎么说话」，埋在中段会被稀释掉（2026-11-07 实测过一轮）。
+    kaoLine,
     exBlock,
     axesLine && axesLine !== '中间' ? '鱼格倾向：' + axesLine + '。' : '',
     mbtiLine || '',
@@ -1105,7 +1107,6 @@ let styleLines = []
     ...selfNoteLines,
     expr ? '我想怎么说：' + cardLine({ level: expr.level }) : '',
     ...styleLines,
-    kaoLine,
     stickerLine,
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
       + (userEmotion.raw_label ? '（我按你以前的纠正改的：我一开始读成' + userEmotion.raw_label + '）' : '')
