@@ -3,7 +3,7 @@
  * 运行：node test/presence.test.mjs
  */
 import { makeWorld } from './eval-persona/setup.mjs'
-import { describeGap, partOfDay, presenceLine, lastTurnOf } from '../src/modules/presence.js'
+import { describeGap, partOfDay, clockOf, presenceLine, lastTurnOf } from '../src/modules/presence.js'
 import { consciousnessBlock } from '../index.js'
 
 let pass = 0
@@ -51,6 +51,14 @@ const days = (n) => n * 86400000
   check('快到半夜', partOfDay(at(23)) === '快到半夜')
 }
 
+// ---- 钟点：光有时段词，过了六点就只剩一个字，她没别处可对
+{
+  const at = (h, m) => new Date(2026, 10, 7, h, m, 0)
+  check('钟点补零到分', clockOf(at(9, 5)) === '09:05（11-07）', clockOf(at(9, 5)))
+  check('两点五十三', clockOf(at(14, 53)) === '14:53（11-07）', clockOf(at(14, 53)))
+  check('跨零点的日子也跟着走', clockOf(at(23, 59)) === '23:59（11-07）', clockOf(at(23, 59)))
+}
+
 // ---- 没有对话：不瞎说
 {
   const w = makeWorld()
@@ -60,6 +68,8 @@ const days = (n) => n * 86400000
     const p = presenceLine(w.db, w.aid)
     check('空库说没说过话', p.line.includes('还没跟他说过话'), p.line)
     check('空库也给时段', p.line.startsWith('现在：'), p.line)
+    const pinned = presenceLine(w.db, w.aid, { at: new Date(2026, 10, 7, 14, 53, 0) })
+    check('空库也带钟点', pinned.line.includes('现在：下午 14:53（11-07）'), pinned.line)
   } finally { w.close() }
 }
 

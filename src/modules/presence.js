@@ -3,6 +3,8 @@
  *
  * 为什么单独一个模块：以前注入里只有「下午」这种时段，她不知道你是刚才说的，
  * 还是三天前说的。同一句「我回来了」，落在十分钟后和三周后，该是两种回答。
+ * 2026-11-07 补：时段词旁边带上钟点和日子（14:53（11-07））——光给「下午」，
+ * 过了六点换一个字，她没别处可对，就会自己编一个「晚上了」。
  *
  * 硬规则：
  *   - 只读，不写。不 touch 会话、不拨时间戳。
@@ -26,6 +28,18 @@ export function partOfDay(d = new Date()) {
   if (h < 18) return '下午'
   if (h < 23) return '晚上'
   return '快到半夜'
+}
+
+/**
+ * 钟点 + 日子：14:53（11-07）。
+ *
+ * 为什么只补这一行：时段词（下午 / 晚上）太粗，过了六点就换一个字，她没别处可对，
+ * 就会自己编一个「晚上了」。秒不写：每轮差几秒，写进去只会让提示词一直抖。
+ */
+export function clockOf(d = new Date()) {
+  const t = d instanceof Date ? d : new Date(d)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(t.getHours())}:${p(t.getMinutes())}（${p(t.getMonth() + 1)}-${p(t.getDate())}）`
 }
 
 /** 天数的中文说法：三天前比 3 天前像人话。 */
@@ -91,14 +105,15 @@ const clip = (s, n) => {
 export function presenceLine(db, aid, opt = {}) {
   const at = opt.at != null ? new Date(opt.at) : new Date()
   const part = partOfDay(at)
+  const clock = clockOf(at)
   const conv = opt.conversationId == null ? null : String(opt.conversationId)
   const last = opt.last !== undefined ? opt.last : lastTurnOf(db, aid)
-  if (!last) return { line: '现在：' + part + '。还没跟他说过话。', gapMs: null, phrase: '', last: null, here: null }
+  if (!last) return { line: '现在：' + part + ' ' + clock + '。还没跟他说过话。', gapMs: null, phrase: '', last: null, here: null }
   const gapMs = Math.max(0, at.getTime() - last.at)
   const phrase = describeGap(gapMs, at)
   // 引用只认这一段：本段没有上一句就只留时间距离，不拿别段的话冒充。
   const here = conv ? lastTurnOf(db, aid, { conversationId: conv }) : last
   const mine = here && here.role === 'agent'
   const tail = here && here.text ? '；' + (mine ? '我' : '你') + '上一句说的是「' + clip(here.text, 36) + '」' : ''
-  return { line: '现在：' + part + '；' + phrase + tail + '。', gapMs, phrase, last, here: here || null }
+  return { line: '现在：' + part + ' ' + clock + '；' + phrase + tail + '。', gapMs, phrase, last, here: here || null }
 }
