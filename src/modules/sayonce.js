@@ -40,19 +40,21 @@ export function saidToday(db, aid, key, at = Date.now()) {
 
 /**
  * 今天还能不能说这一句。
- * @param {{at?:number, maxDays?:number, withinDays?:number}} o
+ * @param {{at?:number, maxDays?:number, withinDays?:number, meta?:object}} o
  *   maxDays>0 时：窗口 withinDays 天内说满这么多天就不再开口（不传窗口 = 全历史，慎用）。
+ *   meta：顺手记下的当时读数（比如方向灯的 delta）。事后对账不必再猜「当时是什么样」。
  * @returns {boolean} true = 说，并且已经记了一笔；false = 今天/这阵子已经说过。
  */
-export function canSayOnce(db, aid, key, { at = Date.now(), maxDays = 0, withinDays = 0 } = {}) {
+export function canSayOnce(db, aid, key, { at = Date.now(), maxDays = 0, withinDays = 0, meta = null } = {}) {
   if (maxDays > 0 && saidDays(db, aid, key, { at, withinDays }) >= maxDays) return false
   if (saidToday(db, aid, key, at)) return false
   /* 按「决定说这句话的时刻」记，不用 event()——它固定写 now()，
      回放/模拟时几天的话会全挤在今天，闸就废了。 */
   try {
     const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
+    const payload = meta && typeof meta === 'object' ? { ...meta, key, day: dayOf(at) } : { key, day: dayOf(at) }
     db.prepare('INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)')
-      .run(id, aid, 'say.once', JSON.stringify({ key, day: dayOf(at) }), new Date(at).toISOString())
+      .run(id, aid, 'say.once', JSON.stringify(payload), new Date(at).toISOString())
   } catch { /* 记不上就照常说，别把话吞了 */ }
   return true
 }

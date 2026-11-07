@@ -48,6 +48,12 @@ try {
   check('窗口只管窗口内：总数仍是三天', saidDays(db, aid, 'trend.old') === 3, saidDays(db, aid, 'trend.old'))
   check('窗口内不计旧账', saidDays(db, aid, 'trend.old', { withinDays: 10 }) === 0, saidDays(db, aid, 'trend.old', { withinDays: 10 }))
   check('三个月前的三天不算数：今天还能说', canSayOnce(db, aid, 'trend.old', { maxDays: 3, withinDays: 10 }) === true)
+
+  // 3) meta：说这句话的时候顺手记下当时的读数，事后对账不用猜
+  canSayOnce(db, aid, 'trend.meta', { meta: { delta: -0.12 } })
+  const metaRow = db.prepare("SELECT payload FROM events WHERE agent_id=? AND type='say.once' AND payload LIKE '%trend.meta%' ORDER BY created_at DESC LIMIT 1").get(aid)
+  const metaPayload = JSON.parse((metaRow || {}).payload || '{}')
+  check('meta 跟着落库（key 和 delta 都在）', metaPayload.key === 'trend.meta' && metaPayload.delta === -0.12, metaPayload)
 } finally {
   w.close && w.close()
 }
