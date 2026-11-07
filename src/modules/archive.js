@@ -16,6 +16,7 @@ import crypto from 'node:crypto'
 import { now, localDay, localDayBounds } from '../db.js'
 import { feelIdIn, feelIdsOnDay } from './feel.js'
 import { nid } from '../kernel.js'
+import { cleanLine } from '../text.js'
 import { rebuildMemoryFts as rebuildMemoryFtsRows } from './memory_fields.js'
 import {  } from './sangguan/vweights.js'
 import {
@@ -66,6 +67,19 @@ function topicsOf(texts, k = 6) {
 function trim(text, n) {
   const s = String(text || '').replace(/\s+/g, ' ').trim()
   return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+/**
+ * 按句号剪，不按字数硬切。
+ * 开场续接只给 70 字；硬切会把一句话从中间劈开，念出来是半句。
+ * 找不到句号时退回硬切 + 省略号——宁可短，也别假装说完了。
+ */
+function clipSentence(text, n) {
+  const s = String(text || '').trim()
+  if (s.length <= n) return s
+  const head = s.slice(0, n)
+  const m = head.match(/^[\s\S]*[。！？!?…]/)
+  return m ? m[0] : head + '…'
 }
 
 // ---------------------------------------------------------------- T4 原文
@@ -343,21 +357,67 @@ export function backfillFactArchive(db, aid = null) {
 
 // ---------------------------------------------------------------- T2 纪要
 
-/** 取一段原文（会话或某天），压缩成一条纪要。 */
+/**
+ * 从她这一段的回话里挑一句「我说过的话」。
+ *
+ * 为什么不用收尾那句：收尾常常只是「嗯，我在听」「好了」——那不是我在这段里说的话，只是一个句号。
+ * 为什么挑单句、不用 180 字截断：截断会把一句话从中间劈开，回忆里读到的就成了半句。
+ * 为什么走 cleanLine：它挡掉路径 / 代码 / 凭据——纪要是回忆的索引，不是交活的清单。
+ * 挑不出来（整段都在报参数）就返回 ''，调用方退回最长那条回话的开头。
+ */
+function pickMyLine(agents) {
+  const lines = []
+  for (const r of agents || []) {
+    const text = String((r && r.text) || '')
+    for (const s of text.split(/(?<=[。！？!?…])|\r?\n+/)) {
+      const line = cleanLine(s)
+      if (!line) continue
+      // 标题、列表、引用、表格行是排版，不是说话
+      if (/^(?:[#>*|]|[-–—]\s|\d+[.、])/.test(line)) continue
+      // 带内联代码的是在报参数（`ls`、`kubectl get`），不是在跟人说话
+      if (line.includes('`')) continue
+      lines.push(line)
+    }
+  }
+  if (!lines.length) return ''
+  const score = (s) => (/[你我]/.test(s) ? 2 : 0) + (/[，。！？]/.test(s) ? 1 : 0)
+  lines.sort((a, b) => score(b) - score(a) || b.length - a.length)
+  return lines[0]
+}
+
+/**
+ * 取一段原文（会话或某天），压缩成一条纪要。
+ *
+ * opt.from / opt.to：只吃这个时间窗里的原文（老版本按时间切过段，历史纪要要按自己的
+ *   起止重算，否则只能整段合并，把几段揉成一句）。
+ * opt.episodeId：明确改哪一行——分段纪要一行一段，不能用「会话+哪天」去猜。
+ */
 export function buildEpisode(db, aid, opt = {}) {
   const day = opt.day ? String(opt.day) : null
   const sessionId = opt.session ? String(opt.session) : null
+  const from = opt.from ? String(opt.from) : null
+  const to = opt.to ? String(opt.to) : null
   if (!day && !sessionId) throw new Error('buildEpisode 需要 day 或 session')
   const where = ['agent_id=?']
   const args = [aid]
   if (day) { where.push('day=?'); args.push(day) }
   if (sessionId) { where.push('session_id=?'); args.push(sessionId) }
+  if (from) { where.push('created_at>=?'); args.push(from) }
+  if (to) { where.push('created_at<=?'); args.push(to) }
   const rows = db.prepare(`SELECT * FROM raw_turns WHERE ${where.join(' AND ')} ORDER BY created_at, seq`).all(...args)
   if (!rows.length) return null
 
   const users = rows.filter((r) => r.role === 'user').map((r) => r.text)
   const agents = rows.filter((r) => r.role !== 'user')
   const lastAgent = agents.length ? agents[agents.length - 1].text : ''
+  /* 纪要里留我哪一句：挑整段里最长的那条回话，不是收尾那句。
+     收尾常常只是「嗯，我在听」——那不是我在这段里说过的话，只是一个句号。 */
+  const bestAgent = agents
+    .map((r) => String(r.text || '').trim())
+    .filter((t) => t && !/^(Time sampled|Approval prompts|##|<|\{)/.test(t))
+    .sort((a, b) => b.length - a.length)[0] || ''
+  // 优先挑一句真像「我在跟你说话」的；整段都在报参数时，退回最长那条的开头。
+  const myLine = pickMyLine(agents) || (bestAgent ? trim(bestAgent, 180) : '')
   // meaningful 要先算出来：下面挑标题时会拿它兜底（早先写反了顺序，空标题时会直接抛错）
   const meaningful = users.filter((t) => !/^(Time sampled|Approval prompts|##|<|\{)/.test(String(t).trim()))
   // 标题挑一句像人说的话：跳过运行时模板、系统注入和超长粘贴。
@@ -370,9 +430,21 @@ export function buildEpisode(db, aid, opt = {}) {
     .filter((t) => /[?？]|(吗|呢|怎么办|要不要)$/.test(String(t).trim()))
     .slice(-3)
     .map((t) => trim(t, 40))
+  /* 这一段的「代表感觉」：取时段内离结尾最近的一条。没有就 null——不拿段外的感觉凑。
+     顺带决定要不要把它写进纪要：感觉行是她当时自己写的第一人称一句，比任何挑句规则都更像我。 */
+  const epFeel = feelIdIn(db, aid, { from: rows[0].created_at, to: rows[rows.length - 1].created_at })
+  const feelLine = (() => {
+    if (!epFeel) return ''
+    try {
+      const t = String((db.prepare('SELECT text FROM affect_feel WHERE id=?').get(epFeel) || {}).text || '').replace(/\s+/g, ' ').trim()
+      if (!t || t.length > 60 || t.includes('`')) return ''
+      return t
+    } catch { return '' }
+  })()
   const summary = [
-    meaningful.length ? '你说了：' + trim(meaningful.slice(0, 3).join(' / '), 180) : '',
-    lastAgent ? '我回了：' + trim(lastAgent, 180) : '',
+    meaningful.length ? '你对我说：' + trim(meaningful.slice(0, 3).join('；'), 180) : '',
+    myLine ? '我对你说：' + myLine : '',
+    feelLine ? '那会儿我留了一句：' + feelLine : '',
   ].filter(Boolean).join(' ')
 
   const ep = {
@@ -389,10 +461,11 @@ export function buildEpisode(db, aid, opt = {}) {
     importance: Number(opt.importance ?? 0.5),
     source: opt.source || 'rules',
   }
-  const old = db.prepare('SELECT id,importance FROM episodes WHERE agent_id=? AND session_id IS ? AND day=?')
-    .get(aid, ep.session_id, ep.day)
-  // 这一段的「代表感觉」：取时段内离结尾最近的一条。没有就 null——不拿段外的感觉凑。
-  const epFeel = feelIdIn(db, aid, { from: ep.start_at, to: ep.end_at })
+  const old = opt.episodeId
+    ? db.prepare('SELECT id,importance FROM episodes WHERE id=?').get(String(opt.episodeId))
+    : db.prepare('SELECT id,importance FROM episodes WHERE agent_id=? AND session_id IS ? AND day=?')
+      .get(aid, ep.session_id, ep.day)
+  if (opt.episodeId && !old) return null   // 指定了行却没找到：不另建一条
   if (old) {
     db.prepare(`UPDATE episodes SET start_at=?, end_at=?, turns=?, title=?, summary=?, topics=?,
         open_loops=?, importance=?, source=?, feel_id=COALESCE(?, feel_id) WHERE id=?`)
@@ -456,12 +529,22 @@ export function sessionBridge(db, aid, opt = {}) {
         ORDER BY day DESC, end_at DESC LIMIT 1`).get(aid, String(today))
     }
     if (!r) return ''
-    const summary = String(r.summary).replace(/\s+/g, ' ').trim().slice(0, 70)
+    /* 纪要正文是「你对我说… 我对你说…」两半。开场只给 70 字，
+       整段剪就会只念到你的那半、把我的那半挡在外面——两半各分一点，才听得见我说过什么。 */
+    const full = String(r.summary).replace(/\s+/g, ' ').trim()
+    const mineAt = full.indexOf(' 我对你说：')
+    const summary = full.length <= 70
+      ? full
+      : mineAt > 0
+        ? clipSentence(full.slice(0, mineAt), 38) + ' 我说：' + clipSentence(full.slice(mineAt + 6), 34)
+        : clipSentence(full, 70)
     if (!summary) return ''
     /* 不再念 episode 里那串「还没收尾的」。
        它其实只是散场前最后几句问话：没有 id、没有状态、没人能关它。挂上「待办」这个名字，
        就成了一笔永远销不掉的假账，还天天复读。真没办完的事归 open_loops 那条线管。 */
-    const head = sameDay ? '今天早些时候（' + r.day + '）你们聊到：' : '上次（' + r.day + '）你们聊到：'
+    /* 续接的口气也是第一人称：以前的「你们聊到：」是在旁边看两个人说话，
+       现在是「你对我说」——摘要里已经带人称了，这里只报个时间。 */
+    const head = sameDay ? '今天早些时候（' + r.day + '）' : '上次（' + r.day + '）'
     return head + summary
   } catch { return '' }
 }

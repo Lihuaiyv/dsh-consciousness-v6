@@ -34,6 +34,7 @@ import { run as runPersonaJudge } from './persona_judge.js'
 import { run as runProbes } from './persona_probe.js'
 import { auditTimeline } from './timeline.js'
 import { judgeDay } from './pair_judge.js'
+import { reconcileClaims } from './claim_state.js'
 
 /** 本地日期（不要用 toISOString，那是 UTC，跨零点会错一天）。 */
 export function localDay(d = new Date()) {
@@ -107,13 +108,19 @@ export async function runNightly(db, aid, opt = {}) {
   const steps = []
   const push = (name, extra = {}) => steps.push({ step: name, ...extra })
 
-  // ① 当天各会话补纪要
+  // ① 当天各会话补纪要（重压，不再「有就跳过」）
+  //    以前是「这条已经建过就 continue」，结果一条在会话中途压过的纪要会被永远冻在那儿：
+  //    库里 256 条有 124 条盖不满，最狠一条记着 4 轮、实际聊了 142 轮。
+  //    纪要是原文的投影，重压是幂等的，所以当天每个会话都重算一遍。
   let episodes = 0
   try {
     const sessions = db.prepare('SELECT DISTINCT session_id FROM raw_turns WHERE agent_id=? AND day=?').all(aid, day)
     for (const s of sessions) {
-      const has = db.prepare('SELECT 1 FROM episodes WHERE agent_id=? AND day=? AND session_id IS ?').get(aid, day, s.session_id)
-      if (has) continue
+      /* 一组多行是历史分段遗留（老版本按时间切过段），它们的 turns 是按段记的、合起来才对得上原文。
+         把几段合并成一条等于把一团历史揉成一句，所以这种组不碰。 */
+      let n = 0
+      try { n = Number(db.prepare('SELECT COUNT(*) n FROM episodes WHERE agent_id=? AND day=? AND session_id IS ?').get(aid, day, s.session_id).n) || 0 } catch { n = 0 }
+      if (n > 1) continue
       try {
         const ep = buildEpisode(db, aid, { session: s.session_id, day })
         if (ep) episodes++
@@ -123,6 +130,27 @@ export async function runNightly(db, aid, opt = {}) {
   } catch (e) {
     push('episodes', { ok: false, error: String(e && e.message) })
   }
+
+  // ①b 近一周的补缝
+  //     夜巡跑完那天还在继续聊的段，纪要记的轮数会少于原文；而那一天以后不会再被夜巡碰到。
+  //     这里只补真正缺的（actual > claimed），已经齐的不动。
+  let patched = 0
+  try {
+    const since = new Date(Date.parse(day + 'T00:00:00Z') - 7 * 86400000).toISOString().slice(0, 10)
+    const rows = db.prepare(`SELECT e.agent_id, e.session_id, e.day, e.turns,
+        (SELECT COUNT(*) FROM episodes x WHERE x.agent_id=e.agent_id
+           AND x.session_id IS e.session_id AND x.day=e.day) AS rows_in_group,
+        (SELECT COUNT(*) FROM raw_turns r WHERE r.agent_id=e.agent_id
+           AND r.session_id IS e.session_id AND r.day=e.day
+           AND r.text IS NOT NULL AND r.text <> '') AS actual
+      FROM episodes e WHERE e.agent_id=? AND e.day>=?`).all(aid, since)
+    for (const r of rows) {
+      if (Number(r.rows_in_group || 0) > 1) continue   // 历史分段，别合并（同上）
+      if (!r.actual || Number(r.actual) <= Number(r.turns || 0)) continue
+      try { if (buildEpisode(db, aid, { session: r.session_id, day: r.day })) patched++ } catch { /* 单条失败跳过 */ }
+    }
+  } catch { /* 补缝失败不影响主流程 */ }
+  if (patched) push('episodes.patch', { ok: true, count: patched })
 
   // ② 写这一天的日记（补写时 late=1：写的时候已经不是那一天了）
   // 顺序：先补历史待补（昨天没写成的），再写今天，最后看有没有旧 rules/stub 篇可自愈。
@@ -342,6 +370,41 @@ export async function runNightly(db, aid, opt = {}) {
     }
   } catch (e) {
     push('stale_judge', { ok: true, skipped: 'error', error: String(e && e.message).slice(0, 120) })
+  }
+
+  // ⑪e 断言状态核对（v3）：对「还没做」的旧条，看之后的记录证明做完了没有。
+  //    shadow：只改 memory_claims.state，不动 invalid_at；off 时整段不跑。
+  try {
+    const mode = String(getParam(db, aid, 'memory.claim.enable') || 'off')
+    const engine = opt.model || model
+    let can = false
+    try { can = !!(engine.capabilities() || {}).complete } catch { can = false }
+    if (mode === 'off') {
+      push('claim_reconcile', { ok: true, skipped: 'off' })
+    } else if (!can) {
+      push('claim_reconcile', { ok: true, skipped: 'no-model' })
+    } else {
+      const r = await reconcileClaims({
+        db, aid,
+        complete: (req) => engine.complete(req),
+        limit: Math.max(1, Math.min(200, Number(getParam(db, aid, 'memory.claim.daily_max')) || 40)),
+        minAgeDays: Math.max(0, Number(getParam(db, aid, 'memory.claim.min_age_days')) || 3),
+        timeoutMs: Math.max(200, Number(getParam(db, aid, 'memory.claim.timeout_ms')) || 6000),
+        via: 'nightly',
+      })
+      if (mode === 'on' && (r.doneIds.length || r.staleIds.length)) {
+        // 开闸：只有 mode=on 才真的动记忆；shadow 永远只写 claim。
+        try {
+          const { invalidateMemory } = await import('./timeline.js')
+          for (const id of [...r.doneIds, ...r.staleIds]) {
+            try { invalidateMemory(db, aid, id, { reason: 'claim_done', actor: 'nightly' }) } catch { /* 单条失败不连累 */ }
+          }
+        } catch { /* 导入失败就只写 claim */ }
+      }
+      push('claim_reconcile', { ok: true, ...r })
+    }
+  } catch (e) {
+    push('claim_reconcile', { ok: true, skipped: 'error', error: String(e && e.message).slice(0, 120) })
   }
 
   // ⑫ 时效索引对账：白天钩子漏写的事件，这里按主表现状补 SYNC（标近似）。

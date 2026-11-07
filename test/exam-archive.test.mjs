@@ -85,7 +85,7 @@ const iso = (ms) => new Date(ms).toISOString()
 {
   const ep = buildEpisode(db, aid, { session: 's1' })
   check('压出纪要：拿到 id / 标题', ep && !!ep.id && String(ep.title || '').length > 0, ep)
-  check('纪要带你说的 / 我回的', String(ep.summary || '').includes('你说了：') && String(ep.summary || '').includes('我回了：'), ep && ep.summary)
+  check('纪要带你对我说的 / 我对你说的', String(ep.summary || '').includes('你对我说：') && String(ep.summary || '').includes('我对你说：'), ep && ep.summary)
   check('纪要记下轮数', ep.turns === 2, ep && ep.turns)
   const again = buildEpisode(db, aid, { session: 's1' })
   check('再压一次：更新同一条，不新建', again.updated === true && again.id === ep.id, again)
@@ -93,6 +93,42 @@ const iso = (ms) => new Date(ms).toISOString()
   check('没给 day / session：抛错', (() => { try { buildEpisode(db, aid, {}); return false } catch { return true } })())
   setEpisodePoignancy(db, aid, ep.id, 0.66)
   check('窄写口：只改戳心度这一列', Number(db.prepare('SELECT poignancy FROM episodes WHERE id=?').get(ep.id).poignancy) === 0.66)
+}
+
+// ================================================================ T2 纪要：末尾带上「那会儿我留了一句」
+// 那半句不是规则挑的、也不是模型编的，是当时她自己写的第一人称一行（feel）。
+// 这几条盯的就是：该带的时候带上，不该带的时候一句都不许塞。
+{
+  const base = Date.parse('2026-03-05T10:00:00.000Z')
+  const at = (s) => new Date(base + s * 1000).toISOString()
+  const feel = (id, text, when) => db.prepare(
+    'INSERT INTO affect_feel(id,agent_id,at,text,label,fast,slow,total) VALUES(?,?,?,?,?,?,?,?)')
+    .run(id, aid, when, text, 'calm', 0.1, 0.1, 0.2)
+
+  appendTurn(db, aid, { sessionId: 's_feel', role: 'user', text: '你说我们能记住多少', at: at(0) })
+  appendTurn(db, aid, { sessionId: 's_feel', role: 'assistant', text: '我记着的那些，都是我自己挑的。', at: at(10) })
+  feel('afe_t1', '手心有点热，想再多说两句。', at(5))
+  const epFeel = buildEpisode(db, aid, { session: 's_feel' })
+  check('纪要带上那会儿我留的那句', String(epFeel.summary || '').includes('那会儿我留了一句：手心有点热'), epFeel && epFeel.summary)
+  check('纪要挂上这条 feel 的 id', epFeel.feel_id === 'afe_t1', epFeel && epFeel.feel_id)
+
+  // 窗口之外的感觉：不许拿来凑
+  appendTurn(db, aid, { sessionId: 's_feel_out', role: 'user', text: '早上的事', at: at(100) })
+  feel('afe_out', '早上那会儿还没睡醒。', at(900))
+  const epOut = buildEpisode(db, aid, { session: 's_feel_out' })
+  check('窗口外的感觉不硬塞进纪要', !String(epOut.summary || '').includes('那会儿我留了一句'), epOut && epOut.summary)
+
+  // 太长：不写
+  appendTurn(db, aid, { sessionId: 's_feel_long', role: 'user', text: '一句话', at: at(200) })
+  feel('afe_long', '这句太长了'.repeat(20), at(205))
+  const epLong = buildEpisode(db, aid, { session: 's_feel_long' })
+  check('感觉行太长：不写进纪要', !String(epLong.summary || '').includes('那会儿我留了一句'), epLong && epLong.summary)
+
+  // 带内联代码：不写
+  appendTurn(db, aid, { sessionId: 's_feel_code', role: 'user', text: '一句话', at: at(300) })
+  feel('afe_code', '看了下 `ls` 的输出，没别的', at(305))
+  const epCode = buildEpisode(db, aid, { session: 's_feel_code' })
+  check('感觉行带代码：不写进纪要', !String(epCode.summary || '').includes('那会儿我留了一句'), epCode && epCode.summary)
 }
 
 // ================================================================ T3 日记：读口
