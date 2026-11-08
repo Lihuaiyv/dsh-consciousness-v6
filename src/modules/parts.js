@@ -501,6 +501,25 @@ export const PARTS = [
       note: '回退 = 删 src/parts/mouth/ 与 test/exam-mouth.test.mjs，删本行、删 ownership voice 里那三个文件（tag 打在未提交改动的 HEAD 上，新文件不在那个 commit 里，只能手删）',
     },
   },
+  {
+    id: 'budget',
+    name: '模型预算',
+    role: '骨架',
+    chain: '链外',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/modules/llm_budget.js · llmBudgetAllow',
+    files: ['src/modules/llm_budget.js'],
+    entry: 'llmBudgetAllow / llmBudgetBump / llmBudgetSnapshot / shouldDeferExtract（src/modules/llm_budget.js）',
+    exam: { file: 'test/exam-budget.test.mjs', score: '16/16', note: '不限额照记 / 种类分桶 / 另一天清空 / 蒸馏满额推迟 / 拧开日顶才挡 / 顶见底推迟抽取，16 道' },
+    assert: '表：flags / extract_queue；读：llmBudgetAllow / llmBudgetSnapshot / shouldDeferExtract；回退：budget-before-part',
+    swaps: [],
+    rollback: {
+      pointer: 'budget-before-part',
+      note: '回退 = git checkout budget-before-part -- src/modules/parts.js src/kernel.js src/ports/ownership.js scripts/exam-sabotage-parts.mjs docs/给人看的/零件-待立-2026-11-05.md docs/给人看的/对账-三十五行-2026-11-06.md，再删 test/exam-budget.test.mjs 与 docs/给人看的/零件-模型预算.md（llm_budget.js 这次没改行为）',
+    },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */

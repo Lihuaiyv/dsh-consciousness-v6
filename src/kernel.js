@@ -226,6 +226,11 @@ export const PARAMS = {
   'memory.judge.timeout_ms': ['C4', 6000],
   // 两次模型调用之间的最小间隔（毫秒）：抽取高峰时别把宿主模型打满。
   'memory.judge.min_interval_ms': ['C4', 800],
+  // 日模型调用硬顶（提炼 / 聚类 / 日记 / 蒸馏 / 抽取共用）。0 = 不限额，和旋钮没挂上时一样。
+  'memory.llm.daily_cap': ['C4', 0],
+  // 纪要蒸馏开关，以及蒸馏自己的日顶。总顶见底或蒸馏满额时，同日抽取应延后。
+  'memory.episode.distill': ['C4', 'on'],
+  'memory.episode.distill.daily_cap': ['C4', 6],
 
   // 断言状态（记忆时态 v3）：off 不跑 / shadow 只写 claim / on 才允许按核对结果作废。
   'memory.claim.enable': ['C4', 'off'],

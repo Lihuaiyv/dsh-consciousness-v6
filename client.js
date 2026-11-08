@@ -9406,16 +9406,17 @@ window.__ModuleLoader__.load({
                 setTimeout(() => {
                   if (!alive) return
                   try {
+                    // 跟后面的持续呼吸用同一套节奏，这样两下预告和之后的呼吸是同一个频率
                     el.animate(
                       [
-                        { boxShadow: '0 0 0 0 rgba(255,255,255,.45)', transform: 'scale(1)' },
-                        { boxShadow: '0 0 0 12px rgba(255,255,255,0)', transform: 'scale(1.9)' },
-                        { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
+                        { boxShadow: '0 0 0 3px rgba(255,255,255,.12)', transform: 'scale(1.2)' },
+                        { boxShadow: '0 0 0 11px rgba(255,255,255,0)', transform: 'scale(1.9)' },
+                        { boxShadow: '0 0 0 3px rgba(255,255,255,.12)', transform: 'scale(1.2)' },
                       ],
-                      { duration: 560, easing: 'ease-out' },
+                      { duration: 1400, easing: 'ease-in-out' },
                     )
                   } catch { /* 老浏览器不支持 animate 就算了 */ }
-                }, i * 320)
+                }, i * 1400)
               }
               // 然后一直「呼吸」着，等这句话说完才停
               const holdMs = Math.max(900, until - Date.now())
@@ -9438,7 +9439,6 @@ window.__ModuleLoader__.load({
                 breathRef.current = null
                 el.style.opacity = '.6'
               }, holdMs)
-            }
             }
           } catch { /* 接口还没起来就静静待着 */ }
         }

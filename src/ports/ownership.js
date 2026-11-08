@@ -43,6 +43,10 @@ export const WRITES = Object.freeze({
   actions: ['action_config'],
   // 听见 / 出声只搬字节；语音基线记一张一人一行的小表（只存滚动平均，不存音频）。
   voice: ['voice_baseline'],
+  // 收信认件 / 画板不写库。微信收信写聊天账本；水位走共享 flags，不在这里声明。
+  inbox: [],
+  paint: [],
+  wechatinbox: ['chat_turns'],
   // 搬库 / 编排：ops 清库和导入、host 导入导出和接线。它们可以写别的域的表，
   // 但只许在本名单里——不是「想写哪张写哪张」。真正的进一步拆分要等把导入/导出/清库
   // 的代码抽成独立文件，那之前先按整域例外登记。
@@ -299,7 +303,8 @@ export const OWNERSHIP = {
     // fact_archive：原地改写的旧句留底（`<id>:hist:<version>`）
     // memory_pair_judge：窄门判定的缓存表（pair_judge 负责读写），gate 只把 applied 标成 0/1——
     // 登记在这里是为了让这次跨模块写可见，不是把表从 pair_judge 抢过来。
-    files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js', 'modules/memory_source.js', 'modules/pair_judge.js', 'modules/write_lane.js'],
+    // llm_budget.js：日调用账记在 flags（走 kernel）；推迟抽取那句 SQL 写 extract_queue，所以文件归这个域。
+    files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js', 'modules/memory_source.js', 'modules/pair_judge.js', 'modules/write_lane.js', 'modules/llm_budget.js'],
     tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive', 'memory_pair_judge'],
   },
   timeline: {

@@ -325,6 +325,16 @@ const CASES = [
     importFrom: "'../src/parts/mouth/index.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：不限额也当满了——顶是 0 时本来一直许，这下一次都不许。
+    name: '模型预算：不限额也拦住（日顶门反了）',
+    impl: 'src/modules/llm_budget.js',
+    exam: 'test/exam-budget.test.mjs',
+    from: '  if (!snap.cap) return { ok: true, ...snap }',
+    to: '  if (false) return { ok: true, ...snap }',
+    importFrom: "'../src/modules/llm_budget.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0
