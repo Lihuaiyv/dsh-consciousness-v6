@@ -9380,17 +9380,15 @@ window.__ModuleLoader__.load({
       return ''
     }
 
-    /** 输入框那个槽如果在，只负责把「发送」接口交出来。自己不画东西（但顺手挂那颗光点）。 */
+    /** 输入框右边的槽：交出「发送」接口，顺手挂一颗小光点（就贴在输入框旁边）。 */
     function VoiceMicBridge(props) {
       const sid = voiceSessionId(props)
       if (sid) VOICE.sid = sid
       if (props && props.inputActions) VOICE.actions = props.inputActions
-      // 右下角那颗光点：常驻一颗小白点，我开口时亮一下（跟麦克风按钮、名字牌一样的做法）。
+      const glowRef = useRef(null)
       useEffect(() => {
-        const el = document.createElement('div')
-        el.id = 'dshc-voice-glow'
-        el.style.cssText = 'position:fixed;right:22px;bottom:26px;width:8px;height:8px;border-radius:50%;background:#fff;opacity:.45;z-index:2147483645;pointer-events:none;transition:opacity .4s ease;'
-        document.body.appendChild(el)
+        const el = glowRef.current
+        if (!el) return
         let last = 0
         let alive = true
         const poll = async () => {
@@ -9405,21 +9403,37 @@ window.__ModuleLoader__.load({
                 el.animate(
                   [
                     { boxShadow: '0 0 0 0 rgba(255,255,255,.5)', transform: 'scale(1)' },
-                    { boxShadow: '0 0 0 16px rgba(255,255,255,0)', transform: 'scale(2.2)' },
+                    { boxShadow: '0 0 0 14px rgba(255,255,255,0)', transform: 'scale(2.1)' },
                     { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
                   ],
-                  { duration: 1500, easing: 'ease-out' },
+                  { duration: 1400, easing: 'ease-out' },
                 )
               } catch { /* 老浏览器不支持 animate 就算了 */ }
-              setTimeout(() => { if (alive) el.style.opacity = '.45' }, 1500)
+              setTimeout(() => { if (alive) el.style.opacity = '.5' }, 1400)
             }
           } catch { /* 接口还没起来就静静待着 */ }
         }
         const timer = setInterval(poll, 700)
         poll()
-        return () => { alive = false; clearInterval(timer); try { el.remove() } catch { /* gone */ } }
+        return () => { alive = false; clearInterval(timer) }
       }, [])
-      return null
+      return h('span', {
+        ref: glowRef,
+        id: 'dshc-voice-glow',
+        title: '我说话的时候，这里会亮',
+        style: {
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: '#fff',
+          opacity: 0.5,
+          display: 'inline-block',
+          marginRight: 8,
+          flex: '0 0 auto',
+          boxShadow: '0 0 0 0 rgba(255,255,255,.5)',
+          transition: 'opacity .4s ease',
+        },
+      })
     }
 
     function blobToBase64(blob) {
