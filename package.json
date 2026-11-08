@@ -71,8 +71,9 @@
     "test:speech": "node test/speech-judge.test.mjs && node test/speech-words.test.mjs",
     "sim:speech": "node scripts/sim/sim-speech.mjs",
     "exam:wechat": "node test/exam-wechat-inbox.test.mjs",
-    "gate": "npm run check:arch && node test/run-tests.mjs",
-    "docs:index": "node scripts/doc-index.mjs"
+    "gate": "npm run check:arch && node test/run-tests.mjs && node test/client-smoke.test.mjs",
+    "docs:index": "node scripts/doc-index.mjs",
+    "test:client": "node test/client-smoke.test.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",
