@@ -1,0 +1,434 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>画板 · 小汐</title>
+<style>
+  :root{
+    --bg:#17181b; --panel:#1f2126; --panel2:#24262c; --line:#2f3238;
+    --text:#e7e8ea; --dim:#9aa0a8; --mute:#6d747d;
+    --accent:#7aa2f7; --accent-soft:#2b3550;
+    --paper:#fbf9f4; --shadow:0 18px 50px rgba(0,0,0,.55);
+    --r:10px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:13px/1.5 "Microsoft YaHei UI","Segoe UI",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow:hidden;
+  }
+  .app{display:grid; grid-template-rows:52px 1fr 28px; height:100%}
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{
+    display:flex; align-items:center; gap:14px; padding:0 14px;
+    background:linear-gradient(180deg,#22242a,#1d1f24);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:.5px}
+  .brand i{width:18px;height:18px;border-radius:5px;background:linear-gradient(135deg,#7aa2f7,#9f7aea);
+    display:inline-block; box-shadow:0 0 0 1px rgba(255,255,255,.08) inset}
+  .brand small{color:var(--mute);font-weight:400}
+  .divider{width:1px;height:22px;background:var(--line)}
+  .group{display:flex;align-items:center;gap:10px}
+  .label{color:var(--dim);font-size:11px;letter-spacing:.3px}
+  input[type=range]{
+    -webkit-appearance:none;appearance:none;width:110px;height:4px;border-radius:2px;
+    background:#33373f;outline:none
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+    background:var(--text);box-shadow:0 0 0 3px rgba(122,162,247,.25);cursor:pointer
+  }
+  .val{min-width:22px;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums}
+
+  .swatches{display:flex;gap:6px}
+  .sw{width:20px;height:20px;border-radius:6px;border:1px solid rgba(255,255,255,.12);cursor:pointer;
+      transition:transform .08s ease, box-shadow .12s ease}
+  .sw:hover{transform:translateY(-1px)}
+  .sw.on{box-shadow:0 0 0 2px var(--bg),0 0 0 4px var(--accent)}
+
+  .btn{
+    height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel2);color:var(--text);cursor:pointer;font:inherit;
+    transition:background .12s ease,border-color .12s ease
+  }
+  .btn:hover{background:#2c2f36;border-color:#3b3f47}
+  .btn:active{transform:translateY(1px)}
+  .btn.ghost{background:transparent}
+  .btn.danger:hover{border-color:#7d3b3b;color:#ffb4b4}
+  .spacer{flex:1}
+
+  /* ---------- 主体 ---------- */
+  .body{display:grid;grid-template-columns:56px 1fr 264px;min-height:0}
+
+  .rail{
+    display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0;
+    background:var(--panel);border-right:1px solid var(--line)
+  }
+  .tool{
+    width:38px;height:38px;border-radius:9px;display:grid;place-items:center;cursor:pointer;
+    color:var(--dim);border:1px solid transparent;background:transparent;font-size:16px;
+    transition:background .12s,color .12s,border-color .12s
+  }
+  .tool:hover{background:var(--panel2);color:var(--text)}
+  .tool.on{background:var(--accent-soft);color:#cfe0ff;border-color:#3a4a6d}
+  .rail .sep{width:22px;height:1px;background:var(--line);margin:4px 0}
+
+  .stage{
+    position:relative;display:grid;place-items:center;min-width:0;
+    background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(122,162,247,.06), transparent 60%),
+      repeating-conic-gradient(#1a1b1f 0% 25%, #17181b 0% 50%) 50%/22px 22px;
+  }
+  .paperwrap{position:relative;background:var(--paper);border-radius:4px;box-shadow:var(--shadow);
+             line-height:0}
+  .paperwrap img.ref, .paperwrap canvas{display:block;border-radius:4px}
+  .paperwrap img.ref{
+    position:absolute;inset:0;width:100%;height:100%;object-fit:contain;
+    opacity:0;transition:opacity .15s ease;pointer-events:none;filter:saturate(.9) contrast(.95)
+  }
+  .paperwrap img.ref.show{opacity:.35}
+  canvas#board{touch-action:none;cursor:crosshair}
+
+  .panel{background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .sec{padding:12px 14px;border-bottom:1px solid var(--line)}
+  .sec h3{margin:0 0 9px;font-size:11px;font-weight:600;color:var(--mute);letter-spacing:.8px;text-transform:uppercase}
+  .row{display:flex;align-items:center;gap:8px;margin:7px 0}
+  .row .grow{flex:1}
+  .chip{font-size:11px;color:var(--dim);background:var(--panel2);border:1px solid var(--line);
+        border-radius:999px;padding:2px 9px}
+  .layer{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);
+         background:var(--panel2);margin-bottom:8px;cursor:pointer}
+  .layer:hover{border-color:#3b3f47}
+  .layer .dot{width:9px;height:9px;border-radius:3px;background:#4a4f58}
+  .layer.ink .dot{background:#7aa2f7}
+  .layer.sketch .dot{background:#9f7aea}
+  .layer .name{flex:1;font-size:12px}
+  .layer .eye{color:var(--mute);font-size:12px}
+  .layer.off{opacity:.45}
+  select{
+    background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;
+    padding:6px 8px;font:inherit;max-width:100%
+  }
+  .hint{color:var(--mute);font-size:11px;line-height:1.6}
+
+  .status{display:flex;align-items:center;gap:16px;padding:0 14px;color:var(--mute);font-size:11px;
+          border-top:1px solid var(--line);background:#1b1d21}
+  .status .ok{color:#8fd694}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <div class="brand"><i></i>画板 <small>· 小汐</small></div>
+    <div class="divider"></div>
+    <div class="group">
+      <span class="label">笔尖</span>
+      <input id="size" type="range" min="1" max="30" value="4" />
+      <span class="val" id="sizeVal">4</span>
+    </div>
+    <div class="group">
+      <span class="label">不透明</span>
+      <input id="alpha" type="range" min="10" max="100" value="100" />
+      <span class="val" id="alphaVal">100</span>
+    </div>
+    <div class="divider"></div>
+    <div class="swatches" id="swatches"></div>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="undo">撤销</button>
+    <button class="btn ghost danger" id="clear">清空</button>
+  </div>
+
+  <div class="body">
+    <!-- 工具列 -->
+    <div class="rail">
+      <button class="tool on" data-tool="pencil" title="铅笔">✎</button>
+      <button class="tool" data-tool="eraser" title="橡皮">◻</button>
+      <div class="sep"></div>
+      <button class="tool" id="fit" title="适应窗口">⤢</button>
+      <button class="tool" id="savePng" title="导出 PNG">⇩</button>
+    </div>
+
+    <!-- 纸 -->
+    <div class="stage" id="stage">
+      <div class="paperwrap" id="paperwrap">
+        <img class="ref" id="refimg" alt="参考" />
+        <canvas id="board" width="900" height="900"></canvas>
+      </div>
+    </div>
+
+    <!-- 右侧面板 -->
+    <div class="panel">
+      <div class="sec">
+        <h3>图层</h3>
+        <div class="layer ink" data-layer="ink"><span class="dot"></span><span class="name">墨线</span><span class="eye">●</span></div>
+        <div class="layer sketch" data-layer="sketch"><span class="dot"></span><span class="name">草稿</span><span class="eye">●</span></div>
+      </div>
+      <div class="sec">
+        <h3>参考图</h3>
+        <div class="row"><select id="refs" class="grow"><option>加载中…</option></select></div>
+        <div class="row">
+          <span class="label">透明度</span>
+          <input id="refOp" type="range" min="0" max="100" value="35" class="grow" />
+        </div>
+        <div class="row"><span class="hint" id="refHint">垫在下面照着描；不勾就只是白纸。</span></div>
+      </div>
+      <div class="sec">
+        <h3>状态</h3>
+        <div class="row"><span class="chip" id="count">0 笔</span><span class="chip" id="toolChip">铅笔</span></div>
+        <div class="row"><span class="hint">两个人共用这一张纸：你画的写进 board.json，我画的也是。</span></div>
+      </div>
+      <div class="sec" style="border-bottom:none;margin-top:auto">
+        <div class="hint">Ctrl+Z 撤销 · 拖动鼠标画 · 顶栏可以改颜色和粗细</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status">
+    <span id="st">就绪</span>
+    <span class="spacer"></span>
+    <span>本地 127.0.0.1 · 不联网</span>
+  </div>
+</div>
+
+<script>
+const W = 900, H = 900;
+const PALETTE = [
+  ['#2a2a32', '墨'], ['#345294', '蓝'], ['#4674be', '天蓝'],
+  ['#e8969e', '粉'], ['#d6a096', '肤'], ['#c64242', '红'],
+];
+const state = {
+  tool: 'pencil', color: PALETTE[0][0], width: 4, alpha: 1,
+  layer: 'ink', refOn: false, refOpacity: 0.35,
+  strokes: [], drawn: 0, count: 0,
+};
+const cvs = document.getElementById('board');
+const ctx = cvs.getContext('2d');
+const paper = document.getElementById('paperwrap');
+const refimg = document.getElementById('refimg');
+
+/* ---------- 缩放 ---------- */
+let scale = 1;
+function fit() {
+  const stage = document.getElementById('stage');
+  const pad = 56;
+  const s = Math.min((stage.clientWidth - pad) / W, (stage.clientHeight - pad) / H, 1.2);
+  scale = Math.max(0.2, s);
+  paper.style.width = (W * scale) + 'px';
+  paper.style.height = (H * scale) + 'px';
+  cvs.style.width = (W * scale) + 'px';
+  cvs.style.height = (H * scale) + 'px';
+  redraw();
+}
+window.addEventListener('resize', fit);
+
+/* ---------- 画 ---------- */
+function paintStroke(s, target) {
+  const pts = s.pts || [];
+  if (pts.length === 0) return;
+  const layerHidden = s.layer === 'sketch' ? hidden.sketch : hidden.ink;
+  if (layerHidden) return;
+  target.strokeStyle = s.erase ? '#fbf9f4' : (s.c || '#2a2a32');
+  target.globalAlpha = s.a == null ? 1 : s.a;
+  target.lineWidth = s.w || 3;
+  target.lineCap = 'round';
+  target.lineJoin = 'round';
+  if (pts.length === 1) {
+    target.beginPath();
+    target.arc(pts[0][0], pts[0][1], (s.w || 3) / 2, 0, Math.PI * 2);
+    target.fillStyle = target.strokeStyle;
+    target.fill();
+  } else {
+    target.beginPath();
+    target.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length - 1; i++) {
+      const mx = (pts[i][0] + pts[i + 1][0]) / 2;
+      const my = (pts[i][1] + pts[i + 1][1]) / 2;
+      target.quadraticCurveTo(pts[i][0], pts[i][1], mx, my);
+    }
+    const last = pts[pts.length - 1];
+    target.lineTo(last[0], last[1]);
+    target.stroke();
+  }
+  target.globalAlpha = 1;
+}
+
+const hidden = { ink: false, sketch: false };
+
+function redraw() {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  for (const s of state.strokes) paintStroke(s, ctx);
+  ctx.restore();
+}
+
+/* ---------- 同步 ---------- */
+async function pull() {
+  try {
+    const r = await fetch('/state', { cache: 'no-store' });
+    const data = await r.json();
+    if (!Array.isArray(data.strokes)) return;
+    if (data.strokes.length !== state.count) {
+      state.strokes = data.strokes;
+      state.count = data.strokes.length;
+      redraw();
+      document.getElementById('count').textContent = data.strokes.length + ' 笔';
+    }
+  } catch (e) { /* 服务没起来就安静 */ }
+}
+setInterval(pull, 800);
+pull();
+
+/* ---------- 输入 ---------- */
+let drawing = false, pts = [];
+function toBoard(e) {
+  const rect = cvs.getBoundingClientRect();
+  return [ (e.clientX - rect.left) / rect.width * W, (e.clientY - rect.top) / rect.height * H ];
+}
+cvs.addEventListener('pointerdown', (e) => {
+  drawing = true;
+  pts = [toBoard(e)];
+  cvs.setPointerCapture(e.pointerId);
+});
+cvs.addEventListener('pointermove', (e) => {
+  if (!drawing) return;
+  pts.push(toBoard(e));
+  redraw();
+  paintStroke({
+    pts, w: state.width, c: rgb(state.color), a: state.alpha,
+    erase: state.tool === 'eraser', layer: state.layer,
+  }, ctx);
+});
+cvs.addEventListener('pointerup', async () => {
+  if (!drawing) return;
+  drawing = false;
+  if (pts.length < 2) pts = [];
+  const stroke = {
+    pts: pts.map(p => [Math.round(p[0] * 10) / 10, Math.round(p[1] * 10) / 10]),
+    w: state.width, c: rgb(state.color), a: state.alpha,
+    erase: state.tool === 'eraser', layer: state.layer, by: 'master',
+  };
+  pts = [];
+  if (!stroke.pts.length) return;
+  try {
+    await fetch('/stroke', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stroke }),
+    });
+    await pull();
+  } catch (err) { setStatus('保存失败：服务是不是关了？', true); }
+});
+
+function rgb(hex) {
+  const n = hex.replace('#', '');
+  return [parseInt(n.slice(0, 2), 16), parseInt(n.slice(2, 4), 16), parseInt(n.slice(4, 6), 16)];
+}
+
+/* ---------- 顶栏控件 ---------- */
+const swWrap = document.getElementById('swatches');
+PALETTE.forEach(([hex, name], i) => {
+  const b = document.createElement('button');
+  b.className = 'sw' + (i === 0 ? ' on' : '');
+  b.style.background = hex; b.title = name;
+  b.onclick = () => {
+    state.color = hex; state.tool = 'pencil';
+    document.querySelectorAll('.sw').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    document.querySelectorAll('.tool[data-tool]').forEach(x =>
+      x.classList.toggle('on', x.dataset.tool === 'pencil'));
+    document.getElementById('toolChip').textContent = '铅笔';
+  };
+  swWrap.appendChild(b);
+});
+
+document.getElementById('size').oninput = (e) => {
+  state.width = +e.target.value;
+  document.getElementById('sizeVal').textContent = state.width;
+};
+document.getElementById('alpha').oninput = (e) => {
+  state.alpha = +e.target.value / 100;
+  document.getElementById('alphaVal').textContent = e.target.value;
+};
+
+document.querySelectorAll('.tool[data-tool]').forEach(btn => {
+  btn.onclick = () => {
+    state.tool = btn.dataset.tool;
+    document.querySelectorAll('.tool[data-tool]').forEach(x => x.classList.toggle('on', x === btn));
+    document.getElementById('toolChip').textContent = state.tool === 'eraser' ? '橡皮' : '铅笔';
+  };
+});
+
+document.getElementById('undo').onclick = async () => {
+  await fetch('/undo', { method: 'POST' }); await pull();
+};
+document.getElementById('clear').onclick = async () => {
+  if (!confirm('清空整张纸？这个撤不回来。')) return;
+  await fetch('/clear', { method: 'POST' }); await pull();
+};
+document.getElementById('fit').onclick = fit;
+document.getElementById('savePng').onclick = () => window.open('/png', '_blank');
+
+/* ---------- 图层 ---------- */
+document.querySelectorAll('.layer').forEach(el => {
+  el.onclick = () => {
+    const k = el.dataset.layer;
+    hidden[k] = !hidden[k];
+    el.classList.toggle('off', hidden[k]);
+    el.querySelector('.eye').textContent = hidden[k] ? '○' : '●';
+    redraw();
+  };
+});
+
+/* ---------- 参考图 ---------- */
+async function loadRefs() {
+  const sel = document.getElementById('refs');
+  try {
+    const r = await fetch('/refs');
+    const data = await r.json();
+    sel.innerHTML = '<option value="">（不垫图）</option>';
+    (data.items || []).forEach(u => {
+      const o = document.createElement('option');
+      o.value = u; o.textContent = decodeURIComponent(u.split('/').pop());
+      sel.appendChild(o);
+    });
+  } catch (e) { sel.innerHTML = '<option>取不到列表</option>'; }
+}
+declare_ctrl: {
+  const sel = document.getElementById('refs');
+  sel.onchange = () => {
+    if (!sel.value) { refimg.classList.remove('show'); state.refOn = false; }
+    else {
+      refimg.src = sel.value;
+      refimg.classList.add('show');
+      refimg.style.opacity = state.refOpacity;
+    }
+    // 告诉服务端我垫的是哪张：小汐要照着同一张描，得知道名字
+    fetch('/ref', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ src: sel.value }) });
+  };
+  document.getElementById('refOp').oninput = (e) => {
+    state.refOpacity = +e.target.value / 100;
+    refimg.style.opacity = state.refOpacity;
+  };
+}
+loadRefs();
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    e.preventDefault(); document.getElementById('undo').click();
+  }
+});
+
+function setStatus(t) { document.getElementById('st').textContent = t; }
+
+fit();
+setStatus('就绪 · 服务已连上');
+</script>
+</body>
+</html>
+
