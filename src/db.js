@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS memory_claims(
   evidence_id TEXT, checked_at TEXT, via TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_claims_agent_state ON memory_claims(agent_id, state);
 
+-- 署名（记忆归属）：这条记忆里的话，到底是谁说的。
+-- 为什么要单独一张表：memory_items 已定型，按项目规矩只加新表、不 ALTER 老表。
+-- speaker：me=我说的 / user=对方说的 / both=两边都有 / unknown=没标（老条目）。
+-- quote：支撑这条的最短原话（逐字），读的时候能回到现场；没有就空。
+-- inferred：1 = 原文没直说，是我推出来的；0 = 原文里有据。不许把推断冒充原话。
+CREATE TABLE IF NOT EXISTS memory_provenance(
+  memory_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  speaker TEXT NOT NULL DEFAULT 'unknown', quote TEXT,
+  inferred INTEGER NOT NULL DEFAULT 0, turn_id TEXT,
+  via TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_mem_prov_agent ON memory_provenance(agent_id, speaker);
+
 CREATE TABLE IF NOT EXISTS journal(
   seq INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, turn_id TEXT,
   op TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'intent',
@@ -702,6 +714,17 @@ export function openDb(file) {
     started_at TEXT NOT NULL, duration_h REAL NOT NULL,
     from_val REAL NOT NULL, to_val REAL NOT NULL,
     seed TEXT NOT NULL, PRIMARY KEY(agent_id, seg_no));`)
+  // 语音基线：一个人「平时怎么说」。绝对音高没意义，「比平时高多少」才有意义。
+  // 一行一个人（先只分 default，认人接上后再按 speaker 拆）。
+  // 不升 schema 号：CREATE IF NOT EXISTS，跟上面的做法一致。
+  db.exec(`CREATE TABLE IF NOT EXISTS voice_baseline(
+    agent_id TEXT NOT NULL, speaker TEXT NOT NULL DEFAULT 'default',
+    pitch_hz REAL, loudness REAL, periodicity REAL, cps REAL,
+    samples INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+    PRIMARY KEY(agent_id, speaker));`)
+  // 第一版存的是 jitter_pct / shimmer_pct——那两列量的其实是语调，不是声带抖动
+  // （见 acoustics.js 的注释）。改成 periodicity 后补一列，旧列留着不管，旧行作废。
+  try { db.exec('ALTER TABLE voice_baseline ADD COLUMN periodicity REAL') } catch { /* 已存在 */ }
   // 空闲心跳的浮现队列：心跳只产候选，注入时最多取一条。
   // 故意不升 schema 号：沿用 proactive_decisions 的做法，在 openDb 里补建。
   db.exec(`CREATE TABLE IF NOT EXISTS surface_queue(

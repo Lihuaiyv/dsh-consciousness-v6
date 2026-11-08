@@ -11,8 +11,9 @@
     "08-AffectPage.js",
     "09-fieldHuman.js",
     "10-MetricsPage.js",
-    "11-MemorySettingsCard.js"
+    "11-MemorySettingsCard.js",
+    "12-VoiceTalk.js"
   ],
-  "sha256": "b540c1d58b0811b1",
-  "builtAt": "2026-11-08T09:18:52.412Z"
+  "sha256": "407b99a506d077c6",
+  "builtAt": "2026-11-08T12:05:45.574Z"
 }

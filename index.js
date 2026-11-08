@@ -14,12 +14,10 @@ import { dbPath } from './src/paths.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
 import { attachHostLlm, createHostJudgeModel, hostTalkModel } from './src/model.js'
-import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, queueProactive, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, autoGrowPreferences, attachContextBlock, closingIntentOf } from './src/features.js'
+import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, attachContextBlock, closingIntentOf } from './src/features.js'
 // 主动开口零件入口：心跳只认这一个口，不直接碰零件内部
 import { runSpeakTick } from './src/parts/speak/index.js'
 import { nid, purgeExpired, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraft, TARGET_IDS, latestUserEmotion, decayAffect, getDrive, spontaneousTick } from './src/core.js'
@@ -29,12 +27,6 @@ import { axisWords, mbtiPrompt } from './src/modules/traits.js'
 import { pulseDriveFromSignals } from './src/modules/drive.js'
 import { pushProactiveLine } from './src/push.js'
 import { pushProactiveToQQ, ownerChatKey, pushableLine } from './src/modules/qq_push.js'
-import { getConfig as getActionConfig, sendMessage as sendViaChannel } from './src/modules/actions/channels.js'
-import { detectPython } from './src/modules/actions/wechat.js'
-import { pollWeChatInbox } from './src/modules/wechat_inbox.js'
-import { startWeChatTyping } from './src/modules/wechat_typing.js'
-import { defaultAgentId } from './src/modules/conversations.js'
-import { chatReply } from './src/features.js'
 import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
 import { presenceLine, webConversationId } from './src/modules/presence.js'
@@ -70,10 +62,8 @@ import { latestFeel, feelLineOf, echoFeelOf, echoFeelLineOf, attachableFeelId, F
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { asofInjectItems } from './src/modules/asof.js'
 import { passportLine, isStale } from './src/modules/passport.js'
-import { enqueueExtraction, tickExtraction, makeTurnId } from './src/modules/extract_queue.js'
+import { enqueueExtraction, makeTurnId } from './src/modules/extract_queue.js'
 import { tickEscalation } from './src/modules/conflict.js'
-import { runNightly, dueDiaryDays, hasDiaryMaterial } from './src/modules/nightly.js'
-import { repairPending, repairOldDiaries, defaultDiaryChat } from './src/modules/diary.js'
 import { readViews } from './src/modules/sangguan/bridge.js'
 import {  } from './src/modules/sangguan/speak.js'
 import { afterTurn as sangguanAfterTurn } from './src/modules/sangguan/fast.js'
@@ -81,17 +71,28 @@ import { promptHook as sangguanPrompt } from './src/modules/sangguan/inject.js'
 import { ensureHeatBootstrapped, touch } from './src/modules/tiers.js'
 import { model } from './src/kernel.js'
 import * as R from './src/modules/relations.js'
-import { enqueueRelationRead, tickRelationRead } from './src/modules/relations_extract.js'
+import { enqueueRelationRead } from './src/modules/relations_extract.js'
+import { createWorkers } from './src/host/workers.js'
+import {
+  attachSessionAgents,
+  autoBindQQSession,
+  qqContextOf, qqAidOf, agentOfSession, currentQQContext,
+  activeAgentId, currentSessionId, sessionAgentId, pinSessionAgent,
+  enabledAgentIds, probeSessionId, noteSessionEventId,
+  initiatorAgentId, latestAgentId,
+} from './src/host/session_agents.js'
+export { autoBindQQSession }
 import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/affect.js'
 import { addMemory, setFeelProvider } from './src/modules/memory.js'
 import { openEmotion } from './src/modules/emotion_event.js'
 import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
+import { maybeSpeakReply, takeVoiceShape } from './src/modules/actions/voice.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
 import { canSayOnce } from './src/modules/sayonce.js'
-import { resolveAgentId, peekPending, bindingOf, bindSession, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
+import { resolveAgentId, refreshAll, refreshRuntime, sweepBindings, migrateLegacyBindings } from './src/modules/binding.js'
 import { heartbeatTick } from './src/modules/heartbeat.js'
-import { attachQQBridge, attachQQIngest, attachQQFeelProvider, resolveQQContext, isQQSessionId, parseOwnerQq, loadSessionMap, qqChannelBlock, conversationIdOf, chatKeyOfSessionId } from './src/modules/qq_bridge.js'
+import { attachQQBridge, attachQQIngest, attachQQFeelProvider, isQQSessionId, qqChannelBlock } from './src/modules/qq_bridge.js'
 import { findQQSessionsFile } from './src/modules/qq_watch.js'
 import { mindLine, noteMeter, meterFromUsage, meterOf } from './src/modules/mindstate.js'
 import { makeOwnerGuard, verdictFor } from './src/modules/owner_gate.js'
@@ -125,6 +126,30 @@ let dbError = null
 let lockHeld = false
 /** 宿主适配器：四个接缝的探测结果，ping 里原样报出去。 */
 let host = null
+
+/** 后台 workers（懒建：ensureDb 首次成功时再挂定时器）。 */
+let workersApi = null
+function wireSessionAgents() {
+  attachSessionAgents({
+    ensureDb,
+    getParam,
+    optionalService,
+    probe: (msg) => __probe(msg),
+  })
+}
+
+function workers() {
+  wireSessionAgents()
+  if (!workersApi) {
+    workersApi = createWorkers({
+      ensureDb,
+      enabledAgentIds,
+      summarizeForDiary,
+      probe: (msg) => __probe(msg),
+    })
+  }
+  return workersApi
+}
 
 function pidAlive(pid) {
   try { process.kill(pid, 0); return true } catch { return false }
@@ -162,6 +187,7 @@ function releaseLock() {
 process.on('exit', releaseLock)
 
 function ensureDb() {
+  wireSessionAgents()
   if (db) return db
   if (dbError) throw dbError
   try {
@@ -195,16 +221,16 @@ try { hydrateFromRaw(db, aid) } catch { /* 重放失败不影响启动 */ }
       } catch { /* 启动补数据失败不影响启动 */ }
     }, 5000)
     // P2 抽取 worker：每 30 秒看一眼队列，30 秒前先跑一次（重启后把积压清掉）
-try { startExtractionWorker() } catch { /* 抽取 worker 起不来不影响启动 */ }
+    try { workers().startExtractionWorker() } catch { /* 抽取 worker 起不来不影响启动 */ }
     // 关系读人 worker：把排队的人物提及读成「谁是谁的谁」
-try { startRelationWorker() } catch { /* 读人 worker 起不来不影响启动 */ }
+    try { workers().startRelationWorker() } catch { /* 读人 worker 起不来不影响启动 */ }
     // P4 夜间巩固：每晚 23:00 写日记；关机 / 休眠错过的，下次启动或半小时内补上。
-try { startNightlyWorker() } catch { /* 巩固 worker 起不来不影响启动 */ }
-    try { startDiaryRetryWorker() } catch { /* diary retry worker unavailable */ }
+    try { workers().startNightlyWorker() } catch { /* 巩固 worker 起不来不影响启动 */ }
+    try { workers().startDiaryRetryWorker() } catch { /* diary retry worker unavailable */ }
     // 偏好自己长：10 分钟一次，够条件才真调模型；长出来的删不掉
-    try { startGrowPrefsWorker() } catch { /* 长偏好 worker 起不来不影响启动 */ }
+    try { workers().startGrowPrefsWorker() } catch { /* 长偏好 worker 起不来不影响启动 */ }
     // 微信收信：一分钟一次，只读本地库（不动窗口）；第一次见到的会话只落水位，不灌历史
-    try { startWeChatInboxWorker() } catch { /* 收信 worker 起不来不影响启动 */ }
+    try { workers().startWeChatInboxWorker() } catch { /* 收信 worker 起不来不影响启动 */ }
     return db
   } catch (e) {
     dbError = e
@@ -906,6 +932,11 @@ let conflictLine = ''
 userEmotion = stranger ? null : latestUserEmotion(db, aid)
   } catch { userEmotion = null }
 
+  // 这一轮如果是按着麦说的：转写只留下字，这里补上「怎么说」的那一句。
+  // 只读一次（takeVoiceShape 会取走），不留给后面几轮冒充。
+  let voiceShapeText = ''
+  try { voiceShapeText = stranger ? '' : takeVoiceShape(sessionId) } catch { voiceShapeText = '' }
+
   // 心情只认 v3 总情绪（-1~1）；mood(0~1) 只是它的换算式，两套数字到此为止。
 const moodUnit = (() => {
     const t = affect && affect.v3 && affect.v3.total != null ? Number(affect.v3.total) : null
@@ -1178,6 +1209,7 @@ let styleLines = []
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
       + (userEmotion.raw_label ? '（我按你以前的纠正改的：我一开始读成' + userEmotion.raw_label + '）' : '')
       + '。' : '',
+    voiceShapeText ? '刚才那段语音的声儿：' + voiceShapeText + '。' : '',
     drive ? '需求缺口档位：' + drive.band + '。' : '',
     // ④ 记忆（≤5 条，带来源与时间）
     // 去掉句末标点再加「。）」：不然会拼出「叫我。。」这种双句号。
@@ -1359,7 +1391,7 @@ if (!stranger) try {
     enqueueRelationRead(db, aid, { text: u })
     // 入队后马上跑一次，不等 30 秒的轮询：用户说完这句话，下一句之前账本就该是对的。
 // 仍然走异步（不阻塞回复），只是把「最坏等 30 秒」压到 1 秒。
-const t = setTimeout(() => { runRelationReadTick() }, 1500)
+const t = setTimeout(() => { try { workers().kickRelationReadTick() } catch { /* 踢一脚失败下轮轮询会补 */ } }, 1500)
     if (t.unref) t.unref()
   } catch (e) { __probe('rel-ingest-err:' + (e && e.message)) }
   if (!stranger) try { narrativeAfterTurn(db, aid, sid) } catch { /* 冷层衍生失败不影响对话 */ }
@@ -1486,7 +1518,7 @@ if (learning) {
       // P2 异步抽取：先落队列，再由 worker 慢慢跑；进程这会儿挂了也不会丢。
 try {
         enqueueExtraction(db, aid, [{ role: 'user', text: u, turnId: tid }, { role: 'assistant', text: aText, turnId: tid }])
-        runExtractionTick()
+        try { workers().kickExtractionTick() } catch { /* 踢一脚失败下轮轮询会补 */ }
       } catch { /* 入队失败不影响对话 */ }
     }
     // 三观快环：开关关闭直接返回；这里只入缓冲，抽取在后台定时器里。
@@ -1511,6 +1543,8 @@ try { sangguanAfterTurn(db, aid, { user: u, assistant: aText, sid, at }) } catch
   try { tickConflicts(db, aid) } catch { /* 冲突悬置衰减失败不影响对话 */ }
   try { tickEscalation(db, aid) } catch { /* 冲突升级失败不影响对话 */ }
   try { evaluateDrive(db, aid) } catch { /* 鏆傚仠鎴栨暟鎹己澶?*/ }
+  // 本机麦说完这一轮：设置是「自动念」就在后台把回复念出来，不拖对话落账。
+  Promise.resolve().then(() => maybeSpeakReply({ db, agentId: aid, sessionId: sid, text: aText })).catch(() => {})
 }
 
 /**
@@ -1591,631 +1625,8 @@ try { markSurfacedUsed(db, aid, reply) } catch { /* 观测失败不影响对话 
 
 /** 找桥接插件的会话映射表：实现搬到 src/modules/qq_watch.js（看板也要用同一份路径规则）。 */
 
-/**
- * QQ 会话重建后自动续绑。
- *
- * 桥接每次重启 / 断线都会换一个新的 sessionId（`qq-<hash>-<时间戳>` 后半段变了），
- * 而绑定表里还挂着旧的那个——于是新会话在记忆链上是「陌生人」：不召回、不挂人格段。
- * 这里按「这条聊天原本归谁」把新 id 接回去。只做续绑：已经有绑定的会话一律不动，
- * 用户手动绑的结果不会被覆盖。
- *
- * 认人顺序：
- *   1) qq-sessions.json 里有这条 key → chatKey → conversations 表（qq:p:<号> / qq:g:<号>）归谁；
- *   2) 同一个 chatKey 的旧会话还绑着谁（conversations 没记时）；
- *   3) 都认不出就返回 null，保持原样——绝不随便挑一个绑上去。
- *
- * 导出给测试用（test/qq-rebind.test.mjs）；业务里只由 attachQQBridge 的 autoBind 调。
- *
- * @param {object} db 库
- * @param {string} sid 会话 id（`qq-<24hex>-<时间戳>`）
- * @param {{sessionsFile?: string}} [opts] 测试可指定映射表路径
- * @returns {string|null} 绑上的 agent id；没动手返回 null
- */
-export function autoBindQQSession(db, sid, opts = {}) {
-  const s = String(sid || '')
-  if (!db || !isQQSessionId(s)) return null
-  try { if (bindingOf(db, s)) return null } catch { /* 读不到绑定就当没绑 */ }
-  // ① 聊天映射表 → chatKey → conversations 表（qq:p:<号> / qq:g:<号>）里这条聊天归谁
-  let key = ''
-  try {
-    const file = opts && opts.sessionsFile ? String(opts.sessionsFile) : findQQSessionsFile()
-    key = chatKeyOfSessionId(s, loadSessionMap(file) || {})
-  } catch { key = '' }
-  if (key) {
-    const conv = conversationIdOf(key)
-    if (conv) {
-      try {
-        const row = db.prepare("SELECT agent_id FROM conversations WHERE conversation_id=? AND state='active'").get(conv)
-        if (row && row.agent_id) {
-          const r = bindSession(db, row.agent_id, s, { source: 'qq-rebind' })
-          if (r && r.ok) return r.agent_id
-        }
-      } catch { /* 继续走 ② */ }
-    }
-  }
-  // ② 同一个 chatKey 的旧会话（前半段 hash 相同、只有时间戳后缀变了）还绑着谁。
-  // 不依赖映射表：桥接还没把 qq-sessions.json 写完、或群聊没记进 conversations 时，这里是最后一道。
-  // sessionId 形如 `qq-<24 位 hash>-<时间戳>`，前 27 个字符就是稳定的那段。
-  try {
-    const digest = s.slice(0, 27)
-    if (digest.length === 27) {
-      const old = db.prepare("SELECT agent_id FROM bindings WHERE session_id LIKE ? AND session_id<>? AND state='bound' ORDER BY bound_at DESC LIMIT 1").get(digest + '-%', s)
-      if (old && old.agent_id) {
-        const r = bindSession(db, old.agent_id, s, { source: 'qq-rebind' })
-        if (r && r.ok) return r.agent_id
-      }
-    }
-  } catch { /* 认不出就保持原样 */ }
-  return null
-}
-
-/** 一个 DSH sessionId 在 QQ 那边的身份（不是 QQ 会话返回 null）。 */
-function qqContextOf(sessionId) {
-  try {
-    const sid = String(sessionId || '')
-    if (!isQQSessionId(sid)) return null
-    const d = ensureDb()
-    // 配置按「这段会话绑的是谁」读；没绑定才退回当前激活的那只。
-    const aid = sessionAgentId(d, sid) || activeAgentId(d)
-    if (!aid) return null
-    if (String(getParam(d, aid, 'qq.bridge.enable') || 'off') !== 'on') return null
-    const owners = parseOwnerQq(getParam(d, aid, 'qq.bridge.owner_qq') || '')
-    const file = getParam(d, aid, 'qq.bridge.sessions_file') || findQQSessionsFile()
-    return resolveQQContext(sid, { owners, sessionMap: loadSessionMap(file) })
-  } catch { return null }
-}
-
-/**
- * 一个 QQ 会话键（qq-xxx 桥接会话 / qq:p: 旧通道会话）现在归谁。
- * 显式绑定优先，其次 conversations 表，最后才是当前激活的那只（只用于记账退路）。
- */
-function qqAidOf(db, key) {
-  const k = String(key || '')
-  if (!k) return activeAgentId(db)
-  if (k.startsWith('qq:')) {
-    try {
-      const c = db.prepare('SELECT agent_id, state FROM conversations WHERE conversation_id=?').get(k)
-      if (c && c.state === 'active' && c.agent_id) return c.agent_id
-    } catch { /* 空 */ }
-    return activeAgentId(db)
-  }
-  return sessionAgentId(db, k) || activeAgentId(db)
-}
-
-/**
- * 会话 → 意识体，只认得出、不猜：
- *   1) 绑定表里这条会话直接绑了谁；
- *   2) QQ 会话：反查桥接的会话映射表，拿到 chatKey 再查 conversations。
- * 认不出返回空串——工具那边会退回「当前发起人」，不会拿着别人家的库乱写。
- */
-function agentOfSession(d, sid) {
-  const s = String(sid || '')
-  if (!s) return ''
-  try { const a = sessionAgentId(d, s); if (a) return a } catch { /* 继续 */ }
-  try {
-    if (isQQSessionId(s)) {
-      const map = loadSessionMap(findQQSessionsFile()) || {}
-      for (const [key, id] of Object.entries(map)) {
-        if (String(id) !== s) continue
-        const conv = conversationIdOf(key)
-        if (!conv) continue
-        const row = d.prepare("SELECT agent_id FROM conversations WHERE conversation_id=? AND state='active'").get(conv)
-        if (row && row.agent_id) return String(row.agent_id)
-      }
-    }
-  } catch { /* 认不出就空 */ }
-  return ''
-}
-
-/**
- * 当前正在组装提示词的是不是 QQ 会话。
- * 全局 section 拿不到 agent 信息（AssembleContext 只有 scope/signal），
- * 所以借 agents.currentInitiator() —— 组装发生在那个会话自己的 driver 链里。
- */
 const qqPromptSeen = new Set()
 let qqScopeProbeDone = false
-function currentQQContext() {
-  try {
-    const agents = optionalService('agents')
-    if (!agents || typeof agents.currentInitiator !== 'function') return null
-    const who = agents.currentInitiator()
-    if (!who || !who.id) return null
-    const sid = String(who.id)
-    const qc = qqContextOf(sid)
-    return qc ? { ...qc, sessionId: sid } : null
-  } catch { return null }
-}
-
-function activeAgentId(db) {
-  try {
-    const r = db.prepare("SELECT id FROM agents WHERE status='active' ORDER BY COALESCE(last_interaction_at, created_at) DESC LIMIT 1").get()
-    return r ? r.id : null
-  } catch { return null }
-}
-
-/** 宿主在组装提示词时给的 initiator 就是会话 id（probe-session-ok 验过）。 */
-function currentSessionId() {
-  try {
-    const agents = optionalService('agents')
-    if (!agents || typeof agents.currentInitiator !== 'function') return ''
-    const who = agents.currentInitiator()
-    return who && who.id ? String(who.id) : ''
-  } catch { return '' }
-}
-
-/**
- * 一段会话现在归谁（只读，不写库；落绑定由 sessionEvent 的 pinSessionAgent 做）。
- * 已绑定的按绑定走；绑定的人被暂停就返回 null（binding.js 的硬规则：暂停 = 不注入，但绑定保留）。
- * 还没绑定的：待绑定（最近唤醒）优先，其次才退回「当前激活的那只」。
- * QQ 会话只有显式绑定才认人——没绑的不自动认，交给桥接自己带。
- */
-function sessionAgentId(db, sid) {
-  const id = String(sid || '').trim()
-  if (!id) return activeAgentId(db)
-  try {
-    const row = bindingOf(db, id)
-    if (row) {
-      const a = db.prepare('SELECT status FROM agents WHERE id=?').get(row.agent_id)
-      if (!a || a.status === 'soft_deleted') return null
-      if (a.status === 'paused') return null
-      return row.agent_id
-    }
-  } catch { /* 解析失败走退路 */ }
-  // qq- 开头的是 QQ 桥接的会话：没手动绑过就返回 null，不自动钉、不跟着全局激活漂。
-  if (id.startsWith('qq-')) return null
-  try {
-    const pending = peekPending(db)
-    if (pending) {
-      const a = db.prepare('SELECT id,status FROM agents WHERE id=?').get(pending)
-      if (a && a.status !== 'paused' && a.status !== 'soft_deleted') return a.id
-    }
-  } catch { /* 解析失败走退路 */ }
-  return activeAgentId(db)
-}
-
-/**
- * 会话首次开口：把「最近唤醒的那个人」正式落成绑定（source=auto）。
- * 之后这段对话就钉住了，再唤醒别人也不会跟着漂——这正是「新会话归新唤醒的那只」。
- * 已经绑过的一律不动；绑定的人被暂停时返回 null，不拆绑定。
- */
-function pinSessionAgent(db, sid) {
-  const id = String(sid || '').trim()
-  if (!id) return activeAgentId(db)
-  if (id.startsWith('qq-') || id === 'legacy') return null
-  try {
-    if (bindingOf(db, id)) return resolveAgentId(db, id) || null
-  } catch { /* 读不到就当没绑 */ }
-  try {
-    const got = resolveAgentId(db, id)
-    if (got) return got
-  } catch { /* 继续走自动钉 */ }
-  try {
-    const act = activeAgentId(db)
-    if (act && bindSession(db, act, id, { source: 'auto' }).ok) return act
-  } catch { /* 钉不上就退回当前激活，至少不串到别人 */ }
-  return activeAgentId(db)
-}
-
-/** 所有「用户允许活着」的实例：后台 worker 要遍历它们，不能只照顾最近那个。 */
-function enabledAgentIds(db) {
-  try {
-    return db.prepare("SELECT id FROM agents WHERE status='active' ORDER BY COALESCE(last_interaction_at, created_at) DESC").all().map((r) => r.id)
-  } catch { return [] }
-}
-
-/**
- * 会话 id 一致性探针：拼提示词时宿主给的是 `context.agent.id`，
- * 旁听对话时是 `session.id`。这两个如果不是同一个，整套按会话注入就是错的。
- * 所以第一次对不上就落 hook.log，对上了也只记一次。
- */
-const seenSessionIds = new Set()
-let sessionProbeDone = false
-function probeSessionId(sid) {
-  if (sessionProbeDone) return
-  if (!seenSessionIds.has(sid)) {
-    // 只在「两边都见过却对不上」时报警：第一次见到新会话是正常的
-    if (seenSessionIds.size > 0) {
-      __probe('probe-session-mismatch prompt=' + sid.slice(0, 12) + ' event=' + [...seenSessionIds][0].slice(0, 12))
-    }
-    return
-  }
-  sessionProbeDone = true
-  __probe('probe-session-ok ' + sid.slice(0, 12))
-}
-function noteSessionEventId(sid) {
-  if (!sid) return
-  seenSessionIds.add(String(sid))
-  if (seenSessionIds.size > 50) {
-    // 只留最近的几个：探针不需要记住全部会话
-const first = seenSessionIds.values().next().value
-    seenSessionIds.delete(first)
-  }
-}
-
-/**
- * 工具调用归谁：宿主的 `agents.currentInitiator()` 会带着「是哪个会话在驱动」，
- * 拿它反查绑定即可；拿不到才退回「当前运行的那个」（单实例的老路径）。 */
-function initiatorAgentId() {
-  try {
-    const d = ensureDb()
-    const svc = optionalService('agents')
-    if (svc && typeof svc.currentInitiator === 'function') {
-      const a = svc.currentInitiator()
-      if (a && a.id) {
-        const sid = String(a.id)
-        // QQ 会话：只认显式绑定，没绑就不认人——别把网页那边激活的人借过来用。
-        if (sid.startsWith('qq-')) return sessionAgentId(d, sid) || null
-        const viaSession = sessionAgentId(d, sid)
-        if (viaSession) return viaSession
-      }
-    }
-  } catch { /* 宿主没这个服务时走老路 */ }
-  try { return activeAgentId(ensureDb()) } catch { return null }
-}
-
-/** 后台补数据用：paused 也算（只是不主动开口），只有软删的排除。 */
-function latestAgentId(db) {
-  try {
-    const r = db.prepare("SELECT id FROM agents WHERE status!='soft_deleted' ORDER BY COALESCE(last_interaction_at, created_at) DESC LIMIT 1").get()
-    return r ? r.id : null
-  } catch { return null }
-}
-
-// ---------------- P2 抽取 worker ----------------
-
-let extractTimer = null
-
-/** 跑一次抽取队列（不阻塞对话；失败按队列里的退避规则重试）。 */
-async function runExtractionTick() {
-  let d
-  try { d = ensureDb() } catch { return }
-  // 自动记忆关着就不往库里写：队列先留着，打开后下一轮会慢慢补上
-  for (const aid of enabledAgentIds(d)) {
-    // 自动记忆关着就不往库里写：队列先留着，打开后下一轮会慢慢补上
-    try { if (getParam(d, aid, 'memory.auto') === false) continue } catch { /* 参数读不到就照常跑 */ }
-    try {
-      await tickExtraction(d, aid, (turns) => ingest(d, aid, { turns }), { max: 1 })
-    } catch { /* 这一轮失败，下一轮再来 */ }
-  }
-}
-
-function startExtractionWorker() {
-  if (extractTimer) return
-  extractTimer = setInterval(() => { runExtractionTick() }, 30000)
-  if (extractTimer.unref) extractTimer.unref()
-  setTimeout(() => { runExtractionTick() }, 6000)
-}
-
-// ---------------- 关系读人 worker ----------------
-
-let relationTimer = null
-
-/** 规则已经把名字记下了；这一层让模型补「谁是谁的谁」（小周是主人同事）。 */
-async function runRelationReadTick() {
-  let d
-  try { d = ensureDb() } catch { return }
-  // 多实例：每个实例各自的关系账本各自读。
-for (const aid of enabledAgentIds(d)) {
-    try {
-      await tickRelationRead(d, aid, { complete: (a) => model.complete(a) })
-    } catch { /* 这一条失败，下一轮再来 */ }
-  }
-}
-
-function startRelationWorker() {
-  if (relationTimer) return
-  relationTimer = setInterval(() => { runRelationReadTick() }, 30000)
-  if (relationTimer.unref) relationTimer.unref()
-  setTimeout(() => { runRelationReadTick() }, 9000)
-}
-
-// ---------------- 日记待补 worker ----------------
-// 模型回来之后，30 分钟内把「当天没写成」的日记补上；一次只补一天/一个旧篇，避免一口气烧 token。
-let diaryRetryTimer = null
-async function runDiaryRetryTick() {
-  let d
-  try { d = ensureDb() } catch { return }
-  if (defaultDiaryChat() === null) return
-  for (const aid of enabledAgentIds(d)) {
-    try { await repairPending(d, aid, { limit: 1 }) } catch { /* 单条失败下轮再来 */ }
-    try { await repairOldDiaries(d, aid) } catch { /* 同上 */ }
-  }
-}
-function startDiaryRetryWorker() {
-  if (diaryRetryTimer) return
-  diaryRetryTimer = setInterval(() => { runDiaryRetryTick() }, 30 * 60 * 1000)
-  if (diaryRetryTimer.unref) diaryRetryTimer.unref()
-  const boot = setTimeout(() => { runDiaryRetryTick() }, 45000)
-  if (boot.unref) boot.unref()
-}
-
-// ---------------- P4 夜间巩固 ----------------
-
-let nightlyTimer = null
-let nightlyBusy = false
-// 每天几点写日记；默认 23:00（本地时间），可用 DSHC_DIARY_HOUR 改。
-const DIARY_HOUR = Math.min(23, Math.max(0, Number(process.env.DSHC_DIARY_HOUR ?? 23)))
-// 关机 / 休眠错过时最多往回补几天；0 = 不补（只在到点那一刻写当天）。
-const DIARY_BACKFILL_DAYS = Math.min(30, Math.max(0, Number(process.env.DSHC_DIARY_BACKFILL_DAYS ?? 7)))
-
-/** 下一个 23:00（本地时间）的时间戳。 */
-function nextDiaryAt(from = Date.now()) {
-  const d = new Date(from)
-  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), DIARY_HOUR, 0, 0, 0)
-  if (t.getTime() <= from) t.setDate(t.getDate() + 1)
-  return t.getTime()
-}
-
-/**
- * 补写：把「到点没赶上」的日记按天补上。
- * 关机 / 休眠 / 定时器被挂起，都不再丢一天；只补还有原料的天，补的标 late=1。
- */
-async function catchUpDiaries(reason) {
-  if (nightlyBusy) return
-  let d
-  try { d = ensureDb() } catch { return }
-  // 多实例：每个人各补各的日记（各按自己的 dueDiaryDays 判，谁缺补谁）
-const aids = enabledAgentIds(d)
-  if (!aids.length) return
-  nightlyBusy = true
-  try {
-    const summarize = summarizeForDiary()
-    for (const aid of aids) {
-      // 关系每天走一次时间：三轴回归基线 + 淡出 / 归档（§5.2）。
-// tick 按「上次见面时间」算绝对目标，一天跑几次结果一样，不会累积扣。
-try { R.tick(d, aid) } catch (e) { __probe('rel-tick-err:' + (e && e.message)) }
-      const days = dueDiaryDays(d, aid, { hour: DIARY_HOUR, backfillDays: DIARY_BACKFILL_DAYS })
-      if (!days.length) continue
-      for (const day of days) {
-        // 那天的原文一句都没有（一直没开机）就不写：日记不编不存在的一天。
-if (!hasDiaryMaterial(d, aid, day)) continue
-        const out = await runNightly(d, aid, { day, summarize })
-        __probe('nightly(' + reason + ') aid=' + aid.slice(0, 8) + ' day=' + day + ' late=' + (out.late === undefined ? '-' : out.late) + ' ms=' + (out.ms || 0) + ' diary=' + out.diary_day)
-      }
-      // 巩固完记忆，顺手长一次「喜欢 / 讨厌」：自动、只增不减，模型没接上就一条都不长
-      try {
-        const g = await autoGrowPreferences(d, aid)
-        __probe('grow-prefs(' + reason + ') aid=' + aid.slice(0, 8) + ' added=' + g.added.length + ' reason=' + (g.reason || 'ok') + ' model=' + g.model)
-      } catch (e) {
-        __probe('grow-prefs-err(' + reason + '):' + (e && e.message))
-      }
-    }
-  } catch (e) {
-    __probe('nightly-err(' + reason + '):' + (e && e.message))
-  } finally {
-    nightlyBusy = false
-  }
-}
-
-/** 23:00 的准点定时器：到点就检查一遍该写哪几篇（补写逻辑自己按天判断）。 */
-function scheduleNightly() {
-  if (nightlyTimer) return
-  const target = nextDiaryAt()
-  const delay = Math.max(1000, target - Date.now())
-  nightlyTimer = setTimeout(() => {
-    nightlyTimer = null
-    catchUpDiaries('clock').catch(() => {}).finally(() => scheduleNightly())
-  }, delay)
-  if (nightlyTimer.unref) nightlyTimer.unref()
-}
-
-function startNightlyWorker() {
-  // 启动后补一次：关机 / 休眠期间错过的日记在这里补上（等 archive 迁移先跑完）
-  const boot = setTimeout(() => { catchUpDiaries('boot') }, 15000)
-  if (boot.unref) boot.unref()
-  // 每半小时兜底一次：睡醒、久开后跨天、准点定时器被挂起，都能接上
-  const tick = setInterval(() => { catchUpDiaries('tick') }, 30 * 60 * 1000)
-  if (tick.unref) tick.unref()
-  scheduleNightly()
-}
-
-/**
- * 「喜欢 / 讨厌」是它自己长的，不用人按按钮。
- *
- * 每 10 分钟问一次该不该长（features.growPrefsDue 判：离上次 ≥ 60 分钟，
- * 且至少多出 3 条新记忆），够条件才真的花一次模型调用；长出来的标 origin=auto，
- * 接口层一律不许删。首次启动等 4 分钟，避开启动期的迁移和补写。
- */
-let growPrefsTimer = null
-let growPrefsBusy = false
-
-async function growPrefsTick(reason) {
-  if (growPrefsBusy) return
-  let d
-  try { d = ensureDb() } catch { return }
-  const aids = enabledAgentIds(d)
-  if (!aids.length) return
-  growPrefsBusy = true
-  try {
-    // 多实例：每人的偏好自己长（够条件才花一次模型调用）
-    for (const aid of aids) {
-      try {
-        const out = await autoGrowPreferences(d, aid)
-        if (out.added && out.added.length) {
-          __probe('auto-grow-prefs(' + reason + ') aid=' + aid.slice(0, 8) + ' added=' + out.added.length + ' ' + out.added.map((x) => x.tag).join(','))
-        }
-      } catch (e) {
-        __probe('auto-grow-prefs-err(' + reason + '):' + (e && e.message))
-      }
-    }
-  } finally {
-    growPrefsBusy = false
-  }
-}
-
-function startGrowPrefsWorker() {
-  const boot = setTimeout(() => { growPrefsTick('boot').catch(() => {}) }, 4 * 60 * 1000)
-  if (boot.unref) boot.unref()
-  growPrefsTimer = setInterval(() => { growPrefsTick('tick').catch(() => {}) }, 10 * 60 * 1000)
-  if (growPrefsTimer.unref) growPrefsTimer.unref()
-}
-
-/**
- * 主人在微信上说话：走完整条回复管线（召回 → 情绪 → 回一句 → 记账），再把这句话发回微信。
- *
- * 为什么用 chatReply：它已经把「记对话、写原文、认关系、压纪要」全做完了，
- * 另起一条会又是一套手脚、又是两份账。它记完这一轮，所以这里不许再记一遍。
- * 发不出去只能吞掉（话已经记了），下一条再说——别因为一次窗口卡住就把这轮拆成两条。
- */
-async function wechatOwnerTurn({ db, aid, name, username, text }) {
-  // 先起「正在输入」：对面从这一刻就该看到她在打字，而不是干等她想了十几秒。
-  let py = null
-  let cfg = null
-  try { cfg = getActionConfig(db, aid) } catch { cfg = null }
-  try { py = await detectPython() } catch { py = null }
-  const wantTyping = !!(cfg && cfg['wechat.typing.enable'] && py && py.ok)
-  const typing = wantTyping
-    ? startWeChatTyping({ target: name, python: py.cmd, pre: py.pre, leadMs: cfg['wechat.typing.lead_ms'] })
-    : null
-
-  let r = null
-  try {
-    r = await chatReply(db, aid, {
-      text,
-      speaker: { channel: 'wechat', handle: username },
-      conversation_id: 'wechat:' + name,
-    })
-  } catch (e) {
-    if (typing) typing.cancel()
-    throw e
-  }
-  const reply = String((r && r.reply) || '').trim()
-  if (!reply) { if (typing) typing.cancel(); return false }
-
-  if (typing) {
-    const out = await typing.finish(reply)
-    if (out && out.ok) {
-      __probe('wechat-typed-reply(' + name + ') sent=' + !!out.sent + ' waited=' + (out.waited_ms || 0) + 'ms chars=' + reply.length)
-      return true
-    }
-    // 打字那条不成就退回普通发送：别为了「像在打字」把这话丢了
-    __probe('wechat-typing-fallback(' + name + '): ' + (out && out.code) + ' ' + String((out && out.message) || '').slice(0, 120))
-  }
-
-  try {
-    const out = await sendViaChannel(db, aid, { channel: 'wechat', target: name, text: reply })
-    __probe('wechat-reply(' + name + ') ' + (out && out.status) + ' chars=' + reply.length)
-  } catch (e) {
-    __probe('wechat-reply-err(' + name + '): ' + (e && e.message))
-  }
-  return true
-}
-
-let wechatInboxTimer = null
-let wechatInboxBusy = false
-// 读不到（没装 Python 后端 / 微信没开 / 库没密钥）就退避 10 分钟，别每分钟刷一遍同样的错。
-let wechatInboxBackoffUntil = 0
-let wechatInboxFailLogged = false
-
-async function wechatInboxTick(reason) {
-  if (wechatInboxBusy) return
-  if (Date.now() < wechatInboxBackoffUntil) return
-  let d
-  try { d = ensureDb() } catch { return }
-  // 微信只有一个号：只让「默认实例」收。别的实例也是 active（知识库助手就是），
-  // 一起轮询 = 同一句话被两个实例各回一遍。
-  const all = enabledAgentIds(d)
-  const ownerAid = defaultAgentId(d)
-  const aids = ownerAid ? all.filter((x) => x === ownerAid) : all.slice(0, 1)
-  if (!aids.length) return
-  wechatInboxBusy = true
-  try {
-    for (const aid of aids) {
-      let cfg = null
-      try { cfg = getActionConfig(d, aid) } catch { cfg = null }
-      if (!cfg || cfg['wechat.sealed'] || !cfg['wechat.inbox.enable']) continue
-      try {
-        // 先找一个真装了 wechatauto 的解释器（机器上可能 3.14 在 PATH 前面、包在 3.12）。
-        const py = await detectPython()
-        if (!py.ok) {
-          if (!wechatInboxFailLogged) {
-            wechatInboxFailLogged = true
-            __probe('wechat-inbox-skip: 没找到能 import wechatauto 的 Python（' + py.error + '）')
-          }
-          wechatInboxBackoffUntil = Date.now() + 30 * 60 * 1000
-          continue
-        }
-        const out = await pollWeChatInbox({
-          db: d, aid,
-          skip: cfg['wechat.inbox.skip'],
-          limit: cfg['wechat.inbox.limit'],
-          python: py.cmd, pre: py.pre,
-          onOwnerMessage: wechatOwnerTurn,
-        })
-        if (out.added) __probe('wechat-inbox(' + reason + ') aid=' + aid.slice(0, 8) + ' added=' + out.added + ' chats=' + out.chats.join(','))
-        if (out.seeded && out.seeded.length) __probe('wechat-inbox-seeded: ' + out.seeded.join(','))
-        if (!out.ok) {
-          if (!wechatInboxFailLogged) {
-            wechatInboxFailLogged = true
-            __probe('wechat-inbox-skip: ' + out.note + '（10 分钟后再试）')
-          }
-          wechatInboxBackoffUntil = Date.now() + 10 * 60 * 1000
-        } else {
-          wechatInboxFailLogged = false
-        }
-      } catch (e) {
-        __probe('wechat-inbox-err: ' + (e && e.message))
-        wechatInboxBackoffUntil = Date.now() + 10 * 60 * 1000
-      }
-    }
-  } finally {
-    wechatInboxBusy = false
-  }
-}
-
-function startWeChatInboxWorker() {
-  // 启动后先等半分钟：让迁移、补写、桥都先跑完，别在开机那一堆活里再插一个 Python。
-  const boot = setTimeout(() => { wechatInboxTick('boot').catch(() => {}) }, 30 * 1000)
-  if (boot.unref) boot.unref()
-  // 30 秒一轮：60 秒一轮的话，主人发一句要等半分钟才开始回，体感就是「不理我」。
-  wechatInboxTimer = setInterval(() => { wechatInboxTick('tick').catch(() => {}) }, 30 * 1000)
-  if (wechatInboxTimer.unref) wechatInboxTimer.unref()
-  // 开机预热微信窗口：没人催的时候先拉起来，回话时就不用现等那几十秒。
-  // 封存期间不预热——不然半夜自己把一个登录窗弹到主人屏幕上。
-  const warm = setTimeout(() => {
-    try {
-      const d = ensureDb()
-      const aid = defaultAgentId(d)
-      const cfg = aid ? getActionConfig(d, aid) : null
-      if (!cfg || cfg['wechat.sealed']) return
-    } catch { return }
-    wakeWeChatOnce().catch(() => {})
-  }, 45 * 1000)
-  if (warm.unref) warm.unref()
-}
-
-const WECHAT_WIN_SCRIPT = fileURLToPath(new URL('./scripts/wechat_win.py', import.meta.url))
-let wechatWakeBusy = false
-
-/** 把微信窗口先拉起来（开机预热）。已经开着就是一次快速探测，不打扰。 */
-async function wakeWeChatOnce() {
-  if (wechatWakeBusy) return
-  wechatWakeBusy = true
-  try {
-    if (!fs.existsSync(WECHAT_WIN_SCRIPT)) return
-    const py = await detectPython()
-    if (!py.ok) return
-    await new Promise((resolve) => {
-      let child = null
-      try {
-        child = spawn(py.cmd, [...py.pre, WECHAT_WIN_SCRIPT], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
-      } catch { resolve(); return }
-      let out = ''
-      let err = ''
-      child.stdout.on('data', (b) => { if (out.length < 200) out += b.toString('utf8') })
-      child.stderr.on('data', (b) => { if (err.length < 200) err += b.toString('utf8') })
-      child.on('error', () => resolve())
-      child.on('close', (code) => {
-        __probe('wechat-wake exit=' + code + (out.trim() ? ' ' + out.trim() : '') + (err.trim() ? ' err=' + err.trim().slice(0, 120) : ''))
-        resolve()
-      })
-    })
-  } catch (e) {
-    __probe('wechat-wake-err ' + (e && e.message))
-  } finally {
-    wechatWakeBusy = false
-  }
-}
 
 /** 宿主有没有「往会话里推一条消息」的口子（sessionController.prompt）。 */
 function pushPort() {

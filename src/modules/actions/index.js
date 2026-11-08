@@ -17,7 +17,7 @@ import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool
 import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall } from '../feel.js'
 import { settleEmotion } from '../emotion_event.js'
-import { executeHear, executeSay } from './voice.js'
+import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
 
 export const PORT_LABELS = {
@@ -526,13 +526,22 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       name: 'act_hear',
       description:
         '听一段本地音频，把它转成文字。走本机识别（音频不出本机、不花钱），需要设置里启用 DSH 的「语音输入」实验包。'
-        + 'path 填音频文件路径，wav / mp3 / amr 都行；转出来是空就当没听出字，不要自己猜内容。',
+        + 'path 填音频文件路径，wav / mp3 / amr 都行；转出来是空就当没听出字，不要自己猜内容。'
+        + '除了字，还会给出这段声音是怎么说的（快慢、起伏、停顿、音高，见 shape / shape_words）——那是量出来的，不是猜的。',
       parameters: schema({
         path: str('本地音频文件路径，例如 C:\\Users\\me\\voice.wav'),
         language: str('语言，默认 auto（中英混说也行）'),
       }, ['path']),
       output: {
-        schema: { type: 'object', properties: { ok: { type: 'boolean' }, text: { type: 'string' }, audio_seconds: { type: 'number' } } },
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            text: { type: 'string' },
+            audio_seconds: { type: 'number' },
+            shape_words: { type: 'string' },
+          },
+        },
         render: (_a, v) => TEXT(v && v.text ? v.text : '没听出字（可能是录音太短或没人说话）'),
       },
       timeoutMs: 180000,
@@ -733,7 +742,10 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
 
 // ---------------- 界面入口 ----------------
 
-export { getConfig, saveConfig, publicConfig, channelStatus, channelTest, biliStatus, listRuns, getRun }
+export {
+  getConfig, saveConfig, publicConfig, channelStatus, channelTest, biliStatus, listRuns, getRun,
+  executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply,
+}
 
 // API 路由跑研究时需要宿主服务；index.js 在 apply 时注入。
 let hostDeps = { getWeb: () => null, getModel: () => null, getSpeech: () => null }

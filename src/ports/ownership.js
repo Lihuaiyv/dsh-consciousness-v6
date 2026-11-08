@@ -16,7 +16,7 @@ export const WRITES = Object.freeze({
   speak: ['proactive_decisions', 'proactive_stats'],
   expression: [],
   who: [],
-  memory: ['memory_items', 'memory_fts', 'alerts', 'conflicts'],
+  memory: ['memory_items', 'memory_fts', 'alerts', 'conflicts', 'memory_provenance'],
   timeline: ['memory_timeline', 'memory_items', 'flags'],
   layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
   persona: ['persona', 'relations', 'preferences', 'taboos'],
@@ -24,7 +24,7 @@ export const WRITES = Object.freeze({
   affect: ['affect_baseline', 'affect_episodes', 'affect_events', 'affect_review', 'affect_samples', 'affect_state', 'affect_trigger', 'affect_user_read', 'affect_v3'],
   feel: ['affect_feel'],
   drive: ['action_log', 'action_ports', 'budgets', 'cooldowns', 'drive_state'],
-  relations: ['rel_channel', 'rel_edge', 'rel_evidence', 'rel_habit', 'rel_mention', 'rel_person', 'rel_tier', 'rel_violation'],
+  relations: ['rel_channel', 'rel_edge', 'rel_evidence', 'rel_habit', 'rel_mention', 'rel_person', 'rel_tier', 'rel_violation', 'rel_extract_queue'],
   sangguan: [
     'claim_edges', 'claim_events', 'claim_evidence', 'claim_kappa', 'claim_llm_cache', 'claim_predictions',
     'claim_proj_claim', 'claim_proj_edge', 'claim_proj_kappa', 'claim_proj_meta', 'claim_proj_nu', 'claim_proj_theta',
@@ -41,8 +41,8 @@ export const WRITES = Object.freeze({
   poisons: [],
   values: ['persona_values'],
   actions: ['action_config'],
-  // 听见 / 出声：只搬字节，一个表都不写（要记的账走共享的 events）
-  voice: [],
+  // 听见 / 出声只搬字节；语音基线记一张一人一行的小表（只存滚动平均，不存音频）。
+  voice: ['voice_baseline'],
   // 搬库 / 编排：ops 清库和导入、host 导入导出和接线。它们可以写别的域的表，
   // 但只许在本名单里——不是「想写哪张写哪张」。真正的进一步拆分要等把导入/导出/清库
   // 的代码抽成独立文件，那之前先按整域例外登记。
@@ -72,6 +72,8 @@ export const OWNERSHIP = {
     ],
     tables: [
       'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'alerts', 'raw_turns',
+      // 署名：这条记忆里的话是谁说的（谁写记忆谁落署名，跟正文同域）
+      'memory_provenance',
       // 开案后真的开口问：往主动消息队列里排一条
       'proactive',
       // 只读：召回的关系加成（记忆挂在谁名下、那个人多亲近）
@@ -93,14 +95,15 @@ export const OWNERSHIP = {
     reads: [],
   },
   speak: {
-    // 主动开口：判断 + 生成 + 记判决。读情绪 / 驱力 / 人格 / 记忆 / 开环；只写自己的两张账表。
+    // 主动开口：判断 + 生成 + 记判决。读情绪 / 驱力 / 人格 / 开环；记忆条数走 memory 公开函数，不直读 memory_items。
+    // 只写自己的两张账表 + flags 上开口自己的键。
     files: [
       'parts/speak/index.js', 'parts/speak/prefs.js', 'parts/speak/budget.js', 'parts/speak/trigger.js',
       'parts/speak/judge.js', 'parts/speak/store.js', 'parts/speak/compose.js', 'parts/speak/hooks.js',
     ],
     tables: [
       'proactive', 'proactive_decisions', 'proactive_stats', 'flags',
-      'agents', 'memory_items', 'affect_state', 'drive_state',
+      'agents', 'affect_state', 'drive_state',
     ],
     reads: [],
   },
@@ -150,12 +153,14 @@ export const OWNERSHIP = {
   },
   voice: {
     // 听见（ear）：一段声音变成字。出声（mouth）：一段字变成声音。
-    // 两个都只搬字节，不写库、不存音频；各占自己的文件。
+    // 两个零件只搬字节，不写库、不存音频；「这个人平时怎么说」由 voice_baseline
+    // 记一张小表（一人一行），只存滚动平均，不存音频。
     files: [
-      'parts/ear/index.js', 'parts/ear/probe.js', 'parts/ear/engine.js',
+      'parts/ear/index.js', 'parts/ear/probe.js', 'parts/ear/engine.js', 'parts/ear/acoustics.js',
       'parts/mouth/index.js', 'parts/mouth/providers.js', 'parts/mouth/format.js',
+      'modules/voice_baseline.js',
     ],
-    tables: [],
+    tables: ['voice_baseline'],
   },
   wechatinbox: {
     // 微信收信：只读本地库，把新消息记进聊天账本；水位存 flags（键带域前缀）。
@@ -172,14 +177,15 @@ export const OWNERSHIP = {
     tables: ['algo_bindings'],
   },
   persona: {
-    files: ['modules/persona.js'],
-    tables: ['persona', 'persona_values', 'changes', 'preferences', 'taboos', 'relations'],
+    files: ['modules/persona.js', 'modules/traits.js'],
+    // chat_turns / axis_rope：traits 只读（说话样本、绳索投影），不写
+    tables: ['persona', 'persona_values', 'changes', 'preferences', 'taboos', 'relations', 'chat_turns', 'axis_rope'],
   },
   relations: {
     // 人物账本：rel_event 是主数据，其余都是可重放投影。
     // 名单里的 relations（旧表）只读，用于一次性迁移；v2 不写它。
     // reldyn / desensitize 是纯函数（不碰表），登记在这里让界桩扫得到零件文件。
-    files: ['modules/relations.js', 'algo/reldyn.js', 'algo/desensitize.js'],
+    files: ['modules/relations.js', 'modules/relations_extract.js', 'algo/reldyn.js', 'algo/desensitize.js'],
     tables: [
       'rel_event', 'rel_tier', 'rel_person', 'rel_edge', 'rel_mention', 'rel_evidence',
       'rel_channel', 'rel_extract_queue', 'rel_review', 'rel_habit', 'rel_violation',
@@ -198,10 +204,12 @@ export const OWNERSHIP = {
   },
   affect: {
     // 情绪动力搬家：实现搬进 parts/affect/index.js，modules/affect.js 只留转发。
-    files: ['modules/affect.js', 'parts/affect/index.js'],
+    // appraise_flow：关系边偏置后的评价编排（从 features 搬出）。
+    files: ['modules/affect.js', 'modules/emotion_event.js', 'parts/affect/index.js', 'modules/appraise_flow.js'],
     // affect_events：P0 影子闸门，每条消息一行，只记录「会不会成为事件」
     // affect_review / affect_trigger：事后复查 + 触发词学习，本来就是它自己的两张表，之前漏登记
-    tables: ['affect_state', 'affect_episodes', 'affect_samples', 'affect_v3', 'affect_baseline', 'affect_user_read', 'affect_events', 'affect_review', 'affect_trigger'],
+    // chat_turns 只读：短句上下文
+    tables: ['affect_state', 'affect_episodes', 'affect_samples', 'affect_v3', 'affect_baseline', 'affect_user_read', 'affect_events', 'affect_review', 'affect_trigger', 'chat_turns'],
   },
   feel: {
     // 感受（feel）：立零件时补的域。只写 affect_feel；读的情绪/对话/记忆只读。
@@ -235,7 +243,7 @@ export const OWNERSHIP = {
     ],
   },
   selfmod: {
-    files: ['modules/selfmod.js', 'modules/selfmod_store.js', 'modules/artifacts.js'],
+    files: ['modules/selfmod.js', 'modules/selfmod_store.js', 'modules/artifacts.js', 'modules/metrics.js'],
     tables: [
       'proposals', 'changes', 'rule_versions', 'inbox_items', 'metric_samples',
       'rule_artifacts', 'agent_bindings', 'chat_turns', 'drive_state', 'change_journal',
@@ -291,7 +299,7 @@ export const OWNERSHIP = {
     // fact_archive：原地改写的旧句留底（`<id>:hist:<version>`）
     // memory_pair_judge：窄门判定的缓存表（pair_judge 负责读写），gate 只把 applied 标成 0/1——
     // 登记在这里是为了让这次跨模块写可见，不是把表从 pair_judge 抢过来。
-    files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js', 'modules/memory_source.js'],
+    files: ['modules/entities.js', 'modules/gate.js', 'modules/extract_queue.js', 'modules/enrich.js', 'modules/memory_source.js', 'modules/pair_judge.js', 'modules/write_lane.js'],
     tables: ['entities', 'extract_queue', 'memory_items', 'memory_fts', 'conflicts', 'alerts', 'fact_archive', 'memory_pair_judge'],
   },
   timeline: {
@@ -304,10 +312,10 @@ export const OWNERSHIP = {
     // 三观引擎：L0 只增账本 + 可重建投影 + 判定缓存；claim_purge 只在整 agent 清除的事务里存在
     // chat_turns 只读（用户是否活跃）；flags 存开关 / 预算 / 判定健康 / 快环缓冲 / 注入影子记录
     files: [
-      'api', 'bridge', 'budget', 'catalog', 'config', 'core', 'deliberate', 'elev', 'errors', 'events', 'explain', 'fast', 'fold',
+      'api', 'ask_track', 'bridge', 'budget', 'catalog', 'config', 'core', 'deliberate', 'elev', 'errors', 'events', 'explain', 'fast', 'fold',
       'gates', 'http_chat', 'index', 'inject', 'intake', 'ledger', 'liveness', 'llm', 'machine', 'night', 'open', 'practice',
       'precedent', 'projection', 'purge', 'schema', 'seed', 'sim', 'summary', 'tags', 'templates', 'theta', 'trial', 'ulid', 'verdict',
-    ].map((f) => 'modules/sangguan/' + f + '.js'),
+    ].map((f) => 'modules/sangguan/' + f + '.js').concat(['modules/sangguan/draftstore.js']),
     tables: [
       'claim_events', 'persona_claims', 'claim_questions', 'claim_kappa', 'claim_predictions', 'claim_evidence',
       'claim_edges', 'claim_summaries',
@@ -319,7 +327,10 @@ export const OWNERSHIP = {
   },
   host: {
     // api.js / index.js / db.js 不直接写业务 SQL；features / eval 编排聚合
-    files: ['features.js', 'modules/eval.js', 'modules/proxies.js', 'modules/browse.js', 'push.js'],
+    files: [
+      'features.js', 'modules/eval.js', 'modules/proxies.js', 'modules/browse.js', 'push.js',
+      'modules/heartnote.js', 'modules/selfnote.js', 'host/workers.js', 'host/session_agents.js',
+    ],
     tables: [
       'changes', 'rule_versions', 'metric_samples', 'conflicts', 'proposals',
       'events', 'agents', 'flags', 'bindings', 'chat_turns', 'proactive', 'proactive_stats', 'proactive_decisions',
@@ -339,6 +350,8 @@ export const OWNERSHIP = {
       // 人物账本的导出 / 导入
       'rel_tier', 'rel_event', 'rel_person', 'rel_edge', 'rel_mention', 'rel_evidence',
       'rel_channel', 'rel_extract_queue', 'rel_review',
+      // session_agents：认人只读 conversations / bindings（写绑定走 binding.js）
+      'conversations', 'bindings',
     ],
   },
 }

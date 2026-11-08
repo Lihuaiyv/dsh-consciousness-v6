@@ -6,6 +6,8 @@
 //
 // 入口只有一个：transcribeVoice。
 import { toWav16k, transcribeViaDsh } from './engine.js'
+import { pcmShape } from './acoustics.js'
+import { inspectWav } from './probe.js'
 
 /**
  * @param {object} options
@@ -17,11 +19,14 @@ import { toWav16k, transcribeViaDsh } from './engine.js'
  * @param {string} [options.language] 默认「自动」
  * @param {AbortSignal} [options.signal]
  * @param {Function} [options.run] ffmpeg 执行器（考卷注入假的）
- * @returns {Promise<{ text: string, audioSeconds: number|null, inferenceSeconds: number|null, wavBytes: number }>}
+ * @returns {Promise<{ text: string, audioSeconds: number|null, inferenceSeconds: number|null, wavBytes: number, shape: object|null }>}
  */
 export async function transcribeVoice({ buffer, ext, ffmpegPath, tmpDir, service, language, signal, run } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('语音内容是空的，没法转写')
-  const wav = await toWav16k({ buffer, ext, ffmpegPath, tmpDir, run })
+  // 浏览器已经交来规范的 16k 单声道 WAV 时，不再找 ffmpeg。这台机器经常没装它。
+  const wav = inspectWav(buffer).ok ? buffer : await toWav16k({ buffer, ext, ffmpegPath, tmpDir, run })
+  // 先量形状再转写：转写失败时形状也白算，但反过来「形状量不出」不该拖累转写。
+  const shape = pcmShape(wav)
   const transcript = await transcribeViaDsh({ service, wav, language, signal })
-  return { ...transcript, wavBytes: wav.length }
+  return { ...transcript, wavBytes: wav.length, shape }
 }

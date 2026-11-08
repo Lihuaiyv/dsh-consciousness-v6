@@ -941,6 +941,42 @@ async function routes(db, method, path, body, role, bound) {
       if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以测试通道')
       return await act.testChannel(db, aid, body)
     }
+    // ---- 本机麦：听一段上传录音 / 念一句 / 点一下念上一句 ----
+    if (method === 'POST' && sub === 'voice' && sub2 === 'hear') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以用麦克风说话')
+      const deps = act.currentDeps()
+      const out = await act.executeHear({
+        args: {
+          audio_base64: body.audio_base64,
+          format: body.format || body.ext || 'webm',
+          language: body.language || 'auto',
+          path: body.path,
+        },
+        getSpeech: () => deps.speech,
+        // 给了 db/agentId 才会记个人基线，才会说「比平时高」。
+        db,
+        agentId: aid,
+      })
+      const sid = String(body.session_id || '').trim()
+      if (sid && out && out.text) act.markVoiceExpect(sid)
+      // 「怎么说」的那一半挂到这一段会话上，下一轮拼系统提示时她会读到，读一次就取走。
+      if (sid && out && out.voice_line) act.markVoiceShape(sid, out.voice_line)
+      return { ...out, session_id: sid || undefined }
+    }
+    if (method === 'POST' && sub === 'voice' && sub2 === 'say') {
+      if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以让她出声')
+      let text = String(body.text || '').trim()
+      if (!text) {
+        const last = act.lastAssistantReply(String(body.session_id || '').trim())
+        text = last && last.text ? last.text : ''
+      }
+      if (!text) err(400, 'INVALID_ARGUMENT', '没有要念的话：传 text，或先聊一句再点念')
+      return await act.executeSay({ db, agentId: aid, args: { text, play: body.play !== false } })
+    }
+    if (method === 'GET' && sub === 'voice' && sub2 === 'last') {
+      const last = act.lastAssistantReply(String(q(path, 'session_id') || '').trim())
+      return { ok: true, text: last ? last.text : '', at: last ? last.at : 0 }
+    }
     // ---- 写评论 ----
     if (method === 'POST' && sub === 'comments') {
       if (role !== 'user') err(403, 'FORBIDDEN', '只有 user 可以发评论')

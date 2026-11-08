@@ -11,6 +11,8 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { getConfig } from './channels.js'
 import { transcribeVoice } from '../../parts/ear/index.js'
+import { describeShape } from '../../parts/ear/acoustics.js'
+import { applyBaseline, describeDrift } from '../voice_baseline.js'
 import { synthesizeVoice } from '../../parts/mouth/index.js'
 
 /** 设置里的 voice.* → 出声零件认的配置。字段名对齐旧桥，搬家不改配方。 */
@@ -40,32 +42,140 @@ function expand(file) {
 }
 
 /**
- * 听见：本地音频文件 → 文字。
- * @param {{ args?: object, getSpeech?: Function }} deps
+ * 听见：本地音频文件或上传字节 → 文字。
+ * @param {{ args?: object, getSpeech?: Function, db?: object, agentId?: string }} deps
+ *   args.path / args.file —— 本地路径；
+ *   args.audio_base64 + args.format —— 浏览器录音上传（webm / wav / mp3 / ogg）。
+ *   db + agentId —— 给了才记个人基线（「比平时高/快」靠它），不给就只量本段。
  */
-export async function executeHear({ args = {}, getSpeech } = {}) {
+export async function executeHear({ args = {}, getSpeech, db, agentId } = {}) {
+  let buffer = null
+  let ext = 'amr'
   const file = expand(args.path || args.file)
-  if (!file) throw new Error('要听哪个文件？给我一个本地音频路径（wav / mp3 / amr 都行）')
-  if (!fs.existsSync(file)) throw new Error('找不到这个文件：' + file)
-  const buffer = fs.readFileSync(file)
+  if (file) {
+    if (!fs.existsSync(file)) throw new Error('找不到这个文件：' + file)
+    buffer = fs.readFileSync(file)
+    ext = path.extname(file).replace('.', '') || 'amr'
+  } else if (args.audio_base64) {
+    const raw = String(args.audio_base64 || '').replace(/^data:[^;]+;base64,/, '')
+    buffer = Buffer.from(raw, 'base64')
+    ext = String(args.format || args.ext || 'webm').replace(/^\./, '').toLowerCase() || 'webm'
+    if (!buffer.length) throw new Error('录音是空的，再说一次')
+  } else {
+    throw new Error('要听哪个文件？给我一个本地音频路径（wav / mp3 / amr 都行），或把录音字节传上来')
+  }
   const service = typeof getSpeech === 'function' ? getSpeech() : null
   if (!service) {
     throw new Error('本机没有语音识别服务：设置 → 插件里启用「语音输入」那个实验包，再让我听')
   }
   const out = await transcribeVoice({
     buffer,
-    ext: path.extname(file).replace('.', '') || 'amr',
+    ext,
     tmpDir: os.tmpdir(),
     service,
     language: args.language || 'auto',
   })
+  // 个人基线：先拿旧常态比这一句，再把这一句滚进常态里。
+  // 没给 db/agentId 就算了——量本段照样能跑，只是少「比平时」这一层。
+  let drift = ''
+  try {
+    if (db && agentId) {
+      const base = applyBaseline(db, { agentId, shape: out.shape, text: out.text })
+      drift = describeDrift(base.drift, base.warmed)
+    }
+  } catch { drift = '' }
+  const shapeWords = describeShape(out.shape, out.text)
   return {
     ok: true,
     text: out.text,
     audio_seconds: out.audioSeconds,
     inference_seconds: out.inferenceSeconds,
     bytes: buffer.length,
+    // 「怎么说」的那一半：转写只留下字，这些是同一段声音上顺带量的。
+    shape: out.shape || null,
+    shape_words: shapeWords,
+    // 跟他自己平时比，不是跟别人比。不够格时是空串。
+    voice_drift: drift,
+    // 拼好的一句，给注入那行直接用。
+    voice_line: [shapeWords, drift].filter(Boolean).join('，'),
     at: new Date().toISOString(),
+  }
+}
+
+/** 麦克风说完后，这段会话在窗口内回完话要自动念（见 maybeSpeakReply）。 */
+const voiceExpectUntil = new Map()
+
+/**
+ * 上一段语音「怎么说」的那句话，按会话挂 2 分钟。
+ * 转写只交出字；这一行让下一轮拼系统提示时，那边也知道它是快是慢、停没停。
+ * 读一次就取走——只属于刚说出口的那一轮，不留到后面冒充。
+ */
+const voiceShapeBySession = new Map()
+
+export function markVoiceShape(sessionId, line) {
+  const sid = String(sessionId || '').trim()
+  const text = String(line || '').trim()
+  if (!sid || !text) return
+  voiceShapeBySession.set(sid, { line: text, at: Date.now() })
+}
+
+export function takeVoiceShape(sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return ''
+  const hit = voiceShapeBySession.get(sid)
+  if (!hit) return ''
+  voiceShapeBySession.delete(sid)
+  return Date.now() - hit.at <= 120_000 ? hit.line : ''
+}
+
+export function markVoiceExpect(sessionId, ms = 120000) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return
+  voiceExpectUntil.set(sid, Date.now() + Math.max(10_000, Number(ms) || 120000))
+}
+
+export function takeVoiceExpect(sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return false
+  const until = voiceExpectUntil.get(sid)
+  if (!until) return false
+  voiceExpectUntil.delete(sid)
+  return Date.now() <= until
+}
+
+/** 每段会话最近一句助手回复，给「点一下再念」用。 */
+const lastAssistantBySession = new Map()
+
+export function rememberAssistantReply(sessionId, text) {
+  const sid = String(sessionId || '').trim()
+  const t = String(text || '').trim()
+  if (!sid || !t) return
+  lastAssistantBySession.set(sid, { text: t.slice(0, 600), at: Date.now() })
+}
+
+export function lastAssistantReply(sessionId) {
+  const sid = String(sessionId || '').trim()
+  if (!sid) return null
+  return lastAssistantBySession.get(sid) || null
+}
+
+/**
+ * 回完一句后要不要自动念：只在「刚才是麦克风说的」且设置是 auto 时念。
+ * 失败只记人话，不拖对话。
+ */
+export async function maybeSpeakReply({ db, agentId, sessionId, text } = {}) {
+  rememberAssistantReply(sessionId, text)
+  if (!db || !agentId) return { spoke: false, reason: 'no_agent' }
+  const cfg = getConfig(db, agentId)
+  if (cfg['voice.reply.mode'] !== 'auto') return { spoke: false, reason: 'reply_off' }
+  if (!takeVoiceExpect(sessionId)) return { spoke: false, reason: 'not_from_mic' }
+  const line = String(text || '').trim()
+  if (!line) return { spoke: false, reason: 'empty' }
+  try {
+    const out = await executeSay({ db, agentId, args: { text: line.slice(0, 600), play: true } })
+    return { spoke: !!out.played, reason: out.played ? 'ok' : (out.play_error || 'no_play'), file: out.file }
+  } catch (e) {
+    return { spoke: false, reason: String(e && e.message || e).slice(0, 160) }
   }
 }
 

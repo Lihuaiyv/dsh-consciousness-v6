@@ -190,8 +190,9 @@ export const PARTS = [
     owner: 'src/modules/memory_source.js · gateSelfText',
     files: [
       'src/modules/memory_source.js',
+      'src/modules/write_lane.js',
     ],
-    entry: 'gateSelfText / classifySelf / scoreSelf / narrationOnly（src/modules/memory_source.js）；落库车道（宿主接线）：features.js 的 writeExtractedItem',
+    entry: 'gateSelfText / classifySelf / scoreSelf / narrationOnly（src/modules/memory_source.js）；落库车道 writeExtractedItem（src/modules/write_lane.js）；features.js 只 re-export',
     exam: { file: 'test/exam-writegate.test.mjs', score: '53/53', note: '旁白 / 为什么被拦（含噪音次序）/ 三档 / 打分 / 判决 / 来源徽章 / 落热层·落冷层·不写库，53 道' },
     assert: "表：memory_items / entities / extract_queue；读：gateSelfText；回退：wgate-before-part",
     swaps: [],
@@ -276,7 +277,7 @@ export const PARTS = [
     version: 'v0.1.0',
     owner: 'src/parts/affect/ · applyEmotionV3',
     files: ['src/parts/affect/index.js'],
-    entry: 'applyEmotionV3 / decayAffect（src/parts/affect/index.js）；宿主接线：features 的 appraiseWithEdges 调它，index.js 心跳里走衰减',
+    entry: 'applyEmotionV3 / decayAffect（src/parts/affect/index.js）；评价编排 appraiseWithEdges（src/modules/appraise_flow.js）；features 只 re-export；index.js 心跳里走衰减',
     exam: { file: 'test/exam-affect-apply.test.mjs', score: '13/13', note: '界内与有限数 / 正价压负价 / 两小时后回落 / 没情绪数据返回 null / 衰减不涨 / 不碰记忆，13 道' },
     assert: '表：affect_state / affect_v3 / affect_samples / affect_episodes；读：getAffect；回退：affect-apply-before-part',
     swaps: [],
@@ -469,7 +470,7 @@ export const PARTS = [
       'src/parts/ear/engine.js',
     ],
     entry: 'transcribeVoice（src/parts/ear/index.js）',
-    exam: { file: 'test/exam-ear.test.mjs', score: '27/27', note: '体检 / 修头 / 转规格 / 交给识别 / 空文本不编 / 异常说人话，27 道' },
+    exam: { file: 'test/exam-ear.test.mjs', score: '28/28', note: '体检 / 修头 / 转规格 / 交给识别 / 空文本不编 / 异常说人话，28 道' },
     assert: '表：无；读：transcribeVoice；回退：ear-before-part',
     swaps: [],
     rollback: {

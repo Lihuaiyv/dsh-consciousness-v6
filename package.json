@@ -4,11 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/run-tests.mjs && node test/voice-tools.test.mjs",
+    "test": "node test/run-tests.mjs && node test/voice-tools.test.mjs && node test/acoustics.test.mjs && node test/voice-baseline.test.mjs",
     "backup": "node scripts/backup-now.mjs",
     "test:selfhood": "node test/selfhood-fixes.test.mjs && node test/selfhood-life.test.mjs && node test/selfhood-share.test.mjs && node test/selfhood-author.test.mjs && node test/selfhood-reap.test.mjs",
     "test:actions": "node test/actions.test.mjs",
-    "test:memory": "node test/memory-settings.test.mjs",
+    "test:memory": "node test/memory-settings.test.mjs && node test/memory-provenance.test.mjs",
     "test:humanlike": "node test/pack.test.mjs && node test/examples.test.mjs && node test/injection-budget.test.mjs && node test/recall-cache.test.mjs && node test/memory-tag.test.mjs && node test/memory-tag-integration.test.mjs && node test/anchor-rotate.test.mjs && node test/style-texture.test.mjs && node test/memory-fade.test.mjs && node test/memory-fade-integration.test.mjs && node test/turn-id.test.mjs && node test/loop-guard.test.mjs && node test/noise-guard.test.mjs && node test/focus.test.mjs && node test/felt-leak.test.mjs && node test/subtext.test.mjs && node test/relation-recall.test.mjs && node test/closing.test.mjs && node test/memory-narration.test.mjs && node test/memory-self-lane.test.mjs && node test/memory-self-quota.test.mjs && node test/life-expand.test.mjs && node test/integration-self-memory.test.mjs && node test/memory-self-repeat.test.mjs && node test/memory-self-insight.test.mjs && node test/memory-self-pattern.test.mjs && node test/memory-deep-recall.test.mjs",
     "bench:humanlike": "node scripts/bench-humanlike.mjs",
     "bench:fade": "node scripts/bench-fade.mjs",

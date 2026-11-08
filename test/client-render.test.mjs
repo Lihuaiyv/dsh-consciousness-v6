@@ -84,7 +84,7 @@ const ctx = {
 mod.apply(ctx)
 
 const ids = registered.map((r) => r.meta.id)
-assert.deepEqual(ids, ['consciousness', 'consciousness-presence'], '注册的槽位变了：' + ids.join(','))
+assert.deepEqual(ids, ['consciousness', 'consciousness-presence', 'consciousness-voice-mic', 'consciousness-voice-bridge'], '注册的槽位变了：' + ids.join(','))
 
 /* ── 4. 迷你渲染：把组件真的调一遍 ─────────────────────── */
 let nodes = 0
