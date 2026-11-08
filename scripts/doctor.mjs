@@ -23,8 +23,9 @@ function flag(name, def) {
   return v && !v.startsWith('--') ? v : true
 }
 
-const BASE = String(flag('url', process.env.DSHC_URL || 'http://127.0.0.1:58087')).replace(/\/$/, '')
-const DB_PATH = String(flag('db', process.env.DSHC_DB || path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'app.db')))
+const BASE = process.env.DSH_WEB_URL ? process.env.DSH_WEB_URL.replace(/\/$/, '') : String(flag('url', process.env.DSHC_URL || 'http://127.0.0.1:58087')).replace(/\/$/, '')
+import { dbPath as resolveDbPath } from '../src/paths.js'
+const DB_PATH = String(flag('db', process.env.DSHC_DB || resolveDbPath()))
 const OFFLINE = !!flag('offline', false)
 const FIX = !!flag('fix', false)
 const AGENT = flag('agent', null)
