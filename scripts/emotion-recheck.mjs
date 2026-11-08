@@ -1,5 +1,5 @@
 // 情绪回查：只看最近 N 天的 affect_events / affect_samples / affect_episodes，不写库。
-// 产出 docs/情绪-回查-<YYYY-MM>.md 一份 + _emotion_recheck.json 一份。
+// 产出 docs/情绪-回查-<YYYY-MM>.md 一份 + var/_emotion_recheck.json 一份。
 //
 // 三张清单：
 //   A 差一点    —— sig 过了 0.7θ 但没过闸门
@@ -136,7 +136,8 @@ const out = {
   flat: flat.slice(0, 20),
   unseen: unseen.map((e) => ({ at: e.at, sig: r3(e.sig), label: e.label, cause: clip(e.cause, 60) })),
 }
-fs.writeFileSync(path.join(ROOT, '_emotion_recheck.json'), JSON.stringify(out, null, 2), 'utf8')
+fs.mkdirSync(path.join(ROOT, 'var'), { recursive: true })
+fs.writeFileSync(path.join(ROOT, 'var', '_emotion_recheck.json'), JSON.stringify(out, null, 2), 'utf8')
 
 /* ───────── Markdown ───────── */
 const pctStr = (x) => (x * 100).toFixed(1) + '%'
