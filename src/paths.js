@@ -11,6 +11,7 @@
  *   repoRoot()   本仓库根目录（按这个文件自己的位置算，跟搬去哪无关）
  *   picturesDir() / stickersDir()  用户图片与贴纸目录（贴纸可用 PAINT_REF_DIR 覆盖）
  */
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -21,10 +22,24 @@ export function home() {
   return env && env.trim() ? env.trim() : path.join(os.homedir(), '.dsh')
 }
 
-/** 线上库的路径：DSH_DB 优先，其次 home()/consciousness/app.db */
+/** 数据收进插件目录后，库在这里：<plugins>/runtime/consciousness/app.db */
+export function runtimeDbPath() {
+  return path.resolve(repoRoot(), '..', 'runtime', 'consciousness', 'app.db')
+}
+
+/**
+ * 线上库的路径，优先级：
+ *   1. DSH_DB 环境变量
+ *   2. <plugins>/runtime/consciousness/app.db —— 数据已经收进插件目录时用这个
+ *   3. home()/consciousness/app.db —— 还没收拢时的老位置
+ * 2026-11-08：本机没有建联接的权限（mklink 报 Access is denied），
+ * 所以改成"代码认路"，不再依赖 junction。
+ */
 export function dbPath() {
   const env = process.env.DSH_DB
   if (env && env.trim()) return env.trim()
+  const rt = runtimeDbPath()
+  try { if (fs.existsSync(rt)) return rt } catch { /* 读不到就回落 */ }
   return path.join(home(), 'consciousness', 'app.db')
 }
 
