@@ -33,6 +33,26 @@ _audit/
 _baseline/
 run-tests*.txt
 
+# 根目录的一次性草稿：调完就扔的东西，别再进版本库
+# （已经 tracked 的旧文件不在此列，那是历史，逐步清）
+_*.mjs
+_*.out
+_*.ps1
+_*.md
+_*.json
+_*.log
+_bak_*/
+
+# 工作目录约定（2026-11-08）：
+#   scratch/  一次性的探针脚本、临时笔记
+#   var/      运行产物：导出、回放、统计
+# 两者都不入库；根目录只留入口与源码。
+scratch/
+var/
+
+# 微信自动化日志
+wechatauto_logs/
+
 # 系统杂项
 .DS_Store
 Thumbs.db

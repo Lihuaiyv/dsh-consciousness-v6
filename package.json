@@ -34,6 +34,7 @@
     "check:host": "node scripts/check-host.mjs",
     "check:parts": "node scripts/check-parts.mjs",
     "check:paths": "node scripts/check-paths.mjs",
+    "check:hygiene": "node scripts/check-hygiene.mjs",
     "check:parts:independence": "node scripts/check-parts-independence.mjs",
     "check:algos": "node scripts/check-algos.mjs",
     "check:dead": "node scripts/dead-code-audit.mjs",

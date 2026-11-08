@@ -2497,6 +2497,12 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-paths.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 })
   check('路径闸：没有写死的绝对路径', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
+// 目录卫生：根目录只留入口、源码和约定里的目录（一次性草稿进 scratch/，产物进 var/）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-hygiene.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('目录卫生：根目录没有多余的草稿', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
 
 console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)
 if (fail.length) { console.log('失败:', fail); process.exit(1) }
