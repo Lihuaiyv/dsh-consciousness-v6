@@ -9386,6 +9386,7 @@ window.__ModuleLoader__.load({
       if (sid) VOICE.sid = sid
       if (props && props.inputActions) VOICE.actions = props.inputActions
       const glowRef = useRef(null)
+      const breathRef = useRef(null)
       useEffect(() => {
         const el = glowRef.current
         if (!el) return
@@ -9400,25 +9401,43 @@ window.__ModuleLoader__.load({
             if (at > last) {
               last = at
               el.style.opacity = '1'
-              // 先轻闪两下，告诉眼睛「我要开口了」
+              // 先轻轻呼吸两下，告诉眼睛「我要开口了」
               for (let i = 0; i < 2; i++) {
                 setTimeout(() => {
                   if (!alive) return
                   try {
                     el.animate(
                       [
-                        { boxShadow: '0 0 0 0 rgba(255,255,255,.5)', transform: 'scale(1)' },
+                        { boxShadow: '0 0 0 0 rgba(255,255,255,.45)', transform: 'scale(1)' },
                         { boxShadow: '0 0 0 12px rgba(255,255,255,0)', transform: 'scale(1.9)' },
                         { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
                       ],
-                      { duration: 520, easing: 'ease-out' },
+                      { duration: 560, easing: 'ease-out' },
                     )
                   } catch { /* 老浏览器不支持 animate 就算了 */ }
-                }, i * 300)
+                }, i * 320)
               }
-              // 然后一直亮着，等这句话说完再落回去
+              // 然后一直「呼吸」着，等这句话说完才停
               const holdMs = Math.max(900, until - Date.now())
-              setTimeout(() => { if (alive) el.style.opacity = '.6' }, holdMs)
+              try {
+                if (breathRef.current) breathRef.current.cancel()
+              } catch { /* ignore */ }
+              try {
+                breathRef.current = el.animate(
+                  [
+                    { boxShadow: '0 0 0 3px rgba(255,255,255,.12)', transform: 'scale(1.2)' },
+                    { boxShadow: '0 0 0 11px rgba(255,255,255,0)', transform: 'scale(1.9)' },
+                    { boxShadow: '0 0 0 3px rgba(255,255,255,.12)', transform: 'scale(1.2)' },
+                  ],
+                  { duration: 1400, iterations: Infinity, easing: 'ease-in-out' },
+                )
+              } catch { /* ignore */ }
+              setTimeout(() => {
+                if (!alive) return
+                try { if (breathRef.current) breathRef.current.cancel() } catch { /* ignore */ }
+                breathRef.current = null
+                el.style.opacity = '.6'
+              }, holdMs)
             }
             }
           } catch { /* 接口还没起来就静静待着 */ }

@@ -37,6 +37,23 @@ const throwsWith = async (fn, needle) => {
   check('出声空文本：说「空的」', await throwsWith(() => createVoiceServices({ getConfig: () => ({ ttsProvider: 'azure', ttsApiKey: 'k' }) })[VOICE_OUT].speak({ text: '  ' }), '空的'))
 }
 
+// ---------------------------------------------------------------- 桥上配好的配方可以直接拿来念
+{
+  let called = ''
+  const fetchImpl = async (url) => {
+    called = String(url)
+    return { ok: true, arrayBuffer: async () => Buffer.from('ID3fake-mp3-bytes') }
+  }
+  const s = createVoiceServices()
+  const out = await s[VOICE_OUT].speak({
+    text: '在',
+    config: { ttsProvider: 'openai', ttsApiKey: 'k', ttsBaseUrl: 'http://example.test/v1', ttsModel: 'tts-1', ttsVoice: 'alloy' },
+    fetchImpl,
+  })
+  check('桥的 openai 配方改走 compat 地址', called === 'http://example.test/v1/audio/speech', called)
+  check('交回来的是音频字节', Buffer.isBuffer(out.audio) && out.audio.length > 0, out)
+}
+
 // ---------------------------------------------------------------- 挂到宿主上
 {
   // 新版 cordis：ctx.set

@@ -18,6 +18,16 @@ export const VOICE_IN = 'voiceIn'
 export const VOICE_OUT = 'voiceOut'
 
 /**
+ * 桥上的旧配方 → 出声零件认的配方。
+ * 桥里第二条嗓子叫 openai；零件里叫 compat（厂商名不进零件代码）。其余字段同名。
+ */
+export function mouthConfigOf(config = {}) {
+  const c = { ...config }
+  if (c.ttsProvider === 'openai') c.ttsProvider = 'compat'
+  return c
+}
+
+/**
  * 造两个服务对象。依赖全部注入，这个函数自己不去 ctx 上摸东西。
  * @param {object} options
  * @param {() => object|null} [options.getSpeech] 宿主的 speechToText 服务
@@ -41,6 +51,7 @@ export function createVoiceServices({ getSpeech, getConfig, tmpDir = os.tmpdir()
         const out = await transcribeVoice({
           buffer,
           ext: String((input && input.ext) || 'webm').replace(/^\./, ''),
+          ffmpegPath: (input && input.ffmpegPath) || 'ffmpeg',
           tmpDir,
           service,
           language: (input && input.language) || 'auto',
@@ -59,8 +70,13 @@ export function createVoiceServices({ getSpeech, getConfig, tmpDir = os.tmpdir()
        * 配置不齐这里就报人话，别等请求发出去才 401。
        */
       async speak(input = {}) {
-        const cfg = typeof getConfig === 'function' ? getConfig() : {}
-        const out = await synthesizeVoice(voiceConfigOf(cfg), input && input.text)
+        // 调用方自己带了桥的配方（ttsProvider / ttsApiKey）就用那份——QQ 上配好的不丢。
+        // 没带才读意识体设置里的 voice.*。
+        const given = input && input.config
+        const cfg = given && typeof given === 'object'
+          ? mouthConfigOf(given)
+          : voiceConfigOf(typeof getConfig === 'function' ? getConfig() : {})
+        const out = await synthesizeVoice(cfg, input && input.text, { fetchImpl: input && input.fetchImpl })
         return { audio: out.audio, format: out.format }
       },
     },
