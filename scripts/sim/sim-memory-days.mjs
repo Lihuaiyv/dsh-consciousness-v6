@@ -4,25 +4,25 @@
  * 不调 LLM、不连宿主：用固定剧本模拟「每天说了什么、抽出了什么」，
  * 其余全部走真实代码（闸门 / 实体 / 队列 / 巩固 / 状态机 / 检索）。
  *
- * 用法：node scripts/sim-memory-days.mjs [天数]
+ * 用法：node scripts/sim/sim-memory-days.mjs [天数]
  */
 
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { addMemory, recall } from '../src/modules/memory.js'
-import { applyWrite } from '../src/modules/gate.js'
-import { entityForText } from '../src/modules/entities.js'
-import { appendTurn } from '../src/modules/archive.js'
-import { runNightly, localDay } from '../src/modules/nightly.js'
-import { retrieve } from '../src/modules/retrieve.js'
-import { packInjection } from '../src/modules/pack.js'
-import { tempStats } from '../src/modules/temps.js'
-import { logRetrieval, retrievalStats } from '../src/modules/retrieval_log.js'
-import { enqueueExtraction, tickExtraction } from '../src/modules/extract_queue.js'
-import { conflictStats, tickEscalation } from '../src/modules/conflict.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { addMemory, recall } from '../../src/modules/memory.js'
+import { applyWrite } from '../../src/modules/gate.js'
+import { entityForText } from '../../src/modules/entities.js'
+import { appendTurn } from '../../src/modules/archive.js'
+import { runNightly, localDay } from '../../src/modules/nightly.js'
+import { retrieve } from '../../src/modules/retrieve.js'
+import { packInjection } from '../../src/modules/pack.js'
+import { tempStats } from '../../src/modules/temps.js'
+import { logRetrieval, retrievalStats } from '../../src/modules/retrieval_log.js'
+import { enqueueExtraction, tickExtraction } from '../../src/modules/extract_queue.js'
+import { conflictStats, tickEscalation } from '../../src/modules/conflict.js'
 
 const DAYS = Math.max(10, Math.min(400, Number(process.argv[2]) || 200))
 const DAY = 86400000

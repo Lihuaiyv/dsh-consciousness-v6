@@ -1,21 +1,21 @@
 /**
  * U0–U5 统一模拟：预算互斥、UPDATE、实体、蒸馏召回、remember。
- * 用法：node scripts/sim-upgrade-u.mjs
+ * 用法：node scripts/sim/sim-upgrade-u.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { appendTurn, buildEpisodes, listFactArchive } from '../src/modules/archive.js'
-import { runNightly, localDay } from '../src/modules/nightly.js'
-import { retrieve } from '../src/modules/retrieve.js'
-import { writeParam } from '../src/kernel.js'
-import { llmBudgetSnapshot, shouldDeferExtract } from '../src/modules/llm_budget.js'
-import { applyWrite } from '../src/modules/gate.js'
-import { addMemory } from '../src/modules/memory.js'
-import { rememberFact } from '../src/modules/remember_tool.js'
-import { rebuildVectorIndex, searchVectorAnn } from '../src/modules/vector_index.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { appendTurn, buildEpisodes, listFactArchive } from '../../src/modules/archive.js'
+import { runNightly, localDay } from '../../src/modules/nightly.js'
+import { retrieve } from '../../src/modules/retrieve.js'
+import { writeParam } from '../../src/kernel.js'
+import { llmBudgetSnapshot, shouldDeferExtract } from '../../src/modules/llm_budget.js'
+import { applyWrite } from '../../src/modules/gate.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { rememberFact } from '../../src/modules/remember_tool.js'
+import { rebuildVectorIndex, searchVectorAnn } from '../../src/modules/vector_index.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-simu-'))
 const db = openDb(path.join(dir, 'app.db'))

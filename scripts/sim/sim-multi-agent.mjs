@@ -1,7 +1,7 @@
 /**
  * 多实例整体模拟（真实函数、临时库，不碰线上）。
  *
- * 跑法：node scripts/sim-multi-agent.mjs [--json out.json]
+ * 跑法：node scripts/sim/sim-multi-agent.mjs [--json out.json]
  *
  * 验的是「会不会串」这件事本身：
  *   3 个意识体 / 3 段对话 / 7 天 × 每段每天 20 轮
@@ -12,14 +12,14 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { nid } from '../src/kernel.js'
-import { seedState, seedRelations, addMemory } from '../src/core.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { nid } from '../../src/kernel.js'
+import { seedState, seedRelations, addMemory } from '../../src/core.js'
 import {
   bindSession, resolveAgentId, unbindAgent, bindingsOf, runningAgentIds, setMaxRunning, maxRunning,
-} from '../src/modules/binding.js'
-import { heartbeatTick, ensureRows, LIGHT_MS, DEEP_MS } from '../src/modules/heartbeat.js'
+} from '../../src/modules/binding.js'
+import { heartbeatTick, ensureRows, LIGHT_MS, DEEP_MS } from '../../src/modules/heartbeat.js'
 
 const args = process.argv.slice(2)
 const jsonOut = args.includes('--json') ? args[args.indexOf('--json') + 1] : null

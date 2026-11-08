@@ -3,21 +3,21 @@
  * 覆盖 off / shadow / on 三种挡位、四种鱼格、八类刺激，外加衰减、标签惯性、12 道门、
  * 自述与日记取材、以及 30 轮连续对话。
  *
- * 用法：node scripts/sim-affect-v2.mjs
+ * 用法：node scripts/sim/sim-affect-v2.mjs
  * 退出码：0 = 全过；1 = 有断言失败。
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { seedState } from '../src/core.js'
-import { appraiseWithEdges, decideSpeak } from '../src/features.js'
-import { decayAffect, getAffect } from '../src/modules/affect.js'
-import { readAxes, setAxisAuto, stimulusStrength, traitAmp, sensitivityOf } from '../src/modules/traits.js'
-import { computeEdgeBias } from '../src/modules/edges.js'
-import { getSelfview } from '../src/modules/selfview.js'
-import { diaryContext, diaryTone } from '../src/modules/archive.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { seedState } from '../../src/core.js'
+import { appraiseWithEdges, decideSpeak } from '../../src/features.js'
+import { decayAffect, getAffect } from '../../src/modules/affect.js'
+import { readAxes, setAxisAuto, stimulusStrength, traitAmp, sensitivityOf } from '../../src/modules/traits.js'
+import { computeEdgeBias } from '../../src/modules/edges.js'
+import { getSelfview } from '../../src/modules/selfview.js'
+import { diaryContext, diaryTone } from '../../src/modules/archive.js'
 
 let pass = 0
 const fails = []

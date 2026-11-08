@@ -4,18 +4,18 @@
  * 不碰真实库，不联网，不调真模型：browse / model 都是假的。
  * 目的是验证机制（闸门、去重、记录、注入增量），不是评内容好坏。
  *
- * 运行：node scripts/sim-selfhood.mjs [--days 30]
+ * 运行：node scripts/sim/sim-selfhood.mjs [--days 30]
  * 输出：文末 JSON + 一段人话摘要。
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { seedState } from '../src/core.js'
-import { addMemory } from '../src/modules/memory.js'
-import { lifeTick, lifeLine, latestShare } from '../src/modules/life.js'
-import { reappraiseTick, reappraiseLine } from '../src/modules/reappraise.js'
-import { authorChange, authorStats } from '../src/modules/self_author.js'
+import { openDb, now } from '../../src/db.js'
+import { seedState } from '../../src/core.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { lifeTick, lifeLine, latestShare } from '../../src/modules/life.js'
+import { reappraiseTick, reappraiseLine } from '../../src/modules/reappraise.js'
+import { authorChange, authorStats } from '../../src/modules/self_author.js'
 
 const DAY = 86400000
 const args = process.argv.slice(2)

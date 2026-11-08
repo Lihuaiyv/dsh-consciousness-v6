@@ -5,15 +5,15 @@
  *   1. 连聊 12 小时（每 3 分钟一句，情绪正负交替），看慢情绪能不能跟住水位；
  *   2. 挨了一下之后没人理（6 小时），看多快回到水位附近——分别看「被抬高」和「被压下去」。
  *
- * 运行：node scripts/sim-recovery.mjs
+ * 运行：node scripts/sim/sim-recovery.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { setParam } from '../src/kernel.js'
-import { seedAffect, applyEmotionV3 } from '../src/modules/affect.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { setParam } from '../../src/kernel.js'
+import { seedAffect, applyEmotionV3 } from '../../src/modules/affect.js'
 
 const H = 3600000
 const MIN = 60000

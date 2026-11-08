@@ -4,15 +4,15 @@
  * 跑两条一模一样的 14 天时间线：一条把四个参数都关掉（旧行为），一条用默认值。
  * 只比数据，不调模型。
  *
- * 运行：node scripts/sim-alive.mjs
+ * 运行：node scripts/sim/sim-alive.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { setParam } from '../src/kernel.js'
-import { seedAffect, applyEmotionV3, spontaneousTick } from '../src/modules/affect.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { setParam } from '../../src/kernel.js'
+import { seedAffect, applyEmotionV3, spontaneousTick } from '../../src/modules/affect.js'
 
 const H = 3600000
 const DAY = 24 * H

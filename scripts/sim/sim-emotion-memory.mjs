@@ -1,7 +1,7 @@
 /**
  * 改造前后的对照模拟（可重复跑，不碰线上库）。
  *
- *   node scripts/sim-emotion-memory.mjs
+ *   node scripts/sim/sim-emotion-memory.mjs
  *
  * 三块：
  *   A 注入：旧的内联「说话分寸」 vs 新的表达层——统计「关系说热情、情绪说冷淡」同轮打架的次数
@@ -12,12 +12,12 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openDb } from '../src/db.js'
-import { addMemory } from '../src/modules/memory.js'
-import { surfaceQueueTick, takeSurface, pendingSurface } from '../src/modules/pulse.js'
-import { applySelfRead, readReplyTone } from '../src/modules/self_read.js'
-import { expressionState } from '../src/modules/expression_state.js'
-import { toneOf } from '../src/algo/reldyn.js'
+import { openDb } from '../../src/db.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { surfaceQueueTick, takeSurface, pendingSurface } from '../../src/modules/pulse.js'
+import { applySelfRead, readReplyTone } from '../../src/modules/self_read.js'
+import { expressionState } from '../../src/modules/expression_state.js'
+import { toneOf } from '../../src/algo/reldyn.js'
 
 const now = () => new Date().toISOString()
 const r2 = (x) => Math.round(x * 100) / 100

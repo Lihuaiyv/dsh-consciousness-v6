@@ -5,8 +5,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { handle } from '../src/api.js'
+import { openDb } from '../../src/db.js'
+import { handle } from '../../src/api.js'
 
 const LIVE = path.join(os.homedir(), '.dsh', 'consciousness')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-e2e2-'))

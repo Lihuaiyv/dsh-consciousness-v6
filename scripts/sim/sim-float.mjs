@@ -7,19 +7,19 @@
  *   2. 相关的那几条有没有被挤掉（配额不是白拿的）；
  *   3. 空话轮（「嗯」「好」）有没有东西可浮。
  *
- * 用法：node scripts/sim-float.mjs
+ * 用法：node scripts/sim/sim-float.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { addMemory } from '../src/modules/memory.js'
-import { retrieve } from '../src/modules/retrieve.js'
-import { packInjection } from '../src/modules/pack.js'
-import { detectLoop, addLoop, pendingLoops, loopLineFor, markLoopsFired, loopStats } from '../src/modules/loops.js'
-import { bumpReflect, reflectCursor } from '../src/modules/consolidate.js'
-import { recordSurfaced, markSurfacedUsed, surfacingStats } from '../src/modules/surfacing.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { retrieve } from '../../src/modules/retrieve.js'
+import { packInjection } from '../../src/modules/pack.js'
+import { detectLoop, addLoop, pendingLoops, loopLineFor, markLoopsFired, loopStats } from '../../src/modules/loops.js'
+import { bumpReflect, reflectCursor } from '../../src/modules/consolidate.js'
+import { recordSurfaced, markSurfacedUsed, surfacingStats } from '../../src/modules/surfacing.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-float-sim-'))
 const db = openDb(path.join(dir, 'app.db'))

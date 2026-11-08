@@ -1,6 +1,6 @@
 /**
  * 感受快照的「防照着念」模拟：同一批场景，开/关各跑一遍，比注入文本。
- *   node scripts/sim-snapshot.mjs
+ *   node scripts/sim/sim-snapshot.mjs
  *
  * 它不调模型（本地拼提示词），所以它验的不是「她会不会念数字」——
  * 那要真机看。它验的是**我们能控的那一半**：
@@ -12,11 +12,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { consciousnessBlock } from '../index.js'
-import { writeParam } from '../src/kernel.js'
-import { seedTiers } from '../src/modules/relations.js'
-import { addMemory } from '../src/modules/memory.js'
+import { openDb } from '../../src/db.js'
+import { consciousnessBlock } from '../../index.js'
+import { writeParam } from '../../src/kernel.js'
+import { seedTiers } from '../../src/modules/relations.js'
+import { addMemory } from '../../src/modules/memory.js'
 
 let pass = 0
 let fail = 0

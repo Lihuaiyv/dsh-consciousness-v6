@@ -6,9 +6,9 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { handle } from '../src/api.js'
-import { attachContextBlock } from '../src/features.js'
+import { openDb } from '../../src/db.js'
+import { handle } from '../../src/api.js'
+import { attachContextBlock } from '../../src/features.js'
 
 const live = path.join(os.homedir(), '.dsh', 'consciousness', 'app.db')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-e2e-'))

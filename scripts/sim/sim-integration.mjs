@@ -1,6 +1,6 @@
 /**
  * 整体功能模拟：走一遍真实的写入路径（不是手搓行），看下一轮拼出来的提示词。
- *   node scripts/sim-integration.mjs
+ *   node scripts/sim/sim-integration.mjs
  *
  * 链路：appraise() → applyEmotionV3() → 写 affect_events + affect_samples
  *        → recordUnsaid() → events
@@ -11,13 +11,13 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { seedAffect, appraise } from '../src/core.js'
-import { recordUnsaid } from '../src/features.js'
-import { consciousnessBlock } from '../index.js'
-import { seedTiers } from '../src/modules/relations.js'
-import { writeParam } from '../src/kernel.js'
-import { feltSnapshot } from '../src/modules/felt_snapshot.js'
+import { openDb } from '../../src/db.js'
+import { seedAffect, appraise } from '../../src/core.js'
+import { recordUnsaid } from '../../src/features.js'
+import { consciousnessBlock } from '../../index.js'
+import { seedTiers } from '../../src/modules/relations.js'
+import { writeParam } from '../../src/kernel.js'
+import { feltSnapshot } from '../../src/modules/felt_snapshot.js'
 
 let pass = 0
 let fail = 0

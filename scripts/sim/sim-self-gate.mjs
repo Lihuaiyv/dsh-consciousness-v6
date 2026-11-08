@@ -5,16 +5,16 @@
  *   1) 拿真库里最近被挡下的自我条目头部，按新规则过一遍分类，看会怎么分流；
  *   2) 在临时库里跑一轮完整的写入流程（含配额），数出热层 / 冷层 / 丢弃各多少，确认没丢话。
  *
- * 运行：node scripts/sim-self-gate.mjs
+ * 运行：node scripts/sim/sim-self-gate.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { openDb } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { writeExtractedItem, selfWindowState } from '../src/features.js'
-import { classifySelf } from '../src/modules/memory_source.js'
+import { openDb } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { writeExtractedItem, selfWindowState } from '../../src/features.js'
+import { classifySelf } from '../../src/modules/memory_source.js'
 
 const REAL = path.join(os.homedir(), '.dsh', 'consciousness', 'app.db')
 const AGENT = process.env.SIM_AGENT || 'agt_3977d80f17'
@@ -92,8 +92,8 @@ console.log('  当前窗口配额：每 ' + w.winH + ' 小时 ' + w.cap + ' 条�
 console.log('  丢失检查：' + ((after - before) + out.drop === items.length ? '没丢（存下来的 + 明确丢掉的 = 候选数）' : '对不上，需要查'))
 
 // ---- 3. 按分量选人 + 结算 ----
-import { setParam } from '../src/kernel.js'
-import { settleSelfHot } from '../src/features.js'
+import { setParam } from '../../src/kernel.js'
+import { settleSelfHot } from '../../src/features.js'
 setParam(db, aid, 'self.admission', { value: 'score' })
 setParam(db, aid, 'self.admission.min_score', { value: 0.5 })
 setParam(db, aid, 'self.quota.auto', { value: 'off' })

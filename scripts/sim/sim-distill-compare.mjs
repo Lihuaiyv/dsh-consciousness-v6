@@ -2,20 +2,20 @@
  * 蒸馏前后对比：同一剧本跑两遍（关 distill / 开 distill），比召回命中与事实来源。
  * 不调真实 LLM：夜巡用 mock summarize + extract。
  *
- * 用法：node scripts/sim-distill-compare.mjs [天数]
+ * 用法：node scripts/sim/sim-distill-compare.mjs [天数]
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { appendTurn, buildEpisodes } from '../src/modules/archive.js'
-import { runNightly, localDay } from '../src/modules/nightly.js'
-import { retrieve } from '../src/modules/retrieve.js'
-import { writeParam } from '../src/kernel.js'
-import { addMemory } from '../src/modules/memory.js'
-import { applyWrite } from '../src/modules/gate.js'
-import { entityForText } from '../src/modules/entities.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { appendTurn, buildEpisodes } from '../../src/modules/archive.js'
+import { runNightly, localDay } from '../../src/modules/nightly.js'
+import { retrieve } from '../../src/modules/retrieve.js'
+import { writeParam } from '../../src/kernel.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { applyWrite } from '../../src/modules/gate.js'
+import { entityForText } from '../../src/modules/entities.js'
 
 const DAYS = Math.max(20, Math.min(120, Number(process.argv[2]) || 60))
 const DAY = 86400000

@@ -1,7 +1,7 @@
 ﻿/**
  * 改造前后对照（同一套模拟、两种运行语义）。
  *
- * 跑法：node scripts/sim-before-after.mjs [--json out.json]
+ * 跑法：node scripts/sim/sim-before-after.mjs [--json out.json]
  *
  * 为什么这么比：改造前的「谁在运行」是一个全局单值（`activeAgentId()`），
  * 所有会话都认它；改造后按会话解析。这里把两种语义分别**真实跑一遍**，
@@ -11,12 +11,12 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { nid } from '../src/kernel.js'
-import { seedState, seedRelations, addMemory } from '../src/core.js'
-import { bindSession, resolveAgentId, runningAgentIds } from '../src/modules/binding.js'
-import { heartbeatTick, ensureRows, LIGHT_MS, DEEP_MS } from '../src/modules/heartbeat.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { nid } from '../../src/kernel.js'
+import { seedState, seedRelations, addMemory } from '../../src/core.js'
+import { bindSession, resolveAgentId, runningAgentIds } from '../../src/modules/binding.js'
+import { heartbeatTick, ensureRows, LIGHT_MS, DEEP_MS } from '../../src/modules/heartbeat.js'
 
 const args = process.argv.slice(2)
 const jsonOut = args.includes('--json') ? args[args.indexOf('--json') + 1] : null

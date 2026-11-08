@@ -6,19 +6,19 @@
  *   commit_after_pack=off → 旧路：取到就落账
  * 这样「改前」不是回忆，是同一套代码跑出来的对照。
  *
- * 运行：node scripts/sim-realness-closure.mjs
+ * 运行：node scripts/sim/sim-realness-closure.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { openDb, now } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { setParam } from '../src/kernel.js'
-import { addMemory } from '../src/modules/memory.js'
-import { bootstrap, ownerPerson } from '../src/modules/relations.js'
-import { recordSelfResidue, settleSelfResidue } from '../src/modules/self_residue.js'
-import { consciousnessBlock } from '../index.js'
+import { openDb, now } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { setParam } from '../../src/kernel.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { bootstrap, ownerPerson } from '../../src/modules/relations.js'
+import { recordSelfResidue, settleSelfResidue } from '../../src/modules/self_residue.js'
+import { consciousnessBlock } from '../../index.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-realness-'))
 const db = openDb(path.join(dir, 'app.db'))

@@ -1,6 +1,6 @@
 /**
  * 开环前后对比：拿真库里那 45 条历史开环做语料，比「改前 / 改后」两种判法。
- *   node scripts/sim-loops.mjs
+ *   node scripts/sim/sim-loops.mjs
  *
  * 只读真库（不写），旧逻辑在这里原样重写一份做对照——不参与线上。
  */
@@ -8,8 +8,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { detectLoop } from '../src/modules/loops.js'
-import { openDb } from '../src/db.js'
+import { detectLoop } from '../../src/modules/loops.js'
+import { openDb } from '../../src/db.js'
 
 const DB = process.env.DSHC_DB || path.join(os.homedir(), '.dsh', 'consciousness', 'app.db')
 if (!fs.existsSync(DB)) { console.error('找不到库：' + DB); process.exit(2) }

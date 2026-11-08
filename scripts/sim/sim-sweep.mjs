@@ -2,7 +2,7 @@
  * 参数扫描：想让「饿」真的看得出来，胃口倍率和回落速度各该给多少。
  * 只跑稳态：固定日子过法，跑 12 天，取最后一天的五维缺口。
  */
-import { learnSetpoint, deficitV3 } from '../src/algo/deficit.js'
+import { learnSetpoint, deficitV3 } from '../../src/algo/deficit.js'
 
 const DIMS = ['R', 'E', 'C', 'A', 'S']
 const DT = 1 / 12

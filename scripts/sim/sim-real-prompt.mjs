@@ -5,11 +5,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { consciousnessBlock } from '../index.js'
-import { buildReplySystem } from '../src/model.js'
-import { attachContextBlock, buildContextBlock, clampContextBlock } from '../src/features.js'
-import { recall } from '../src/core.js'
+import { openDb } from '../../src/db.js'
+import { consciousnessBlock } from '../../index.js'
+import { buildReplySystem } from '../../src/model.js'
+import { attachContextBlock, buildContextBlock, clampContextBlock } from '../../src/features.js'
+import { recall } from '../../src/core.js'
 
 const LIVE = path.join(os.homedir(), '.dsh', 'consciousness')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-realprompt-'))

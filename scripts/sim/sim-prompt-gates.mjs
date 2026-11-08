@@ -1,6 +1,6 @@
 /**
  * 提示词三道闸的模拟：一天一天走，看哪些话什么时候说、什么时候闭嘴。
- * 运行：node scripts/sim-prompt-gates.mjs
+ * 运行：node scripts/sim/sim-prompt-gates.mjs
  *
  * 三样东西：
  *   1. 「上次你们聊到」—— 一天一次，隔天还能再说（不是只活一天）
@@ -9,9 +9,9 @@
  *
  * 全部用假时钟走，不碰线上库（makeWorld 是临时库）。
  */
-import { makeWorld } from '../test/eval-persona/setup.mjs'
-import { canSayOnce } from '../src/modules/sayonce.js'
-import { reappraiseLine } from '../src/modules/reappraise.js'
+import { makeWorld } from '../../test/eval-persona/setup.mjs'
+import { canSayOnce } from '../../src/modules/sayonce.js'
+import { reappraiseLine } from '../../src/modules/reappraise.js'
 
 const DAY = 86400000
 const w = makeWorld()

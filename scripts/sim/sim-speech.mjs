@@ -5,16 +5,16 @@
  * 统计改前（24 句模板）和改后（生成句 + 夹边界）的差别：
  *   唯一句数 / AI 味词占比 / 重样率 / 夹边界率 / 评委偏好 / 影子落账数。
  *
- * 运行：node scripts/sim-speech.mjs
+ * 运行：node scripts/sim/sim-speech.mjs
  * 不改活库：临时目录建一份同样的 schema。
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
-import { feltLine, expressionState } from '../src/modules/expression_state.js'
-import { judgeSpeech, recordShadow, judgeCompare, recordCompare } from '../src/modules/speech_judge.js'
-import { generateVoice, recordVoice, recentVoices, latestVoice, validateVoice } from '../src/modules/speech_words.js'
+import { openDb, now } from '../../src/db.js'
+import { feltLine, expressionState } from '../../src/modules/expression_state.js'
+import { judgeSpeech, recordShadow, judgeCompare, recordCompare } from '../../src/modules/speech_judge.js'
+import { generateVoice, recordVoice, recentVoices, latestVoice, validateVoice } from '../../src/modules/speech_words.js'
 
 const TURNS = 40
 const AI_FLAVOR = /有点|感觉|情绪/

@@ -10,17 +10,17 @@
  *   3) 问「还记得吗」时自动翻旧账，注入里有没有那句「刚翻出来的」；
  *   4) 同一个问题连问 4 轮，会不会同一件事反复念。
  *
- * 运行：node scripts/sim-self-memory.mjs
+ * 运行：node scripts/sim/sim-self-memory.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
-import { addMemory } from '../src/modules/memory.js'
-import { retrieve, deepRecall } from '../src/modules/retrieve.js'
-import { packMemoryBlock } from '../index.js'
-import { selfTextOk } from '../src/modules/memory_source.js'
+import { openDb } from '../../src/db.js'
+import { attachDb } from '../../src/algo/index.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { retrieve, deepRecall } from '../../src/modules/retrieve.js'
+import { packMemoryBlock } from '../../index.js'
+import { selfTextOk } from '../../src/modules/memory_source.js'
 
 const TOPICS = ['潮汐表的排序', '记忆检索的召回', '咖啡的偏好', '考试系统的权限', '日记的写法', '生活流的频率', '情绪的快慢', '注入的预算']
 const QUERIES = TOPICS.map((t) => t + ' 怎么弄')

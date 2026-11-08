@@ -1,7 +1,7 @@
 /**
  * 整体功能模拟：连着说三句，看每一轮的注入块到底长什么样。
  *
- *   node scripts/sim-turns.mjs
+ *   node scripts/sim/sim-turns.mjs
  *
  * 验四件事：
  *   1) 每轮都有「我说话的样子」和「感觉现在大概的情绪」（A1/A2）
@@ -12,11 +12,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb } from '../src/db.js'
-import { addMemory } from '../src/modules/memory.js'
-import { seedTiers } from '../src/modules/relations.js'
-import { retrieve } from '../src/modules/retrieve.js'
-import { consciousnessBlock, recentRecall, invalidateRecallCache, packMemoryBlock, noteStyleMode } from '../index.js'
+import { openDb } from '../../src/db.js'
+import { addMemory } from '../../src/modules/memory.js'
+import { seedTiers } from '../../src/modules/relations.js'
+import { retrieve } from '../../src/modules/retrieve.js'
+import { consciousnessBlock, recentRecall, invalidateRecallCache, packMemoryBlock, noteStyleMode } from '../../index.js'
 
 const now = () => new Date().toISOString()
 const DAY = 86400000

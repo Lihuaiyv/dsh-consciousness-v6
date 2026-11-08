@@ -2,7 +2,7 @@
  * 驱力模拟：30 天，每小时推进一次，看「是不是一直都有驱力」。
  * 用真代码（learnSetpoint / deficitV3），只把外部世界换成合成输入。
  */
-import { learnSetpoint, deficitV3, APPETITE } from '../src/algo/deficit.js'
+import { learnSetpoint, deficitV3, APPETITE } from '../../src/algo/deficit.js'
 
 const DIMS = ['R', 'E', 'C', 'A', 'S']
 const DAYS = 30

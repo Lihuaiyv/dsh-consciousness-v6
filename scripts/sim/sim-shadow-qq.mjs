@@ -1,7 +1,7 @@
 /**
  * 整体功能模拟（本阶段）：QQ 通道 → 回话余量 → Shadow 只读观测。
  *
- * 跑法：node scripts/sim-shadow-qq.mjs
+ * 跑法：node scripts/sim/sim-shadow-qq.mjs
  *
  * 验的是「这几块拼在一起」：
  *   1. QQ 主人的回话会留下关系余量（偏冷才记），陌生人不记；
@@ -16,11 +16,11 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { openDb } from '../src/db.js'
-import { handle } from '../src/api.js'
-import { writeParam } from '../src/kernel.js'
-import { attachQQIngest } from '../src/modules/qq_bridge.js'
-import { shadowReport, settleSelfResidue, recordReplyResidue } from '../src/modules/self_residue.js'
+import { openDb } from '../../src/db.js'
+import { handle } from '../../src/api.js'
+import { writeParam } from '../../src/kernel.js'
+import { attachQQIngest } from '../../src/modules/qq_bridge.js'
+import { shadowReport, settleSelfResidue, recordReplyResidue } from '../../src/modules/self_residue.js'
 
 const OWNER_QQ = '3192248859'
 const OWNER_CHAT = 'u:' + OWNER_QQ
