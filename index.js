@@ -14,6 +14,8 @@ import { dbPath } from './src/paths.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { openDb, recover, now } from './src/db.js'
 import { handle } from './src/api.js'
 import { attachHostLlm, createHostJudgeModel, hostTalkModel } from './src/model.js'
@@ -86,7 +88,7 @@ import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/a
 import { addMemory, setFeelProvider } from './src/modules/memory.js'
 import { openEmotion } from './src/modules/emotion_event.js'
 import { createActionTools, attachActionDeps, executeBrowse, getConfig as getActionConfig } from './src/modules/actions/index.js'
-import { maybeSpeakReply, takeVoiceShape } from './src/modules/actions/voice.js'
+import { maybeSpeakReply, takeVoiceShape, lastVoiceFlash } from './src/modules/actions/voice.js'
 import { createVoiceServices } from './src/voice_service.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
@@ -2134,11 +2136,20 @@ function hostSpec() {
           })
         },
       })
+      // 右下角光点用：这一轮「开口」的时间戳。变了就亮一下，平时静静待着。
+      const d5 = child.webServer.register({
+        kind: 'exact',
+        path: '/dsh-consciousness/voice-flash',
+        handler: (_req, res) => {
+          sendJson(res, 200, { at: lastVoiceFlash() })
+        },
+      })
       return () => {
         try { d1() } catch { /* ignore */ }
         try { d2() } catch { /* ignore */ }
         try { d3() } catch { /* ignore */ }
         try { d4() } catch { /* ignore */ }
+        try { d5() } catch { /* ignore */ }
       }
     },
 
@@ -2326,4 +2337,39 @@ try {
   } catch (e) {
     console.error('[dsh-consciousness-v6] host attach failed:', e)
   }
+
+  // 光点已改到网页里（client 半，右下角），不再从宿主起系统窗口——
+  // DSH 的插件进程里 spawn 出来的界面程序活不下来（PATH 里没有 powershell，绝对路径也会立刻退出）。
 }
+
+/**
+ * 拉起右下角那颗光点。
+ * 只在「没记 pid，或者那个 pid 已经死了」时才起，否则每次重载都会多叠一个。
+ * 失败静默：它只是给眼睛的一个信号，不该拖累插件。
+ */
+function startVoiceGlow() {
+  try {
+    const root = path.dirname(fileURLToPath(import.meta.url))
+    const script = path.join(root, 'scripts', 'voice-glow.ps1')
+    if (!fs.existsSync(script)) return
+    const pidFile = path.join(root, '..', 'runtime', 'voice-glow.pid')
+    try {
+      const pid = Number(String(fs.readFileSync(pidFile, 'utf8')).trim())
+      if (Number.isFinite(pid) && pid > 0) {
+        process.kill(pid, 0)
+        return // 还活着，不用再起
+      }
+    } catch { /* 没 pid 文件或进程已死：往下起 */ }
+    // 插件进程里的 PATH 不一定有 powershell，用绝对路径起
+    const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const exe = fs.existsSync(psExe) ? psExe : 'powershell.exe'
+    const child = spawn(exe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+    if (child.pid) fs.writeFileSync(pidFile, String(child.pid))
+  } catch { /* 静默 */ }
+}
+

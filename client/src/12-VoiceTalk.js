@@ -19,11 +19,45 @@
       return ''
     }
 
-    /** 输入框那个槽如果在，只负责把「发送」接口交出来。自己不画东西。 */
+    /** 输入框那个槽如果在，只负责把「发送」接口交出来。自己不画东西（但顺手挂那颗光点）。 */
     function VoiceMicBridge(props) {
       const sid = voiceSessionId(props)
       if (sid) VOICE.sid = sid
       if (props && props.inputActions) VOICE.actions = props.inputActions
+      // 右下角那颗光点：常驻一颗小白点，我开口时亮一下（跟麦克风按钮、名字牌一样的做法）。
+      useEffect(() => {
+        const el = document.createElement('div')
+        el.id = 'dshc-voice-glow'
+        el.style.cssText = 'position:fixed;right:22px;bottom:26px;width:8px;height:8px;border-radius:50%;background:#fff;opacity:.45;z-index:2147483645;pointer-events:none;transition:opacity .4s ease;'
+        document.body.appendChild(el)
+        let last = 0
+        let alive = true
+        const poll = async () => {
+          if (!alive) return
+          try {
+            const j = await fetch('/dsh-consciousness/voice-flash', { cache: 'no-store' }).then((r) => r.json())
+            const at = Number(j && j.at) || 0
+            if (at > last) {
+              last = at
+              el.style.opacity = '1'
+              try {
+                el.animate(
+                  [
+                    { boxShadow: '0 0 0 0 rgba(255,255,255,.5)', transform: 'scale(1)' },
+                    { boxShadow: '0 0 0 16px rgba(255,255,255,0)', transform: 'scale(2.2)' },
+                    { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
+                  ],
+                  { duration: 1500, easing: 'ease-out' },
+                )
+              } catch { /* 老浏览器不支持 animate 就算了 */ }
+              setTimeout(() => { if (alive) el.style.opacity = '.45' }, 1500)
+            }
+          } catch { /* 接口还没起来就静静待着 */ }
+        }
+        const timer = setInterval(poll, 700)
+        poll()
+        return () => { alive = false; clearInterval(timer); try { el.remove() } catch { /* gone */ } }
+      }, [])
       return null
     }
 

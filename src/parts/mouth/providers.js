@@ -160,7 +160,12 @@ export async function synthesizeEdgeVoice(config, text, { run = runProcess, tmpD
   writeFileSync(txt, line, 'utf8')
   const env = { ...process.env, PYTHONPATH: String((config && config.ttsEdgeDir) || '').trim() }
   try {
-    await run(py, ['-m', 'edge_tts', '--voice', String((config && config.ttsVoice) || 'zh-CN-XiaoyiNeural'), '--file', txt, '--write-media', mp3], env)
+    const args = ['-m', 'edge_tts', '--voice', String((config && config.ttsVoice) || 'zh-CN-XiaoyiNeural'), '--file', txt, '--write-media', mp3]
+    const rate = String((config && config.ttsRate) || '').trim()
+    const pitch = String((config && config.ttsPitch) || '').trim()
+    if (rate) args.push('--rate=' + rate)
+    if (pitch) args.push('--pitch=' + pitch)
+    await run(py, args, env)
     const audio = readFileSync(mp3)
     if (!audio.length) throw new Error('edge-tts 没产出音频')
     return { audio, format: 'mp3' }

@@ -33,6 +33,8 @@ export function voiceConfigOf(cfg = {}) {
     ttsLocalPromptText: pick('voice.local_prompt'),
     ttsEdgePython: pick('voice.edge_python'),
     ttsEdgeDir: pick('voice.edge_dir'),
+    ttsRate: pick('voice.rate'),
+    ttsPitch: pick('voice.pitch'),
   }
 }
 
@@ -104,6 +106,11 @@ export async function executeHear({ args = {}, getSpeech, db, agentId } = {}) {
   }
 }
 
+/** 刚刚开口的时间戳：网页右下角那颗光点靠它知道该亮了。 */
+let voiceFlashAt = 0
+export function markVoiceFlash() { voiceFlashAt = Date.now() }
+export function lastVoiceFlash() { return voiceFlashAt }
+
 /** 麦克风说完后，这段会话在窗口内回完话要自动念（见 maybeSpeakReply）。 */
 const voiceExpectUntil = new Map()
 
@@ -162,6 +169,21 @@ export function lastAssistantReply(sessionId) {
 }
 
 /**
+ * 只取回话的第一句：屏幕上那一大段解释不进耳朵。
+ * 按中文/英文句末切；切不出来就取前 40 字。
+ */
+export function firstSentenceOf(text, max = 40) {
+  const raw = String(text || '').trim()
+  if (!raw) return ''
+  // 优先：回复里用「」或 "" 圈出来的那一句，就是「要说的话」——屏幕上的解释不念。
+  const quoted = raw.match(/[「"]([^」"\n]{2,80})[」"]/)
+  if (quoted) return quoted[1].trim().slice(0, max)
+  const m = raw.match(/^[^。！？!?\n]+[。！？!?]?/)
+  const first = (m ? m[0] : raw).trim()
+  return first.length > max ? first.slice(0, max) : first
+}
+
+/**
  * 回完一句后要不要自动念：只在「刚才是麦克风说的」且设置是 auto 时念。
  * 失败只记人话，不拖对话。
  */
@@ -171,7 +193,7 @@ export async function maybeSpeakReply({ db, agentId, sessionId, text } = {}) {
   const cfg = getConfig(db, agentId)
   if (cfg['voice.reply.mode'] !== 'auto') return { spoke: false, reason: 'reply_off' }
   if (!takeVoiceExpect(sessionId)) return { spoke: false, reason: 'not_from_mic' }
-  const line = String(text || '').trim()
+  const line = firstSentenceOf(text)
   if (!line) return { spoke: false, reason: 'empty' }
   try {
     const out = await executeSay({ db, agentId, args: { text: line.slice(0, 600), play: true } })
@@ -181,6 +203,39 @@ export async function maybeSpeakReply({ db, agentId, sessionId, text } = {}) {
   }
 }
 
+/**
+ * 出声之前先给眼睛一个信号：托盘气泡先亮 1.5 秒，然后声音才出来。
+ * 不阻塞、失败不管——看不见气泡也不该耽误说话。
+ */
+function flashDesktopHint() {
+  try {
+    // 托盘气泡在 Win11 上经常被通知设置吃掉，所以直接画一个置顶的小圆点：
+    // 无边框、透明背景、右下角浮 1.6 秒，一定能看见。
+    const ps = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "Add-Type -AssemblyName System.Drawing",
+      "$f = New-Object System.Windows.Forms.Form",
+      "$f.FormBorderStyle = 'None'",
+      "$f.StartPosition = 'Manual'",
+      "$f.ShowInTaskbar = $false",
+      "$f.TopMost = $true",
+      "$f.Size = New-Object System.Drawing.Size(110,110)",
+      "$wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea",
+      "$f.Location = New-Object System.Drawing.Point(($wa.Right-170), ($wa.Bottom-170))",
+      "$f.BackColor = [System.Drawing.Color]::Magenta",
+      "$f.TransparencyKey = [System.Drawing.Color]::Magenta",
+      "$f.add_Paint({ param($s,$e) $e.Graphics.SmoothingMode = 'AntiAlias'; $b = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(230,255,190,90)); $e.Graphics.FillEllipse($b, 12, 12, 86, 86) })",
+      "$f.Show()",
+      // WinForms 没有消息循环就不画窗口，只 Show()+Sleep 会什么都看不见。
+      "$end = (Get-Date).AddMilliseconds(1800)",
+      "while ((Get-Date) -lt $end) { [System.Windows.Forms.Application]::DoEvents(); Start-Sleep -Milliseconds 25 }",
+      "$f.Close()",
+    ].join('; ')
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true })
+    child.on('error', () => {})
+  } catch { /* 闪不出来就算了 */ }
+}
+
 /** 本机播放：wav 走 SoundPlayer，别的交给系统默认程序。失败不算整个动作失败。 */
 function playFile(file, format) {
   return new Promise((resolve) => {
@@ -188,7 +243,7 @@ function playFile(file, format) {
       const ps = format === 'wav'
         ? `$p = New-Object Media.SoundPlayer '${file.replace(/'/g, "''")}'; $p.PlaySync()`
         // mp3 不弹播放器窗口：用 WPF 的 MediaPlayer 静默播，等一句说完。
-        : `Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]'${file.replace(/'/g, "''")}'); $p.Play(); Start-Sleep -Milliseconds 9000`
+        : `Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]'${file.replace(/'/g, "''")}'); $p.Play(); $deadline = (Get-Date).AddSeconds(90); Start-Sleep -Milliseconds 400; while ((Get-Date) -lt $deadline) { if ($p.NaturalDuration.HasTimeSpan -and $p.Position -ge $p.NaturalDuration.TimeSpan) { break }; Start-Sleep -Milliseconds 200 }`
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true })
       child.on('error', (e) => resolve({ played: false, error: String(e && e.message || e) }))
       child.on('exit', (code) => resolve(code === 0 ? { played: true, error: '' } : { played: false, error: '播放器退出码 ' + code }))
@@ -207,6 +262,8 @@ export async function executeSay({ db, agentId, args = {}, fetchImpl } = {}) {
   if (!text) throw new Error('要念什么？给我一句话')
   if (text.length > 600) throw new Error('一口气念不了这么长（最多 600 字），分两段吧')
   const cfg = db && agentId ? getConfig(db, agentId) : {}
+  // 先给眼睛一个信号，再合成出声：视觉先到，声音后到，不吓人。
+  markVoiceFlash()
   const out = await synthesizeVoice(voiceConfigOf(cfg), text, { fetchImpl })
   const file = path.join(os.tmpdir(), 'dsh-voice-' + Date.now().toString(36) + '.' + out.format)
   fs.writeFileSync(file, out.audio)

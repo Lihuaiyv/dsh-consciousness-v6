@@ -56,6 +56,9 @@ export const DEFAULTS = {
   // Edge 在线嗓子（免费、不要 key）：要一个装了 edge-tts 的 python 和它的包目录。
   'voice.edge_python': '',
   'voice.edge_dir': '',
+  // 语气旋钮（只对 edge 这条嗓子生效）：语速像 "-10%"，音高像 "-2Hz"。
+  'voice.rate': '',
+  'voice.pitch': '',
   'voice.play': true, // 念完直接在本机播出来
   // 本机对着麦说话：默认按住说；可切成一直开着麦。
   'voice.mic.mode': 'ptt', // ptt=按住说话 | open=持续听
