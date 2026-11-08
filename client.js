@@ -9399,17 +9399,23 @@ window.__ModuleLoader__.load({
             if (at > last) {
               last = at
               el.style.opacity = '1'
-              try {
-                el.animate(
-                  [
-                    { boxShadow: '0 0 0 0 rgba(255,255,255,.5)', transform: 'scale(1)' },
-                    { boxShadow: '0 0 0 14px rgba(255,255,255,0)', transform: 'scale(2.1)' },
-                    { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
-                  ],
-                  { duration: 1400, easing: 'ease-out' },
-                )
-              } catch { /* 老浏览器不支持 animate 就算了 */ }
-              setTimeout(() => { if (alive) el.style.opacity = '.5' }, 1400)
+              // 连闪三下，一下比一下亮：先给眼睛一个明确的信号，再开口
+              for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                  if (!alive) return
+                  try {
+                    el.animate(
+                      [
+                        { boxShadow: '0 0 0 0 rgba(255,255,255,.8)', transform: 'scale(1)' },
+                        { boxShadow: '0 0 0 22px rgba(255,255,255,0)', transform: 'scale(2.8)' },
+                        { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
+                      ],
+                      { duration: 480, easing: 'ease-out' },
+                    )
+                  } catch { /* 老浏览器不支持 animate 就算了 */ }
+                }, i * 250)
+              }
+              setTimeout(() => { if (alive) el.style.opacity = '.6' }, 1300)
             }
           } catch { /* 接口还没起来就静静待着 */ }
         }
@@ -9426,7 +9432,7 @@ window.__ModuleLoader__.load({
           height: 7,
           borderRadius: '50%',
           background: '#fff',
-          opacity: 0.5,
+          opacity: 0.6,
           display: 'inline-block',
           marginRight: 8,
           flex: '0 0 auto',
