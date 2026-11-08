@@ -4,7 +4,7 @@
  *   node scripts/smoke-injection.mjs
  *
  * 验证三件事：
- *   1) 有「此刻我 / 我想怎么说」，没有旧的「这一轮的说话分寸」命令；
+ *   1) 有「这会儿大概 / 我想怎么说」，没有旧的「这一轮的说话分寸」命令；
  *   2) 心跳排的候选会以「心里忽然浮上来」进上下文；
  *   3) 同一轮只出现一个语气出口（关系只给温度，不给句长命令）。
  */
@@ -52,12 +52,12 @@ surfaceQueueTick(db, aid)
 const queued = pendingSurface(db, aid)
 
 const block = consciousnessBlock(db, aid)
-const hasFelt = block.includes('感觉现在大概')
+const hasFelt = /^(?:这会儿大概|感觉现在大概)/m.test(block)
 const hasWish = block.includes('我想怎么说')
 const hasOldCommand = block.includes('这一轮的说话分寸') || block.includes('只说 1 句')
 const hasSpontaneous = block.includes('心里忽然浮上来')
 const hasExamples = block.includes('## 我说话的样子')
-const toneLines = block.split('\n').filter((l) => l.startsWith('感觉现在大概') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('此刻情绪') || l.includes('说话分寸'))
+const toneLines = block.split('\n').filter((l) => /^(?:这会儿大概|感觉现在大概|此刻我|我想怎么说|此刻情绪)/.test(l) || l.includes('说话分寸'))
 const tokens = Math.ceil(block.length / 2)
 console.log(block)
 console.log('\n--- 断言 ---')

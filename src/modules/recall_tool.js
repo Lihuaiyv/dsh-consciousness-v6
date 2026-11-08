@@ -21,7 +21,7 @@ import {
   searchFacts, searchByEntity, searchByVector, expandByLinks,
   searchEpisodes, searchDiaries, evidenceOf, overlap, TYPE_WEIGHT,
 } from './retrieve.js'
-import { searchRaw, searchFactArchive } from './archive.js'
+import { searchRaw, searchFactArchive, searchChatTurns } from './archive.js'
 import { canEmbed, embedText } from './vector.js'
 
 export const LAYERS = ['memory', 'episode', 'diary', 'raw', 'fact']
@@ -238,9 +238,16 @@ function rawLayer(db, aid, q, opt) {
     const since = opt.since ? { since: opt.since } : {}
     const limit = Math.min(50, opt.k * 4)
     const mk = (x) => toItem({ ...x, type: x.role || 'raw' }, 'raw', q)
+    // 聊天账本的行 id 和 raw_turns 不是一套，加前缀免得撞车；撞了就会互相顶掉。
+    const mkChat = (x) => toItem({ ...x, id: 'chat:' + x.id, type: x.role || 'raw' }, 'raw', q)
     const segs = segmentsOf(q)
-    if (!segs.length) return [(searchRaw(db, aid, q, limit, since) || []).map(mk)]
-    const merged = unionById(segs.map((s) => { try { return searchRaw(db, aid, s, limit, since) || [] } catch { return [] } }), mk)
+    const terms = segs.length ? segs : [q]
+    const lists = []
+    for (const s of terms) {
+      try { lists.push((searchRaw(db, aid, s, limit, since) || []).map(mk)) } catch { /* 原文层失败就跳过这路 */ }
+      try { lists.push((searchChatTurns(db, aid, s, limit, since) || []).map(mkChat)) } catch { /* 聊天账本失败同样跳过 */ }
+    }
+    const merged = unionById(lists, (x) => x)
     return merged.length ? [merged] : []
   } catch { return [] }
 }

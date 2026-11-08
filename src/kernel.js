@@ -1,4 +1,4 @@
-import { now } from './db.js'
+﻿import { now } from './db.js'
 import { createModel } from './model.js'
 import { bootstrapAlgos } from './algo/index.js'
 
@@ -214,6 +214,8 @@ export const PARAMS = {
   // 模型窄门（记忆时态）：只在「结构指得出候选、规则判不了」时问模型一次。
   // 总开关默认关；off 时判定逻辑一行都不执行，行为与改造前完全一致。
   'memory.judge.enable': ['C4', 'off'],
+  // 判定形态：pair = v1 四档配对；pick = v3 有界指认（从候选里选被否定的）。
+  'memory.judge.mode': ['C4', 'pair'],
   // 写入门控怎么用判定：off 不判 / shadow 只记事件与缓存、不改记忆 / on 才允许取代。
   'memory.judge.gate': ['C4', 'shadow'],
   // 夜间批量判定（仍受 enable 总闸控制）。
@@ -224,6 +226,19 @@ export const PARAMS = {
   'memory.judge.timeout_ms': ['C4', 6000],
   // 两次模型调用之间的最小间隔（毫秒）：抽取高峰时别把宿主模型打满。
   'memory.judge.min_interval_ms': ['C4', 800],
+
+  // 断言状态（记忆时态 v3）：off 不跑 / shadow 只写 claim / on 才允许按核对结果作废。
+  'memory.claim.enable': ['C4', 'off'],
+  // 每晚最多核对多少条 pending（真库现在 251 条，按 40/晚分批）。
+  'memory.claim.daily_max': ['C4', 40],
+  // 至少放几天再核对：刚写下的 pending 先别急着判。
+  'memory.claim.min_age_days': ['C4', 3],
+  // 单次核对超时（毫秒）。
+  'memory.claim.timeout_ms': ['C4', 6000],
+  // loop 关闭时是否联动记忆：off 不联动 / shadow 只写 claim / on 同时作废。
+  'memory.claim.loop_link': ['C4', 'shadow'],
+  // 注入侧「还挂着」是否改弱提示：off 保持原样（A 组回放不变）/ on 换成「当时还没做，之后没再确认」。
+  'memory.claim.inject': ['C4', 'off'],
   // 模糊最多用几档：1 只删括号 / 2 再删数字 / 3 再删引号原话。默认 3（到头）。
   'memory.fade.max_level': ['C4', 3],
   // 复习抵年龄：被想起过的旧事糊得慢一点（有效年龄 = 真实年龄 ÷ 复习系数，下限 50%）。
@@ -389,6 +404,9 @@ export const PARAMS = {
   'affect.empathy.dampen': ['C4', 0.5],
   'affect.empathy.invert.below': ['C4', -0.35],
   'affect.empathy.invert.stand': ['C4', -0.1],
+  'affect.event.surface': ['C4', 'on'],
+  'affect.appraise.sec': ['C4', 'record'],
+  'expression.affect.weight': ['C4', 0.25],
   // 自己沉下去的察觉（第三层，情绪调节）：
   //   低于水位超过 drown.th 就算在沉，连续沉够 drown.hours 才认。
   //   认了只做一件事：回水位快一点（beta × beta.mul）。不改判断、不伪造正向情绪。

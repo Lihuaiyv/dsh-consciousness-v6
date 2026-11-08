@@ -42,9 +42,21 @@ export const DEFAULTS = {
   'research.depth': 'standard',
   'research.max_sources': 12,
   'research.seen_days': 60,
+  // 语音（听见 / 出声）：这两个零件的配置住在同一张 action_config 里，
+  // 但字段的语义只归语音壳解释（voice.js 的 voiceConfigOf），发信不碰。
+  'voice.provider': 'azure', // azure | compat | local
+  'voice.api_key': '',
+  'voice.base_url': '',
+  'voice.model': '',
+  'voice.name': 'zh-CN-XiaoxiaoNeural',
+  'voice.style': '',
+  'voice.local_url': 'http://127.0.0.1:9880',
+  'voice.local_ref': '',
+  'voice.local_prompt': '',
+  'voice.play': true, // 念完直接在本机播出来
 }
 
-const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable', 'wechat.typing.enable', 'wechat.sealed'])
+const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable', 'wechat.typing.enable', 'wechat.sealed', 'voice.play'])
 const NUM_KEYS = new Set(['bili.limit', 'research.max_sources', 'research.seen_days', 'wechat.inbox.limit', 'wechat.typing.lead_ms'])
 const ENUMS = {
   'wechat.mode': ['uia', 'wecom', 'auto'],
@@ -52,6 +64,7 @@ const ENUMS = {
   'qq.mode': ['onebot'],
   'qq.default_target_type': ['private', 'group'],
   'research.depth': ['quick', 'standard', 'deep'],
+  'voice.provider': ['azure', 'compat', 'local'],
 }
 
 function coerce(key, value) {
@@ -81,7 +94,7 @@ export function getConfig(db, agentId) {
 }
 
 /** 密钥类配置：界面拿到的是打码值，保存回来的空串不能当「清空」。 */
-const SECRET_KEYS = new Set(['wechat.wecom_webhook', 'qq.token', 'bili.cookie'])
+const SECRET_KEYS = new Set(['wechat.wecom_webhook', 'qq.token', 'bili.cookie', 'voice.api_key'])
 
 export function saveConfig(db, agentId, patch) {
   const clean = {}
@@ -109,9 +122,11 @@ export function publicConfig(cfg) {
     'wechat.wecom_webhook': mask(cfg['wechat.wecom_webhook']),
     'qq.token': mask(cfg['qq.token']),
     'bili.cookie': mask(cfg['bili.cookie']),
+    'voice.api_key': mask(cfg['voice.api_key']),
     has_wecom_webhook: !!cfg['wechat.wecom_webhook'],
     has_qq_token: !!cfg['qq.token'],
     has_bili_cookie: !!cfg['bili.cookie'],
+    has_voice_key: !!cfg['voice.api_key'],
   }
 }
 

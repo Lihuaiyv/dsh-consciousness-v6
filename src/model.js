@@ -1,4 +1,4 @@
-import fs from 'node:fs'
+﻿import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 const RULES = {
@@ -289,7 +289,7 @@ class OpenAIAdapter {
       return finalizeAppraisal(parseJson(raw2) || {})
     }
     const raw = await this.chat([
-      { role: 'system', content: "你是 OCC 情绪评价器。判断这句话对『接收它的意识体』的影响与反应，而不是判断说话人自己的情绪。scores 表示意识体的反应分布；另给一份 user_label/user_scores 表示说话人情绪（只供共情参考）。只输出 JSON：{\"scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1},\"goal_relevance\":0.5,\"goal_congruence\":0,\"agency\":\"self|other\",\"certainty\":0.6,\"novelty\":0.4,\"user_label\":\"joy|peaceful|curious|calm|confused|lost|irritated|frustrated\",\"user_scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1}}。scores 八个键都必须有，值为 0-1，和为 1。agency：self=意识体做了什么，other=对方做了什么。" },
+      { role: 'system', content: "你是 OCC 情绪评价器。判断这句话对『接收它的意识体』的影响与反应，而不是判断说话人自己的情绪。scores 表示意识体的反应分布；另给一份 user_label/user_scores 表示说话人情绪（只供共情参考）。只输出 JSON：{\"scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1},\"goal_relevance\":0.5,\"goal_congruence\":0,\"agency\":\"self|other\",\"coping\":0.5,\"norm\":0,\"certainty\":0.6,\"novelty\":0.4,\"user_label\":\"joy|peaceful|curious|calm|confused|lost|irritated|frustrated\",\"user_scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1}}。label：只写一个，必须是你真认的那个——不许用分布糊过去。label_why：一句话说清为什么是它、为什么不是第二名（第二名叫什么也写出来）。scores 八个键都必须有，值为 0-1，和为 1，用来做对照；label 和 scores 的最大项不一致时，以 label 为准，但 label_why 要能解释这个差。agency：self=意识体做了什么，other=对方做了什么。" },
       { role: 'user', content: String(text).slice(0, 2000) },
     ], 400, true)
     const d = parseJson(raw) || {}
@@ -507,7 +507,7 @@ let hostLlmGetter = null
 export function attachHostLlm(getter) { hostLlmGetter = getter }
 
 const AP_LABELS = ['joy', 'peaceful', 'curious', 'calm', 'confused', 'lost', 'irritated', 'frustrated']
-const AP_PROMPT = "你是 OCC 情绪评价器。判断这句话对『接收它的意识体』的影响与反应，而不是判断说话人自己的情绪。scores 表示意识体的反应分布；另给一份 user_label/user_scores 表示说话人情绪（只供共情参考）。只输出 JSON：{\"scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1},\"goal_relevance\":0.5,\"goal_congruence\":0,\"agency\":\"self|other\",\"certainty\":0.6,\"novelty\":0.4,\"user_label\":\"joy|peaceful|curious|calm|confused|lost|irritated|frustrated\",\"user_scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1}}。scores 八个键都必须有，值为 0-1，和为 1。agency：self=意识体做了什么，other=对方做了什么。"
+const AP_PROMPT = "你是 OCC 情绪评价器。判断这句话对『接收它的意识体』的影响与反应，而不是判断说话人自己的情绪。scores 表示意识体的反应分布；另给一份 user_label/user_scores 表示说话人情绪（只供共情参考）。只输出 JSON：{\"scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1},\"goal_relevance\":0.5,\"goal_congruence\":0,\"agency\":\"self|other\",\"coping\":0.5,\"norm\":0,\"certainty\":0.6,\"novelty\":0.4,\"user_label\":\"joy|peaceful|curious|calm|confused|lost|irritated|frustrated\",\"user_scores\":{\"joy\":0.1,\"peaceful\":0.1,\"curious\":0.1,\"calm\":0.3,\"confused\":0.1,\"lost\":0.1,\"irritated\":0.1,\"frustrated\":0.1}}。label：只写一个，必须是你真认的那个——不许用分布糊过去。label_why：一句话说清为什么是它、为什么不是第二名（第二名叫什么也写出来）。scores 八个键都必须有，值为 0-1，和为 1，用来做对照；label 和 scores 的最大项不一致时，以 label 为准，但 label_why 要能解释这个差。agency：self=意识体做了什么，other=对方做了什么。"
 
 function normalizeScores(d) {
   const src = d && d.scores && typeof d.scores === 'object' ? d.scores : null
@@ -533,7 +533,11 @@ kind（五选一）：
 - relation：表达关系、亲近、信任、期待、失望（"我们""以后""你对我…"）
 - chat：对方说自己的事、闲聊、感叹
 polarity：-1 伤到它 / 0 无关 / 1 顺着它
-只输出 JSON：{"kind":"task|directive|eval|relation|chat","polarity":0,"concern_relevance":0,"concern_congruence":0,"change":0,"novelty":0.2,"certainty":0.8,"agency":"self|other|world","none":true,"why":"","target":"me|other|none","receive":"follow|hold|dampen","unsaid":"","scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125},"user_label":"joy|peaceful|curious|calm|confused|lost|irritated|frustrated","user_scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125}}
+只输出 JSON：{"kind":"task|directive|eval|relation|chat","polarity":0,"concern_relevance":0,"concern_congruence":0,"change":0,"novelty":0.2,"certainty":0.8,"agency":"self|other|world","coping":0.5,"norm":0,"none":true,"why":"","target":"me|other|none","receive":"follow|hold|dampen","unsaid":"","scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125},"user_label":"joy|peaceful|curious|calm|confused|lost|irritated|frustrated","user_scores":{"joy":0.125,"peaceful":0.125,"curious":0.125,"calm":0.125,"confused":0.125,"lost":0.125,"irritated":0.125,"frustrated":0.125}}
+coping：这件事它控不控制得住。0=完全控不住（拦不住、改不了、只能受着），1=完全控得住。判断的是它有没有办法，不是它想不想。
+norm：这合不合它的准则。-1=明显违背（它觉得不该这样、被冒犯、被轻慢），+1=明显合乎（被尊重、被认真对待），0=谈不上。
+coping 和 norm 只在 none=false 时才有意义；none=true 时给 0.5 / 0。
+这两个数必须是你按这句话判断出来的，不要照抄示例里的数字——抄示例等于没判。
 规则：
 1. task / chat → none=true，concern_relevance ≤ 0.15，concern_congruence=0，scores 接近均匀。
 2. directive → none=false，concern_relevance 0.35~0.5，concern_congruence 用 polarity 表示（被催、被纠正是 -0.2~-0.5），scores 给一个偏负但不满格的分布（confused 或 frustrated 稍高）。

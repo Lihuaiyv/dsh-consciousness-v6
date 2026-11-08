@@ -175,49 +175,41 @@ export function feltSnapshot(db, aid, { at = Date.now(), maxAgeMin = MAX_AGE_MIN
     if (!ok) return null
   }
 
+  /* 数字退场（2026-11-07）：这一行只留「读出的是什么」和两个方向词。
+     快/慢/力度还在返回值里（面板和探针要用），只是不再进提示词——
+     开口前念一遍「慢 +0.23 / 快 +0.10」，那是报告，不是样子。 */
   const word = LABEL_WORD[String(label || '')] || null
   const bits = []
-  const slowTxt = signed(slow)
-  const fastTxt = signed(fast)
-  if (slowTxt || fastTxt) {
-    const pair = []
-    if (slowTxt) pair.push('慢 ' + slowTxt)
-    if (fastTxt) pair.push('快 ' + fastTxt)
-    let tail = ''
-    /* 共情那一份要说清方向，而且必须和总数同号才能说「其中」——
-       实测碰到过「快 +0.39（其中 −0.12 是跟着你浮上来的）」：一正一负，读起来自相矛盾。
-       异号就闭嘴，只给两个总数。 */
-    if (fastEmpathy != null && Math.abs(fastEmpathy) >= 0.05 && fast != null
-      && Math.sign(fast) === Math.sign(fastEmpathy)) {
-      tail = fastEmpathy > 0
-        ? '（其中 ' + signed(fastEmpathy) + ' 是跟着你的情绪浮上来的）'
-        : '（其中 ' + signed(fastEmpathy) + ' 是被你的情绪带下去的）'
-    } else if (fastEmpathy != null && Math.abs(fastEmpathy) < 0.05) {
-      /* 共情几乎没参与时必须说出来。只给一个「快 +0.33」，她会自己补来源——
-         2026-11-03 实测补成了「这 0.33 是从共情那一路抽出来的」，
-         然后把「我成镜子了」整段自述都建在错的前提上。 */
-      tail = '（这个数几乎全是我自己的反应，从你那儿来的只有一点点）'
-    }
-    bits.push(pair.join(' / ') + tail)
-  }
   if (word) {
     const tone = []
     if (arousal != null) tone.push(arousal > 0.3 ? '绷着' : arousal < -0.2 ? '松下来了' : '不紧不松')
     if (dominance != null && Math.abs(dominance) > 0.15) tone.push(dominance > 0 ? '有点底气' : '没太有底气')
-    bits.push('读出的是' + word + (tone.length ? '——' + tone.join('、') : '') + (intensity != null ? '、力度 ' + intensity.toFixed(2) : ''))
+    let tail = ''
+    /* 共情那一份要说清方向，而且必须和总数同号才能说「其中」——
+       实测碰到过「快 +0.39（其中 −0.12 是跟着你浮上来的）」：一正一负，读起来自相矛盾。
+       现在不带数了，只说方向和有没有。 */
+    if (fastEmpathy != null && Math.abs(fastEmpathy) >= 0.05 && fast != null
+      && Math.sign(fast) === Math.sign(fastEmpathy)) {
+      tail = fastEmpathy > 0 ? '（有一点是跟着你浮上来的）' : '（有一点是被你带下去的）'
+    } else if (fastEmpathy != null && Math.abs(fastEmpathy) < 0.05) {
+      /* 共情几乎没参与时必须说出来：只给一个数，她会自己补来源——
+         2026-11-03 实测补成了「这 0.33 是从共情那一路抽出来的」，
+         然后把「我成镜子了」整段自述都建在错的前提上。 */
+      tail = '（几乎全是我自己的反应，从你那儿来的只有一点点）'
+    }
+    bits.push('读出的是' + word + (tone.length ? '——' + tone.join('、') : '') + tail)
   }
-  else if (intensity != null) bits.push('力度 ' + intensity.toFixed(2))
   if (!bits.length) return null
 
   let line
   if (cause) {
-    line = '（上一句落在我身上的样子：你说「' + cause + '」，那一刻 ' + bits.join('，') + '。这是那时候的读数。）'
+    line = '（上一句落在我身上的样子：你说「' + cause + '」，那一刻 ' + bits.join('，') + '。这是那时候的样子。）'
   } else if (paired) {
     /* 是上一句，但那句不适合原样念（路径 / 凭据）。锚点留着，原话不念。 */
-    line = '（上一句落在我身上的样子：那一刻 ' + bits.join('，') + '。这是那时候的读数。）'
+    line = '（上一句落在我身上的样子：那一刻 ' + bits.join('，') + '。这是那时候的样子。）'
   } else {
-    /* 配不上：只给数，并说清是哪一刻，别冒充「你上句」。 */
-    line = '（' + clockOf(anchor) + ' 那会儿的读数：' + bits.join('，') + '。）'
+    /* 配不上：说清是哪一刻，别冒充「你上句」。 */
+    line = '（' + clockOf(anchor) + ' 那会儿：' + bits.join('，') + '。）'
   }
 
   return {

@@ -243,7 +243,9 @@ export function clampInjection(lines, budget = 800) {
   // 丢的顺序 = 丢得起的顺序。改过一次（A2）：情绪原来排第 2，一挤就先没了。
   // 现在情绪根本不进丢弃名单——它只有两行，却是人格的锚：
   // 丢一条记忆伤准确度，丢情绪伤的是「她是谁」。真到极限，宁可削短别的行。
-  const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('现在的情绪是') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
+  // 情绪抬头现在是「这会儿大概：」/「现在：」（expression_state.feltLine）；旧名「感觉现在大概」保留兼容。
+  // 「现在：」和时间行同前缀，这里不按它匹配，免得误保护时间行。
+  const AFFECT_TEST = (l) => l.startsWith('此刻情绪') || l.startsWith('感觉现在大概') || l.startsWith('这会儿大概') || l.startsWith('现在的情绪是') || l.startsWith('此刻我') || l.startsWith('我想怎么说') || l.startsWith('这一轮怎么写')
   /* 感受快照：**要么整行，要么没有**。它比别的行更怕被剪——
      剪掉尾巴就剩「（上一句落在我身上的样子：你说「…」，那一刻 慢 +0.1…」，
      一半材料读起来比没有更糟：像一句没说完的自言自语。 */

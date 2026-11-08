@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS memory_pair_judge(
 CREATE INDEX IF NOT EXISTS idx_pair_judge_agent ON memory_pair_judge(agent_id, judged_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pair_judge_verdict ON memory_pair_judge(agent_id, verdict);
 
+-- 断言状态（记忆时态 v3）：这条记忆说的「还没做 / 做完了」，现在还算不算。
+-- 只加新表、不 ALTER 老表；state 取 pending / done / stale / na。
+-- 只有 pending/done/stale 才写行，na 不写——别把整库记忆都扫成一行。
+CREATE TABLE IF NOT EXISTS memory_claims(
+  memory_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  claim_key TEXT, state TEXT NOT NULL, since TEXT NOT NULL,
+  evidence_id TEXT, checked_at TEXT, via TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_claims_agent_state ON memory_claims(agent_id, state);
+
 CREATE TABLE IF NOT EXISTS journal(
   seq INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, turn_id TEXT,
   op TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'intent',

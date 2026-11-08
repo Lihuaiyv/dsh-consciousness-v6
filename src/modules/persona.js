@@ -23,7 +23,7 @@ export const STYLE_LIMITS = Object.freeze({
 
 export const LIMITS = Object.freeze({
   style: STYLE_LIMITS,
-  valueKey: 24,
+  valueKey: 400,
   relationName: 12,
   preferenceTag: 16,
   tabooText: 60,

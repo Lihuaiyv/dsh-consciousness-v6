@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
-/** 每条规矩：一个零件、一个只许它自己用的原料、一句人话。 */
+/** 每条规矩：一个零件、一个只许它自己用的原料、一句人话。allow 可以是文件列表。 */
 const RULES = [
   {
     part: '认人',
@@ -31,6 +31,18 @@ const RULES = [
     desc: '不许手写「主人 || 通道」的兜底顺序（旧的 bumpRelation 就错在这儿）',
     allow: 'src/modules/who.js',
     test: (line) => /ownerPerson\s*\(.*\)\s*\|\|\s*personByChannel/.test(line),
+  },
+  {
+    part: '听见',
+    desc: '转规格和体检只有一处：别处调 transcribeVoice；toWav16k / inspectWav 只许在 parts/ear/ 里出现',
+    allow: ['src/parts/ear/index.js', 'src/parts/ear/probe.js', 'src/parts/ear/engine.js'],
+    test: (line) => /\b(?:toWav16k|inspectWav|canonicalizeWav)\s*\(/.test(line),
+  },
+  {
+    part: '出声',
+    desc: '合成和看字节只有一处：别处调 synthesizeVoice；synthesizeTts / sniffAudioFormat 只许在 parts/mouth/ 里出现',
+    allow: ['src/parts/mouth/index.js', 'src/parts/mouth/providers.js', 'src/parts/mouth/format.js'],
+    test: (line) => /\b(?:synthesizeTts|sniffAudioFormat|buildAzureSsml)\s*\(/.test(line),
   },
 ]
 
@@ -64,7 +76,8 @@ for (const rel of targets) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     for (const rule of RULES) {
-      if (rel === rule.allow) continue
+      const allow = Array.isArray(rule.allow) ? rule.allow : [rule.allow]
+      if (allow.includes(rel)) continue
       if (!rule.test(line)) continue
       reds.push({ rel, line: i + 1, rule, code: line.trim().slice(0, 120) })
     }

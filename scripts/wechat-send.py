@@ -20,7 +20,8 @@ def save(path, out):
 
 def main():
     req_path, res_path = sys.argv[1], sys.argv[2]
-    with open(req_path, encoding='utf-8') as f:
+    # utf-8-sig：手工拿 PowerShell 写请求时容易带 BOM，带 BOM 的 json 会直接崩。
+    with open(req_path, encoding='utf-8-sig') as f:
         req = json.load(f)
 
     out = {
@@ -33,6 +34,30 @@ def main():
         'steps': [],
         'at': datetime.now().isoformat(),
     }
+
+    target = str(req.get('target') or '').strip()
+    text = str(req.get('text') or '')
+    if not target:
+        out['code'] = 'WECHAT_NO_TARGET'
+        out['message'] = '收件人为空'
+        save(res_path, out)
+        return
+    if not text.strip():
+        out['code'] = 'WECHAT_NO_TEXT'
+        out['message'] = '消息正文为空'
+        save(res_path, out)
+        return
+
+    # 演练（dry_run）：只回执，不碰窗口。
+    # Node 侧 wechat.send 会把 dry_run 传下来，这里要是漏读，一句「演练」就变成真发出去了
+    # （2026-11-07 补上：这一步必须在 ensure_gui / quick_send 之前）。
+    if req.get('dry_run'):
+        out['ok'] = True
+        out['sent'] = False
+        out['mode'] = 'dry-run'
+        out['message'] = '演练：没有真发（收件人「%s」）' % target
+        save(res_path, out)
+        return
 
     try:
         # 微信关到托盘时自动化读不到主窗口：先兜一下，把客户端拉起来再发。
@@ -48,19 +73,6 @@ def main():
             '没装 wechatauto-replica（%s）。安装：pip install wechatauto-replica；'
             '发送路径还需要 winsdk、pypinyin。' % str(e)[:120]
         )
-        save(res_path, out)
-        return
-
-    target = str(req.get('target') or '').strip()
-    text = str(req.get('text') or '')
-    if not target:
-        out['code'] = 'WECHAT_NO_TARGET'
-        out['message'] = '收件人为空'
-        save(res_path, out)
-        return
-    if not text.strip():
-        out['code'] = 'WECHAT_NO_TEXT'
-        out['message'] = '消息正文为空'
         save(res_path, out)
         return
 

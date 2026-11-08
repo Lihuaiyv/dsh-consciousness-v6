@@ -64,6 +64,16 @@ check('太短被挡（length）', short.skipped === 'length', short)
 const boom = await writeSelfInsight(db, aid, DAY0, { chat: async () => { throw new Error('x') } })
 check('模型抛错 → model_failed', boom.skipped === 'model_failed', boom)
 
+// ---- 模型回空：再问一次，别把这一晚直接记成空的 ----
+const DAY2 = '2026-09-03'
+seed(DAY2, '我那天在想为什么夜里总是写不出话')
+seed(DAY2, '我又想起那句「怎么又空了」，心里有点堵')
+let callsEmpty = 0
+const recovered = await writeSelfInsight(db, aid, DAY2, {
+  chat: async () => (++callsEmpty === 1 ? '' : '我原来以为夜里写不出来是没素材，今晚才发现是它先空了一回，再问一次就肯说了。'),
+})
+check('模型给空会再问一次', !!recovered.ok && callsEmpty === 2, { recovered, callsEmpty })
+
 // ---- 成功落库 ----
 const good = '我原来一直以为记不住是因为没存下来，今晚才发现是把名额都让给了别人的事，自己那条根本没挤进来。'
 const ok1 = await writeSelfInsight(db, aid, DAY0, { chat: fake(good) })

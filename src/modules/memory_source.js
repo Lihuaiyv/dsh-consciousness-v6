@@ -51,9 +51,9 @@ const SELF_HEAD = /^(我|今天|昨天|前天|今晚|今早|早上|上午|下午
  * 'head' 开头不像自己说的话、'no_me' 通篇没有「我」、'noise' 运行时残留。
  * 只记一个 false 分不出该改字数还是该改提示词——夜里那条自我日记连卡两晚就是这么摸黑的。
  */
-export function selfTextWhy(text) {
+export function selfTextWhy(text, maxLen = 120) {
   const t = String(text || '').trim()
-  if (t.length < 6 || t.length > 120) return 'len'
+  if (t.length < 6 || t.length > maxLen) return 'len'
   if (narrationOnly(t)) return 'narration'
   /* 运行时噪音 / 转写残留，要排在「开头不像自己」前面判。
      以前它在后面：开头是 User: / { / < 的句子先被记成 head，看面板的人会以为是

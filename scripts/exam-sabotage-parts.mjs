@@ -285,6 +285,46 @@ const CASES = [
     importFrom: "'../src/host/events.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：采样率不查了——四万四的音频也当能识别，平台那边直接 Invalid speech WAV。
+    name: '听见：采样率不查（什么率都放过去）',
+    impl: 'src/parts/ear/probe.js',
+    exam: 'test/exam-ear.test.mjs',
+    from: '  if (sampleRate !== 16000) return { ok: false, reason: `采样率 ${sampleRate}，需要 16000`, sampleRate }',
+    to: '  if (false) return { ok: false, reason: `采样率 ${sampleRate}，需要 16000`, sampleRate }',
+    importFrom: "'../src/parts/ear/probe.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：空文本当成功——没人说话也交一行空字出去，后面只能对着空白回。
+    name: '听见：空文本当成功（没听出字也交差）',
+    impl: 'src/parts/ear/engine.js',
+    exam: 'test/exam-ear.test.mjs',
+    from: "  if (text === '') throw new Error('DSH 语音服务返回了空文本（可能是录音太短或没人说话）')",
+    to: '  if (false) throw new Error(\'DSH 语音服务返回了空文本（可能是录音太短或没人说话）\')',
+    importFrom: "'../src/parts/ear/engine.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：不看字节——服务回的 HTML 错误页也当声音交出去，主人听到一片安静。
+    name: '出声：不看字节（错误页也当声音交）',
+    impl: 'src/parts/mouth/index.js',
+    exam: 'test/exam-mouth.test.mjs',
+    from: "  if (!sniffed) throw new Error('嗓子回的不是音频（多半是错误页），不敢交出去')",
+    to: '  if (false) throw new Error(\'嗓子回的不是音频（多半是错误页），不敢交出去\')',
+    importFrom: "'../src/parts/mouth/index.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：缺参考音频也硬发——本机嗓子克隆不出来，请求发出去只会等到超时。
+    name: '出声：缺参考音频也硬发（配置体检失效）',
+    impl: 'src/parts/mouth/index.js',
+    exam: 'test/exam-mouth.test.mjs',
+    from: "    if (!c.ttsLocalRefAudio) return '本机嗓子缺参考音频（ttsLocalRefAudio）：没它克隆不出声音'",
+    to: '    if (false) return \'本机嗓子缺参考音频（ttsLocalRefAudio）：没它克隆不出声音\'',
+    importFrom: "'../src/parts/mouth/index.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

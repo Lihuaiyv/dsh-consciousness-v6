@@ -120,10 +120,10 @@ function check(name, ok, detail) {
   const desk = kaomojiLine({ conversationId: null, setting: 'auto' })
   const wx = kaomojiLine({ conversationId: 'wechat:主人', setting: 'auto' })
   check('颜文字：QQ 默认带', /颜文字/.test(qq) && !/不用颜文字/.test(qq), qq)
-  check('颜文字：电脑端默认不带', /不用颜文字/.test(desk), desk)
-  check('颜文字：微信默认不带', /不用颜文字/.test(wx), wx)
-  check('颜文字：on 强制带（电脑端也带）', !/不用颜文字/.test(kaomojiLine({ conversationId: null, setting: 'on' })))
-  check('颜文字：off 强制不带（QQ 也不带）', /不用颜文字/.test(kaomojiLine({ conversationId: 'qq:p:1', setting: 'off' })))
+  check('颜文字：电脑端默认不带（连这句也不提）', desk === '', desk)
+  check('颜文字：微信默认不带（连这句也不提）', wx === '', wx)
+  check('颜文字：on 强制带（电脑端也带）', /颜文字/.test(kaomojiLine({ conversationId: null, setting: 'on' })))
+  check('颜文字：off 强制不带（QQ 也不带，也不提这句）', kaomojiLine({ conversationId: 'qq:p:1', setting: 'off' }) === '')
   check('颜文字：写错的值宁可不说', kaomojiLine({ conversationId: 'qq:p:1', setting: '乱写' }) === '')
 }
 

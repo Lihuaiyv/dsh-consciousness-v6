@@ -11,7 +11,7 @@
 import { makeWorld } from './eval-persona/setup.mjs'
 import { moodLabelOf } from '../src/modules/affect.js'
 import { consciousnessBlock } from '../index.js'
-import { recordFeel, latestFeel, feelLineOf, cleanFeelText, feelAnchorOf } from '../src/modules/feel.js'
+import { recordFeel, latestFeel, feelLineOf, feelTextForInject, cleanFeelText, feelAnchorOf, echoFeelOf, echoFeelLineOf } from '../src/modules/feel.js'
 import { createActionTools } from '../src/modules/actions/index.js'
 import { writeParam } from '../src/kernel.js'
 
@@ -82,14 +82,28 @@ check('去掉首尾引号', cleanFeelText('「有点累」') === '有点累', cl
   const ai3 = recordFeel(db, aid, { text: '嗯', at: T0 + 220000 })
   check('太短（说不清是哪一下）：退回', ai3.ok === false && ai3.issue === 'too-short', ai3)
   const ai4 = recordFeel(db, aid, { text: '啊'.repeat(200), at: T0 + 230000 })
-  check('太长（流水账）：退回，不硬截断', ai4.ok === false && ai4.issue === 'too-long', ai4)
-  check('被退回的一条都没进库', db.prepare('SELECT COUNT(*) n FROM affect_feel WHERE agent_id=?').get(aid).n === beforeN)
+  check('太长：不再退回，先存着（注入时再截短）', ai4.ok === true, ai4)
+  check('被退回的两条（AI 味 / 太短）没进库，太长那条进了',
+    db.prepare('SELECT COUNT(*) n FROM affect_feel WHERE agent_id=?').get(aid).n === beforeN + 1)
+  // 太长的那条：库里留原话，拼注入时才收短；不能因为长就整条消失
+  const longLine = feelLineOf({ text: ai4.text })
+  const longInjected = feelTextForInject(ai4.text)
+  check('注入时截短，不会把 80 字整条塞进去', Array.from(longInjected).length <= 61 && longInjected.endsWith('…'), longInjected)
+  check('注入行用的是截短后的句子', longLine.includes(longInjected) && !longLine.includes(ai4.text), longLine)
+  // 有句读时从句读处断：句子读起来还是一口气，不是从字中间切断
+  const longNat = '屏幕停在提交成功的最后一行，我手指还搭在键盘上没挪开，那句话「通道优先」在眼底又亮了一下，窗外已经黑了，屋里只剩风扇转的声音。'
+  const natOut = feelTextForInject(longNat)
+  check('有句读：在逗号处断，前文一字不改', Array.from(longNat).length > 61 && natOut.endsWith('…') && longNat.startsWith(natOut.slice(0, -1)), natOut)
+  check('短句原样不动', feelTextForInject('手有点抖') === '手有点抖')
+  check('句末「。」不会和数字尾巴拼成「。，」',
+    !feelLineOf({ text: '她走了。', fast: 0.1, slow: 0.2 }).includes('。，'),
+    feelLineOf({ text: '她走了。', fast: 0.1, slow: 0.2 }))
   // 退回不是静默的：库里留 feel.miss，查「这几轮为什么没有 feel」不用猜
   const misses = db.prepare("SELECT payload FROM events WHERE agent_id=? AND type='feel.miss'").all(aid).map((r) => JSON.parse(r.payload))
   const missP = misses.find((m) => m.reason === 'ai-word') || {}
   check('被退回时留一条 feel.miss', misses.length >= 3 && missP.reason === 'ai-word', misses.map((m) => m.reason))
   check('miss 里带着原文，能看出改哪', String(missP.text || '').length > 0, missP)
-  const okOne = recordFeel(db, aid, { text: '猛地一下没接住气', at: T0 + 240000 })
+  const okOne = recordFeel(db, aid, { text: '猛地一下没接住气', at: T0 + 242000 })
   check('写得白的话照样能记', okOne.ok === true, okOne)
   // 别挡太狠：「有点」在人话里太常见，三个字的短句也是一句话
   const okTwo = recordFeel(db, aid, { text: '手有点抖', at: T0 + 255000 })
@@ -137,12 +151,15 @@ check('最新一条记得住', latestFeel(db, aid, { at: T0 + 400000 + 60000 }) 
 check('超窗口不冒充刚说完', latestFeel(db, aid, { at: T0 + 400000 + 9 * 3600 * 1000 }) === null, latestFeel(db, aid, { at: T0 + 400000 + 9 * 3600 * 1000 }))
 const line = feelLineOf(latestFeel(db, aid, { at: T0 + 460000 }))
 check('注入行带自己的原话', line.includes('刚跑完步，心还热着'), line)
-check('注入行带当时的数', /快 [+-]?\d/.test(line), line)
 check('注入行说清「这不是你说的」', line.includes('不是你说的'), line)
+/* 2026-11-07 改：数字从注入行退场——快/慢是账本上的东西，不该在开口前念给我听。
+   数还在库里（下面「落库」那几条照旧验），只是不再进这一行。 */
+check('注入行不带快慢数字', !/[+\-−]\d+\.\d+/.test(line), line)
+check('注入行不出现「快 +」/「慢 +」', !/快\s*[+\-−]|慢\s*[+\-−]/.test(line), line)
 // consciousnessBlock：以「当前时间」为准，所以把这条挪到刚才
 db.prepare('UPDATE affect_feel SET at=? WHERE agent_id=? AND text=?').run(new Date().toISOString(), aid, fresh.text)
 const block = consciousnessBlock(db, aid)
-check('提示词里有 feel 这条通路', block.includes('先用 feel 记一句'), block.slice(0, 200))
+check('提示词里有 feel 这条通路', block.includes('给它一个把手'), block.slice(0, 200))
 check('提示词里有自己那句话', block.includes('刚跑完步，心还热着'), block.slice(-600))
 const guestBlock = consciousnessBlock(db, aid, { snap: 'off' })
 check('客人会话看不到这条', !guestBlock.includes('刚跑完步，心还热着'), guestBlock.slice(-300))
@@ -162,6 +179,24 @@ const offBlock = consciousnessBlock(db, aid)
 check('affect.feel.inject=off：不再注入', !offBlock.includes('刚跑完步，心还热着'), offBlock.slice(-300))
 
 w.close && w.close()
+
+// ---------- 六、旧感觉回来：一天一条，不重复 ----------
+{
+  const w2 = makeWorld()
+  try {
+    const old = new Date(Date.now() - 20 * 86400000).toISOString()
+    w2.db.prepare('INSERT INTO affect_feel(id,agent_id,at,text,label,fast,slow,total,source) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('afe_echo_1', w2.aid, old, '认得字，认不得人。', 'irritated', 0, 0, 0, 'tool')
+    const e1 = echoFeelOf(w2.db, w2.aid, { label: 'irritated' })
+    check('二十天前那条能被翻回来', !!e1 && e1.text === '认得字，认不得人。', e1)
+    const line = echoFeelLineOf(e1)
+    check('回看那行只陈述、不下结论', line.includes('我也这样过') && !line.includes('所以'), line)
+    check('同一天只翻一次', echoFeelOf(w2.db, w2.aid, { label: 'irritated' }) === null)
+    check('没有标签就不翻', echoFeelOf(w2.db, w2.aid, { label: '' }) === null)
+    check('标签对不上不翻', echoFeelOf(w2.db, w2.aid, { label: 'joy' }) === null)
+  } finally { w2.close && w2.close() }
+}
+
 console.log('')
 console.log('通过 ' + pass + ' / ' + (pass + fail))
 process.exit(fail ? 1 : 0)

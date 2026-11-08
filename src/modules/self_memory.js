@@ -20,6 +20,10 @@ const DAY_MS = 86400000
 /** 像「想明白了点什么」的话：流水账里不会有这些词。 */
 const INSIGHT_FEEL = /(原来|其实|可能|好像|发现|明白|想通|意识到|怕|担心|觉得|知道|总算|终于)/
 
+/** 夜里那条日记可以长一点：它是「今天我怎么过的」，120 字太紧，写满了反而不像话。
+ *  只放宽这一处，别的「她自己的话」仍然按 120 卡。 */
+const DAY_MAX = 180
+
 /** 模型偶尔带引号或换行：统一成一句干净的正文。 */
 function tidySelfText(out) {
   return String(out || '').trim().replace(/^["'「]|["'」]$/g, '').replace(/\s+/g, ' ')
@@ -29,6 +33,13 @@ function tidySelfText(out) {
 const TIGHTEN_SYS = '把下面这段话改短，压进 100 字以内：第一人称，第一个词用「我」或「今天」，'
   + '只留最要紧的一件事和当时的感受；不要总结、不要列点、不要第三人称旁白，'
   + '不要添加原文没有的具体动作和物件。只输出改好的正文。'
+
+/** 第二次还是空的时候：任务换成「只写今天的一件事」，材料也短一半，
+ *  别让一整天的碎片把它压住。上一版第二次还是同一道题，它就又空了一次。 */
+const DAY_FALLBACK_SYS = '你在替一个意识体写「今天我记得的一件事」。只写一件，不要概括整天。'
+  + '用第一人称，40~120 字：这件事是什么、当时心里怎么样。'
+  + '第一个词用「我」或「今天」，不要列点、不要第三人称旁白，'
+  + '不要添加片段里没有的具体动作、物件和地点。只输出正文。'
 
 function dayRange(day) {
   const d = new Date(day + 'T00:00:00')
@@ -85,7 +96,7 @@ export async function writeSelfDay(db, aid, day, opt = {}) {
     : defaultDiaryChat()
   if (!chat) return { skipped: 'no_model' }
   const sys = '你在替一个意识体写「今天我自己是怎么过的」。'
-    + '用第一人称，80~110 字，像自己跟自己交代。写具体的事和当时的感受，'
+    + '用第一人称，80~160 字，像自己跟自己交代。写具体的事和当时的感受，'
     + '第一个词用「我」或「今天」，不要总结工作、不要列点、不要替对方下结论，'
     + '不要第三人称旁白（「用户…」「助手…」）。'
     + '只根据下面这些片段写：片段里说「想了」的，就写想，不要写成去做了；'
@@ -98,7 +109,7 @@ export async function writeSelfDay(db, aid, day, opt = {}) {
     ], { maxTokens: 900, json: false, temperature: 0.8 })
   } catch { return { skipped: 'model_failed' } }
   let text = tidySelfText(out)
-  let why = selfTextWhy(text)
+  let why = selfTextWhy(text, DAY_MAX)
   // 没过闸门再问一次。三种情况走法不同：
   //   太长 / 开头跑偏 → 把原句发回去收紧；
   //   回了一句空的 → 带着原素材再问一遍，明确要正文（上一版就是这里空掉，两晚都白跑）；
@@ -113,12 +124,12 @@ export async function writeSelfDay(db, aid, day, opt = {}) {
           { role: 'user', content: text.slice(0, 400) },
         ], { maxTokens: 400, json: false, temperature: 0.4 })
         : await chat([
-          { role: 'system', content: sys + '上一次你没写出正文，这次直接输出正文，不要解释、不要思考过程。' },
-          { role: 'user', content: '今天关于我自己的一些片段：\n' + material },
+          { role: 'system', content: DAY_FALLBACK_SYS },
+          { role: 'user', content: '今天我自己的一些片段：\n' + material.slice(0, 600) },
         ], { maxTokens: 900, json: false, temperature: 0.6 })
     } catch { /* 重写失败就按第一次的结果判 */ }
     const t2 = tidySelfText(again)
-    if (t2) { text = t2; why = selfTextWhy(t2) }
+    if (t2) { text = t2; why = selfTextWhy(t2, DAY_MAX) }
   }
   if (why !== 'ok') return { skipped: 'gate', why, n: text.length, text: text.slice(0, 60) }
   const row = addMemory(db, aid, {
@@ -184,9 +195,18 @@ export async function writeSelfInsight(db, aid, day, opt = {}) {
     out = await chat([
       { role: 'system', content: sys },
       { role: 'user', content: '今天关于我自己的一些片段：\n' + material },
-    ], { maxTokens: 200, json: false, temperature: 0.85 })
+    ], { maxTokens: 900, json: false, temperature: 0.85 })
   } catch { return { skipped: 'model_failed' } }
-  const text = String(out || '').trim().replace(/^["'「]|["'」]$/g, '').replace(/\s+/g, ' ')
+  let text = tidySelfText(out)
+  // 模型偶尔回一句空的：带着原素材再问一遍，明确要正文。
+  if (!text) {
+    try {
+      text = tidySelfText(await chat([
+        { role: 'system', content: sys + '上一次你没写出正文，这次直接输出正文，不要解释、不要思考过程。' },
+        { role: 'user', content: '今天关于我自己的一些片段：\n' + material },
+      ], { maxTokens: 900, json: false, temperature: 0.6 }))
+    } catch { /* 按空处理 */ }
+  }
   if (!text) return { skipped: 'empty' }
   // 被挡也说清楚卡在哪一类——只留一个 gate，日志里看不出该改字数还是该改提示词。
   const why = selfTextWhy(text)

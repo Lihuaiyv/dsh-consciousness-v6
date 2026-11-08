@@ -7,6 +7,7 @@ import {
   logAdd, invalidateMemory, reactivateMemory, hideMemory, unhideMemory,
   disputeOpen, disputeClose,
 } from './timeline.js'
+import { syncClaims, claimEnabled } from './claim_state.js'
 import { normalizeTerms } from './terms.js'
 import { attrConflict } from './contradict.js'
 import { askAboutConflict } from './conflict_ask.js'
@@ -290,6 +291,8 @@ export function addMemory(db, aid, body) {
     }
   })
   journalDone(db, seq)
+  // v3：出生时用规则标一次 claim（pending/done）；标注失败不影响记忆本身。
+  try { if (claimEnabled(db, aid)) syncClaims(db, aid, { id: mid, text: safe }) } catch { /* 标注失败不算写入失败 */ }
   return { id: mid, conflict: kind === 'conflict' && risk === 'high', conflict_id: conflictId, superseded: kind === 'conflict' && risk === 'low', superseded_ids: superseded }
 }
 

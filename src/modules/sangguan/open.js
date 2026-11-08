@@ -136,7 +136,7 @@ export async function openCandidates(db, aid, now, opt = {}) {
     const r = await call({ db, aid, day: String(now).slice(0, 10), at: now, chat: opt.chat }, 'J3', input, { tier: 'T1', pool: 'mid' })
     if (!r.cached) calls++
     if (!r.ok && r.code === 'BUDGET') return { did, skipped, queued: queuedNow, postponed: true }
-    if (!r.ok && r.code === 'CALL') { skipped.push({ key: item.key, reason: 'CALL' }); continue }
+    if (!r.ok && (r.code === 'CALL' || r.code === 'SCHEMA')) { skipped.push({ key: item.key, reason: r.code }); continue }
     const j3 = r.ok ? r.out : null
     const u = j3 ? uGates(a.layer, a, b, j3) : { ok: false, failed: ['J3'], report: { J3: r.code } }
     if (!u.ok) {

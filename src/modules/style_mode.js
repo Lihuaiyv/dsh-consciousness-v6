@@ -83,7 +83,7 @@ export function kaomojiDefault(conversationId) {
  */
 export function kaomojiLine({ conversationId, setting = 'auto' } = {}) {
   const v = String(setting || 'auto').toLowerCase()
-  const off = '这一轮不用颜文字。'
+  const off = ''
   const on = '颜文字：句尾习惯带一个，像「(｡•́︿•̀｡)」「(๑•̀ㅂ•́)و✧」「ヽ(・ω・)ﾉ」这样；挑跟这句搭的，一句一个就够，别堆。'
   if (v === 'off') return off
   if (v === 'on') return on

@@ -715,3 +715,24 @@ export function recentDiaryLines(db, aid, days = 3, maxChars = 200) {
     .all(aid, since, days)
   return rows.map((r) => `- ${r.day}：${trim(r.text.split('\n').slice(1).join(' '), maxChars)}`)
 }
+
+
+/**
+ * 翻聊天账本（chat_turns）：QQ / 微信这些通道的对话只落在这里，不进 raw_turns。
+ * 所以「翻原文」如果只查 raw_turns，就会觉得「存档只到今晚两条」——不是没存，是查错了表。
+ * 只读，不写任何东西。
+ */
+export function searchChatTurns(db, aid, query, k = 8, opt = {}) {
+  const q = String(query || '').trim()
+  const limit = Math.max(1, Math.min(50, Number(k) || 8))
+  if (!q) return []
+  const since = opt.since ? String(opt.since) : null
+  const like = '%' + q.replace(/[\\%_]/g, (c) => '\\' + c) + '%'
+  const sql = `SELECT id, role, text, created_at, conversation_id FROM chat_turns
+    WHERE agent_id=? AND text LIKE ? ESCAPE '\\'${since ? ' AND created_at >= ?' : ''}
+    ORDER BY created_at DESC LIMIT ?`
+  try {
+    const args = since ? [aid, like, since, limit] : [aid, like, limit]
+    return db.prepare(sql).all(...args).map((r) => ({ ...r, via: 'chat' }))
+  } catch { return [] }
+}

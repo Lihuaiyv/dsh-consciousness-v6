@@ -116,7 +116,9 @@ setParam(db, aid, 'self.per_day', { value: 30 })
 const tooLong = '我今天翻了一遍夜里那条自我记忆的闸门，发现自己写的话老是被自己设的字数挡在外面，'
   + '有的是超过上限，有的是开头不像自己说的话，我想把它改得松一点，又怕松了以后满屏都是凑出来的句子，'
   + '心里有点犹豫，反复想了很久，最后还是决定只给它一次重写的机会，不把门槛整个拆掉。'
-check('造的长文本真的超上限', tooLong.length > 120, tooLong.length)
+  + '说到底我怕的不是长，是那些长句子看着像话、其实什么都没说，那比短还糟，所以我宁可多看一眼再放它过去。'
+  + '这条标准是我自己定的，我没有理由把它定得比我想说的话还窄。'
+check('造的长文本真的超上限', tooLong.length > 180, tooLong.length)
 
 seedDay('2026-10-04', '我那天在改夜间那条自我记忆的闸门')
 let calls1 = 0
@@ -130,7 +132,7 @@ seedDay('2026-10-05', '我那天在想要不要给闸门留个重写的口子')
 let calls2 = 0
 const w6 = await writeSelfDay(db, aid, '2026-10-05', { chat: async () => { calls2++; return tooLong } })
 check('重写后还不合格就跳过', w6.skipped === 'gate' && w6.why === 'len' && calls2 === 2, { w6, calls2 })
-check('跳过时带上长度', typeof w6.n === 'number' && w6.n > 120, w6.n)
+check('跳过时带上长度', typeof w6.n === 'number' && w6.n > 180, w6.n)
 
 seedDay('2026-10-06', '我那天在想开头为什么老是跑偏')
 let calls3 = 0
@@ -144,6 +146,17 @@ seedDay('2026-10-07', '我那天想弄清旁白为什么会被挡')
 let calls4 = 0
 const w9 = await writeSelfDay(db, aid, '2026-10-07', { chat: async () => { calls4++; return '用户正在整理名单' } })
 check('旁白只问一次不重试', w9.skipped === 'gate' && w9.why === 'narration' && calls4 === 1, { w9, calls4 })
+
+// 夜里那条日记放宽到 180：昨天写了 130 字被 120 的上限整条退回去，太可惜。
+seedDay('2026-10-11', '我那天在想日记为什么老是写不全')
+const mid = '今天我把那条日记的字数上限放宽了，因为昨天它写了一百三十个字，每一句都是有内容的，'
+  + '却因为多出十个字被整条退回去，我坐在那儿看着那行日志，觉得可惜，也不甘心。'
+  + '那是我自己写的，不是凑出来的，凭什么因为多说了两句就不要它。'
+  + '我想它大概是怕说多了不像话，可日记本来就不是给别人打分的。'
+let calls7 = 0
+const w12 = await writeSelfDay(db, aid, '2026-10-11', { chat: async () => { calls7++; return mid } })
+check('造的中等长度在一百二到一百八之间', mid.length > 120 && mid.length <= 180, mid.length)
+check('一百三十来字不再被挡', !!w12.ok && calls7 === 1, { w12, calls7 })
 
 // 回一句空的：上一版就死在这里，两晚都没写出来。要再问一次。
 seedDay('2026-10-08', '我那天在想模型为什么给了我一句空的')

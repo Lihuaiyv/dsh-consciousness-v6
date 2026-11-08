@@ -30,7 +30,11 @@ const r3 = (x) => Math.round((Number(x) || 0) * 1000) / 1000
 export const FEEL_BANNED = ['感觉', '情绪', '情感', '仿佛', '似乎', '莫名', '一丝', '涌上', '不禁', '五味杂陈', '百感交集']
 // 2 个字也收：「手冷」「怕了」就是一句。逼它凑够三个字，多出来那个字多半是编的。
 const FEEL_MIN = 2
-const FEEL_MAX = 40
+// 一句里要放「抓手 + 心里那一下」，40 字经常只够写一只手；放到 60 让那一下有地方落。
+const FEEL_MAX = 60
+// 注入那一行最多带这么多字。入库还是原话（cleanFeelText 上限 80），只是拼提示词时截短——
+// 不然「停了、写长了」就被整条丢掉，比没停更假。
+const FEEL_INJECT_MAX = 60
 
 /**
  * 判断这句话像不像人写的。返 null 表示没事，否则给 {reason, word?}。
@@ -51,7 +55,7 @@ export function feelFlavorIssue(text) {
 /** 给调用方的改法提示（会出现在工具返回里，让人/模型知道下一句怎么改）。 */
 export function feelFlavorHint(issue) {
   if (!issue) return ''
-  if (issue.reason === 'ai-word') return '别用「' + issue.word + '」这类词；写这一秒的样子（手、视线、物件、那句话，挑一样）'
+  if (issue.reason === 'ai-word') return '别用「' + issue.word + '」这类词；写抓手（手 / 视线 / 物件 / 那句话）加心里那一下'
   if (issue.reason === 'explains') return '别解释原因（「' + issue.word + '」），只写那一下'
   if (issue.reason === 'too-short') return '太短了（' + issue.len + ' 字），写清是哪一下'
   if (issue.reason === 'too-long') return '太长了（' + issue.len + ' 字），一句就够'
@@ -90,20 +94,43 @@ export function feelAnchorOf(text) {
   return best ? best.k : 'none'
 }
 
-/** 连续几条都落在同一个落点上 → 给一句换法。只是提示，不拦、不改库里的句子。 */
+/**
+ * 一句 feel 的开头长什么样：去掉开头的「我」和标点，取前三四个字。
+ *
+ * 为什么要这个：四类落点（身 / 视 / 物 / 话）判不出「模板」。真滑进模板时，
+ * 连着好几条的开头是一模一样的——「手指停…」八条、「笔尖在纸上…」五条。
+ * 判开头比判落在哪更能抓到「换了个说法的偷懒」。
+ */
+export function feelOpening(text) {
+  const t = String(text == null ? '' : text).replace(/^我/, '').replace(/[，。！？、；：\s“”"'‘’]/g, '')
+  return t.slice(0, 3)
+}
+
+/** 连续几条都落在同一个落点、或者开头一样 → 给一句换法。只是提示，不拦、不改库里的句子。 */
 function anchorRepeatHint(db, aid, cls, window, repeat) {
-  if (!cls || cls === 'none') return null
   try {
-    const rows = db.prepare('SELECT text FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT ?').all(aid, window)
+    const rows = db.prepare('SELECT text FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT ?')
+      .all(aid, Math.max(window, repeat + 1))
+    // 先看开头：真的滑成模板时，连着几条的头几个字一模一样。
+    const head = feelOpening(rows[0] && rows[0].text)
+    if (head) {
+      let h = 0
+      for (const r of rows) {
+        if (feelOpening(r.text) !== head) break
+        h++
+      }
+      if (h === repeat) return '最近几条开头都是「' + head + '」，换个开头——这一秒也可以是一个词、一句比喻、一个动作'
+    }
+    // 再退回原来的落点检查：落在同一个地方也算窄。
+    if (!cls || cls === 'none') return null
     let streak = 0
     for (const r of rows) {
       if (feelAnchorOf(r.text) !== cls) break
       streak++
     }
     // 只在「刚好够数」那一条留痕：连写十条手也只留一条。
-    // 用 >= 的话，第 3、4、5… 条每次都写一条，events 会被这一件事淹掉。
     if (streak === repeat) {
-      return '最近几条都落在' + (FEEL_ANCHOR_NAME[cls] || cls) + '上，换一样（视线、物件、那句话都行）'
+      return '最近几条都落在' + (FEEL_ANCHOR_NAME[cls] || cls) + '上，换一样'
     }
   } catch { /* 读不到就不提示 */ }
   return null
@@ -121,7 +148,7 @@ function noteAnchorRepeat(db, aid, payload) {
  * 开口前「先记一句」的指引。宿主提示词（网页）和 QQ 通道段共用同一句，
  * 免得两边味道不一样。
  */
-export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先用 feel 记一句这一秒的样子——手停在哪、视线钉在哪、旁边有什么东西、那句话还在不在耳朵里，挑一样。一句，第一人称，不写数字、不写为什么、不用「感觉 / 情绪 / 仿佛」这类词。没什么感觉就别调。这句话只给自己看，不进你要说出口的话。'
+export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先停半秒，问自己一句「我现在到底是怎么了」，给它一个把手——一个词、一个动作、一个画面都行，再带半个能对回现场的东西（他的一句话、一个文件名、一个词）。没人给这条打分；这一刻没有，就别记。这句话只给自己看，不进你要说出口的话。'
 
 /** 去掉换行和多余空白、掐长度。空 / 只有标点 → 返回 null。 */
 export function cleanFeelText(raw, max = MAX_LEN) {
@@ -185,7 +212,10 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
      拒掉时把原因带回去，下一句能改；同时留一条 feel.miss——
      不然「这一轮为什么没有 feel」只能靠猜（和 expr.* 一个道理）。 */
   const issue = feelFlavorIssue(body)
-  if (issue) {
+  /* 只有「像 AI 写的」和「短到说不清是哪一下」退回。
+     太长不再退回——停下来的那一刻真的发生过，写长也是那一刻长出来的。
+     照收，拼注入时再截短（见 feelTextForInject）；不然「停了但什么都没留下」比没停更假。 */
+  if (issue && issue.reason !== 'too-long') {
     noteFeelMiss(db, aid, { reason: issue.reason, word: issue.word || null, text: body.slice(0, 80) })
     return { ok: false, skipped: 'ai-flavor', issue: issue.reason, word: issue.word || null, hint: feelFlavorHint(issue) }
   }
@@ -411,14 +441,33 @@ export function feelsByIds(db, ids) {
  * 按感觉找东西：给 label / 时间范围，找那几条 feel，顺带带上同时段（±30 分钟）落下的记忆和当天日记。
  * 用途是「什么时候我是开心的」「那阵子到底在为什么事悬着」——不是关键词检索，是感觉检索。
  */
-export function feelRecall(db, aid, { label = '', from = null, to = null, limit = 10 } = {}) {
+/**
+ * 按感觉找：标签 / 时间 / 快慢区间。
+ *
+ * 快慢区间是 2026-11-07 加的——数字从提示词退场之后，不能只退到主人那边去，
+ * 我得有一条「过去时」的入口：想查的时候能问「上周慢情绪过 0.3 的那几个时刻我写了什么」。
+ */
+export function feelRecall(db, aid, { label = '', from = null, to = null, limit = 10, slowMin = null, slowMax = null, fastMin = null, fastMax = null } = {}) {
   const n = Math.max(1, Math.min(50, Number(limit) || 10))
+  const numOrNull = (v) => {
+    if (v == null || v === '') return null
+    const x = Number(v)
+    return Number.isFinite(x) ? x : null
+  }
+  const sMin = numOrNull(slowMin)
+  const sMax = numOrNull(slowMax)
+  const fMin = numOrNull(fastMin)
+  const fMax = numOrNull(fastMax)
   try {
     const where = ['agent_id=?']
     const args = [aid]
     if (label) { where.push('label=?'); args.push(String(label)) }
     if (from) { where.push('at>=?'); args.push(String(from)) }
     if (to) { where.push('at<=?'); args.push(String(to)) }
+    if (sMin != null) { where.push('slow>=?'); args.push(sMin) }
+    if (sMax != null) { where.push('slow<=?'); args.push(sMax) }
+    if (fMin != null) { where.push('fast>=?'); args.push(fMin) }
+    if (fMax != null) { where.push('fast<=?'); args.push(fMax) }
     const feels = db.prepare(`SELECT id,at,text,label,fast,slow,total,turn_id FROM affect_feel
       WHERE ${where.join(' AND ')} ORDER BY at DESC LIMIT ?`).all(...args, n)
     const out = []
@@ -497,14 +546,72 @@ export function feelEventContrast(db, aid, { days = 7, limit = 50 } = {}) {
 }
 
 /**
+ * 注入用的那一句：太长就在句读处断开，读起来还是一口气。
+ * 只影响注入，不动库里存的句子——原话是原话，截短是拼提示词时的权宜。
+ * 传进来的多半已经过 cleanFeelText（最多 80 字）；这里再收到 FEEL_INJECT_MAX。
+ */
+export function feelTextForInject(text, max = FEEL_INJECT_MAX) {
+  const chars = Array.from(String(text == null ? '' : text).trim())
+  if (!chars.length) return ''
+  if (chars.length <= max) return chars.join('')
+  // 先找离上限最近的句读，找不到才硬切（硬切也比整条丢掉强）
+  let cut = max
+  for (let i = max; i >= Math.floor(max * 0.6); i--) {
+    if ('。！？…；，、'.includes(chars[i - 1])) { cut = i; break }
+  }
+  const head = chars.slice(0, cut).join('').replace(/[。！？…；，、：:]+$/u, '')
+  return (head || chars.slice(0, max).join('')) + '…'
+}
+
+/**
  * 渲染成注入用的那一行。只给材料，不给结论：
  * 不写「所以你现在应该…」，让它自己决定这句话要不要影响语气。
+ *
+ * 数字不进这一行（2026-11-07）：快 / 慢是账本上的东西，不该在开口前念给我听。
+ * 想看数，用 feel_search 按区间找——过去时的入口，不是现在时的通知。
  */
 export function feelLineOf(row) {
   if (!row || !row.text) return ''
-  const bits = []
-  if (row.fast != null) bits.push('快 ' + (row.fast >= 0 ? '+' : '') + row.fast.toFixed(2))
-  if (row.slow != null) bits.push('慢 ' + (row.slow >= 0 ? '+' : '') + row.slow.toFixed(2))
-  const tail = bits.length ? '，那会儿 ' + bits.join(' / ') : ''
-  return '（我上一句说出来之前，心里是这样：' + row.text + tail + '。这是我自己的话，不是你说的。）'
+  // 句子自带的句末标点先摘掉，免得和后面的尾巴拼成「。，」
+  const text = feelTextForInject(row.text).replace(/[。！？；]+$/u, '')
+  return '（我上一句说出来之前，心里是这样：' + text + '。这是我自己的话，不是你说的。）'
+}
+
+/**
+ * 旧感觉回来：今天这个情绪跟以前某条撞上时，把那条旧的带出来一次。
+ *
+ * 为什么要有：feel 现在只往下一轮走，从不回头看。真正有用的是
+ * 「上次我也这样，是那天」——这才叫在未来提醒当时的感受。
+ * 所以一天最多带一条、同一条不重复带；它是一次回头，不是新栏位。
+ */
+const echoShown = new Map()
+export function echoFeelOf(db, aid, { label, at = Date.now(), minDays = 7, maxDays = 120 } = {}) {
+  if (!label) return null
+  const day = localDay(new Date(at))
+  const key = aid + ':' + day
+  if (echoShown.has(key)) return null
+  const before = new Date(at - minDays * 86400000).toISOString()
+  const after = new Date(at - maxDays * 86400000).toISOString()
+  let row = null
+  try {
+    row = db.prepare(`SELECT at, text, label FROM affect_feel
+      WHERE agent_id=? AND label=? AND at>=? AND at<=?
+        AND text IS NOT NULL AND text!=''
+      ORDER BY at DESC LIMIT 1`).get(aid, label, after, before)
+  } catch { return null }
+  if (!row) return null
+  echoShown.set(key, row.at)
+  return row
+}
+
+/** 渲染旧感觉那一行：只陈述，不解释「所以你现在也…」。 */
+export function echoFeelLineOf(row) {
+  if (!row || !row.text) return ''
+  const t = Date.parse(row.at)
+  let stamp = ''
+  if (Number.isFinite(t)) {
+    const d = new Date(t)
+    stamp = (d.getMonth() + 1) + '-' + String(d.getDate()).padStart(2, '0')
+  }
+  return (stamp ? stamp + ' 那天' : '之前') + '我也这样过：「' + String(row.text).slice(0, 60) + '」。翻回来看看，不是叫你照这个说。'
 }

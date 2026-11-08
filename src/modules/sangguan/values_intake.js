@@ -7,7 +7,7 @@
 import { setFlag, getFlag } from '../../kernel.js'
 import { laneOn } from './config.js'
 import { VALUE_DIMS, VALUE_INIT } from '../persona_dims.js'
-import { append, newId } from './ledger.js'
+import { append, readEvents, newId } from './ledger.js'
 import { loadState } from './projection.js'
 import { theta } from './fold.js'
 import { lexicalSim } from './sim.js'
@@ -48,11 +48,45 @@ export function claimUserValue(db, aid, body, at) {
       payload: { evidence: [{ kind: 'verdict', target_type: 'claim', target_id: id, sign: 1, weight: wVerdict, ref: 'user:value:' + key }] },
     },
   ])
+  // 手写的 claim 也进矛盾检查：同主题 + 反向 → 提一个候选，等 J3 判。
+  try { proposeKappa(db, aid, id, text, when) } catch { /* 提不出候选不影响写入 */ }
   return { key, claimed: true, claim_id: id }
 }
 
 const NEG = /不|别|讨厌|反对|拒绝|不要|不许|不能|厌恶/
 const CLASH = 0.35
+
+/**
+ * 手写 claim 也进矛盾检查：同主题 + 反向 → 提一个 KAPPA_CANDIDATE，等 J3 判。
+ * 零模型；只提候选，不立案。同一对只提一次，一次最多提一对。
+ */
+export function proposeKappa(db, aid, id, text, at) {
+  const neg = NEG.test(String(text || ''))
+  let rows = []
+  try {
+    rows = db.prepare("SELECT id, text FROM persona_claims WHERE agent_id=? AND layer='V'").all(aid)
+  } catch { return }
+  const s = loadState(db, aid)
+  const done = new Set()
+  try {
+    for (const e of readEvents(db, aid, { types: ['KAPPA_CANDIDATE'] })) {
+      const p = e.payload || {}
+      if (p.a_id && p.b_id) done.add([p.a_id, p.b_id].sort().join('|'))
+    }
+  } catch { /* 读不到就当没提过 */ }
+  for (const r of rows) {
+    if (r.id === id) continue
+    const c = s.claims[r.id]
+    if (!c || isTerminal(c.status) || c.kind === 'commit') continue
+    if (NEG.test(String(r.text || '')) === neg) continue
+    if (lexicalSim(text, r.text) < CLASH) continue
+    const key = [id, r.id].sort().join('|')
+    if (done.has(key)) continue
+    append(db, aid, [{ type: 'KAPPA_CANDIDATE', layer: 'V', actor: 'sys', at, payload: { a_id: id, b_id: r.id } }])
+    done.add(key)
+    return
+  }
+}
 
 /**
  * 偏好或禁忌的句子顶到一条已有价值命题：只加一条 PRESSURE 边。

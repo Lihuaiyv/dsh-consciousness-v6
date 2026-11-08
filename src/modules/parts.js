@@ -293,9 +293,17 @@ export const PARTS = [
     owner: 'src/modules/feel.js · recordFeel',
     files: ['src/modules/feel.js'],
     entry: 'recordFeel / latestFeel / feelRecall（src/modules/feel.js）；工具注册在 src/modules/actions/index.js，提示词里的「我上一句说出来之前」那行在 index.js 拼',
-    exam: { file: 'test/feel-tool.test.mjs', score: '60/60', note: 'AI 味与长度 / 频率与重复 / 落点提示不拦 / 不动情绪 / 注入窗口 / 回顾与对照，60 道' },
+    exam: { file: 'test/feel-tool.test.mjs', score: '71/71', note: 'AI 味与长度 / 太长的照收、注入时截短 / 频率与重复 / 落点提示不拦 / 不动情绪 / 注入窗口 / 回顾与对照 / 旧感觉一天回来一次，70 道' },
     assert: '表：affect_feel；读：latestFeel / listFeels；回退：feel-before-part',
-    swaps: [],
+    swaps: [
+      {
+        who: '小汐',
+        at: '2026-11-07',
+        from: '写超过 60 字就退回、不落库',
+        to: '照收（入库最多 80 字），注入时在句读处截短',
+        why: '停下来的那一刻真的发生过，写长也是那一刻长出来的；整条丢掉比没停更假。考卷 70/70',
+      },
+    ],
     rollback: { pointer: 'feel-before-part', note: '回退 = git checkout feel-before-part -- src/modules/parts.js src/ports/ownership.js docs/给人看的/零件-感受.md scripts/exam-sabotage-parts.mjs' },
   },
   {
@@ -389,7 +397,7 @@ export const PARTS = [
     owner: 'src/modules/archive.js · appendTurn',
     files: ['src/modules/archive.js', 'src/modules/episode_fields.js'],
     entry: 'appendTurn / archiveFact / buildEpisode / buildDiary（src/modules/archive.js）；纪要的窄写口 setEpisodePoignancy（src/modules/episode_fields.js）；宿主接线：features 与夜间整理调它',
-    exam: { file: 'test/exam-archive.test.mjs', score: '32/32', note: '原文按轮去重 / 出生照只拍一次 / 纪要重复跑是更新 / 戳心度窄写口 / 日记读口 / 两个索引重建，32 道' },
+    exam: { file: 'test/exam-archive.test.mjs', score: '37/37', note: '原文按轮去重 / 出生照只拍一次 / 纪要重复跑是更新 / 戳心度窄写口 / 日记读口 / 两个索引重建，37 道' },
     assert: '表：raw_turns / raw_fts / fact_archive / fact_fts / episodes / diaries；读：listRaw / listFactArchive；回退：archive-before-part',
     swaps: [],
     rollback: { pointer: 'archive-before-part', note: '回退 = git checkout archive-before-part -- src/modules/parts.js src/modules/diary.js src/ports/ownership.js test/exam-archive.test.mjs docs/给人看的/零件-归档.md scripts/exam-sabotage-parts.mjs，再删 src/modules/episode_fields.js' },
@@ -411,6 +419,26 @@ export const PARTS = [
     rollback: { pointer: 'send-before-part', note: '回退 = git checkout send-before-part -- src/modules/parts.js src/ports/ownership.js test/exam-send.test.mjs docs/给人看的/零件-发信.md scripts/exam-sabotage-parts.mjs' },
   },
   {
+    id: 'paint',
+    name: '画板',
+    role: '四肢',
+    chain: '链外',
+    judge: '机器',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/parts/paintboard · board.py / server.py / index.html',
+    files: [
+      'src/parts/paintboard/board.py',
+      'src/parts/paintboard/server.py',
+      'src/parts/paintboard/index.html',
+    ],
+    entry: '命令行：python board.py new|stroke|apply|undo|status|render（我下笔走这条）；网页：python server.py 起在 127.0.0.1:8777，人和我共用一张纸',
+    exam: { file: 'test/exam-paintboard.test.mjs', score: '12/12', note: '开新纸落盘并出图 / 落两笔计数与像素都变 / 撤一笔 / 单笔再落 / 空纸重渲染，12 道（没 python 则 SKIP）；打假：test/exam-paintboard-sabotage.test.mjs（把 render 改成不写图，考卷必须红）' },
+    assert: '状态：~/.dsh/paintboard/board.json（PAINTBOARD_HOME 可改）；读：board.load / board.render；回退：paint-before-part',
+    swaps: [],
+    rollback: { pointer: 'paint-before-part', note: '回退 = git checkout paint-before-part -- src/modules/parts.js test/exam-paintboard.test.mjs docs/给人看的/零件-画板.md，再删 src/parts/paintboard' },
+  },
+  {
     id: 'inbox',
     name: '收信·认件',
     role: '四肢',
@@ -426,6 +454,52 @@ export const PARTS = [
     swaps: [],
     rollback: { pointer: 'inbox-before-part', note: '回退 = git checkout inbox-before-part -- src/modules/parts.js src/host/dsh.js src/ports/ownership.js test/exam-inbox.test.mjs docs/给人看的/零件-收信·认件.md scripts/exam-sabotage-parts.mjs，再删 src/host/events.js' },
   },
+  {
+    id: 'ear',
+    name: '听见',
+    role: '四肢',
+    chain: '链外',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/parts/ear/ · transcribeVoice',
+    files: [
+      'src/parts/ear/index.js',
+      'src/parts/ear/probe.js',
+      'src/parts/ear/engine.js',
+    ],
+    entry: 'transcribeVoice（src/parts/ear/index.js）',
+    exam: { file: 'test/exam-ear.test.mjs', score: '27/27', note: '体检 / 修头 / 转规格 / 交给识别 / 空文本不编 / 异常说人话，27 道' },
+    assert: '表：无；读：transcribeVoice；回退：ear-before-part',
+    swaps: [],
+    rollback: {
+      pointer: 'ear-before-part',
+      note: '回退 = 删 src/parts/ear/ 与 test/exam-ear.test.mjs，删本行、删 ownership 的 voice 域（tag 打在未提交改动的 HEAD 上，新文件不在那个 commit 里，checkout 拿不回，只能手删）',
+    },
+  },
+  {
+    id: 'mouth',
+    name: '出声',
+    role: '四肢',
+    chain: '链外',
+    judge: '混合',
+    status: '可换',
+    version: 'v0.1.0',
+    owner: 'src/parts/mouth/ · synthesizeVoice',
+    files: [
+      'src/parts/mouth/index.js',
+      'src/parts/mouth/providers.js',
+      'src/parts/mouth/format.js',
+    ],
+    entry: 'synthesizeVoice（src/parts/mouth/index.js）',
+    exam: { file: 'test/exam-mouth.test.mjs', score: '27/27', note: '配置体检 / 三条嗓子各发什么 / 看字节（HTML 不交）/ 格式以字节为准，27 道' },
+    assert: '表：无；读：synthesizeVoice；回退：mouth-before-part',
+    swaps: [],
+    rollback: {
+      pointer: 'mouth-before-part',
+      note: '回退 = 删 src/parts/mouth/ 与 test/exam-mouth.test.mjs，删本行、删 ownership voice 里那三个文件（tag 打在未提交改动的 HEAD 上，新文件不在那个 commit 里，只能手删）',
+    },
+  },
 ]
 
 /** 零件盒（GET /v1/parts）和以后的界桩都读这里：按登记顺序，返回副本，外面改不动册子 */
@@ -439,3 +513,4 @@ export function listParts() {
     rollback: p.rollback ? { ...p.rollback } : null,
   }))
 }
+

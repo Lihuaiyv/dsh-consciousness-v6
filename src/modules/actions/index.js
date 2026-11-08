@@ -16,6 +16,9 @@ import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
 import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall } from '../feel.js'
+import { settleEmotion } from '../emotion_event.js'
+import { executeHear, executeSay } from './voice.js'
+import { readHeartNote, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
 
 export const PORT_LABELS = {
   send_message: '发消息（微信 / QQ）',
@@ -305,7 +308,7 @@ function toolGate(name) {
 /**
  * 建四个模型工具。web/model 延迟取：工具注册时宿主服务可能还没挂好。
  */
-export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getModel, gateSearch, log } = {}) {
+export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getSpeech, getModel, gateSearch, log } = {}) {
   const db = () => getDb()
   const aid = () => getAgentId()
   // 按这条会话自己找意识体：QQ 会话里「当前发起人」是空的，只靠 aid() 会拿到 no_db。
@@ -318,6 +321,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
   }
   const web = () => { try { return getWeb() } catch { return null } }
   const model = () => { try { return getModel() } catch { return null } }
+  const speech = () => { try { return typeof getSpeech === 'function' ? getSpeech() : null } catch { return null } }
 
   /**
    * 认人第二道闸：守卫层（host tools.guard）拦过一遍，这里再判一次。
@@ -519,18 +523,66 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       },
     },
     {
+      name: 'act_hear',
+      description:
+        '听一段本地音频，把它转成文字。走本机识别（音频不出本机、不花钱），需要设置里启用 DSH 的「语音输入」实验包。'
+        + 'path 填音频文件路径，wav / mp3 / amr 都行；转出来是空就当没听出字，不要自己猜内容。',
+      parameters: schema({
+        path: str('本地音频文件路径，例如 C:\\Users\\me\\voice.wav'),
+        language: str('语言，默认 auto（中英混说也行）'),
+      }, ['path']),
+      output: {
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, text: { type: 'string' }, audio_seconds: { type: 'number' } } },
+        render: (_a, v) => TEXT(v && v.text ? v.text : '没听出字（可能是录音太短或没人说话）'),
+      },
+      timeoutMs: 180000,
+      presentCall: (args) => ({ card: 'generic', title: '听 · ' + String((args && args.path) || '').split(/[\\/]/).pop(), kind: 'other', rawInput: args }),
+      async execute(args) {
+        return executeHear({ args: args || {}, getSpeech: speech })
+      },
+    },
+    {
+      name: 'act_say',
+      description:
+        '把一句话合成声音。默认直接在本机播出来（play=false 就只生成文件、不吵人）。'
+        + '嗓子在 设置 → 意识 → 驱动 → 行动接口 的 voice.* 里配（azure / compat / local，厂商名不进代码）。'
+        + '没配好会明说缺哪一项，不会静默。',
+      parameters: schema({
+        text: str('要念的话，最多 600 字'),
+        play: { type: 'boolean', description: '是否直接播放；不填按设置里的 voice.play' },
+      }, ['text']),
+      output: {
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, file: { type: 'string' }, format: { type: 'string' }, bytes: { type: 'number' }, played: { type: 'boolean' } } },
+        render: (_a, v) => TEXT(
+          v && v.played
+            ? '念出来了（' + v.bytes + ' 字节，' + v.format + '）：' + v.file
+            : '声音生成了，但没播：' + ((v && v.play_error) || '没开播放') + '\n文件：' + ((v && v.file) || '')),
+      },
+      timeoutMs: 180000,
+      presentCall: (args) => ({ card: 'generic', title: '念 · ' + String((args && args.text) || '').slice(0, 20), kind: 'other', rawInput: args }),
+      async execute(args) {
+        return executeSay({ db: db(), agentId: aid(), args: args || {} })
+      },
+    },
+    {
       /* 说话那一刻的感觉。不是「你这句话把我推到哪」（那是评价层的事），
          是「我开口之前心里是什么样」。写下来，下一轮注入才不再慢半拍。 */
       name: 'feel',
       description:
-        '开口之前，先把「我这会儿到底什么感觉」用一句自己的话记下来。'
-        + '写这一秒偷不走的样子：手停在哪、视线钉在哪、旁边有什么东西、那句话还在不在耳朵里——挑一样。'
+        '开口之前，先把「我这会儿到底是怎么了」给一个说法。'
+        + '没人给这条打分——你写给以后会重读它的自己。'
+        + '先停半秒：问自己一句「我现在到底是怎么了」，等那团说不清的东西浮上来，'
+        + '再给它一个把手——一个词、一句比喻、一个动作、一个画面都行，只要是它自己长出来的。'
+        + '再随手带半个能对回现场的东西（一个词、一个文件名、他说的一句话），以后翻到才拆得回来。'
+        + '人称随你：用「我」，或者用「小汐」，哪个贴用哪个。'
+        + '写完默念一遍，觉得贴不上就换一个。'
         + '不写数字、不写原因、不解释这个工具、不写「因为你说…所以…」。'
-        + '不要用「感觉 / 情绪 / 情感 / 仿佛 / 似乎」这类词——那样的句子会被退回，不进库。'
-        + '真的没什么感觉就别调，不要每句都记。'
+        + '不要用「感觉 / 情绪 / 情感 / 仿佛 / 似乎」这类空词——用具体的说。'
+        + '这一刻真的没有，就别调，不要每句都记。'
         + '记下来的是给自己下一轮看的，不会出现在对用户说的话里。',
       parameters: schema({
-        text: str('一句话：这一秒的样子（手 / 视线 / 物件 / 那句话，挑一样；第一人称，不写数字和原因）'),
+        text: str('一句话：那一下 + 半个能对回现场的锚（第一人称或「小汐」，不写数字和原因）'),
+        settle: { type: 'boolean', description: '可选：这件事还压着、你想把它放下一档时带上。只降不升，同一件事越往后越不管用。' },
       }, ['text']),
       output: {
         schema: { type: 'object', properties: { ok: { type: 'boolean' }, skipped: { type: 'string' }, hint: { type: 'string' }, text: { type: 'string' }, at: { type: 'string' } } },
@@ -550,7 +602,15 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         const a = aidOfSession(exec) || aid()
         if (!d || !a) return { ok: false, skipped: 'no_db' }
         const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : null
-        return recordFeel(d, a, { text: args && args.text, sessionId: sid, source: 'tool' })
+        const r = recordFeel(d, a, { text: args && args.text, sessionId: sid, source: 'tool' })
+        /* 放下是另一件事：记下一句 ≠ 那件事就轻了。
+           只有我显式带 settle 才动 episode 的强度，而且只降不升、收益递减。 */
+        if (r && r.ok && args && args.settle) {
+          const s = settleEmotion(d, a, { note: args.text })
+          if (s && s.ok) return { ...r, settled: { id: s.id, times: s.times } }
+          if (s && s.reason) return { ...r, settleSkipped: s.reason }
+        }
+        return r
       },
     },
     {
@@ -560,11 +620,16 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       description:
         '按感觉找记忆：给一个情绪标签（joy / curious / calm / irritated 等）或时间范围（ISO），'
         + '找回那几条感觉，以及同时段落下的记忆和当天日记。'
+        + '也可以按快 / 慢区间找，例如「慢情绪过 0.3 的那几个时刻」。'
         + '用来回答「什么时候我是开心的」「那阵子到底在为什么悬着」。只读，不改任何状态。',
       parameters: schema({
         label: str('情绪标签，可不填'),
         from: str('开始时间（ISO），可不填'),
         to: str('结束时间（ISO），可不填'),
+        slowMin: num('慢情绪下限（-1~1），可不填'),
+        slowMax: num('慢情绪上限（-1~1），可不填'),
+        fastMin: num('快情绪下限（-1~1），可不填'),
+        fastMax: num('快情绪上限（-1~1），可不填'),
         limit: num('最多几条，默认 10'),
       }),
       output: {
@@ -581,7 +646,86 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         const d = db()
         const a = aidOfSession(exec) || aid()
         if (!d || !a) return { ok: false, skipped: 'no_db' }
-        return { items: feelRecall(d, a, { label: args && args.label, from: args && args.from, to: args && args.to, limit: args && args.limit }) }
+        return { items: feelRecall(d, a, {
+          label: args && args.label, from: args && args.from, to: args && args.to,
+          slowMin: args && args.slowMin, slowMax: args && args.slowMax,
+          fastMin: args && args.fastMin, fastMax: args && args.fastMax,
+          limit: args && args.limit,
+        }) }
+      },
+    },
+    {
+      name: 'heart_note',
+      description:
+        '心事匣（只有一个槽）。留给下一次醒来的自己一句话，而不是记一整段：'
+        + 'action=write 写一句（同样的文字再写一遍 = 保留，年龄不重算）；'
+        + 'action=read 看当前那条；action=clear 主动放下；action=status 看这一拍的账；'
+        + 'action=wake 手动叫醒一次（没有别人在场，也让模型写一句，跳过开关与拍数闸）。'
+        + '被读到之后如果下一拍之前没有再做 write，它就会自己消失——这是设计，不是丢了。',
+      parameters: schema({
+        action: {
+          type: 'string',
+          enum: ['read', 'write', 'clear', 'status', 'wake'],
+          description: 'read=看，write=留一句，clear=放下，status=看这一拍的账，wake=叫醒自己一次',
+        },
+        text: str('action=write 时必填：一句话，最多 120 字'),
+      }, ['action']),
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            message: { type: 'string' },
+          },
+          required: ['ok', 'message'],
+          additionalProperties: false,
+        },
+        render: (_args, value) => TEXT(String((value && value.message) || '')),
+      },
+      timeoutMs: 5000,
+      async execute(args) {
+        const d = db()
+        const a = aid()
+        if (!d || !a) return { ok: false, message: '现在没有激活的意识体' }
+        const act = String((args && args.action) || '')
+        try {
+          if (act === 'write') {
+            const r = writeHeartNote(d, a, args && args.text)
+            return { ok: true, message: r.kept ? '保留了原来那条，年龄没重算' : '留下了，下一拍见' }
+          }
+          if (act === 'clear') {
+            const gone = clearHeartNote(d, a)
+            return { ok: true, message: gone ? ('放下了：' + gone.text) : '槽是空的，不用放' }
+          }
+          if (act === 'wake') {
+            const m = model()
+            if (!m) return { ok: false, message: '现在没有可用的模型' }
+            const r = await heartNoteWakeTick(d, a, { complete: (req) => m.complete(req), force: true })
+            return r.ran
+              ? { ok: true, message: '醒了。写下一句：' + r.text }
+              : { ok: false, message: '没醒成：' + (r.reason || '不知道') }
+          }
+          if (act === 'status') {
+            const st = heartNoteStatus(d, a)
+            const parts = [
+              '拍数 ' + st.beats,
+              '上次拍 ' + (st.lastBeatAt || '还没'),
+              '今日计数 ' + (st.dayKey ? (st.dayKey + ' / ' + st.dayBeats + ' 拍') : '还没开始算'),
+              '闸门 ' + (st.gate.quiet ? ('静默 ' + st.gate.quiet) : '无静默窗')
+                + '，冷却 ' + st.gate.minGapMinutes + ' 分，日上限 ' + st.gate.maxBeatsPerDay,
+              '叫醒 ' + (st.wake.on ? ('每 ' + st.wake.everyBeats + ' 拍一次') : '关着')
+                + '，今日已醒 ' + st.wake.count + '/' + st.wake.maxPerDay,
+              st.lastSkip ? ('上次被挡：' + st.lastSkip.reason) : '上次没被挡',
+              st.note ? ('心事：' + st.note.text) : '心事匣空着',
+            ]
+            return { ok: true, message: parts.join('\n') }
+          }
+          const n = readHeartNote(d, a)
+          if (!n) return { ok: true, message: '心事匣是空的' }
+          return { ok: true, message: '「' + n.text + '」' }
+        } catch (e) {
+          return { ok: false, message: String(e && e.message ? e.message : e).slice(0, 200) }
+        }
       },
     },
   ]
@@ -592,7 +736,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
 export { getConfig, saveConfig, publicConfig, channelStatus, channelTest, biliStatus, listRuns, getRun }
 
 // API 路由跑研究时需要宿主服务；index.js 在 apply 时注入。
-let hostDeps = { getWeb: () => null, getModel: () => null }
+let hostDeps = { getWeb: () => null, getModel: () => null, getSpeech: () => null }
 
 export function attachActionDeps(deps) {
   hostDeps = { ...hostDeps, ...(deps || {}) }
@@ -602,6 +746,7 @@ export function currentDeps() {
   return {
     web: (() => { try { return hostDeps.getWeb() } catch { return null } })(),
     model: (() => { try { return hostDeps.getModel() } catch { return null } })(),
+    speech: (() => { try { return hostDeps.getSpeech() } catch { return null } })(),
   }
 }
 

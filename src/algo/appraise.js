@@ -89,6 +89,11 @@ function normalizeHint(hint) {
     /* 咽回去的那半句（P3）。同一个坑第三次：字段名得写在这里，少一行就永远拿不到。
        先影子：只落库、不进提示词，攒够样本再谈回读。 */
     unsaid: String(hint.unsaid || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+    /* 第二组检查（2026-11-07）：应对潜力 / 规范意义。
+       只做透传：模型给了就带上（0~1 / -1~1），没给就留 null——
+       不许在这里编默认值，编了就等于替她「觉得控得住」。 */
+    coping: Number.isFinite(Number(hint.coping)) ? Math.max(0, Math.min(1, Number(hint.coping))) : null,
+    norm: Number.isFinite(Number(hint.norm)) ? Math.max(-1, Math.min(1, Number(hint.norm))) : null,
   }
 }
 

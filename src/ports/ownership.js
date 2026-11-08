@@ -41,6 +41,8 @@ export const WRITES = Object.freeze({
   poisons: [],
   values: ['persona_values'],
   actions: ['action_config'],
+  // 听见 / 出声：只搬字节，一个表都不写（要记的账走共享的 events）
+  voice: [],
   // 搬库 / 编排：ops 清库和导入、host 导入导出和接线。它们可以写别的域的表，
   // 但只许在本名单里——不是「想写哪张写哪张」。真正的进一步拆分要等把导入/导出/清库
   // 的代码抽成独立文件，那之前先按整域例外登记。
@@ -79,8 +81,10 @@ export const OWNERSHIP = {
   loops: {
     // 开环：承诺 / 待办 / 悬着的事。只写自己的表 open_loops；来源由调用方递进来，不碰记忆正文。
     files: ['parts/loops/index.js', 'modules/loops.js'],
-    tables: ['open_loops'],
-    reads: [],
+    // agent_params：只读两个开关（memory.claim.loop_link / memory.claim.inject）；
+    // WRITES 里 loops 只允许写 open_loops，所以加进 tables 也不会误写。
+    tables: ['open_loops', 'agent_params'],
+    reads: ['agent_params'],
   },
   queue: {
     // 待发消息队列：proactive 只由 modules/proactive.js 写。开口、冲突提问、投递、作废都调它的公开函数。
@@ -130,12 +134,27 @@ export const OWNERSHIP = {
   },
   actions: {
     // 发信：三路通道的配置和出口。只写自己的 action_config；action_ports 只读（看开关）。
-    files: ['modules/actions/channels.js'],
+    // voice.js 是语音两个零件的壳：只折配置、递字节，不实现转码和合成。
+    files: ['modules/actions/channels.js', 'modules/actions/voice.js'],
     tables: ['action_config', 'action_ports'],
   },
   inbox: {
     // 收信·认件：只认平台递进来的事件，不碰库。
     files: ['host/events.js'],
+    tables: [],
+  },
+  paint: {
+    // 画板：一支笔一张纸。只读写自己的 board.json（在 ~/.dsh/paintboard），不碰库。
+    files: ['parts/paintboard/board.py', 'parts/paintboard/server.py', 'parts/paintboard/index.html'],
+    tables: [],
+  },
+  voice: {
+    // 听见（ear）：一段声音变成字。出声（mouth）：一段字变成声音。
+    // 两个都只搬字节，不写库、不存音频；各占自己的文件。
+    files: [
+      'parts/ear/index.js', 'parts/ear/probe.js', 'parts/ear/engine.js',
+      'parts/mouth/index.js', 'parts/mouth/providers.js', 'parts/mouth/format.js',
+    ],
     tables: [],
   },
   wechatinbox: {

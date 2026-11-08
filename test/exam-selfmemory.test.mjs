@@ -105,7 +105,7 @@ const chatOnce = (text) => { let n = 0; const f = async () => { n++; return text
     let n = 0
     const chat = async () => {
       n++
-      return n === 1 ? '我' + '想'.repeat(150) : '我想明白了，以后不把话说满'
+      return n === 1 ? '我' + '想'.repeat(200) : '我想明白了，以后不把话说满'
     }
     const out = await writeSelfDay(w.db, w.aid, today, { chat })
     check('太长：问第二次，收紧了就写', out.ok === true && n === 2, { out, n })

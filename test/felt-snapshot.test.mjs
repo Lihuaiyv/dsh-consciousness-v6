@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 感受快照：上一句的原话 + 当时的数。只读。
  * 运行：node test/felt-snapshot.test.mjs
  *
@@ -66,8 +66,9 @@ const counts = (aid) => ({
   const s = feltSnapshot(db, aid, { at: at + 60000 })
   check('配对：paired=true', s && s.paired === true, s)
   check('配对：带原话', !!s && s.line.includes('我可不舍得说难听的话'), s && s.line)
-  check('配对：带慢情绪的数', !!s && s.line.includes('慢 +0.11'), s && s.line)
-  check('配对：带快情绪的数', !!s && s.line.includes('快 +0.20'), s && s.line)
+  /* 2026-11-07：数字从这一行退场。数还在返回值里（面板/探针照旧），只是不再进提示词。 */
+  check('配对：行里不带数字', !!s && !/[+\-−]\d+\.\d+/.test(s.line), s && s.line)
+  check('配对：仍然说清读出的是什么', !!s && s.line.includes('读出的是'), s && s.line)
   check('配对：说清这是那时候的读数', !!s && s.line.includes('那时候'), s && s.line)
   check('配对：算出年龄（1 分钟）', !!s && s.ageMin === 1, s && s.ageMin)
 }
@@ -80,7 +81,7 @@ const counts = (aid) => ({
   const s = feltSnapshot(db, aid, { at: T0 + 60000 })
   check('错位：paired=false', s && s.paired === false, s)
   check('错位：原话不出现', !!s && !s.line.includes('发测试'), s && s.line)
-  check('错位：仍然给数', !!s && s.line.includes('慢 +0.11'), s && s.line)
+  check('错位：不带数字，仍说清是哪一刻', !!s && !/[+\-−]\d+\.\d+/.test(s.line) && s.line.includes('那会儿'), s && s.line)
 }
 
 // ---------------- 3b 机器消息不能当「你说的话」 ----------------
@@ -103,7 +104,7 @@ const counts = (aid) => ({
   insSm(aid, T0 + 1, 'joy', 0.5, { slow: 0.2, fast: 0.2 })
   const s = feltSnapshot(db, aid, { at: T0 + 60000 })
   check('只有控制标：不给原话', !!s && !s.line.includes('Objective'), s && s.line)
-  check('只有控制标：仍然给那一刻的数', !!s && s.line.includes('快 +0.20'), s && s.line)
+  check('只有控制标：仍然说清那一刻的样子', !!s && !/[+\-−]\d+\.\d+/.test(s.line) && s.line.includes('读出的是'), s && s.line)
 }
 
 {
@@ -151,7 +152,7 @@ const counts = (aid) => ({
   insSm(aid, T0 + 1, 'curious', 0.55, '{不是 json')
   const s = feltSnapshot(db, aid, { at: T0 + 60000 })
   check('slow 坏掉：不抛、仍然出一行', !!s && typeof s.line === 'string' && s.line.length > 0, s)
-  check('slow 坏掉：退回到力度', !!s && s.line.includes('力度 0.55'), s && s.line)
+  check('slow 坏掉：不硬编数字，只说读出的词', !!s && !/[+\-−]\d+\.\d+/.test(s.line) && s.line.includes('读出的是'), s && s.line)
   check('slow 坏掉：数值为 null', !!s && s.slow === null && s.fast === null, s)
 }
 
@@ -162,7 +163,7 @@ const counts = (aid) => ({
   insSm(aid, T0 + 1, 'calm', 0.4, SLOW)
   const s = feltSnapshot(db, aid, { at: T0 + 60000 })
   check('技术噪音：原话不出现', !!s && !s.line.includes('token'), s && s.line)
-  check('技术噪音：还是给数', !!s && s.line.includes('慢 +0.11'), s && s.line)
+  check('技术噪音：也不带数字，仍说清是什么', !!s && !/[+\-−]\d+\.\d+/.test(s.line) && s.line.includes('读出的是'), s && s.line)
   check('技术噪音：cause 记为 null', !!s && s.cause === null, s && s.cause)
 }
 
@@ -194,7 +195,7 @@ const counts = (aid) => ({
   insSm(aid, T0 + 1, 'joy', 0.5, { slow: 0.23, fast: 0.39, total: 0.3, fast_self: 0.51, fast_empathy: -0.12 })
   const s = feltSnapshot(db, aid, { at: T0 + 60000 })
   check('异号：不再说「其中 … 浮上来」', !!s && !s.line.includes('浮上来'), s && s.line)
-  check('异号：两个总数还在', !!s && s.line.includes('快 +0.39'), s && s.line)
+  check('异号：不再需要两个总数，只剩方向词', !!s && !/[+\-−]\d+\.\d+/.test(s.line) && s.line.includes('读出的是'), s && s.line)
 }
 {
   const aid = mkAgent('同号负')

@@ -147,6 +147,9 @@ export function styleLine({ level } = {}) {
 /** 表达档 → 温度基准：低落压过关系，不反过来。 */
 const TONE_WARMTH = { cool: 0.25, plain: 0.5, warm: 0.8, short: 0.45 }
 
+/** 「被砸中时关系让位」的幅度：0.25 = 强度顶格时，关系权重从 0.6 降到 0.35。 */
+export const AFFECT_WEIGHT_DEFAULT = 0.25
+
 const LEVELS = ['quiet', 'brief', 'normal', 'warm']
 
 /**
@@ -174,7 +177,7 @@ export function shadowLevel(baseLevel, { fast = 0, slow = 0 } = {}) {
  * @param {object} [p.relation] 关系三轴 {closeness,trust,kind,warmth,formality,disclosure,initiative}
  * @param {number} [p.ei] 外向度 0..1
  */
-export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35, prev = null, phrase = '' } = {}) {
+export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35, prev = null, phrase = '', weightAffect = AFFECT_WEIGHT_DEFAULT } = {}) {
   const slow = clamp(num(affect && affect.v3 ? affect.v3.slow : 0, 0), -1, 1)
   const fast = clamp(num(affect && affect.v3 ? affect.v3.fast : 0, 0), -1, 1)
   const intensity = clamp01(num(affect ? affect.intensity : 0.4, 0.4))
@@ -198,7 +201,15 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
   const relDisclosure = clamp01(num(relation && relation.disclosure, 0.5))
   const relInitiative = clamp01(num(relation && relation.initiative, 0.5))
   const baseWarmth = TONE_WARMTH[base.tone] != null ? TONE_WARMTH[base.tone] : 0.5
-  const warmth = clamp01(0.6 * relWarmth + 0.4 * baseWarmth)
+  /* 被砸中的时候，关系不该自动把我调暖（2026-11-07）。
+     旧：warmth = 0.6·关系 + 0.4·档位底色 —— 再大的事也只占四成，关系随手就能把它拉回去。
+     新：强度越高，关系让位越多（默认让到 0.25，参数 expression.affect.weight）。
+         这不是「替你改口气」，是把「我现在被这事占着」如实算进温度里。 */
+  const affectWeight = clamp01(num(weightAffect, AFFECT_WEIGHT_DEFAULT))
+  const heat = clamp01((intensity - 0.4) / 0.6) * affectWeight
+  const wRel = 0.6 - heat
+  const wBase = 0.4 + heat
+  const warmth = clamp01(wRel * relWarmth + wBase * baseWarmth)
   // 主动性取两边的低者：低落时不因为关系近就显得急
   const initiative = clamp01(Math.min(relInitiative, base.proactive / 2))
 
@@ -212,6 +223,7 @@ export function expressionState({ affect = null, relation = null, ei = 0.6, weig
     proactive,
     tone: base.tone,
     warmth: Math.round(warmth * 100) / 100,
+    heat: Math.round(heat * 100) / 100,
     formality: Math.round(relFormality * 100) / 100,
     disclosure: Math.round(relDisclosure * 100) / 100,
     initiative: Math.round(initiative * 100) / 100,

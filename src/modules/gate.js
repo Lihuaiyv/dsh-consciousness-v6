@@ -20,6 +20,7 @@ import { hasNegation, isPositiveCompoundAt } from './negation.js'
 import { reviseMemory, invalidateMemory, deleteMemoryByGate, disputeOpen } from './timeline.js'
 import { isStalePair } from './stale_pair.js'
 import { structureCandidates, judgePair, pairKey } from './pair_judge.js'
+import { pickSuperseded } from './supersede_pick.js'
 import { tx, getParam, model } from '../kernel.js'
 
 export const GATE = Object.freeze({
@@ -370,6 +371,30 @@ function maybeJudge(db, aid, cand, out, opt) {
     const evId = () => 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
 
     const p = (async () => {
+      // v3：有界指认（从候选里选被否定的），替代自由四档。
+      const jmode = String(getParam(db, aid, 'memory.judge.mode') || 'pair')
+      if (jmode === 'pick') {
+        const poolRows = pool.slice(0, 3).map((c) => c.row)
+        const pr = await pickSuperseded({ oldCandidates: poolRows, newer: newRow, complete, timeoutMs })
+        const pickedIds = pr.invalidate.map((k) => poolRows[k - 1] && poolRows[k - 1].id).filter(Boolean)
+        try {
+          db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(evId(), aid, 'memory.judge.pick', JSON.stringify({
+            picked: pickedIds, skipped: pr.skipped, ok: pr.ok, raw: String(pr.raw || '').slice(0, 120),
+            mode, ms: pr.ms,
+          }).slice(0, 800), new Date().toISOString())
+        } catch { /* 事件失败不影响 */ }
+        if (mode === 'on' && pickedIds.length) {
+          const at = new Date().toISOString()
+          for (const id of pickedIds) {
+            try { invalidateMemory(db, aid, id, { at, reason: 'pick_supersede', causeId: newRow.id, actor: 'gate' }) } catch { /* 单条失败不连累 */ }
+          }
+          try {
+            db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(evId(), aid, 'memory.judge.superseded',
+              JSON.stringify({ old: pickedIds, by: newRow.id, via: 'gate', kind: 'pick' }), at)
+          } catch { /* ignore */ }
+        }
+        return
+      }
       const r = await judgePair({ db, aid, oldRow: target.row, newerRow: newRow, complete, timeoutMs, via: 'gate' })
       try {
         db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(evId(), aid, 'memory.judge.gate', JSON.stringify({

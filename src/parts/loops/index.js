@@ -13,6 +13,8 @@
  */
 import { now } from '../../db.js'
 import { feelIdIn } from '../../modules/feel.js'
+import { setClaimState } from '../../modules/claim_state.js'
+import { invalidateMemory } from '../../modules/timeline.js'
 
 /** 用户说这些，表示「这件事完了」。 */
 const CLOSE_RE = /(好了|搞定|弄好了|完成|做完了|用不上了|不用了|算了|解决了|已经做了|结束了|可以了)/
@@ -257,12 +259,49 @@ export function markLoopsFired(db, ids, at = Date.now()) {
 export function closeLoops(db, aid, ids, by = 'manual', at = Date.now()) {
   const list = [...new Set((ids || []).filter(Boolean))]
   let n = 0
+  const linked = []
   const up = db.prepare("UPDATE open_loops SET state='closed', closed_at=?, closed_by=?, updated_at=? WHERE id=? AND agent_id=? AND state IN ('open','half_said')")
   for (const id of list) {
     const r = up.run(stamp(at), by, stamp(at), id, aid)
-    if (r && r.changes) n++
+    if (r && r.changes) {
+      n++
+      try {
+        const row = db.prepare('SELECT memory_id FROM open_loops WHERE id=? AND agent_id=?').get(id, aid)
+        if (row && row.memory_id) linked.push({ loopId: id, memoryId: row.memory_id })
+      } catch { /* 查不到就跳过 */ }
+    }
+  }
+  // v3：loop 关了，它关联的记忆不能还「挂着」。
+  if (linked.length) {
+    try { linkClosedLoopMemories(db, aid, linked, by, at) } catch { /* 联动失败不影响关环 */ }
   }
   return n
+}
+
+/**
+ * loop 关闭联动记忆状态：shadow 只写 claim，on 才作废。
+ * 为什么要做：11-07「先找躯干」那条 loop 已 closed，但记忆还 active，
+ * 之后每轮注入都把它当「还挂着」读。
+ */
+function linkClosedLoopMemories(db, aid, linked, by, at) {
+  let mode = 'shadow'
+  try {
+    const r = db.prepare('SELECT value FROM agent_params WHERE agent_id=? AND key=?').get(aid, 'memory.claim.loop_link')
+    if (r) { const v = JSON.parse(r.value); mode = v === 'on' || v === 'off' ? v : 'shadow' }
+  } catch { mode = 'shadow' }
+  if (mode === 'off') return
+  const state = by === 'expired' ? 'stale' : 'done'
+  for (const { loopId, memoryId } of linked) {
+    try {
+      setClaimState(db, aid, memoryId, state, { via: 'loop_close', checkedAt: stamp(at) })
+      if (mode === 'on') {
+        invalidateMemory(db, aid, memoryId, { reason: 'loop_closed', actor: 'loop', at: stamp(at) })
+      }
+      db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(
+        'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
+        'loop.closed_memory', JSON.stringify({ loop: loopId, memory: memoryId, state, mode }), stamp(at))
+    } catch { /* 单条失败不连累其他 */ }
+  }
 }
 
 /**
@@ -327,6 +366,15 @@ export function loopPrefixOf(kinds, { focusOn = true } = {}) {
 }
 
 /** 注入用的一行。 */
+/** 注入侧是否用「弱一点」的还挂着提示（默认 off，保持 A 组回放不变）。 */
+function claimInjectOn(db, aid) {
+  try {
+    const r = db.prepare('SELECT value FROM agent_params WHERE agent_id=? AND key=?').get(aid, 'memory.claim.inject')
+    if (!r) return false
+    return JSON.parse(r.value) === 'on'
+  } catch { return false }
+}
+
 export function loopLineFor(db, aid, opt = {}) {
   const at = opt.at || Date.now()
   const limit = Math.max(1, Math.min(5, Number(opt.limit) || 1))
@@ -335,13 +383,14 @@ export function loopLineFor(db, aid, opt = {}) {
   const rows = pendingLoops(db, aid, { at, limit: Math.max(limit, 5), throttleHours: opt.throttleHours })
   if (!rows.length) return { text: '', ids: [], kinds: [] }
   const owedFirst = (r) => (r.kind === 'promise' || r.kind === 'reminder' ? 0 : 1)
+  const weak = claimInjectOn(db, aid)
   rows.sort((a, b) => owedFirst(a) - owedFirst(b))
   const picked = rows.slice(0, limit)
   const text = picked.map((r) => {
     const due = Date.parse(r.due_at || '')
     const note = Number.isFinite(due)
       ? (due <= at ? '已经到期了' : '约在 ' + new Date(due).toLocaleDateString('zh-CN'))
-      : '还没做完'
+      : (weak ? '当时还没做，之后没再确认' : '还没做完')
     return '- 还挂着：' + String(r.text).replace(/\s+/g, ' ').slice(0, 45) + '（' + note + '）'
   }).join('\n')
   return { text, ids: picked.map((r) => r.id), kinds: picked.map((r) => String(r.kind || 'task')) }

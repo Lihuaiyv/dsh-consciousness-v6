@@ -38,6 +38,7 @@ import { claimLine } from './src/modules/conflict_ask.js'
 import { examplesBlock, parseExamples } from './src/modules/examples.js'
 import { presenceLine, webConversationId } from './src/modules/presence.js'
 import { selfNoteLines as notesForPrompt } from './src/modules/selfnote.js'
+import { heartNoteTick, heartNoteLines, heartNoteWakeTick } from './src/modules/heartnote.js'
 import { memoryTag, ageDays } from './src/modules/memory_tag.js'
 import { fadeText, shouldFade, rehearseAdjustedAge } from './src/modules/memory_fade.js'
 import { detectMode, resolveMode, styleInjection, kaomojiLine } from './src/modules/style_mode.js'
@@ -64,7 +65,7 @@ import { applySelfRead, readReplyTone } from './src/modules/self_read.js'
 import { recordSelfResidue, residueCandidate, commitResidue, residueDirFor } from './src/modules/self_residue.js'
 import { captureQuote, quoteCandidate, commitQuote } from './src/modules/quote_echo.js'
 import { feltSnapshot } from './src/modules/felt_snapshot.js'
-import { latestFeel, feelLineOf, attachableFeelId, FEEL_GUIDE } from './src/modules/feel.js'
+import { latestFeel, feelLineOf, echoFeelOf, echoFeelLineOf, attachableFeelId, FEEL_GUIDE } from './src/modules/feel.js'
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { asofInjectItems } from './src/modules/asof.js'
 import { passportLine, isStale } from './src/modules/passport.js'
@@ -82,6 +83,7 @@ import * as R from './src/modules/relations.js'
 import { enqueueRelationRead, tickRelationRead } from './src/modules/relations_extract.js'
 import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/affect.js'
 import { addMemory, setFeelProvider } from './src/modules/memory.js'
+import { openEmotion } from './src/modules/emotion_event.js'
 import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
@@ -137,7 +139,7 @@ function acquireLock() {
     try {
       const old = JSON.parse(fs.readFileSync(LOCK_PATH, 'utf8'))
       if (old.pid && old.pid !== process.pid && pidAlive(old.pid)) return false
-    } catch { /* 鍧忛攣褰撻檲鏃?*/ }
+    } catch { /* 锁文件坏了就当没有锁，删掉重来 */ }
     try { fs.unlinkSync(LOCK_PATH) } catch { /* ignore */ }
     try {
       fs.writeFileSync(LOCK_PATH, JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: 'wx' })
@@ -170,7 +172,7 @@ function ensureDb() {
     // 老库迁移：把「本来就在她名下的会话」认领回来，别升级完把主人正在聊的那段变成普通 DSH
     try { migrateLegacyBindings(db) } catch { /* 迁移失败下次启动再试 */ }
     // 在场状态是派生值：每次启动按 bindings 重算一遍，别让上次崩溃留下的状态骗人
-try { refreshAll(db) } catch { /* 鐘舵€侀噸绠楀け璐ヤ笅娆″埛鏂颁細琛?*/ }
+try { refreshAll(db) } catch { /* 状态重算失败，下次刷新再补 */ }
     // 分层记忆：老库补一次热度；顺手把最近三天缺的日记补上（后台，失败不影响启动）
 try { ensureHeatBootstrapped(db) } catch { /* 热度补齐失败下次再来 */ }
     setTimeout(() => {
@@ -192,14 +194,14 @@ try { hydrateFromRaw(db, aid) } catch { /* 重放失败不影响启动 */ }
       } catch { /* 启动补数据失败不影响启动 */ }
     }, 5000)
     // P2 抽取 worker：每 30 秒看一眼队列，30 秒前先跑一次（重启后把积压清掉）
-try { startExtractionWorker() } catch { /* worker 璧蜂笉鏉ヤ笉褰卞搷鍚姩 */ }
+try { startExtractionWorker() } catch { /* 抽取 worker 起不来不影响启动 */ }
     // 关系读人 worker：把排队的人物提及读成「谁是谁的谁」
-try { startRelationWorker() } catch { /* worker 璧蜂笉鏉ヤ笉褰卞搷鍚姩 */ }
+try { startRelationWorker() } catch { /* 读人 worker 起不来不影响启动 */ }
     // P4 夜间巩固：每晚 23:00 写日记；关机 / 休眠错过的，下次启动或半小时内补上。
-try { startNightlyWorker() } catch { /* 宸╁浐 worker 璧蜂笉鏉ヤ笉褰卞搷鍚姩 */ }
+try { startNightlyWorker() } catch { /* 巩固 worker 起不来不影响启动 */ }
     try { startDiaryRetryWorker() } catch { /* diary retry worker unavailable */ }
     // 偏好自己长：10 分钟一次，够条件才真调模型；长出来的删不掉
-    try { startGrowPrefsWorker() } catch { /* 闀垮亸濂?worker 璧蜂笉鏉ヤ笉褰卞搷鍚姩 */ }
+    try { startGrowPrefsWorker() } catch { /* 长偏好 worker 起不来不影响启动 */ }
     // 微信收信：一分钟一次，只读本地库（不动窗口）；第一次见到的会话只落水位，不灌历史
     try { startWeChatInboxWorker() } catch { /* 收信 worker 起不来不影响启动 */ }
     return db
@@ -324,16 +326,18 @@ function heartbeatLight(aid) {
   // 异步、失败静默——心跳不能被一次模型调用拖住。
   try { Promise.resolve().then(() => reviewTick(d, aid)).catch(() => {}) } catch { /* 复查失败跳过 */ }
   // 空闲心跳：不调模型，只给「自己浮上来」补候选（下一轮注入时最多取一条）
-  try { surfaceQueueTick(d, aid) } catch { /* 蹇冭烦澶辫触璺宠繃 */ }
+  try { surfaceQueueTick(d, aid) } catch { /* 心跳失败跳过 */ }
+  // 心事拍：数一拍、把「露过没再碰」的那条散掉。不调模型，闸在 heartnote.js 里（静默/间隔/日上限）
+  try { heartNoteTick(d, aid, Date.now()) } catch { /* 心事拍失败跳过 */ }
   // 挂着的开环到期的收掉，别一直占着注入名额
   try { expireLoops(d, aid) } catch { /* 开环失败跳过 */ }
   // 驱力：事件脉冲 + 代理推缺口 + 日结（纯规则）
 try { applyDriverToDrive(d, aid) } catch { /* 驱动推缺口失败跳过 */ }
-  try { pulseDriveFromSignals(d, aid) } catch { /* 浜嬩欢鑴夊啿澶辫触璺宠繃 */ }
+  try { pulseDriveFromSignals(d, aid) } catch { /* 事件脉冲失败跳过 */ }
   try { evaluateDrive(d, aid) } catch { /* 鏆傚仠鎴栨暟鎹己澶?*/ }
-  try { shrinkPersona(d, aid) } catch { /* 浜烘牸鏀剁缉澶辫触璺宠繃 */ }
-  try { seedRuleBindings(d, aid) } catch { /* 宸ヤ欢绉嶅瓙澶辫触璺宠繃 */ }
-  try { tickOneShadow(d) } catch { /* 褰卞瓙鎺ㄨ繘澶辫触璺宠繃 */ }
+  try { shrinkPersona(d, aid) } catch { /* 人格收缩失败跳过 */ }
+  try { seedRuleBindings(d, aid) } catch { /* 工件种子失败跳过 */ }
+  try { tickOneShadow(d) } catch { /* 影子推进失败跳过 */ }
   // 在场状态：14 天没互动 = 自动休眠（只改 runtime，不改用户意图）
   try {
     let dormant = false
@@ -354,6 +358,12 @@ try { applyDriverToDrive(d, aid) } catch { /* 驱动推缺口失败跳过 */ }
 /** 重活：可能叫模型，由心跳的 deep 档节流 + 全局并发闸护着。 */
 async function heartbeatDeep(aid) {
   const d = ensureDb()
+  // 叫醒：没有别人在场的一拍，也叫模型写一句。
+  // 只在 deep 档跑（light 不许调模型）；开关 / 每 N 拍 / 日上限在 heartnote.js 里闸着，默认关。
+  try {
+    const w = await heartNoteWakeTick(d, aid, { complete: (req) => model.complete(req) })
+    if (w && w.ran) __probe('heart-wake: ' + w.text)
+  } catch { /* 叫醒失败不拖心跳 */ }
   try {
     const p = runSpeakTick(d, aid)
     const out = p && p.then ? await p : p
@@ -535,6 +545,8 @@ let lastJudgeAt = 0
 const spontaneousCache = new Map()
 /** 感受快照的探针去重：同一条样本只记一次，不然每轮都刷一条 event。 */
 const snapProbeSeen = new Set()
+/* 「还挂着的那件事」冒过一次就记下来：aid:episode:day → 时间。一天最多一次。 */
+const eventSurfacedDay = new Map()
 
 /** 主动消息真的进了注入文本才标 delivered；没进就留在 pending，下一轮还能说。 */
 function markProactiveDelivered(db, aid, id, at = Date.now()) {
@@ -786,6 +798,40 @@ let bridgeText = ''
   } catch { spontaneousLine = ''; spontaneousText = ''; spontRow = null }
   if (stranger) { spontaneousLine = ''; spontaneousText = ''; spontRow = null }
 
+  /* 还挂着的那件事：会自己冒上来一次（2026-11-07）。
+     规矩三条：
+       1) 只有那条原话本身是人话时才浮——机器消息不念（跟快照同一道闸）。
+       2) 一天最多一次，同一件事不重复浮；记在内存里，重启也不重来（同一个进程内）。
+       3) 浮上来的是那件事本身，不是「你现在残留 0.3」——不带任何数。 */
+  try {
+    if (!stranger && !spontaneousLine) {
+      const live = openEmotion(db, aid)
+      const cause = live && live.cause ? String(live.cause).trim() : ''
+      const machine = /<[a-z][a-z0-9_]*>|Current runtime context|Time sampled|system-reminder|Approval policy/i.test(cause)
+      if (live && cause && !machine && String(getParam(db, aid, 'affect.event.surface') || 'on') !== 'off') {
+        const day = new Date().toISOString().slice(0, 10)
+        const key = aid + ':' + live.id + ':' + day
+        if (!eventSurfacedDay.has(key)) {
+          if (eventSurfacedDay.size > 400) eventSurfacedDay.clear()
+          eventSurfacedDay.set(key, Date.now())
+          const line = oneLine(cause, 60)
+          if (line) {
+            spontaneousLine = line; spontaneousText = line; spontKind = 'event'
+            /* 落一条探针：情绪账要数「今天有几件自己浮上来了」。不写这条，账上永远是 0。 */
+            try {
+              db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(
+                'evt_' + Math.random().toString(16).slice(2, 12),
+                aid, 'affect.surface',
+                JSON.stringify({ episode_id: live.id, cause: String(line), intensity: live.intensity, phase: live.phase }),
+                now(),
+              )
+            } catch { /* 探针失败不影响提示词 */ }
+          }
+        }
+      }
+    }
+  } catch { /* 浮现失败不影响提示词 */ }
+
   // 记忆块：优先用这一轮真召回的结果；没有就用热度兜底，但只留 4 条，每条压成一句。
   // 兜底时剔掉刚浮上来的那条，避免同一件事说两遍。
 const memFallbackAll = mem.filter((m) => oneLine(m.text, 60) !== spontaneousText)
@@ -904,6 +950,8 @@ const injectWeight = (() => {
       weight: injectWeight,
       prev: prevExpr,
       phrase: voiceForLine ? voiceForLine.text : '',
+      // 被砸中时关系让位多少（0 = 旧行为，0.25 = 默认）。参数可调，别改代码。
+      weightAffect: Number(getParam(db, aid, 'expression.affect.weight')),
     })
     : null
   // 记下这一轮算出的档位，给下一轮做迟滞；同一轮多次拼装时结果稳定，不会互相污染
@@ -930,6 +978,15 @@ const injectWeight = (() => {
       ownFeel = latestFeel(db, aid, { maxAgeMin: Math.max(1, feelHours) * 60, sessionId })
     }
   } catch { ownFeel = null }
+  /* 旧感觉回来：这会儿的样子跟以前某条撞上了，就把那条翻出来一次。
+     不是在时间线上堆新格子，是一天一次的回头。 */
+  let echoFeel = null
+  try {
+    if (!stranger && ownFeel && ownFeel.label) {
+      const echoOn = String(getParam(db, aid, 'affect.feel.echo') || 'on') !== 'off'
+      if (echoOn) echoFeel = echoFeelOf(db, aid, { label: ownFeel.label })
+    }
+  } catch { echoFeel = null }
   // 收尾倾向：深夜 + 今天聊够了 + 对方没在提问。只读 chat_turns，不写状态。
   let closingLine = ''
   try {
@@ -1026,12 +1083,12 @@ let styleLines = []
     })
   } catch { kaoLine = '' }
 
-  // 表情包（只在 QQ）：桥只肯发「可发目录」里的图，所以那边那份在 ~/.dsh/qq-bridge/stickers/whale，
-  // 仓库里留一份源（assets/stickers/whale）和台词表。电脑端没有这条通路，不写。
+  // 表情包（只在 QQ）：图库按情绪分好组，发图走 qq_face_send 传 tag（细节见 零件-发信）。
+  // 鲸鱼娘那套已经挪到 C:\Users\ygys1\Pictures\dsh-stickers\whale —— 别再用 stickers/whale：
+  // 那是相对 cwd 的路径，而 cwd 在 .dsh 下，外发闸会把 .dsh 里的文件一律拦掉，永远发不出去。
   let stickerLine = ''
   if (/^qq:/i.test(String(conversationId || ''))) {
-    stickerLine = '表情：可发目录里有一组鲸鱼娘表情（stickers/whale/ 下的 001–030.gif，台词表是同目录 README.md），'
-      + '想发一张就调 qq_send_image 传相对路径；别每轮都发，也别连发。'
+    stickerLine = '表情：图库按情绪分组，发图用 qq_face_send 传 tag；黄脸传名字。别每轮都发，别连发。'
   }
 
   // 「现在什么情况」：给她时间、时间距离和上下文，而不是命令她用什么分寸。
@@ -1047,6 +1104,9 @@ let styleLines = []
   // 夜里写下的「今天的她」：读一份收拾好的，不在这一轮现拼。按天存，最多读三条
   let selfNoteLines = []
   try { selfNoteLines = stranger ? [] : notesForPrompt(db, aid) } catch { selfNoteLines = [] }
+  // 心事匣：上一条留给自己的话。单槽；这里读到就算「露过」，下一拍没再写就散
+  let heartNote = []
+  try { heartNote = stranger ? [] : heartNoteLines(db, aid) } catch { heartNote = [] }
 
   if (stranger) {
     relLine = '关系：你还不认识对方。别叫「主人」或任何称呼，也别装作熟；等对方自我介绍之后再叫名字。'
@@ -1060,7 +1120,8 @@ let styleLines = []
       const t = trendOf(db, aid)
       // 同一方向说满三天就收声。窗口必须给：不传窗口时 maxDays 会算成
       // 「这辈子一共说过三天」，一个月后再往下掉就永远不会再开口。
-      if (t && canSayOnce(db, aid, 'trend.' + t.dir, { maxDays: 3, withinDays: 10 })) trendLine = '（' + t.text + '。）'
+      // meta 里顺手记下当时的偏移，明天对账不用猜「说的时候是什么样」。
+      if (t && canSayOnce(db, aid, 'trend.' + t.dir, { maxDays: 3, withinDays: 10, meta: { delta: t.delta } })) trendLine = '（' + t.text + '。）'
     }
   } catch { trendLine = '' }
 
@@ -1100,12 +1161,17 @@ let styleLines = []
     snap ? { text: snap.line, key: 'snapshot' } : '',
     // ③c 我开口之前的感觉：自己写的，不是从数字推的
     ownFeel ? { text: feelLineOf(ownFeel), key: 'ownfeel' } : '',
+    // ③d 旧感觉回来：一天最多一条，只陈述，不解释「所以你现在也…」
+    echoFeel ? { text: echoFeelLineOf(echoFeel), key: 'echofeel' } : '',
     // 「现在什么情况」是材料：几点、我上一句说了什么。命令她按什么分寸说，她就照着演
     nowText || '',
     lifeText || '',
     reapText || '',
     ...selfNoteLines,
+    ...heartNote,
     expr ? '我想怎么说：' + cardLine({ level: expr.level }) : '',
+    // 小玩具：只说明它在，不要求任何动作（空着也没关系），见 重要/1-主要思路与权限分层.md §1.5
+    '糖罐在工作区的 糖罐/ 里，空着也没关系。',
     ...styleLines,
     stickerLine,
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
@@ -1126,7 +1192,9 @@ let styleLines = []
     spontaneousLine ? {
       text: (spontKind === 'echo'
         ? '（你想起了他那天说过的一句——是引用，不是你此刻的念头）：\n- '
-        : '（你心里忽然浮上来的一件事）：\n- ') + spontaneousLine,
+        : spontKind === 'event'
+          ? '（那件事还没过去，忽然又浮上来）：\n- '
+          : '（你心里忽然浮上来的一件事）：\n- ') + spontaneousLine,
       key: 'spontaneous',
     } : '',
     (memText)
@@ -2669,6 +2737,7 @@ function hostSpec() {
       // QQ 会话里没有「当前发起人」：按这条会话自己认人，别让 feel 写成 no_db。
       getAgentIdForSession: (sid) => { try { return agentOfSession(ensureDb(), sid) } catch { return '' } },
       getWeb: () => optionalService('web'),
+      getSpeech: () => optionalService('speechToText'),
       getModel: () => model,
       // 第二道闸：工具执行前自己再判一次（守卫那层注册失败/降级时还拦得住）
       gateSearch: (sessionId) => verdictFor({
@@ -2728,7 +2797,7 @@ function startEmbedKeepalive() {
     try {
       if (!model.capabilities().embed) return
       model.embed(['keepalive']).catch(() => { /* 服务没起就下次再来 */ })
-    } catch { /* 娌℃湁鍚戦噺鑳藉姏鏃堕潤榛?*/ }
+    } catch { /* 没有向量能力时静默 */ }
   }, 4 * 60 * 1000)
   if (embedWarmTimer.unref) embedWarmTimer.unref()
 }
@@ -2736,9 +2805,9 @@ function startEmbedKeepalive() {
 export function apply(ctx) {
   try { attachHostLlm(() => ctx) } catch { /* llm 服务不可用 */ }
   // QQ 等外部通道的 reply() 也用同一份意识体包，避免网页一个样、QQ 另一个样
-  try { attachContextBlock((db, aid, opts) => consciousnessBlock(db, aid, opts)) } catch { /* 鍖呮瀯寤哄け璐ュ氨閫€鍥炵簿绠€鎻愮ず */ }
+  try { attachContextBlock((db, aid, opts) => consciousnessBlock(db, aid, opts)) } catch { /* 包构建失败就退回精简提示 */ }
   try { hostCtx = ctx } catch { /* 宿主上下文不可用 */ }
-  try { attachActionDeps({ getWeb: () => optionalService('web'), getModel: () => model }) } catch { /* 琛屽姩灞傞檷绾?*/ }
+  try { attachActionDeps({ getWeb: () => optionalService('web'), getSpeech: () => optionalService('speechToText'), getModel: () => model }) } catch { /* 行动层降级 */ }
   if (!acquireLock()) {
     console.error('[dsh-consciousness-v6] another instance holds the lock; plugin stays offline')
     return
@@ -2747,7 +2816,7 @@ export function apply(ctx) {
 try {
     ensureDb()
     startMaintenance()
-    try { startHeartbeat() } catch { /* 蹇冭烦璧蜂笉鏉ヤ笉褰卞搷瀹夸富 */ }
+    try { startHeartbeat() } catch { /* 心跳起不来不影响宿主 */ }
     startEmbedKeepalive()
   } catch (e) {
     console.error('[dsh-consciousness-v6] db init failed (plugin stays soft-offline):', e)

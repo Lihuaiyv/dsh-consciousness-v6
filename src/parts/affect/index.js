@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 情绪动力（affect）：实现整件搬到这里，src/modules/affect.js 只留转发。
  *
  * 为什么整件搬而不是只搬 applyEmotionV3：那三百行拉着十一个私有件
@@ -20,6 +20,7 @@ import { PAD_PRIOR } from '../../algo/affect_dyn.js'
 import { classifyGap, decayCurve, wakeReset, localHour } from '../../algo/sleep.js'
 import { stepWalk } from '../../algo/walk.js'
 import { significanceOf, gateOf, labelMargin, socialFloorOf, GATE } from '../../algo/gate.js'
+import { secLabel } from '../../algo/appraise_sec.js'
 
 /**
  * 只写快情绪一列，给「自我回读」用：fast / total / fast_at，慢情绪与 slow_at 一概不碰。
@@ -1992,9 +1993,33 @@ export async function appraise(db, aid, text, opts = {}) {
   event(db, aid, 'affect.appraised', {
     episode_id: eid, label: dyn.label, emitted: emit,
     sig: gate.sig, theta: gate.theta, gate: emit ? 1 : 0,
-    algo: { appraise: appraisal.algo, dyn: dyn.algo },
+    algo: { appraise: appraisal.algo, dyn: dyn.algo, hint_label: appraisal.label || null },
     edges: edgeBias.fired || [],
     v3: v3 ? { baseline: v3.baseline, base_off: v3.baseOff, slow: v3.slow, fast: v3.fast, total: v3.total } : null,
+    /* 第二组检查（2026-11-07）：应对潜力 / 规范意义。
+       record：只记下「如果按它判会是什么标签」，不改任何东西；apply 才真接管标签。
+       默认 record——先攒分布，看它把多少「有点烦」读成了怒/怕/羞/委屈，再谈接不接。 */
+    sec: (() => {
+      try {
+        const mode = String(getParam(db, aid, 'affect.appraise.sec') || 'record')
+        if (mode === 'off' || appraisal.none) return null   // 跟这件事无关的（task/chat）不记，记了全是噪声
+        let coping = appraisal.coping == null ? null : Number(appraisal.coping)
+        let norm = appraisal.norm == null ? null : Number(appraisal.norm)
+        /* 防抄模板（2026-11-07 实测）：第一批 sec 全是 0.5 / 0，正好是提示词里的示例值。
+           模型没判、只是把例子抄回来。0.5 落在「怒」和「怕」中间，本身也不带信息，
+           所以直接把这一对当「没判」处理——宁可记 null，也别让分布被假数据灌满。 */
+        const copied = coping === 0.5 && norm === 0
+        if (copied) { coping = null; norm = null }
+        const would = secLabel({
+          coping, norm,
+          cong: appraisal.goal_congruence,
+          rel: appraisal.goal_relevance,
+          agency: appraisal.agency,
+          cert: appraisal.certainty,
+        })
+        return { mode, coping, norm, would, copied, base: dyn.label }
+      } catch { return null }
+    })(),
   })
   return {
     id: eid, label: dyn.label, intensity: dyn.intensity, pleasure: dyn.pleasure,
@@ -2004,7 +2029,7 @@ export async function appraise(db, aid, text, opts = {}) {
     renewed,
     gate: { sig: gate.sig, theta: gate.theta, passed: gate.passed, mode: gateMode },
     appraisal, model: model.status(),
-    algo: { appraise: appraisal.algo, dyn: dyn.algo },
+    algo: { appraise: appraisal.algo, dyn: dyn.algo, hint_label: appraisal.label || null },
     edges: { fired: edgeBias.fired || [], intensityMul: edgeBias.intensityMul || 1 },
     v3,
   }
