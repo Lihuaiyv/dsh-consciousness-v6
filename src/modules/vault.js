@@ -1,3 +1,4 @@
+import { dataDir } from '../paths.js'
 /**
  * 记忆仓库（前端首页用）
  *
@@ -15,7 +16,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { TOTAL_BUDGET } from './pack.js'
 
-export const DEFAULT_ROOT = path.join(os.homedir(), '.dsh', 'consciousness', 'docs')
+export const DEFAULT_ROOT = path.join(dataDir(), 'docs')
 
 /** 可读版格式版本：客户端用它判断后端是不是旧进程（旧的不许重新导出，免得覆盖新格式）。 */
 export const VAULT_VER = 2

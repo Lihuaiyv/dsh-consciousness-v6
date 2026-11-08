@@ -1,4 +1,5 @@
-﻿import fs from 'node:fs'
+import { dataDir } from './paths.js'
+import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 const RULES = {
@@ -831,7 +832,7 @@ class ChainAdapter {
 
 function readModelCfg() {
   try {
-    const p = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'model.json')
+    const p = path.join(dataDir(), 'model.json')
     if (fs.existsSync(p)) {
       // Windows 记事本 / PowerShell 写的 JSON 常带 BOM，JSON.parse 会直接报 Unexpected token。
       // 线上真踩过：judge 段写进去了却读成空配置，独立评委永远是 null。

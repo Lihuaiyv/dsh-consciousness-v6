@@ -1,3 +1,4 @@
+import { dataDir } from './paths.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -266,7 +267,7 @@ export function applyActiveRules(db) {
 }
 
 export function backupDrill() {
-  const root = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'backups')
+  const root = path.join(dataDir(), 'backups')
   if (!fs.existsSync(root)) return { ok: false, reason: '没有备份目录', dir: root }
   const files = fs.readdirSync(root).filter((f) => f.endsWith('.db')).sort()
   if (!files.length) return { ok: false, reason: '没有备份文件', dir: root }

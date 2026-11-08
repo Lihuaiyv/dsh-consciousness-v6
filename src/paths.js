@@ -48,6 +48,12 @@ export function dbPath() {
   return path.join(home(), 'consciousness', 'app.db')
 }
 
+/** 数据目录：库所在的那个目录（收拢后是 runtime\\consciousness）
+ */
+export function dataDir() {
+  return path.dirname(dbPath())
+}
+
 /** 本仓库根目录（src/paths.js 的上一级） */
 export function repoRoot() {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')

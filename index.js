@@ -1,3 +1,4 @@
+import { dbPath } from './src/paths.js'
 /**
  * dsh-consciousness — 意识体：宿主半。
  *
@@ -102,7 +103,7 @@ export const inject = []
 
 const API_PATH = '/dsh-consciousness/api'
 const PING_PATH = '/dsh-consciousness/ping'
-const DB_PATH = path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'consciousness', 'app.db')
+const DB_PATH = dbPath()
 const LOCK_PATH = path.join(path.dirname(DB_PATH), 'app.lock')
 
 // 装配：记忆出生时挂 feel 的取数口。memory 模块不直接读 affect_feel（INV10），

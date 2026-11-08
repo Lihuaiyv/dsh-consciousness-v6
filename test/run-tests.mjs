@@ -839,8 +839,12 @@ try {
   }
 
   const oldHome = process.env.DSH_HOME
+  const oldDb = process.env.DSH_DB
   process.env.DSH_HOME = dir
-  const bdir = path.join(dir, 'consciousness', 'backups')
+  // 库路径现在优先 plugins/runtime（收拢后的真库），测试要显式把库指回临时目录，
+  // 否则备份目录会跟着真库跑，演练就找不到临时备份。
+  process.env.DSH_DB = path.join(dir, 'app.db')
+  const bdir = path.join(dir, 'backups')   // dataDir() = 库所在目录
   fs.mkdirSync(bdir, { recursive: true })
   db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
   fs.copyFileSync(path.join(dir, 'app.db'), path.join(bdir, 'app-test.db'))
@@ -848,6 +852,8 @@ try {
   check('备份恢复演练', drill.ok === true && drill.tables > 10, drill)
   if (oldHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = oldHome
+  if (oldDb === undefined) delete process.env.DSH_DB
+  else process.env.DSH_DB = oldDb
 
   const viewerPost = await api('POST', `/v1/agents/${aid}/memory`, { text: 'viewer' }, { key: key(), token: 'viewer' })
   check('viewer 只读', viewerPost.error?.code === 'FORBIDDEN', viewerPost)

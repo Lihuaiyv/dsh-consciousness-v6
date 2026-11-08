@@ -1,3 +1,4 @@
+import { dataDir } from './paths.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -1259,7 +1260,7 @@ async function routes(db, method, path, body, role, bound) {
   // 没匹配上：把路径记到文件里，下次「接口不存在」不用猜是谁在调
   try {
     const line = new Date().toISOString() + '\t' + method + '\t' + path + '\n'
-    fs.appendFileSync(path.join(os.homedir(), '.dsh', 'consciousness', 'api-404.log'), line)
+    fs.appendFileSync(path.join(dataDir(), 'api-404.log'), line)
   } catch { /* 记日志失败不影响报错 */ }
   err(404, 'NOT_FOUND', '接口不存在：' + method + ' ' + path.split('?')[0])
 }
