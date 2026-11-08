@@ -40,9 +40,14 @@ for (const p of PARTS) {
   const src = (p.files || []).map((f) => {
     try { return fs.readFileSync(path.join(root, f), 'utf8') } catch { return '' }
   }).join('\n')
-  for (const n of readers) {
-    const re = new RegExp('export\\s+(?:async\\s+)?(?:function|const|let|var|class)\\s+' + n + '\\b|export\\s*\\{[^}]*\\b' + n + '\\b')
-    if (!re.test(src)) red(tag + '：assert 里的读函数 ' + n + ' 不在零件文件里导出着')
+  // 非 JS 零件（比如画板是 python + html）没有 JS 导出可查：读函数写在那里是给人看的文档，
+  // 只校验「名字写在册子里」，不校验「export 出来」（那是 JS 零件才有的约束）。
+  const jsFiles = (p.files || []).filter((f) => /\.(js|mjs|cjs)$/.test(f))
+  if (jsFiles.length > 0) {
+    for (const n of readers) {
+      const re = new RegExp('export\\s+(?:async\\s+)?(?:function|const|let|var|class)\\s+' + n + '\\b|export\\s*\\{[^}]*\\b' + n + '\\b')
+      if (!re.test(src)) red(tag + '：assert 里的读函数 ' + n + ' 不在零件文件里导出着')
+    }
   }
   const want = String(p.rollback && p.rollback.pointer || '')
   if (pointer !== want) red(tag + '：assert 回退点 ' + pointer + ' 和零件册里的 ' + (want || '(空)') + ' 不一致')

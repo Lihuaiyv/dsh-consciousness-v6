@@ -434,7 +434,7 @@ export const PARTS = [
     ],
     entry: '命令行：python board.py new|stroke|apply|undo|status|render（我下笔走这条）；网页：python server.py 起在 127.0.0.1:8777，人和我共用一张纸',
     exam: { file: 'test/exam-paintboard.test.mjs', score: '12/12', note: '开新纸落盘并出图 / 落两笔计数与像素都变 / 撤一笔 / 单笔再落 / 空纸重渲染，12 道（没 python 则 SKIP）；打假：test/exam-paintboard-sabotage.test.mjs（把 render 改成不写图，考卷必须红）' },
-    assert: '状态：~/.dsh/paintboard/board.json（PAINTBOARD_HOME 可改）；读：board.load / board.render；回退：paint-before-part',
+    assert: '表：无；读：board.load / board.render；回退：paint-before-part',
     swaps: [],
     rollback: { pointer: 'paint-before-part', note: '回退 = git checkout paint-before-part -- src/modules/parts.js test/exam-paintboard.test.mjs docs/给人看的/零件-画板.md，再删 src/parts/paintboard' },
   },
