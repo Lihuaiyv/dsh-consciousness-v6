@@ -14,6 +14,13 @@ import { sniffAudioFormat } from './format.js'
 export function checkTtsConfig(config) {
   const c = config || {}
   const provider = c.ttsProvider || 'azure'
+  // 系统自带嗓子（Windows SAPI）：不联网、不要 key，只要系统里装了语音。
+  if (provider === 'system') return null
+  // Edge 在线嗓子：不要 key，但要一个能跑 edge-tts 的 python。
+  if (provider === 'edge') {
+    if (!c.ttsEdgePython) return 'Edge 嗓子缺 python 路径（ttsEdgePython）'
+    return null
+  }
   if (provider === 'local') {
     if (!c.ttsLocalRefAudio) return '本机嗓子缺参考音频（ttsLocalRefAudio）：没它克隆不出声音'
     return null
@@ -27,7 +34,7 @@ export function checkTtsConfig(config) {
     if (!c.ttsApiKey) return '这条嗓子没配密钥（ttsApiKey）'
     return null
   }
-  return `不认识的嗓子：${String(provider)}（只有 azure / compat / local）`
+  return `不认识的嗓子：${String(provider)}（只有 azure / compat / local / system / edge）`
 }
 
 /**

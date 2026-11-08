@@ -44,7 +44,7 @@ export const DEFAULTS = {
   'research.seen_days': 60,
   // 语音（听见 / 出声）：这两个零件的配置住在同一张 action_config 里，
   // 但字段的语义只归语音壳解释（voice.js 的 voiceConfigOf），发信不碰。
-  'voice.provider': 'azure', // azure | compat | local
+  'voice.provider': 'azure', // azure | compat | local | system
   'voice.api_key': '',
   'voice.base_url': '',
   'voice.model': '',
@@ -53,6 +53,9 @@ export const DEFAULTS = {
   'voice.local_url': 'http://127.0.0.1:9880',
   'voice.local_ref': '',
   'voice.local_prompt': '',
+  // Edge 在线嗓子（免费、不要 key）：要一个装了 edge-tts 的 python 和它的包目录。
+  'voice.edge_python': '',
+  'voice.edge_dir': '',
   'voice.play': true, // 念完直接在本机播出来
   // 本机对着麦说话：默认按住说；可切成一直开着麦。
   'voice.mic.mode': 'ptt', // ptt=按住说话 | open=持续听
@@ -68,7 +71,7 @@ const ENUMS = {
   'qq.mode': ['onebot'],
   'qq.default_target_type': ['private', 'group'],
   'research.depth': ['quick', 'standard', 'deep'],
-  'voice.provider': ['azure', 'compat', 'local'],
+  'voice.provider': ['azure', 'compat', 'local', 'system', 'edge'],
   'voice.mic.mode': ['ptt', 'open'],
   'voice.reply.mode': ['auto', 'off'],
 }

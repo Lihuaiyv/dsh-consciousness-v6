@@ -31,6 +31,8 @@ export function voiceConfigOf(cfg = {}) {
     ttsLocalUrl: pick('voice.local_url', 'http://127.0.0.1:9880'),
     ttsLocalRefAudio: pick('voice.local_ref'),
     ttsLocalPromptText: pick('voice.local_prompt'),
+    ttsEdgePython: pick('voice.edge_python'),
+    ttsEdgeDir: pick('voice.edge_dir'),
   }
 }
 
@@ -185,7 +187,8 @@ function playFile(file, format) {
     try {
       const ps = format === 'wav'
         ? `$p = New-Object Media.SoundPlayer '${file.replace(/'/g, "''")}'; $p.PlaySync()`
-        : `Start-Process '${file.replace(/'/g, "''")}'`
+        // mp3 不弹播放器窗口：用 WPF 的 MediaPlayer 静默播，等一句说完。
+        : `Add-Type -AssemblyName PresentationCore; $p = New-Object System.Windows.Media.MediaPlayer; $p.Open([uri]'${file.replace(/'/g, "''")}'); $p.Play(); Start-Sleep -Milliseconds 9000`
       const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore', windowsHide: true })
       child.on('error', (e) => resolve({ played: false, error: String(e && e.message || e) }))
       child.on('exit', (code) => resolve(code === 0 ? { played: true, error: '' } : { played: false, error: '播放器退出码 ' + code }))
