@@ -56,7 +56,7 @@
     "test:heartnote": "node test/heart-note.test.mjs",
     "test:feel": "node test/feel-turnid.test.mjs && node test/feel-purge.test.mjs && node test/feel-archive.test.mjs && node test/feel-layers.test.mjs && node test/feel-rel-event.test.mjs && node test/feel-search.test.mjs && node test/feel-transfer.test.mjs && node test/feel-import-clean.test.mjs && node test/feel-day-boundary.test.mjs && node test/feel-display-api.test.mjs && node test/feel-health.test.mjs",
     "eval:persona": "node scripts/eval-persona.mjs",
-    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs && node scripts/check-parts.mjs && node scripts/check-parts-independence.mjs && node scripts/check-migrations.mjs && node scripts/check-adoption.mjs && node scripts/check-algos.mjs && node scripts/check-client.mjs",
+    "check:arch": "node scripts/check-inv9.mjs && node scripts/check-params.mjs && node scripts/check-ownership.mjs && node scripts/dep-graph.mjs && node scripts/check-host.mjs && node scripts/check-parts.mjs && node scripts/check-parts-independence.mjs && node scripts/check-migrations.mjs && node scripts/check-adoption.mjs && node scripts/check-algos.mjs && node scripts/check-client.mjs && node scripts/build-client.mjs --check",
     "check:adoption": "node scripts/check-adoption.mjs",
     "exam:sabotage": "node scripts/exam-sabotage.mjs",
     "exam:sabotage:parts": "node scripts/exam-sabotage-parts.mjs",
@@ -73,7 +73,9 @@
     "exam:wechat": "node test/exam-wechat-inbox.test.mjs",
     "gate": "npm run check:arch && node test/run-tests.mjs && node test/client-smoke.test.mjs",
     "docs:index": "node scripts/doc-index.mjs",
-    "test:client": "node test/client-smoke.test.mjs"
+    "test:client": "node test/client-smoke.test.mjs",
+    "build:client": "node scripts/build-client.mjs",
+    "split:client": "node scripts/split-client.mjs"
   },
   "description": "意识体：设置 → 意识。宿主半提供记忆/人格/情绪/驱力/自修改接口，Client 半在设置里渲染整页。",
   "main": "./index.js",

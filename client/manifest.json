@@ -1,0 +1,18 @@
+{
+  "eol": "lf",
+  "parts": [
+    "01-React.js",
+    "02-Motes.js",
+    "03-RadarChart.js",
+    "04-Detail.js",
+    "05-TensionBlock.js",
+    "06-RelationPage.js",
+    "07-RelGroup.js",
+    "08-AffectPage.js",
+    "09-fieldHuman.js",
+    "10-MetricsPage.js",
+    "11-MemorySettingsCard.js"
+  ],
+  "sha256": "b540c1d58b0811b1",
+  "builtAt": "2026-11-08T08:22:35.740Z"
+}
