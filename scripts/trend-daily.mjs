@@ -12,7 +12,7 @@
 import { DatabaseSync } from 'node:sqlite'
 
 const DB = process.env.DSHC_DB
-  || (process.env.DSH_HOME ? process.env.DSH_HOME.replace(/\\/g, '/') + '/consciousness/app.db' : 'C:/Users/ygys1/.dsh/consciousness/app.db')
+  || (process.env.DSH_HOME ? process.env.DSH_HOME.replace(/\\/g, '/') + '/consciousness/app.db' : (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
 const days = Math.max(1, Math.min(30, Number(process.argv[2]) || 7))
 const db = new DatabaseSync(DB)
 const DAY = 86400000

@@ -3,14 +3,16 @@
 设置 → 意识。整页由 Client 半注册进 `settings.section`（React 组件，在设置内容区里渲染），
 不再往页面注入浮层，也不开 iframe。宿主半在插件进程内提供 `/dsh-consciousness/api`。
 
-## 唯一真源（2026-11-01 起）
+## 唯一真源（2026-11-01 起；11-08 重装后路径变了）
 
-- **这个目录就是真源**：`D:\deepseek\dsh-plugins\dsh-consciousness-v6`。DSH 通过
+- **这个目录就是真源**：`D:\deepseek_local\plugins\dsh-consciousness-v6`（旧机器上是
+  `D:\deepseek\dsh-plugins\dsh-consciousness-v6`）。DSH 通过
   `~/.dsh/profiles/desktop/node_modules/dsh-consciousness-v6` 的 junction 直接加载它，改完即生效（前端改动要刷新页面）。
-- 桌面 `C:\Users\ygys1\Desktop\ds\dsh-plugin` 现在只是**指向这里的 junction**，不要在那边另存副本。
+- 桌面 `C:\Users\<当前用户>\Desktop\ds\dsh-plugin` 是指向这里的 junction，不要在那边另存副本。
 - 远端：`github.com/Lihuaiyv/dsh-consciousness-v6`（`origin/main`）。
 - 旧的「工作区副本 + `_tmp_deploy.mjs` 挑文件复制」流程已退役。旧副本、`.bak`、整目录备份都搬进了
-  `C:\Users\ygys1\Desktop\ds\_回收站\2026-11-01\`，要找回按那里的路由清单。
+  `C:\Users\<旧用户>\Desktop\ds\_回收站\2026-11-01\`，要找回按那里的路由清单。
+- 工具链：Node / Git 不在系统 PATH 时，本仓库用 `D:\tools\nodejs`、`D:\tools\git\bin`（重装后新装的那份）。
 
 ### 收工前三件事
 

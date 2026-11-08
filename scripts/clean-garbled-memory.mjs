@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite'
 
-const db = new DatabaseSync('C:/Users/ygys1/.dsh/consciousness/app.db')
+const db = new DatabaseSync((process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
 const rows = db.prepare(`select id, text, type, created_at from memory_items
   where status!='soft_deleted' and instr(text,'?') > 0 and length(replace(text,'?','')) <= 2`).all()
 const ts = new Date().toISOString()

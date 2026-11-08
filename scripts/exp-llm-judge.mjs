@@ -21,7 +21,7 @@ function arg(name, def) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def
 }
 const N = Number(arg('n', '12')) || 12
-const dbPath = arg('db', 'C:/Users/ygys1/.dsh/consciousness/app.db')
+const dbPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
 const base = String(arg('url', 'http://127.0.0.1:11434')).replace(/\/$/, '')
 const modelName = arg('model', 'gemma4:12b')
 

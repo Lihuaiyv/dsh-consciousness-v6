@@ -3,7 +3,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { exportDocs, getDocsRoot } from '../src/modules/vault.js'
 
-const DB = process.env.DSH_DB || 'C:/Users/ygys1/.dsh/consciousness/app.db'
+const DB = process.env.DSH_DB || (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db')
 const db = new DatabaseSync(DB, { readOnly: true })
 
 const aid = process.argv[2] || db.prepare(

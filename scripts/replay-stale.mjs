@@ -31,7 +31,7 @@ function arg(name, def) {
   const i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def
 }
-const srcPath = arg('db', 'C:/Users/ygys1/.dsh/consciousness/app.db')
+const srcPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
 const agentName = arg('agent', '小汐')
 const limit = Number(arg('limit', '400')) || 400
 const today = new Date().toISOString().slice(0, 10)

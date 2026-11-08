@@ -20,7 +20,7 @@ function arg(name, def) {
 }
 const quiet = process.argv.includes('--quiet')
 
-const dbPath = arg('db', 'C:/Users/ygys1/.dsh/consciousness/app.db')
+const dbPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
 const agentName = arg('agent', '小汐')
 const today = new Date().toISOString().slice(0, 10)
 const jsonOut = arg('json', 'docs/记忆时态-基线-' + today + '.json')
