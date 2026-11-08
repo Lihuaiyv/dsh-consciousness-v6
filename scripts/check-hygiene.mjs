@@ -21,9 +21,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const ALLOW_DIRS = new Set([
   '.git', 'src', 'scripts', 'test', 'docs', 'drafts', 'locale', 'assets',
   'scratch', 'var', 'node_modules', '__pycache__',
+  'client', // client.js 的源码分片（scripts/split-client.mjs 生成）
 ])
 const ALLOW_FILES = new Set([
-  '.gitignore', 'index.js', 'client.js', 'package.json', 'README.md', 'LICENSE',
+  '.gitignore', '.gitattributes', 'index.js', 'client.js', 'package.json', 'README.md', 'LICENSE',
   'cordis.patch.yml', 'icon.svg', 'model.json.example', 'xmind.json',
 ])
 

@@ -15,12 +15,13 @@ const OUT = path.join(ROOT, 'client.js');
 const CHECK = process.argv.includes('--check');
 
 const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8'));
-const eol = manifest.eol === 'crlf' ? '\r\n' : '\n';
+// 一律按 LF 读、按 LF 写：这样 git 的 autocrlf 把片段换成 CRLF 也不会让输出漂移
+const read = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
-const head = fs.readFileSync(path.join(DIR, 'head.txt'), 'utf8');
-const tail = fs.readFileSync(path.join(DIR, 'tail.txt'), 'utf8');
+const head = read(path.join(DIR, 'head.txt'));
+const tail = read(path.join(DIR, 'tail.txt'));
 let body = '';
-for (const part of manifest.parts) body += fs.readFileSync(path.join(DIR, 'src', part), 'utf8');
+for (const part of manifest.parts) body += read(path.join(DIR, 'src', part));
 const built = head + body + tail;
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16);

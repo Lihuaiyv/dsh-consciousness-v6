@@ -1,0 +1,5 @@
+﻿# client.js 是构建产物：保持原字节（LF），别让 autocrlf 改写，否则 build --check 会误报
+client.js -text
+client/head.txt -text
+client/tail.txt -text
+client/src/*.js text eol=lf
