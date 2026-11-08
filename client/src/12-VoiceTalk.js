@@ -38,23 +38,18 @@
             if (at > last) {
               last = at
               el.style.opacity = '1'
-              // 连闪三下，一下比一下亮：先给眼睛一个明确的信号，再开口
-              for (let i = 0; i < 3; i++) {
-                setTimeout(() => {
-                  if (!alive) return
-                  try {
-                    el.animate(
-                      [
-                        { boxShadow: '0 0 0 0 rgba(255,255,255,.8)', transform: 'scale(1)' },
-                        { boxShadow: '0 0 0 22px rgba(255,255,255,0)', transform: 'scale(2.8)' },
-                        { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
-                      ],
-                      { duration: 480, easing: 'ease-out' },
-                    )
-                  } catch { /* 老浏览器不支持 animate 就算了 */ }
-                }, i * 250)
-              }
-              setTimeout(() => { if (alive) el.style.opacity = '.6' }, 1300)
+              // 一次柔和的呼吸：慢慢亮、慢慢落，不硬闪
+              try {
+                el.animate(
+                  [
+                    { boxShadow: '0 0 0 0 rgba(255,255,255,.4)', transform: 'scale(1)', opacity: 0.85 },
+                    { boxShadow: '0 0 0 11px rgba(255,255,255,0)', transform: 'scale(1.85)', opacity: 1 },
+                    { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)', opacity: 0.85 },
+                  ],
+                  { duration: 1800, easing: 'ease-in-out' },
+                )
+              } catch { /* 老浏览器不支持 animate 就算了 */ }
+              setTimeout(() => { if (alive) el.style.opacity = '.6' }, 1800)
             }
           } catch { /* 接口还没起来就静静待着 */ }
         }
