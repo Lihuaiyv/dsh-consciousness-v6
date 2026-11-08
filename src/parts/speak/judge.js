@@ -9,10 +9,12 @@
  */
 import { now } from '../../db.js'
 import { getParam, getAffect, getDrive } from '../../core.js'
+import { getFlag, setFlag } from '../../kernel.js'
 import { readAxes, driveAmp } from '../../modules/traits.js'
 import { budgetGet } from '../../modules/drive.js'
 import { toneOf } from '../../algo/reldyn.js'
 import { whoIsSpeaking } from '../../modules/who.js'
+import { memoryCount } from '../../modules/memory.js'
 import { getProactivePrefs } from './prefs.js'
 import { proactiveSpend } from './budget.js'
 
@@ -75,17 +77,6 @@ export function gateRow(id, ok, detail) {
   return { id, label: GATE_LABEL[id] || id, ok: ok === null ? null : !!ok, detail: detail || '' }
 }
 
-function getFlag(db, key) {
-  try {
-    const r = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
-    return r ? r.value : null
-  } catch { return null }
-}
-
-function setFlag(db, key, v) {
-  db.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run(key, String(v))
-}
-
 export function minDeficitFor(band, override = 0) {
   const o = Number(override)
   if (Number.isFinite(o) && o > 0) return o
@@ -138,16 +129,8 @@ export function rankIntents(db, aid) {
 export function proactiveEvidence(db, aid) {
   const days = PROACTIVE.EVIDENCE_DAYS
   const since = new Date(Date.now() - days * 86400000).toISOString()
-  let items = 0
-  let recent = 0
-  try {
-    const r = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL").get(aid)
-    items = Number(r?.n || 0)
-  } catch { items = 0 }
-  try {
-    const r = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=?").get(aid, since)
-    recent = Number(r?.n || 0)
-  } catch { recent = 0 }
+  const items = memoryCount(db, aid)
+  const recent = memoryCount(db, aid, since)
   return { items, recent, days, score: Math.min(1, recent / PROACTIVE.EVIDENCE_FULL) }
 }
 

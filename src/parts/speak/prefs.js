@@ -3,23 +3,15 @@
  *
  * 开关、每天几句、安静时段、是否推送。
  * 存在 flags 的 `proactive:<aid>` 键上——这是开口自己的键；flags 表本身是共享基础设施。
- * 这个文件不 import 别的业务零件，只碰自己的键。
+ * 读写走 kernel 的 getFlag/setFlag，不在零件里再抄一把锁。
  */
+import { getFlag, setFlag } from '../../kernel.js'
 
 export const PROACTIVE_DEFAULTS = {
   enabled: true, per_day: 1, idle_hours: 6,
   quiet: true, quiet_from: '23:30', quiet_to: '07:30',
   // push：把待发那句直接推进会话（不再等你先开口）。默认关，打开才算授权。
   push: false,
-}
-
-function getFlag(db, key) {
-  const r = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
-  return r ? r.value : null
-}
-
-function setFlag(db, key, value) {
-  db.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run(key, String(value))
 }
 
 export function getProactivePrefs(db, aid) {

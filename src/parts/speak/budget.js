@@ -2,18 +2,10 @@
  * 主动开口 · 今天花了多少额度（零件内）
  *
  * 一句有真事的开口算 1，纯凑数算 2；存在 flags 的 `proactive.spend:<aid>`，跨天自动归零。
- * flags 表是共享基础设施，但这两个键属于开口，只有这个文件写。
+ * flags 表是共享基础设施，但这两个键属于开口，只有这个文件写；锁走 kernel。
  */
 import { now } from '../../db.js'
-
-function getFlag(db, key) {
-  const r = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
-  return r ? r.value : null
-}
-
-function setFlag(db, key, value) {
-  db.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run(key, String(value))
-}
+import { getFlag, setFlag } from '../../kernel.js'
 
 export function proactiveSpend(db, aid) {
   const today = now().slice(0, 10)

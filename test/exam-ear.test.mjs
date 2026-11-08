@@ -132,6 +132,11 @@ const fakeService = (result) => ({
 
   check('入口：服务空文本照样报出来', await throwsAsyncWith(
     () => transcribeVoice({ buffer: wav(), tmpDir, run: fakeRun, service: fakeService({ text: '' }) }), '空文本'))
+
+  let ran = false
+  const spy = async () => { ran = true }
+  const direct = await transcribeVoice({ buffer: wav(), tmpDir, run: spy, service: fakeService({ text: '好', audioSeconds: 1 }) })
+  check('入口：已经是规范 WAV 时不叫 ffmpeg', ran === false && direct.text === '好', { ran, text: direct.text })
 }
 
 // ================================================================ 人话原因

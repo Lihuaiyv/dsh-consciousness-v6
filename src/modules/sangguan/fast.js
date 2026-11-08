@@ -18,7 +18,7 @@ import { call, cacheGet, cachePut, pairKey, judgeHealth } from './llm.js'
 import { J2 } from './templates.js'
 import { neighbors } from './sim.js'
 import { classify, fieldCheck } from './gates.js'
-import { noteAskSpoken } from './inject.js'
+import { noteAskSpoken } from './ask_track.js'
 
 export const PENDING_CAP = 50
 const DRAIN_MAX = 3 // 每次快环最多补判几条，控制花费

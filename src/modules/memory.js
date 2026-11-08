@@ -226,6 +226,22 @@ export function addMemory(db, aid, body) {
       try { db.prepare("UPDATE memory_items SET temp_state='cold', state_since=? WHERE id=?").run(now(), mid) } catch { /* 老库没有温度列 */ }
     }
     db.prepare('INSERT INTO memory_fts(id,text) VALUES(?,?)').run(mid, searchText)
+    /* 署名：这句是谁的。只在调用方带了 speaker 时写——老入口不传就是 unknown，
+       不写一行，免得把「没标」和「不属于任何人」混成一件事。 */
+    const provSpeaker = body.speaker ? String(body.speaker).trim().slice(0, 12) : ''
+    if (provSpeaker) {
+      try {
+        db.prepare(`INSERT OR REPLACE INTO memory_provenance(memory_id,agent_id,speaker,quote,inferred,turn_id,via,created_at)
+          VALUES(?,?,?,?,?,?,?,?)`).run(
+          mid, aid, provSpeaker,
+          body.quote != null ? String(body.quote).trim().slice(0, 160) || null : null,
+          body.inferred ? 1 : 0,
+          body.turn_id || null,
+          String(body.source || 'model').slice(0, 24),
+          now(),
+        )
+      } catch { /* 署名失败不影响记忆本身 */ }
+    }
     // 事实失效：同一个 fact_key 的旧说法当场退场（不删，只标记被谁取代）
     superseded = supersedeByKey(db, aid, mid, factKey, typ)
     // T4 事实存根：这条事实「出生时」长什么样，永远留一份（只追加，之后衰减/推翻/合并都不动它）
@@ -524,6 +540,29 @@ export function resolveConflict(db, aid, cid, body = {}) {
 /** query：活跃记忆（供影子/概览，禁止外域直读 memory_items） */
 export function listActiveMemories(db, aid) {
   return db.prepare("SELECT * FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL").all(aid)
+}
+
+/**
+ * 活跃条数。外域（开口证据门等）只许走这里，不许自己 COUNT memory_items。
+ * since 有值时只数 created_at>=since 的。
+ */
+export function memoryCount(db, aid, since = null) {
+  try {
+    if (since) {
+      const r = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND created_at>=?").get(aid, since)
+      return Number(r?.n || 0)
+    }
+    const r = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL").get(aid)
+    return Number(r?.n || 0)
+  } catch { return 0 }
+}
+
+/** 按权重取前几条（开口生成用）。外域不许自己 SELECT memory_items。 */
+export function listTopMemories(db, aid, limit = 6) {
+  const n = Math.max(0, Math.min(50, Number(limit) || 0))
+  try {
+    return db.prepare("SELECT id,text FROM memory_items WHERE agent_id=? AND status='active' ORDER BY weight DESC LIMIT ?").all(aid, n)
+  } catch { return [] }
 }
 
 export function memoryStats(db, aid) {

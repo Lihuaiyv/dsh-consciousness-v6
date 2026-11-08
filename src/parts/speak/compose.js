@@ -10,6 +10,7 @@
  */
 import { getPersona } from '../../core.js'
 import { cleanLine } from '../../text.js'
+import { listTopMemories } from '../../modules/memory.js'
 import { gateRow, DIM_LINE, DIM_NAME, DIM_NEEDS_EVIDENCE, proactiveEvidence } from './judge.js'
 import { model, freeformModelHook } from './hooks.js'
 
@@ -48,10 +49,7 @@ export async function composeProactiveLine(db, aid, ag, { approved = false, evid
   const style = personaStyle(db, aid)
   const you = style.address || '你'
   const ev = evidence == null ? proactiveEvidence(db, aid).items : Number(evidence) || 0
-  let mems = []
-  try {
-    mems = db.prepare("SELECT id,text FROM memory_items WHERE agent_id=? AND status='active' ORDER BY weight DESC LIMIT 6").all(aid)
-  } catch { mems = [] }
+  const mems = listTopMemories(db, aid, 6)
   let affect = ''
   try {
     const af = db.prepare('SELECT primary_label FROM affect_state WHERE agent_id=?').get(aid)

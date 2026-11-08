@@ -381,6 +381,17 @@ export async function recallTool(db, aid, args = {}) {
   for (const it of out.items) {
     it.text = plan.detail === 'full' ? it.text.slice(0, FULL_MAX) : it.text.slice(0, BRIEF_MAX)
     if (!it.near) delete it.near
+    /* 署名：这条记忆里的话是谁说的。查不到就是不吭声（老条目没标），
+       不拿「unknown」去占一行。 */
+    if (it.layer === 'memory' && it.id) {
+      try {
+        const p = db.prepare('SELECT speaker,inferred FROM memory_provenance WHERE memory_id=?').get(it.id)
+        if (p && p.speaker && p.speaker !== 'unknown') {
+          it.by = p.speaker
+          if (Number(p.inferred)) it.inferred = 1
+        }
+      } catch { /* 没这张表就照旧渲染 */ }
+    }
   }
   out.ms = Date.now() - t0
   return out
@@ -410,7 +421,10 @@ export function renderRecall(v) {
   for (const it of v.items) {
     const tag = '[' + LAYER_LABEL[it.layer] + (it.type ? '/' + it.type : '') + ']'
     const mark = it.cold ? '（冷层）' : (it.stale ? '（旧说法）' : '')
-    lines.push('- ' + tag + ' ' + shortTime(it.at) + ' ' + it.text + mark)
+    // 谁说的：〔你〕/〔我〕/〔两边〕；推断出来的另标一句，别让推的冒充原话
+    const by = it.by === 'self' ? '〔我〕' : it.by === 'user' ? '〔你〕' : it.by === 'both' ? '〔两边〕' : ''
+    const guess = it.inferred ? '（我推的）' : ''
+    lines.push('- ' + tag + ' ' + shortTime(it.at) + ' ' + by + it.text + guess + mark)
     for (const n of it.near || []) {
       lines.push('    ' + (n.rel === 'prev' ? '↑' : '↓') + ' ' + (WHO[n.role] || n.role) + '：' + n.text)
     }

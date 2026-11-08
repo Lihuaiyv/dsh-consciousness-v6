@@ -20,12 +20,12 @@ import { pendingViolationLine } from './violate.js'
 import { pledgeMissLine } from './pledge.js'
 import { buildConstitution } from './constitution.js'
 import { recall, recallLines } from './recall.js'
+import { ASK_CAP, askState, askClosed, noteAskSpoken, noteAskDelivered } from './ask_track.js'
+export { ASK_CAP, noteAskSpoken }
 
 const DAY = 86400000
 export const INJECT_BUDGET = 160
 export const SHADOW_DAYS = 7
-export const ASK_CAP = 3
-const askKey = (aid) => 'sangguan.ask:' + aid
 const PER_LAYER = 3
 const KAPPA_LINES = 2
 const SAMPLES = 10
@@ -154,23 +154,6 @@ function summaryLine(evs) {
   return { id: sm.id, line: '你给自己这一程的说法：' + clip(sm.chapter, 20) + '——' + clip(sm.at_the_time, 60) + '。' }
 }
 
-function askState(db, aid) {
-  try {
-    const v = JSON.parse(getFlag(db, askKey(aid)) || 'null')
-    if (v && typeof v === 'object') return { id: null, question: '', shown: 0, asked: false, ...v }
-  } catch { /* 坏记录当空 */ }
-  return { id: null, question: '', shown: 0, asked: false }
-}
-
-function saveAsk(db, aid, st) {
-  setFlag(db, askKey(aid), JSON.stringify(st))
-}
-
-/** 这问已经问出口，或已经塞进提示词 ASK_CAP 次，就不再注入。 */
-function askClosed(st, id) {
-  return !!(st && st.id === id && (st.asked || st.shown >= ASK_CAP))
-}
-
 /** L1 的 ask 送进对话：T_ask 日内未答、也还没问出口的最近一问。 */
 function askLine(db, aid, s, evs, now) {
   const answered = new Set(evs.filter((e) => e.type === 'INQUIRY' && e.payload.answer_of).map((e) => e.payload.answer_of))
@@ -179,27 +162,6 @@ function askLine(db, aid, s, evs, now) {
   if (!e || instructionLike(e.payload.question)) return null
   if (askClosed(askState(db, aid), e.id)) return null
   return { id: e.id, question: e.payload.question, line: '（你最近想弄清一件事，合适时可以自然地问对方：' + clip(e.payload.question, 60) + '——别生硬，也别每轮都问。）' }
-}
-
-/** 助手已经把这问说出口（字面包含或足够像）就停。 */
-export function noteAskSpoken(db, aid, text) {
-  const st = askState(db, aid)
-  if (!st.id || st.asked || !st.question) return false
-  const q = String(st.question).replace(/[\s？?。！!，,、]/g, '')
-  const a = String(text || '').replace(/[\s？?。！!，,、]/g, '')
-  if (!q || !a.includes(q.slice(0, Math.min(q.length, 16)))) return false
-  st.asked = true
-  saveAsk(db, aid, st)
-  return true
-}
-
-function noteAskDelivered(db, aid, id, question) {
-  const st = askState(db, aid)
-  const next = st.id === id ? st : { id, question: question || '', shown: 0, asked: false }
-  if (next.asked || next.shown >= ASK_CAP) return
-  next.shown += 1
-  if (question) next.question = question
-  saveAsk(db, aid, next)
 }
 
 /** 三列打开时的取法：核心三条常驻 + 按这一句召回 0–2 条（召回结果里的核心不重复渲染）。 */

@@ -10,7 +10,7 @@
  */
 
 import { now } from '../db.js'
-import { nid, event, getParam } from '../kernel.js'
+import { event, getParam } from '../kernel.js'
 import { enqueueProactive } from './proactive.js'
 
 /** 摘要里的「1. 用户的事实：…」剥成一句人话，别把编号和栏目名一起念出来。 */

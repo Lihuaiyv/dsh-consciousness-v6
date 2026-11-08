@@ -1,108 +1,134 @@
 /**
- * 记忆来源与确定度：我自己看到的 / 从聊天里记下的 / 我自己想的。
+ * 署名：这条记忆里的话，是谁说的。
+ *
+ * 老口子：抽出来的条目只有「关于谁」（who），没有「谁说的」（speaker），
+ * 于是「主人说…」和「我答应…」被压成一段第三人称经过，
+ * 最好听的那句到底是谁的，得靠事后猜——2026-11-07 就猜错过一次，把自己的话安到了主人头上。
+ *
+ * 这里钉三件事：
+ *   1) 带 speaker 的条目，库里留一行署名（speaker / quote / inferred）；
+ *   2) 没带的，不写行——「没标」不等于「不属于谁」；
+ *   3) 检索渲染时能看见〔你〕/〔我〕/〔两边〕，推出来的另标（我推的）。
+ *
  * 运行：node test/memory-provenance.test.mjs
  */
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { memoryTag } from '../src/modules/memory_tag.js'
-import { packInjection } from '../src/modules/pack.js'
 import { openDb } from '../src/db.js'
-import { attachDb } from '../src/algo/index.js'
+import { handle } from '../src/api.js'
 import { addMemory } from '../src/modules/memory.js'
-import { retrieve } from '../src/modules/retrieve.js'
-import { setParam } from '../src/kernel.js'
-import { packMemoryBlock, consciousnessBlock } from '../index.js'
+import { writeExtractedItem } from '../src/features.js'
+import { renderRecall } from '../src/modules/recall_tool.js'
 
 let pass = 0
 let fail = 0
 function check(name, ok, detail) {
-  if (ok) { pass++; console.log('PASS ' + name) }
-  else { fail++; console.log('FAIL ' + name + '  ' + JSON.stringify(detail === undefined ? '' : detail).slice(0, 400)) }
+  if (ok) { pass++; console.log('PASS', name) } else { fail++; console.log('FAIL', name, detail === undefined ? '' : JSON.stringify(detail).slice(0, 300)) }
 }
 
-const NOW = Date.parse('2026-11-03T12:00:00+08:00')
-const DAY = 86400000
-const row = (source, days = 3, confidence = 0.8, extra = {}) => ({
-  text: '一条记忆。', source, confidence,
-  created_at: new Date(NOW - days * DAY).toISOString(),
-  ...extra,
-})
-const tag = (source, days, confidence, extra) => memoryTag(row(source, days, confidence, extra), NOW, { provenance: true })
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-prov-'))
+const db = openDb(path.join(dir, 'prov.db'))
 
-// ---- 默认行为：不带 provenance 时逐字回旧版 ----
-check('默认 extract 不加来源', memoryTag(row('extract', 3), NOW) === '（3 天前）', memoryTag(row('extract', 3), NOW))
-check('默认 life 仍带自己看到的', memoryTag(row('life', 3), NOW) === '（我自己看到的，3 天前）', memoryTag(row('life', 3), NOW))
-
-// ---- 三类非默认来源 ----
-check('life → 我自己看到的', tag('life', 3).includes('我自己看到的'), tag('life', 3))
-check('extract → 从聊天里记下的', tag('extract', 3).includes('从聊天里记下的'), tag('extract', 3))
-check('episode → 从聊天里记下的', tag('episode', 3).includes('从聊天里记下的'), tag('episode', 3))
-check('summary → 从聊天里记下的', tag('summary', 3).includes('从聊天里记下的'), tag('summary', 3))
-check('consolidate → 我自己想的', tag('consolidate', 3).includes('我自己想的'), tag('consolidate', 3))
-check('reflect → 我自己想的', tag('reflect', 3).includes('我自己想的'), tag('reflect', 3))
-check('subtext → 我自己想的', tag('subtext', 3).includes('我自己想的'), tag('subtext', 3))
-
-// ---- 默认来源不贴 ----
-check('manual 不贴来源', tag('manual', 3) === '（3 天前）', tag('manual', 3))
-check('chat 不贴来源', tag('chat', 3) === '（3 天前）', tag('chat', 3))
-check('未知来源不贴', tag('mystery', 3) === '（3 天前）', tag('mystery', 3))
-
-// ---- 低置信 ----
-check('低置信推断带「不一定对」', tag('subtext', 3, 0.45).includes('不一定对'), tag('subtext', 3, 0.45))
-check('低置信顺序在最后', tag('subtext', 30, 0.45) === '（我自己想的，1 个月前，有点糊，不一定对）', tag('subtext', 30, 0.45))
-check('高置信不带「不一定对」', !tag('subtext', 3, 0.8).includes('不一定对'), tag('subtext', 3, 0.8))
-check('默认来源即使低置信也不乱标', !tag('manual', 3, 0.3).includes('不一定对'), tag('manual', 3, 0.3))
-check('confidence 缺失不误标', !tag('subtext', 3, null).includes('不一定对'), tag('subtext', 3, null))
-check('无年龄的低置信也能标', tag('subtext', 0, 0.4).includes('不一定对'), tag('subtext', 0, 0.4))
-check('age:false 时只留来源', memoryTag(row('extract', 3), NOW, { provenance: true, age: false }) === '（从聊天里记下的）', memoryTag(row('extract', 3), NOW, { provenance: true, age: false }))
-
-// ---- 装箱接线 ----
-{
-  const items = [
-    row('extract', 3, 0.5, { id: 'm1', partition: 'T1', text: '主人说过想去看海。' }),
-    row('life', 3, 0.9, { id: 'm2', partition: 'T1', text: '我自己看到窗台的花开了。' }),
-  ]
-  const out = packInjection({ items }, { budget: 400, decorate: (it) => memoryTag(it, NOW, { provenance: true }) })
-  check('装箱：转述记忆带来源', out.text.includes('从聊天里记下的') && out.text.includes('不一定对'), out.text)
-  check('装箱：自己看到的记忆带来源', out.text.includes('我自己看到的'), out.text)
-  const off = packInjection({ items }, { budget: 400, decorate: (it) => memoryTag(it, NOW) })
-  check('装箱：关掉来源后只剩时间', !off.text.includes('从聊天里记下的') && off.text.includes('3 天前'), off.text)
-}
-
-// ---- 检索链路带出 source / confidence ----
-{
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-prov-'))
-  const db = openDb(path.join(dir, 'app.db'))
-  attachDb(db)
-  const aid = 'agt_prov'
-  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
-    .run(aid, '来源', 'daily', 'active', new Date().toISOString())
-  addMemory(db, aid, { text: '窗台那盆花该换位置了。', type: 'fact', source: 'extract', confidence: 0.5 })
-  const r = retrieve(db, aid, '窗台 花', { k: 5 })
-  const hit = r.items.find((x) => String(x.text).includes('窗台'))
-  check('检索能拿回这条', !!hit, r.items)
-  check('检索条目带 source', hit && hit.source === 'extract', hit)
-  check('检索条目带 confidence', hit && Number(hit.confidence) === 0.5, hit)
-  check('检索条目能贴出来源徽章', hit && memoryTag(hit, Date.now(), { provenance: true }).includes('从聊天里记下的'), hit)
-  // 关掉时间标签，来源徽章仍要在：两个开关是独立的。
-  setParam(db, aid, 'memory.inject.age', { value: 'off' })
-  setParam(db, aid, 'memory.inject.provenance', { value: 'on' })
-  const packed = packMemoryBlock(db, aid, [{ ...hit, text: '窗台那盆花该换位置了。', partition: 'T1' }], 400)
-  check('关时间标签：来源仍在', packed.text.includes('从聊天里记下的'), packed.text)
-  check('关时间标签：没有年龄', !packed.text.includes('天前') && !packed.text.includes('个月前'), packed.text)
-
-  // QQ / 外部通道：opts.recall 的行对象也要同一套来源标签
-  const qqAid = 'agt_qqprov'
-  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
-    .run(qqAid, 'QQ来源', 'daily', 'active', new Date().toISOString())
-  const qqText = consciousnessBlock(db, qqAid, {
-    recall: [{ text: '从聊天里记下：主人在改接线。', source: 'extract', confidence: 0.5, created_at: new Date().toISOString() }],
+async function call(method, p, body = {}) {
+  return handle(db, {
+    method,
+    path: p,
+    body: method === 'GET' ? body : { ...body, __idempotencyKey: 'k' + Math.random().toString(36).slice(2) },
+    token: 'user',
   })
-  check('外部召回带来源', qqText.includes('从聊天里记下的'), qqText)
-  check('外部召回低置信标不一定对', qqText.includes('不一定对'), qqText)
-  db.close()
 }
 
-console.log('\n通过 ' + pass + ' / ' + (pass + fail))
-if (fail) { console.log('失败:', fail); process.exit(1) }
+const made = await call('POST', '/v1/agents', { name: '署名小测' })
+const aid = made.body.id
+
+const prov = (id) => db.prepare('SELECT * FROM memory_provenance WHERE memory_id=?').get(id) || null
+
+// ---- 表在
+{
+  const t = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_provenance'").get()
+  check('memory_provenance 表建出来了', !!t)
+}
+
+// ---- 对方说的话：署名 user，原话逐字留住
+{
+  const row = addMemory(db, aid, {
+    text: '主人让我去 git 上找现成的表情包', type: 'fact', source: 'extract',
+    speaker: 'user', quote: '去 git 上找现成的表情包', turn_id: 't_owner_1',
+  })
+  const p = prov(row.id)
+  check('你的一句话，署名 user', p && p.speaker === 'user', p)
+  check('原话逐字留着，不改写', p && p.quote === '去 git 上找现成的表情包', p)
+  check('原文里有据：inferred=0', p && Number(p.inferred) === 0, p)
+  check('轮次指针留着', p && p.turn_id === 't_owner_1', p)
+}
+
+// ---- 我推出来的：必须自己承认是推的
+{
+  const row = addMemory(db, aid, {
+    text: '我猜主人不喜欢被当成坏人', type: 'appraisal', source: 'extract',
+    speaker: 'self', inferred: 1,
+  })
+  const p = prov(row.id)
+  check('我的推断，署名 self', p && p.speaker === 'self', p)
+  check('推断标成 inferred=1，不冒充原话', p && Number(p.inferred) === 1, p)
+  check('没给原话就留空，不编一句', p && p.quote == null, p)
+}
+
+// ---- 两边都有：也是真的
+{
+  const row = addMemory(db, aid, {
+    text: '我们约好：下次吵起来，我要是想赢就先停一下', type: 'fact', source: 'extract',
+    speaker: 'both', quote: '下次总有一边会先软一点',
+  })
+  const p = prov(row.id)
+  check('两边的话署名 both', p && p.speaker === 'both', p)
+}
+
+// ---- 老入口不传 speaker：不写行，不记成「不属于谁」
+{
+  const row = addMemory(db, aid, { text: '一条老式条目，没标是谁说的', type: 'fact' })
+  check('没带署名就不写行', !prov(row.id), prov(row.id))
+}
+
+// ---- 抽取那条车道（writeExtractedItem）也得把署名带下来
+{
+  const out = writeExtractedItem(db, aid, {
+    text: '主人说他讨厌被当成坏人', type: 'fact', who: 'user',
+    speaker: 'user', quote: '你讨厌我？', inferred: 0,
+  })
+  const p = out && out.id ? prov(out.id) : null
+  check('抽取条目：署名叫到 user', p && p.speaker === 'user', p || out)
+  check('抽取条目：原话「你讨厌我？」留在库里', p && p.quote === '你讨厌我？', p || out)
+  check('抽取条目：via 记的是 extract', p && p.via === 'extract', p || out)
+}
+
+// ---- 兜底：模型只回了 who、没回 speaker 时，按 who 推
+{
+  const out = writeExtractedItem(db, aid, {
+    text: '主人提到他习惯一边写代码一边听歌', type: 'fact', who: 'user',
+  })
+  const p = out && out.id ? prov(out.id) : null
+  check('没给 speaker 时按 who=user 兜底', p && p.speaker === 'user', p || out)
+  check('兜底也不编原话', p && p.quote == null, p || out)
+}
+
+// ---- 检索渲染：看得到〔你〕〔我〕〔两边〕和「我推的」
+{
+  const v = {
+    query: '吵架', counts: { memory: 3 }, more: {},
+    items: [
+      { layer: 'memory', type: 'fact', at: '2026-11-06T18:20:00Z', text: '主人要去找现成表情包', by: 'user' },
+      { layer: 'memory', type: 'appraisal', at: '2026-11-06T19:00:00Z', text: '我猜他其实不想被当成坏人', by: 'self', inferred: 1 },
+      { layer: 'memory', type: 'fact', at: '2026-11-07T01:00:00Z', text: '我们说过下次先软一点', by: 'both' },
+    ],
+  }
+  const s = renderRecall(v)
+  check('渲染里看得出是谁说的〔你〕', s.includes('〔你〕'), s)
+  check('渲染里看得出是谁说的〔我〕', s.includes('〔我〕'), s)
+  check('两边的话渲染成〔两边〕', s.includes('〔两边〕'), s)
+  check('推断出来的另标（我推的）', s.includes('（我推的）'), s)
+}
+
+console.log(`\n通过 ${pass} / ${pass + fail}`)
+if (fail) process.exitCode = 1

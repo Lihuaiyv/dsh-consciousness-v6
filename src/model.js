@@ -17,7 +17,13 @@ const RULES = {
  * self 必须第一人称、最多 3 条、拿不准就丢——宁可少记，不要编归属。
  */
 export const EXTRACT_SYS = '从对话抽取值得长期记住的东西。只输出 JSON 数组：'
-  + '[{"text":"","type":"fact|episode|appraisal","who":"user|self","mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。'
+  + '[{"text":"","type":"fact|episode|appraisal","who":"user|self","speaker":"user|self|both","quote":"","inferred":0,"mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。'
+  + 'who 是「这条关于谁」，speaker 是「这句话是谁说的」——两个不是一回事。'
+  + '你转述对方说过的话（「用户说…」「他提到…」）时 who=user、speaker=user；'
+  + '写我自己做的事 / 想法 / 答应的话时 who=self、speaker=self；'
+  + '一句话里两边都有、分不开，speaker="both"；实在判不出是谁说的，就整条丢掉，别猜。'
+  + 'quote 是支撑这条的最短原话，逐字抄，不超过 40 字；没有原话就留空串，不要自己编一句好听的。'
+  + 'inferred：0=原文里有据，1=原文没直说、是我推出来的；宁可标 1，不许把推断写成原话。'
   + 'who="user"：关于对方的事实 / 偏好 / 边界。text 用一句客观陈述，写清实体与属性；'
   + 'key 是稳定的去重键（如「用户.咖啡.偏好」），同一件事换个说法必须给同一个 key，拿不准就给空；'
   + 'terms 是 3~6 个「以后用户可能怎么问这件事」的词：同义词、别名、上位词、口语说法（例：咖啡 → 咖啡、美式、喝什么、饮品）。'
@@ -25,6 +31,7 @@ export const EXTRACT_SYS = '从对话抽取值得长期记住的东西。只输�
   + '必须用第一人称、以「我」开头，6~120 字，写具体的事；不要写对方的事，不要第三人称旁白（「用户正在…」「助手…」）；'
   + '拿不准是谁做的就丢掉这条；每轮最多 3 条，没有就整条不给。'
   + 'terms 只写词，不要句子，不要解释；没有就留空数组。'
+
 
 /** 抽取的用户消息：对话原文 + （可选）这一轮她自己做过的事。 */
 function extractUserContent(turns, opt = {}) {

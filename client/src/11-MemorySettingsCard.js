@@ -558,25 +558,3 @@
       timer = setInterval(tick, 12000)
       return () => clearInterval(timer)
     }
-
-    return {
-      inject: ['slots'],
-      apply(ctx) {
-        ctx.effect(() => watchHotReload(), 'dsh-consciousness: 热更新')
-        // 页面外面再包一层：渲染出错也只坏一张卡，页签不会从设置导航里消失
-        const Section = (props) => h(SectionBoundary, null, h(Page, props))
-        const Presence = (props) => h(SectionBoundary, null, h(ChatPresence, props))
-        ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
-          name: 'settings.section',
-          id: 'consciousness',
-          order: 26,
-          label: '意识',
-        }, Section)), 'dsh-consciousness: settings section')
-        ctx.effect(() => ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
-          name: 'conversation.session.header.actions',
-          id: 'consciousness-presence',
-          order: 20,
-          label: '意识体',
-        }, Presence)), 'dsh-consciousness: chat presence')
-      },
-    }

@@ -564,6 +564,45 @@
           '打开后我只往收件箱放条目；到点是否提醒由收件箱自己处理，不会绕过你发消息。'),
       }
 
+      const voicePanel = () => h('div', { className: 'dshc-pgrid', style: { marginTop: 12 } },
+        h(Field, { label: '怎么说话', wide: true }, h(Seg, {
+          items: [['ptt', '按住空格'], ['open', '一直开麦']],
+          value: d['voice.mic.mode'] || 'ptt', onChange: (v) => set('voice.mic.mode', v),
+        }), h('div', { className: 'dshc-sub' },
+          (d['voice.mic.mode'] || 'ptt') === 'open'
+            ? '对话框旁点「开麦」：一直听，你说完停一下就自动送进对话。费电，也容易把旁边的声音听进去。'
+            : '在对话页按住空格说话，松开就送。输入框里已经在打字时，空格还是打空格。')),
+        h(Field, { label: '回完自动念', wide: true }, h(Seg, {
+          items: [['auto', '开'], ['off', '关']],
+          value: (d['voice.reply.mode'] === 'off' || d['voice.reply.mode'] === 'click') ? 'off' : 'auto',
+          onChange: (v) => set('voice.reply.mode', v),
+        }), h('div', { className: 'dshc-sub' },
+          (d['voice.reply.mode'] === 'off' || d['voice.reply.mode'] === 'click')
+            ? '回完只出文字，不念。'
+            : '你用麦克风说完、她回完之后，本机自动念出来。打字聊天不会念。')),
+        h(Field, { label: '嗓子' }, h(Seg, {
+          items: [['azure', '微软'], ['compat', '兼容接口'], ['local', '本机']],
+          value: d['voice.provider'] || 'azure', onChange: (v) => set('voice.provider', v),
+        })),
+        h(Field, { label: '嗓子密钥' }, h(Input, {
+          type: 'password', value: d['voice.api_key'] || '', placeholder: '本机嗓子可留空',
+          onChange: (e) => set('voice.api_key', e.target.value),
+        })),
+        (d['voice.provider'] || '') === 'local' ? h(Field, { label: '本机地址 / 参考音频', wide: true },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+            h(Input, {
+              value: d['voice.local_url'] || '', placeholder: 'http://127.0.0.1:9880',
+              onChange: (e) => set('voice.local_url', e.target.value),
+            }),
+            h(Input, {
+              value: d['voice.local_ref'] || '', placeholder: '参考音频路径（克隆嗓子用）',
+              onChange: (e) => set('voice.local_ref', e.target.value),
+            }))) : null,
+        h(Field, { label: '念完播放' }, h(Btn, {
+          sm: true, primary: d['voice.play'] !== false,
+          onClick: () => set('voice.play', !(d['voice.play'] !== false)),
+        }, d['voice.play'] !== false ? '开' : '关')))
+
       const card = (meta) => {
         const on = enabledOf(meta.name)
         const isOpen = open === meta.name
@@ -600,6 +639,11 @@
           onCount ? h(Btn, { sm: true, danger: true, onClick: allOff, disabled: busy === 'all' }, '全部关闭') : null),
         cf.error ? h('div', { className: 'dshc-err' }, cf.error) : null,
         h('div', { className: 'dshc-ports' }, PORT_META.map(card)),
+        h('div', { style: { marginTop: 14 } },
+          h('b', { style: { fontSize: 13 } }, '本机对着麦说话'),
+          h('div', { className: 'dshc-sub', style: { marginTop: 4 } },
+            '对话页按住空格说话（或开「一直开麦」）。要先在宿主里启用「语音输入」实验包，嗓子配好才会出声。'),
+          voicePanel()),
         h('div', { className: 'dshc-form', style: { marginTop: 10 } },
           h(Btn, { primary: true, onClick: save }, '保存配置'),
           h(Btn, { onClick: probe, disabled: busy === 'probe' }, busy === 'probe' ? '体检中…' : '体检通道'),

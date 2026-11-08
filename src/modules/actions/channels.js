@@ -54,6 +54,10 @@ export const DEFAULTS = {
   'voice.local_ref': '',
   'voice.local_prompt': '',
   'voice.play': true, // 念完直接在本机播出来
+  // 本机对着麦说话：默认按住说；可切成一直开着麦。
+  'voice.mic.mode': 'ptt', // ptt=按住说话 | open=持续听
+  // 她回完要不要自动念：auto=麦克风说完后自动念；off=只出文字。
+  'voice.reply.mode': 'auto', // auto | off
 }
 
 const BOOL_KEYS = new Set(['wechat.allow_keys_fallback', 'wechat.launch', 'wechat.dry_run', 'wechat.inbox.enable', 'wechat.typing.enable', 'wechat.sealed', 'voice.play'])
@@ -65,6 +69,8 @@ const ENUMS = {
   'qq.default_target_type': ['private', 'group'],
   'research.depth': ['quick', 'standard', 'deep'],
   'voice.provider': ['azure', 'compat', 'local'],
+  'voice.mic.mode': ['ptt', 'open'],
+  'voice.reply.mode': ['auto', 'off'],
 }
 
 function coerce(key, value) {
@@ -77,6 +83,8 @@ function coerce(key, value) {
     return Number.isFinite(n) ? n : DEFAULTS[key]
   }
   let v = value == null ? '' : String(value)
+  // 旧值 click（点一下念）已去掉，读成 off。
+  if (key === 'voice.reply.mode' && v === 'click') v = 'off'
   if (ENUMS[key] && !ENUMS[key].includes(v)) v = DEFAULTS[key]
   return v
 }

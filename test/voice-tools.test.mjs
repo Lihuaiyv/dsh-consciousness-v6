@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
 import { saveConfig } from '../src/modules/actions/channels.js'
-import { voiceConfigOf, executeHear, executeSay } from '../src/modules/actions/voice.js'
+import { voiceConfigOf, executeHear, executeSay, markVoiceExpect, takeVoiceExpect, rememberAssistantReply, lastAssistantReply } from '../src/modules/actions/voice.js'
 
 let pass = 0
 let fail = 0
@@ -58,10 +58,14 @@ const fakeFetch = (body) => async () => ({
 {
   const anyFile = path.join(dir, 'any.wav')
   fs.writeFileSync(anyFile, wav)
-  check('没给路径：问要听哪个文件', await throwsWith(() => executeHear({ args: {} }), '本地音频路径'))
+  check('没给路径也没字节：问要听什么', await throwsWith(() => executeHear({ args: {} }), '本地音频路径'))
   check('文件不存在：明说哪个找不到', await throwsWith(() => executeHear({ args: { path: path.join(dir, 'nope.wav') } }), '找不到这个文件'))
   check('没有识别服务：指向要装的那个包', await throwsWith(
     () => executeHear({ args: { path: anyFile }, getSpeech: () => null }), '语音识别服务'))
+  check('上传空 base64：说录音是空的', await throwsWith(
+    () => executeHear({ args: { audio_base64: '' }, getSpeech: () => ({}) }), '本地音频路径'))
+  check('上传有字节但没服务：仍指向识别包', await throwsWith(
+    () => executeHear({ args: { audio_base64: wav.toString('base64'), format: 'wav' }, getSpeech: () => null }), '语音识别服务'))
 }
 
 // ================================================================ 出声
@@ -81,6 +85,23 @@ const fakeFetch = (body) => async () => ({
   const html = Buffer.from('<html>502</html>')
   check('嗓子回错误页：不落盘当成功', await throwsWith(
     () => executeSay({ db, agentId: 'a1', args: { text: '在' }, fetchImpl: fakeFetch(html) }), '不是音频'))
+}
+
+// ================================================================ 麦说完 → 自动念窗口
+{
+  markVoiceExpect('s-mic')
+  check('刚用过麦：还能领一次自动念', takeVoiceExpect('s-mic') === true)
+  check('领过就没了', takeVoiceExpect('s-mic') === false)
+  rememberAssistantReply('s-mic', '我在呢')
+  check('上一句还记着（自动念用）', lastAssistantReply('s-mic').text === '我在呢')
+  const cfg = voiceConfigOf({})
+  check('嗓子默认还是微软', cfg.ttsProvider === 'azure')
+  saveConfig(db, 'a1', { 'voice.mic.mode': 'open', 'voice.reply.mode': 'off' })
+  const { getConfig } = await import('../src/modules/actions/channels.js')
+  const c = getConfig(db, 'a1')
+  check('设置能切持续听 + 不自动念', c['voice.mic.mode'] === 'open' && c['voice.reply.mode'] === 'off', c)
+  saveConfig(db, 'a1', { 'voice.reply.mode': 'click' })
+  check('旧的点念读成关', getConfig(db, 'a1')['voice.reply.mode'] === 'off')
 }
 
 try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 删不掉不影响判定 */ }

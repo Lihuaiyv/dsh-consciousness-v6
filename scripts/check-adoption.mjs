@@ -44,6 +44,18 @@ const RULES = [
     allow: ['src/parts/mouth/index.js', 'src/parts/mouth/providers.js', 'src/parts/mouth/format.js'],
     test: (line) => /\b(?:synthesizeTts|sniffAudioFormat|buildAzureSsml)\s*\(/.test(line),
   },
+  {
+    part: '主动开口',
+    desc: '开口判断只有一处：别处调零件导出的 decideSpeak；decideSpeak( 只许在 parts/speak/ 里出现',
+    allow: ['src/parts/speak/judge.js', 'src/parts/speak/index.js'],
+    test: (line) => /\bdecideSpeak\s*\(/.test(line),
+  },
+  {
+    part: '主动开口',
+    desc: '开口事由只有一处：proactiveTriggerOf( 只许在 parts/speak/ 里出现',
+    allow: ['src/parts/speak/trigger.js', 'src/parts/speak/index.js'],
+    test: (line) => /\bproactiveTriggerOf\s*\(/.test(line),
+  },
 ]
 
 const SKIP_DIRS = new Set(['node_modules', '_回收站'])
