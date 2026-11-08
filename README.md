@@ -21,6 +21,23 @@
 3. `git add -A && git commit -m "一句中文"`；要异地备份就 `git push`。
    不要再建 `*.bak` 或整目录副本——git 已经有历史了。
 
+## 搬家（换机器 / 重装）
+
+别手工列清单，三条命令：
+
+```bash
+npm run move:check     # 搬之前体检；有红的先修，别搬
+npm run move:export    # 打包到桌面「搬家包\」（--lean 只带库和配置，不带会话/附件）
+# 到新机器：把整个文件夹拷过去，双击「一键恢复.cmd」
+```
+
+包里是仓库工作树 + git 全历史 + 一致性库快照 + 会话/附件 + profile 配置 + 同伴插件；
+不带 `node_modules`、缓存、NapCat 本体。恢复脚本会逐文件校验 sha256、先备份旧目录，
+再按新机器重写 profile 与 storages 里的绝对路径，最后建好桌面 junction。
+
+细则、这次修掉的断线、演练记录：见
+[搬家-一键迁移-2026-11-08.md](docs/搬家-一键迁移-2026-11-08.md)。
+
 ## 数据
 
 `~/.dsh/consciousness/app.db`（node:sqlite + FTS5，schema 11，含 `algo_bindings`、`affect_user_read`、`action_config`、`research_seen`、`research_runs`）。
