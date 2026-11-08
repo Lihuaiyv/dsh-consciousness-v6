@@ -476,10 +476,14 @@ export async function runNightly(db, aid, opt = {}) {
   // skipped 的步骤不算失败：没材料/没模型/阈值没到，是正常跳过，不是夜巡坏了
   const ok = steps.every((s) => s.ok !== false || !!s.skipped)
   const ms = Date.now() - t0
+  // 步骤日志别截断：以前这行是 JSON.stringify(steps).slice(0, 2000)，
+  // 三十几步里日记、人格扫描那几个对象一大，JSON 就在中间被砍断——
+  // 后面 self_* 那些步骤整段消失，而且残缺的 JSON 解析不了，看日志的人只会以为「这轮什么都没跑」。
+  // 一天一条、几十 KB，留着完整原文比省这点空间值。
   try {
     db.prepare(`INSERT INTO consolidation_log(id,agent_id,day,at,steps,ok,ms) VALUES(?,?,?,?,?,?,?)
       ON CONFLICT(agent_id,day) DO UPDATE SET at=excluded.at, steps=excluded.steps, ok=excluded.ok, ms=excluded.ms`)
-      .run(nid('csl_'), aid, day, now(), JSON.stringify(steps).slice(0, 2000), ok ? 1 : 0, ms)
+      .run(nid('csl_'), aid, day, now(), JSON.stringify(steps), ok ? 1 : 0, ms)
   } catch { /* 记账失败不影响巩固结果 */ }
 
   return { day, skipped: false, steps, ok, ms, episodes, late, diary_day: diary ? diary.day : null }

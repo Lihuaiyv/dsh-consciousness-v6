@@ -57,6 +57,11 @@ const yDay = localDay(new Date(Date.now() - 86400000))
   const dstep = out.steps.find((s) => s.step === 'diary')
   check('日记来源是模型', dstep.source === 'model', dstep)
   check('记了账', db.prepare('SELECT COUNT(*) n FROM consolidation_log WHERE agent_id=? AND day=?').get(aid, yDay).n === 1)
+  const logged = db.prepare('SELECT steps FROM consolidation_log WHERE agent_id=? AND day=?').get(aid, yDay)
+  let parsed = null
+  try { parsed = JSON.parse(logged.steps) } catch { parsed = null }
+  check('步骤日志能完整解析（以前被截到 2000 字，JSON 会断）', Array.isArray(parsed) && parsed.length >= 10, parsed ? parsed.length : String(logged.steps).slice(0, 80))
+  check('排在最后的步骤也在', Array.isArray(parsed) && parsed.some((s) => s.step === 'self_residue'), Array.isArray(parsed) ? parsed.map((s) => s.step).slice(-4) : null)
   check('没有失败步骤', out.ok === true, out.steps)
 }
 
