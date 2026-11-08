@@ -27,6 +27,9 @@ const opt = (name, fallback) => {
 
 const R = repoRoot()
 const H = home()
+const RT = path.resolve(R, '..', 'runtime')
+// 数据可能已经收进插件目录（runtime\），有就优先用那边，别再读 ~/.dsh 的旧位置
+const dataPath = (n) => { const rt = path.join(RT, n); return fs.existsSync(rt) ? rt : path.join(H, n) }
 const LEAN = has('--lean')
 const WITH_BACKUPS = has('--with-backups')
 const NO_PLUGINS = has('--no-plugins')
@@ -204,7 +207,7 @@ console.log('  app.db ' + (sizeOf(dbOut) / 1024 / 1024).toFixed(1) + ' MB，校�
 // ── 3. 其余运行数据 ──────────────────────────────────────────────────
 console.log('\n[3/6] 运行数据')
 // consciousness 下除库和备份之外的东西（文档、故事、画、研究）
-const conExtra = copyDir(path.join(H, 'consciousness'), conOut, (src) => {
+const conExtra = copyDir(dataPath('consciousness'), conOut, (src) => {
   const base = path.basename(src)
   if (base === 'app.db' || base.startsWith('app.db.')) return false
   if (!WITH_BACKUPS && base === 'backups') return false
@@ -214,7 +217,7 @@ console.log('  consciousness 其它 ' + conExtra + ' 个文件')
 
 const small = ['memory', 'skills', 'storages', 'xiaoxi-heart']
 let smallN = 0
-for (const d of small) smallN += copyDir(path.join(H, d), path.join(dataDir, d))
+for (const d of small) smallN += copyDir(dataPath(d), path.join(dataDir, d))
 // 根级小文件：密钥、匿名 id、用量
 for (const f of ['.credentials.yaml', '.anonymous-user-id', '.dshw-size.json', '.dshw-usage.json']) {
   const src = path.join(H, f)
@@ -236,7 +239,7 @@ if (!LEAN) {
 }
 
 // QQ 桥的运行数据（会话映射、记忆、图片索引），不带走日志和探针
-const qqN = copyDir(path.join(H, 'qq-bridge'), path.join(dataDir, 'qq-bridge'))
+const qqN = copyDir(dataPath('qq-bridge'), path.join(dataDir, 'qq-bridge'))
 if (qqN) console.log('  qq-bridge ' + qqN + ' 个文件')
 
 // NapCat 只带配置，不带 346MB 本体

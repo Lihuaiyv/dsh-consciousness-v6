@@ -22,9 +22,14 @@ export function home() {
   return env && env.trim() ? env.trim() : path.join(os.homedir(), '.dsh')
 }
 
-/** 数据收进插件目录后，库在这里：<plugins>/runtime/consciousness/app.db */
+/** 数据收进插件目录后，库在这里：<plugins>/runtime/consciousness/app.db
+ *  注意：插件是通过 profile 里的 junction 被加载的，import.meta.url 会是
+ *  C:\Users\...\node_modules\dsh-consciousness-v6\src\paths.js，
+ *  直接拿它算 '..' 会落到 node_modules 下面。所以先 realpath 到真身。 */
 export function runtimeDbPath() {
-  return path.resolve(repoRoot(), '..', 'runtime', 'consciousness', 'app.db')
+  let real = repoRoot()
+  try { real = fs.realpathSync(real) } catch { /* 拿不到真身就退回原路径 */ }
+  return path.resolve(real, '..', 'runtime', 'consciousness', 'app.db')
 }
 
 /**
