@@ -26,6 +26,9 @@ function mockCtx(opts = {}) {
     tools: [], guards: [], commands: [], disposed: 0,
   }
   const ctx = {}
+  if (opts.set !== false) {
+    ctx.set = (name, value) => { ctx[name] = value }
+  }
 
   if (opts.on !== false) {
     ctx.on = (name, fn) => {
@@ -99,6 +102,7 @@ function goodSpec() {
       output: { schema: { type: 'object', properties: { card: { type: 'string' } } }, render: () => [{ type: 'text', text: 'x' }] },
       async execute() { return { card: '' } },
     }],
+    services: { voiceIn: { transcribe() {} }, voiceOut: { speak() {} } },
     toolGuards: [() => undefined],
     commands: [{
       name: 'whois',
@@ -113,12 +117,12 @@ const seam = (report, id) => report.seams.find((s) => s.seam === id)
 
 console.log('宿主契约自检（mock 宿主，不需要 DSH / 数据库）')
 
-check('六个接缝都 ok 时 status=ok', () => {
+check('七个接缝都 ok 时 status=ok', () => {
   const { ctx, seen } = mockCtx()
   const rep = createHost().install(ctx, goodSpec())
   assert.equal(rep.status, 'ok')
-  assert.equal(rep.ok, 6)
-  assert.equal(rep.attempted, 6)
+  assert.equal(rep.ok, 7)
+  assert.equal(rep.attempted, 7)
   assert.equal(seen.sections.length, 1)
   assert.equal(seen.routes.length, 3)
   assert.equal(seen.listeners.size, 2)
@@ -178,7 +182,7 @@ check('没有 ctx.on → 两个监听接缝都是 absent', () => {
   assert.equal(seam(rep, 'agent/pre-step').level, 'absent')
   assert.equal(seam(rep, 'session/event').level, 'absent')
   assert.equal(rep.status, 'partial')
-  assert.equal(rep.ok, 4)
+  assert.equal(rep.ok, 5)
 })
 
 check('服务直接挂在 ctx 上（无 inject）→ 走直连路径也能装上', () => {
@@ -202,13 +206,13 @@ check('mount 不返回 disposer → 仍算 ok，只是标注 disposable=false', 
   assert.match(s.contract, /disposable=false/)
 })
 
-check('空 ctx + 空配置 → 六个 skipped，status=off', () => {
+check('空 ctx + 空配置 → 七个 skipped，status=off', () => {
   const rep = createHost().install({}, {})
   assert.equal(rep.status, 'off')
   assert.ok(SEAMS.every((id) => seam(rep, id).level === 'skipped'))
 })
 
-check('空 ctx + 完整配置 → 六个都装不上，status=broken', () => {
+check('空 ctx + 完整配置 → 七个都装不上，status=broken', () => {
   const rep = createHost().install({}, goodSpec())
   assert.equal(rep.status, 'broken')
   assert.equal(rep.ok, 0)

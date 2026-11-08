@@ -30,7 +30,7 @@ import { HOST_EVENTS } from './events.js'
 export { HOST_EVENTS, messageText, readEvent } from './events.js'
 
 /** 六个接缝的 id，顺序即报告顺序。 */
-export const SEAMS = Object.freeze(['systemPrompt', HOST_EVENTS.preStep, 'session/event', 'webServer', 'tools', 'commands'])
+export const SEAMS = Object.freeze(['systemPrompt', HOST_EVENTS.preStep, 'session/event', 'webServer', 'services', 'tools', 'commands'])
 
 function errorText(e) {
   return String((e && e.message) || e || 'unknown error')
@@ -330,6 +330,39 @@ export function createHost(options = {}) {
     }
   }
 
+  /**
+   * 把服务挂到宿主上，让别的插件 `ctx.get('voiceIn')` 能拿到。
+   *
+   * 为什么不是 import 对方：两个插件是两个包，跨包读文件等于把别人的内部路径当契约
+   * （INV10）。接缝只能是宿主服务——对方只认名字，不认我们的目录结构。
+   *
+   * cordis 两代写法都试：`ctx.set(name, value)` → `ctx.provide(name)` + 赋值。
+   * 挂不上只记一条 degraded，不抛：少一个出口，不该拖垮本插件。
+   */
+  function installServices(ctx, spec) {
+    // 没声明就是跳过，不是缺席——不然报告里永远缺一项、status 永远是 partial。
+    if (!spec || typeof spec !== 'object') return mark('services', 'skipped', '没声明服务')
+    const names = Object.keys(spec).filter((n) => spec[n] != null)
+    if (!names.length) return mark('services', 'absent', '服务是空的')
+    const mounted = []
+    const missed = []
+    for (const name of names) {
+      const value = spec[name]
+      let ok = false
+      if (typeof ctx.set === 'function') {
+        try { ctx.set(name, value); ok = true } catch { /* 换下一种写法 */ }
+      }
+      if (!ok && typeof ctx.provide === 'function') {
+        try { ctx.provide(name); ctx[name] = value; ok = true } catch { /* 记失败 */ }
+      }
+      if (ok) mounted.push(name)
+      else missed.push(name)
+    }
+    if (!missed.length) return mark('services', 'ok', '挂上 ' + mounted.join(' / '))
+    return mark('services', mounted.length ? 'degraded' : 'absent',
+      '挂上 ' + (mounted.join(' / ') || '无') + '；没挂上 ' + missed.join(' / '))
+  }
+
   // ---------------- 对外 ----------------
 
   function install(ctx, spec = {}) {
@@ -341,6 +374,7 @@ export function createHost(options = {}) {
     safe(HOST_EVENTS.preStep, () => installListener(HOST_EVENTS.preStep, ctx, spec.preStep, true))
     safe('session/event', () => installListener('session/event', ctx, spec.sessionEvent, false))
     safe('webServer', () => installWebServer(ctx, spec.webServer))
+    safe('services', () => installServices(ctx, spec.services))
     safe('tools', () => installRegistry('tools', ctx, spec.tools, spec.toolGuards, validateTool, 'tools'))
     safe('commands', () => installRegistry('commands', ctx, spec.commands, null, validateCommand, 'commands'))
     return report()

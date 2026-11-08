@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node test/run-tests.mjs && node test/voice-tools.test.mjs && node test/acoustics.test.mjs && node test/voice-baseline.test.mjs",
+    "test": "node test/run-tests.mjs && node test/voice-tools.test.mjs && node test/acoustics.test.mjs && node test/voice-baseline.test.mjs && node test/voice-service.test.mjs",
     "backup": "node scripts/backup-now.mjs",
     "test:selfhood": "node test/selfhood-fixes.test.mjs && node test/selfhood-life.test.mjs && node test/selfhood-share.test.mjs && node test/selfhood-author.test.mjs && node test/selfhood-reap.test.mjs",
     "test:actions": "node test/actions.test.mjs",

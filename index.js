@@ -85,8 +85,9 @@ export { autoBindQQSession }
 import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/affect.js'
 import { addMemory, setFeelProvider } from './src/modules/memory.js'
 import { openEmotion } from './src/modules/emotion_event.js'
-import { createActionTools, attachActionDeps, executeBrowse } from './src/modules/actions/index.js'
+import { createActionTools, attachActionDeps, executeBrowse, getConfig as getActionConfig } from './src/modules/actions/index.js'
 import { maybeSpeakReply, takeVoiceShape } from './src/modules/actions/voice.js'
+import { createVoiceServices } from './src/voice_service.js'
 import { lifeTick, lifeLine } from './src/modules/life.js'
 import { reappraiseLine } from './src/modules/reappraise.js'
 import { canSayOnce } from './src/modules/sayonce.js'
@@ -2172,6 +2173,17 @@ function hostSpec() {
         findSessionsFile: () => findQQSessionsFile(),
       }),
     ],
+
+    // 7) 对外服务：别的插件（QQ 桥）按名字拿「听」和「说」，不 import 我们的文件。
+    // 名字定死了就不许边写边改——跨包契约一改两边都要动。
+    services: createVoiceServices({
+      getSpeech: () => optionalService('speechToText'),
+      getConfig: () => {
+        const d = ensureDb()
+        const aid = activeAgentId(d)
+        return aid ? getActionConfig(d, aid) : {}
+      },
+    }),
   }
 }
 

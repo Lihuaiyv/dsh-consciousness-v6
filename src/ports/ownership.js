@@ -330,6 +330,7 @@ export const OWNERSHIP = {
     files: [
       'features.js', 'modules/eval.js', 'modules/proxies.js', 'modules/browse.js', 'push.js',
       'modules/heartnote.js', 'modules/selfnote.js', 'host/workers.js', 'host/session_agents.js',
+      'voice_service.js',
     ],
     tables: [
       'changes', 'rule_versions', 'metric_samples', 'conflicts', 'proposals',
