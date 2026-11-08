@@ -1,5 +1,6 @@
+import { dbPath as _dbp } from './src/paths.js'
 ﻿import { DatabaseSync } from 'node:sqlite'
-const db = new DatabaseSync('C:/Users/ygys1/.dsh/consciousness/app.db', { readOnly: true })
+const db = new DatabaseSync(_dbp(), { readOnly: true })
 const aid = db.prepare('SELECT id FROM agents WHERE name=?').get('小汐').id
 const since = new Date(Date.now() - 90 * 60000).toISOString()
 const evs = db.prepare("SELECT created_at, payload FROM events WHERE agent_id=? AND type IN ('memory.judge.gate','memory.judge.superseded') AND created_at>=? ORDER BY created_at").all(aid, since)

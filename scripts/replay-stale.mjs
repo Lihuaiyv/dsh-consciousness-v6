@@ -26,12 +26,13 @@ import { DatabaseSync } from 'node:sqlite'
 import { stampRow } from '../src/modules/passport.js'
 import { searchFacts } from '../src/modules/retrieve.js'
 import { packMemoryBlock } from '../index.js'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def
 }
-const srcPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
+const srcPath = arg('db', defaultDbPath())
 const agentName = arg('agent', '小汐')
 const limit = Number(arg('limit', '400')) || 400
 const today = new Date().toISOString().slice(0, 10)

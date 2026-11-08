@@ -1,5 +1,6 @@
+import { dbPath as _dbp } from './src/paths.js'
 ﻿import { DatabaseSync } from 'node:sqlite'
-const db = new DatabaseSync('C:/Users/ygys1/.dsh/consciousness/app.db', { readOnly: true })
+const db = new DatabaseSync(_dbp(), { readOnly: true })
 const aid = db.prepare('SELECT id FROM agents WHERE name=?').get('小汐').id
 const cnt = (sql, ...a) => { try { return db.prepare(sql).get(...a).n } catch { return -1 } }
 console.log('--- open_loops 现状 ---')

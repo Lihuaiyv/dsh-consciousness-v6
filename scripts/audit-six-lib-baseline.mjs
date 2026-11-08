@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { stampRow, passportLine, topicOfFactKey, related, isStale } from '../src/modules/passport.js'
 import { isStalePair } from '../src/modules/stale_pair.js'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name)
@@ -20,7 +21,7 @@ function arg(name, def) {
 }
 const quiet = process.argv.includes('--quiet')
 
-const dbPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
+const dbPath = arg('db', defaultDbPath())
 const agentName = arg('agent', '小汐')
 const today = new Date().toISOString().slice(0, 10)
 const jsonOut = arg('json', 'docs/记忆时态-基线-' + today + '.json')

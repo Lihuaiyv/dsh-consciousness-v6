@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
-const DB = (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db')
+const DB = defaultDbPath()
 const TEST = ['qq:p:222', 'qq:p:7777', 'qq:p:90003']
 const JUNK_MEM = ['mem_8f88cccfbf', 'mem_74479c314f', 'mem_596a4a852a', 'mem_1b0ee406b0']
 

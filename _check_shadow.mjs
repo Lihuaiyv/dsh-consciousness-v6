@@ -1,5 +1,6 @@
+import { dbPath as _dbp } from './src/paths.js'
 ﻿import { DatabaseSync } from 'node:sqlite'
-const db = new DatabaseSync('C:/Users/ygys1/.dsh/consciousness/app.db', { readOnly: true })
+const db = new DatabaseSync(_dbp(), { readOnly: true })
 const aid = db.prepare('SELECT id FROM agents WHERE name=?').get('小汐').id
 for (const t of ['memory.judge.gate','memory.judge.superseded','memory.stale_pair_seen','memory.stale_superseded']) {
   const n = db.prepare('SELECT COUNT(*) n FROM events WHERE agent_id=? AND type=?').get(aid, t).n

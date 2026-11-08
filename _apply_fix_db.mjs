@@ -1,5 +1,6 @@
+import { dbPath as _dbp } from './src/paths.js'
 ﻿import { DatabaseSync } from 'node:sqlite'
-const db = new DatabaseSync('C:/Users/ygys1/.dsh/consciousness/app.db')
+const db = new DatabaseSync(_dbp())
 const aid = db.prepare('SELECT id FROM agents WHERE name=?').get('小汐').id
 const now = new Date().toISOString()
 // 1) 超时参数显式写 6000：插件每次 getParam 读库，立刻生效，不用重启

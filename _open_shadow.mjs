@@ -1,5 +1,6 @@
+import { dbPath as _dbp } from './src/paths.js'
 ﻿import { DatabaseSync } from 'node:sqlite'
-const dbPath = 'C:/Users/ygys1/.dsh/consciousness/app.db'
+const dbPath = _dbp()
 const db = new DatabaseSync(dbPath)
 const aid = db.prepare('SELECT id FROM agents WHERE name=?').get('小汐').id
 const now = new Date().toISOString()

@@ -8,13 +8,14 @@
  */
 import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def
 }
 
-const dbPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
+const dbPath = arg('db', defaultDbPath())
 const agentName = arg('agent', '小汐')
 const jsonOut = arg('json', '')
 

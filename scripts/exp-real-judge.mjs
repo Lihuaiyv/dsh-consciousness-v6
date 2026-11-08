@@ -1,9 +1,10 @@
 ﻿import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { structureCandidates, pairKey } from '../src/modules/pair_judge.js'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
 function arg(name, def) { const i = process.argv.indexOf('--' + name); return i >= 0 ? process.argv[i + 1] : def }
-const dbPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
+const dbPath = arg('db', defaultDbPath())
 const n = Number(arg('n', '10')) || 10
 const days = Number(arg('days', '7')) || 7
 const out = arg('out', 'docs/记忆时态-真模型判定-输入.json')

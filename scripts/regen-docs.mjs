@@ -2,8 +2,9 @@
 // 用法: node scripts/regen-docs.mjs [agentId]
 import { DatabaseSync } from 'node:sqlite'
 import { exportDocs, getDocsRoot } from '../src/modules/vault.js'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
-const DB = process.env.DSH_DB || (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db')
+const DB = process.env.DSH_DB || dbPath()
 const db = new DatabaseSync(DB, { readOnly: true })
 
 const aid = process.argv[2] || db.prepare(

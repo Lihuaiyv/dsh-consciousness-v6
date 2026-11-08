@@ -1084,7 +1084,7 @@ let styleLines = []
   } catch { kaoLine = '' }
 
   // 表情包（只在 QQ）：图库按情绪分好组，发图走 qq_face_send 传 tag（细节见 零件-发信）。
-  // 鲸鱼娘那套已经挪到 C:\Users\ygys1\Pictures\dsh-stickers\whale —— 别再用 stickers/whale：
+  // 鲸鱼娘那套已经挪到 「用户图片目录 / dsh-stickers / whale」（用 src/paths.js 的 stickersDir() 取） —— 别再用 stickers/whale：
   // 那是相对 cwd 的路径，而 cwd 在 .dsh 下，外发闸会把 .dsh 里的文件一律拦掉，永远发不出去。
   let stickerLine = ''
   if (/^qq:/i.test(String(conversationId || ''))) {

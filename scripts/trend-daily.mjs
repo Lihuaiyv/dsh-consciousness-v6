@@ -10,9 +10,10 @@
  * 明天查的时候，一条命令就能分清：是方向翻了，还是闸漏了。
  */
 import { DatabaseSync } from 'node:sqlite'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
 const DB = process.env.DSHC_DB
-  || (process.env.DSH_HOME ? process.env.DSH_HOME.replace(/\\/g, '/') + '/consciousness/app.db' : (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
+  || (process.env.DSH_HOME ? process.env.DSH_HOME.replace(/\\/g, '/') + '/consciousness/app.db' : dbPath())
 const days = Math.max(1, Math.min(30, Number(process.argv[2]) || 7))
 const db = new DatabaseSync(DB)
 const DAY = 86400000

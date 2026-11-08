@@ -8,13 +8,14 @@
 import { DatabaseSync } from 'node:sqlite'
 import { stampRow, topicOfFactKey, related, bigrams } from '../src/modules/passport.js'
 import { model } from '../src/kernel.js'
+import { dbPath as defaultDbPath } from '../src/paths.js'
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name)
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def
 }
 const N = Number(arg('n', '40')) || 40
-const dbPath = arg('db', (process.env.DSH_DB || (process.env.DSH_HOME || 'C:/Users/l/.dsh').replace(/\\/g, '/') + '/consciousness/app.db'))
+const dbPath = arg('db', defaultDbPath())
 
 const db = new DatabaseSync(dbPath, { readOnly: true })
 const aid = db.prepare('SELECT id FROM agents WHERE name=?').get('小汐').id
