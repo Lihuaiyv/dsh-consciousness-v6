@@ -16,7 +16,7 @@
 
 ### 收工前三件事
 
-1. `node test/run-tests.mjs` —— 全绿（当前 **536/536**）。
+1. `node test/run-tests.mjs` —— 全绿（当前 **566/566**）。
 2. `npm run check:arch` —— INV9 / 参数 / 归属 / 依赖图 / 宿主契约。
 3. `git add -A && git commit -m "一句中文"`；要异地备份就 `git push`。
    不要再建 `*.bak` 或整目录副本——git 已经有历史了。
@@ -73,7 +73,7 @@ POST /dsh-consciousness/api
 ## 测试
 
 ```bash
-node test/run-tests.mjs     # 536/536
+node test/run-tests.mjs     # 566/566
 node scripts/render-audit.mjs  # 40 个页面组合渲染审计（含设置页分组 / 参数行）
 npm run check:host          # 宿主契约自检：19 条 mock 宿主用例，不启 DSH
 npm run check:arch          # INV9 / 参数 / 归属 / 依赖图 / 宿主契约
