@@ -2491,5 +2491,12 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
     packed)
 }
 
+// 路径闸：代码里不许写死用户目录（2026-11-08 重装，十几个脚本静默指错库，这一条就是防复发）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-paths.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 })
+  check('路径闸：没有写死的绝对路径', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
 console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)
 if (fail.length) { console.log('失败:', fail); process.exit(1) }
