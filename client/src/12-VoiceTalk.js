@@ -35,21 +35,30 @@
           try {
             const j = await fetch('/dsh-consciousness/voice-flash', { cache: 'no-store' }).then((r) => r.json())
             const at = Number(j && j.at) || 0
+            const until = Number(j && j.until) || 0
             if (at > last) {
               last = at
               el.style.opacity = '1'
-              // 一次柔和的呼吸：慢慢亮、慢慢落，不硬闪
-              try {
-                el.animate(
-                  [
-                    { boxShadow: '0 0 0 0 rgba(255,255,255,.4)', transform: 'scale(1)', opacity: 0.85 },
-                    { boxShadow: '0 0 0 11px rgba(255,255,255,0)', transform: 'scale(1.85)', opacity: 1 },
-                    { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)', opacity: 0.85 },
-                  ],
-                  { duration: 1800, easing: 'ease-in-out' },
-                )
-              } catch { /* 老浏览器不支持 animate 就算了 */ }
-              setTimeout(() => { if (alive) el.style.opacity = '.6' }, 1800)
+              // 先轻闪两下，告诉眼睛「我要开口了」
+              for (let i = 0; i < 2; i++) {
+                setTimeout(() => {
+                  if (!alive) return
+                  try {
+                    el.animate(
+                      [
+                        { boxShadow: '0 0 0 0 rgba(255,255,255,.5)', transform: 'scale(1)' },
+                        { boxShadow: '0 0 0 12px rgba(255,255,255,0)', transform: 'scale(1.9)' },
+                        { boxShadow: '0 0 0 0 rgba(255,255,255,0)', transform: 'scale(1)' },
+                      ],
+                      { duration: 520, easing: 'ease-out' },
+                    )
+                  } catch { /* 老浏览器不支持 animate 就算了 */ }
+                }, i * 300)
+              }
+              // 然后一直亮着，等这句话说完再落回去
+              const holdMs = Math.max(900, until - Date.now())
+              setTimeout(() => { if (alive) el.style.opacity = '.6' }, holdMs)
+            }
             }
           } catch { /* 接口还没起来就静静待着 */ }
         }

@@ -2141,7 +2141,7 @@ function hostSpec() {
         kind: 'exact',
         path: '/dsh-consciousness/voice-flash',
         handler: (_req, res) => {
-          sendJson(res, 200, { at: lastVoiceFlash() })
+          sendJson(res, 200, lastVoiceFlash())
         },
       })
       return () => {

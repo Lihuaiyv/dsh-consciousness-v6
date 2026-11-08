@@ -108,8 +108,13 @@ export async function executeHear({ args = {}, getSpeech, db, agentId } = {}) {
 
 /** 刚刚开口的时间戳：网页右下角那颗光点靠它知道该亮了。 */
 let voiceFlashAt = 0
-export function markVoiceFlash() { voiceFlashAt = Date.now() }
-export function lastVoiceFlash() { return voiceFlashAt }
+let voiceFlashUntil = 0
+/** 开口了：记下起点和预计说完的时刻（按字数估），网页里的光点靠它决定亮多久。 */
+export function markVoiceFlash(durationMs = 0) {
+  voiceFlashAt = Date.now()
+  voiceFlashUntil = voiceFlashAt + Math.max(0, Number(durationMs) || 0)
+}
+export function lastVoiceFlash() { return { at: voiceFlashAt, until: voiceFlashUntil } }
 
 /** 麦克风说完后，这段会话在窗口内回完话要自动念（见 maybeSpeakReply）。 */
 const voiceExpectUntil = new Map()
@@ -263,7 +268,8 @@ export async function executeSay({ db, agentId, args = {}, fetchImpl } = {}) {
   if (text.length > 600) throw new Error('一口气念不了这么长（最多 600 字），分两段吧')
   const cfg = db && agentId ? getConfig(db, agentId) : {}
   // 先给眼睛一个信号，再合成出声：视觉先到，声音后到，不吓人。
-  markVoiceFlash()
+  // 按字数估这一句大概说多久，光点就一直亮到那时候。
+  markVoiceFlash((String(text || '').length / 4.5) * 1000 + 3000)
   const out = await synthesizeVoice(voiceConfigOf(cfg), text, { fetchImpl })
   const file = path.join(os.tmpdir(), 'dsh-voice-' + Date.now().toString(36) + '.' + out.format)
   fs.writeFileSync(file, out.audio)
