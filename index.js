@@ -35,6 +35,7 @@ import { presenceLine, webConversationId } from './src/modules/presence.js'
 import { selfNoteLines as notesForPrompt } from './src/modules/selfnote.js'
 import { heartNoteTick, heartNoteLines, heartNoteWakeTick } from './src/modules/heartnote.js'
 import { memoryTag, ageDays } from './src/modules/memory_tag.js'
+import { rememberBlock } from './src/modules/confluence.js'
 import { fadeText, shouldFade, rehearseAdjustedAge } from './src/modules/memory_fade.js'
 import { detectMode, resolveMode, styleInjection, kaomojiLine } from './src/modules/style_mode.js'
 import { auditStore } from './src/modules/ops.js'
@@ -86,7 +87,7 @@ import {
 export { autoBindQQSession }
 import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/affect.js'
 import { addMemory, setFeelProvider } from './src/modules/memory.js'
-import { openEmotion } from './src/modules/emotion_event.js'
+import { openEmotion, shouldSurfaceEmotion, surfaceCounts } from './src/modules/emotion_event.js'
 import { createActionTools, attachActionDeps, executeBrowse, getConfig as getActionConfig } from './src/modules/actions/index.js'
 import { maybeSpeakReply, takeVoiceShape, lastVoiceFlash } from './src/modules/actions/voice.js'
 import { createVoiceServices } from './src/voice_service.js'
@@ -575,8 +576,11 @@ let lastJudgeAt = 0
 const spontaneousCache = new Map()
 /** 感受快照的探针去重：同一条样本只记一次，不然每轮都刷一条 event。 */
 const snapProbeSeen = new Set()
-/* 「还挂着的那件事」冒过一次就记下来：aid:episode:day → 时间。一天最多一次。 */
+/* 「还挂着的那件事」真的留在提示词里之后才记：aid:episode → 时间。这辈子只冒一次，重启以库里的 kept 账为准。 */
 const eventSurfacedDay = new Map()
+
+/** 测试用：清掉进程内的「已经冒过」。库里的账不动。 */
+export function resetEventSurfaceMemory() { eventSurfacedDay.clear() }
 
 /** 主动消息真的进了注入文本才标 delivered；没进就留在 pending，下一轮还能说。 */
 function markProactiveDelivered(db, aid, id, at = Date.now()) {
@@ -732,8 +736,6 @@ let mbtiLine = ''
   } catch { /* 鑰佸簱娌℃湁 v3 琛?*/ }
   const drive = db.prepare('SELECT * FROM drive_state WHERE agent_id=?').get(aid)
   const taboos = db.prepare('SELECT text,level FROM taboos WHERE agent_id=?').all(aid)
-  let vals = []
-  try { vals = db.prepare('SELECT key,weight FROM persona_values WHERE agent_id=? ORDER BY weight DESC LIMIT 3').all(aid) } catch { /* 老库还没有价值观 */ }
   // 三观：世界观 / 人生观 / 价值观三行；开关关闭时是旧维度折算的那三行
   let worldLine = ''
   let lifeLine = ''
@@ -828,35 +830,28 @@ let bridgeText = ''
   } catch { spontaneousLine = ''; spontaneousText = ''; spontRow = null }
   if (stranger) { spontaneousLine = ''; spontaneousText = ''; spontRow = null }
 
-  /* 还挂着的那件事：会自己冒上来一次（2026-11-07）。
-     规矩三条：
-       1) 只有那条原话本身是人话时才浮——机器消息不念（跟快照同一道闸）。
-       2) 一天最多一次，同一件事不重复浮；记在内存里，重启也不重来（同一个进程内）。
-       3) 浮上来的是那件事本身，不是「你现在残留 0.3」——不带任何数。 */
+  /* 还挂着的那件事：会自己冒上来（2026-11-07）。
+     规矩：
+       1) 只有那条原话本身是人话时才浮——机器消息不念。
+       2) 浮上来的是那件事本身，不带任何数。
+       3) 强度 ≥ 0.35、至少过了 15 分钟、这件事真留住过就不再冒、一天最多 3 次。
+       4) 这里只选句子。账要等预算裁完、这句话还在，才写（见文末）。 */
+  let eventPick = null
   try {
     if (!stranger && !spontaneousLine) {
       const live = openEmotion(db, aid)
       const cause = live && live.cause ? String(live.cause).trim() : ''
       const machine = /<[a-z][a-z0-9_]*>|Current runtime context|Time sampled|system-reminder|Approval policy/i.test(cause)
-      if (live && cause && !machine && String(getParam(db, aid, 'affect.event.surface') || 'on') !== 'off') {
-        const day = new Date().toISOString().slice(0, 10)
-        const key = aid + ':' + live.id + ':' + day
-        if (!eventSurfacedDay.has(key)) {
-          if (eventSurfacedDay.size > 400) eventSurfacedDay.clear()
-          eventSurfacedDay.set(key, Date.now())
-          const line = oneLine(cause, 60)
-          if (line) {
-            spontaneousLine = line; spontaneousText = line; spontKind = 'event'
-            /* 落一条探针：情绪账要数「今天有几件自己浮上来了」。不写这条，账上永远是 0。 */
-            try {
-              db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(
-                'evt_' + Math.random().toString(16).slice(2, 12),
-                aid, 'affect.surface',
-                JSON.stringify({ episode_id: live.id, cause: String(line), intensity: live.intensity, phase: live.phase }),
-                now(),
-              )
-            } catch { /* 探针失败不影响提示词 */ }
-          }
+      const enabled = String(getParam(db, aid, 'affect.event.surface') || 'on') !== 'off'
+      const counts = live ? surfaceCounts(db, aid, live.id) : { keptEver: false, todayCount: 0 }
+      const key = live ? aid + ':' + live.id : ''
+      if (live && key && !eventSurfacedDay.has(key) && shouldSurfaceEmotion({
+        live, cause, machine, enabled, keptEver: counts.keptEver, todayCount: counts.todayCount,
+      })) {
+        const line = oneLine(cause, 60)
+        if (line) {
+          spontaneousLine = line; spontaneousText = line; spontKind = 'event'
+          eventPick = { id: live.id, line, intensity: live.intensity, phase: live.phase }
         }
       }
     }
@@ -891,27 +886,34 @@ const memText = recallOverride
     }
   } catch { /* 老库没有这张表 */ }
 
-  // 未解决的冲突：如果这一条已经排了问句（或刚问过），就交给上面的主动消息说，
-  // 这里不重复；只有问句没排上时才兜一句，保证「对不上」这件事不会又沉回库里。
+  // 未解决的冲突：如果这条已经排过问句（或者在发），就交给上面的主动消息那条线说，这里不再开口。
+  // 只有问句根本没排上时，才兜一句——而且只兜一次，还用第三人称写清「这是库里的记录」。
+  // 别写成「你注意到…」那种第一人称：那不是我想起来的，是替它念台词（11-08 那句噪音就是这么来的），
+  // 也不能每轮都念（问过没问过都不该反复念）。
 let conflictLine = ''
   try {
     const cf = db.prepare("SELECT * FROM conflicts WHERE agent_id=? AND state='open' ORDER BY opened_at DESC LIMIT 1").get(aid)
     const opened = cf ? Date.parse(cf.opened_at || '') : 0
     if (cf && opened > Date.now() - 2 * 86400000) {
-      const queued = db.prepare("SELECT id FROM proactive WHERE agent_id=? AND reason=? AND state='pending'").get(aid, 'conflict:' + cf.id)
-      const said = db.prepare("SELECT id FROM proactive WHERE agent_id=? AND reason=? AND delivered_at>=?")
-        .get(aid, 'conflict:' + cf.id, new Date(Date.now() - 86400000).toISOString())
-      if (!queued && !said) {
+      const asked = db.prepare("SELECT id FROM proactive WHERE agent_id=? AND reason=? LIMIT 1").get(aid, 'conflict:' + cf.id)
+      const surfaced = db.prepare("SELECT 1 FROM events WHERE agent_id=? AND type='memory.conflict_surfaced' AND payload LIKE ? LIMIT 1")
+        .get(aid, '%' + cf.id + '%')
+      if (!asked && !surfaced) {
         let ev = {}
         try { ev = JSON.parse(cf.evidence || '{}') } catch { ev = {} }
         const A = claimLine((ev.attribute && ev.attribute.sentence_a) || ev.a_text || '')
         const B = claimLine((ev.attribute && ev.attribute.sentence_b) || ev.b_text || '')
         if (A && B) {
-          conflictLine = '（你注意到一处对不上：先前「' + A + '」，后来「' + B + '」。如果自然，问一句哪个是现在的，别自己替对方挑。）'
+          conflictLine = '（记忆库里挂着一条没结的冲突，不是这会儿想到的：先前「' + A + '」，后来「' + B + '」。想问就问一句哪个是现在的；不想提就先放着。）'
+          try {
+            db.prepare('INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)')
+              .run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
+                'memory.conflict_surfaced', JSON.stringify({ conflict_id: cf.id }), new Date().toISOString())
+          } catch { /* 记不上就下次再说 */ }
         }
       }
     }
-  } catch { /* 鑰佸簱娌℃湁鍐茬獊琛?*/ }
+  } catch { /* 老库没有冲突表 */ }
 
   // 不熟的人那一侧：人格、情绪、语气、说话方式照给；日记、私有关系、主动搭话、心里挂着的坎一概不给。
   // 两边还是同一个拼装器，只是各拿各该看的那半。
@@ -1017,9 +1019,10 @@ const injectWeight = (() => {
      不是在时间线上堆新格子，是一天一次的回头。 */
   let echoFeel = null
   try {
-    if (!stranger && ownFeel && ownFeel.label) {
+    if (!stranger && ownFeel && (ownFeel.text || ownFeel.label)) {
       const echoOn = String(getParam(db, aid, 'affect.feel.echo') || 'on') !== 'off'
-      if (echoOn) echoFeel = echoFeelOf(db, aid, { label: ownFeel.label })
+      // 用上一条的原话去找「像的」，不用标签：标签是评上一轮对话得出的，常和这一句对不上。
+      if (echoOn) echoFeel = echoFeelOf(db, aid, { text: ownFeel.text, label: ownFeel.label })
     }
   } catch { echoFeel = null }
   // 收尾倾向：深夜 + 今天聊够了 + 对方没在提问。只读 chat_turns，不写状态。
@@ -1297,6 +1300,23 @@ let styleLines = []
       if (ok) consumeSurface(db, aid, spontRow)
       noteMind(db, aid, 'spontaneous', ok)
     }
+  }
+  /* 那件事的账：只有这句还在最终提示词里才写。没留住就不记，下一轮还能再试。
+     旧账没有 kept，不当成「这辈子冒过」。进程内的表只在写成功之后才占住。 */
+  if (!stranger && eventPick && kept.has('spontaneous')) {
+    try {
+      db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(
+        'evt_' + Math.random().toString(16).slice(2, 12),
+        aid, 'affect.surface',
+        JSON.stringify({
+          episode_id: eventPick.id, cause: eventPick.line, intensity: eventPick.intensity,
+          phase: eventPick.phase, kept: true,
+        }),
+        now(),
+      )
+      if (eventSurfacedDay.size > 400) eventSurfacedDay.clear()
+      eventSurfacedDay.set(aid + ':' + eventPick.id, Date.now())
+    } catch { /* 记账失败不影响提示词，下一轮还能再试 */ }
   }
   try {
     const ts = Date.now()
@@ -1813,9 +1833,13 @@ function hostSpec() {
               }
             } catch { /* 探针失败不影响提示词 */ }
             const extra = qqChannelBlock(qq)
-            return [base, extra, stateLine].filter(Boolean).join('\n\n')
+            const promptText = [base, extra, stateLine].filter(Boolean).join('\n\n')
+            try { rememberBlock(sid, promptText) } catch { /* 留底失败不影响提示词 */ }
+            return promptText
           }
-          return [base, stateLine].filter(Boolean).join('\n\n')
+          const promptText = [base, stateLine].filter(Boolean).join('\n\n')
+          try { rememberBlock(sid, promptText) } catch { /* 留底失败不影响提示词 */ }
+          return promptText
         } catch { return '' }
       },
     },
@@ -2194,6 +2218,8 @@ function hostSpec() {
         const aid = activeAgentId(d)
         return aid ? getActionConfig(d, aid) : {}
       },
+      // 系统临时目录里这份 ffmpeg 写不出文件。转码的临时文件放自己的数据目录，转完就删。
+      tmpDir: path.join(path.dirname(DB_PATH), 'tmp'),
     }),
   }
 }

@@ -197,6 +197,19 @@ w.close && w.close()
   } finally { w2.close && w2.close() }
 }
 
+// ---------- 七、按「像不像」翻，不按标签 ----------
+// label 是评上一轮对话得出的，和这一句 feel 常对不上（「胸口一松」被标成 frustrated）。
+{
+  const w3 = makeWorld()
+  try {
+    const old = new Date(Date.now() - 10 * 86400000).toISOString()
+    w3.db.prepare('INSERT INTO affect_feel(id,agent_id,at,text,label,fast,slow,total,source) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('afe_echo_2', w3.aid, old, '被问了一句，手指停在键盘边上没动，心里先沉了一下。', 'joy', 0, 0, 0, 'tool')
+    const byText = echoFeelOf(w3.db, w3.aid, { text: '手指停在键盘边上，心里沉了一下', label: 'irritated' })
+    check('按像不像翻，标签不对也能翻到', !!byText && byText.label === 'joy', byText)
+  } finally { w3.close && w3.close() }
+}
+
 console.log('')
 console.log('通过 ' + pass + ' / ' + (pass + fail))
 process.exit(fail ? 1 : 0)

@@ -13,6 +13,7 @@
  */
 import { event, getParam, nid } from '../kernel.js'
 import { localDay } from '../db.js'
+import { vectorize, cosine } from './fingerprint.js'
 
 const MAX_LEN = 80
 const r3 = (x) => Math.round((Number(x) || 0) * 1000) / 1000
@@ -587,21 +588,36 @@ export function feelLineOf(row) {
 const echoShown = new Map()
 // 三天起：原来定七天，结果 feel 从 11-04 才开始有，七天的窗口一直是空的，
 // 这功能上线两天一次都没出现过。三天够把「不是刚才」和「还没变淡」分开。
-export function echoFeelOf(db, aid, { label, at = Date.now(), minDays = 3, maxDays = 120 } = {}) {
-  if (!label) return null
+export function echoFeelOf(db, aid, { label, text, at = Date.now(), minDays = 3, maxDays = 120, sim = 0.5 } = {}) {
   const day = localDay(new Date(at))
   const key = aid + ':' + day
   if (echoShown.has(key)) return null
   const before = new Date(at - minDays * 86400000).toISOString()
   const after = new Date(at - maxDays * 86400000).toISOString()
-  let row = null
+  let rows = []
   try {
-    row = db.prepare(`SELECT at, text, label FROM affect_feel
-      WHERE agent_id=? AND label=? AND at>=? AND at<=?
+    rows = db.prepare(`SELECT at, text, label FROM affect_feel
+      WHERE agent_id=? AND at>=? AND at<=?
         AND text IS NOT NULL AND text!=''
-      ORDER BY at DESC LIMIT 1`).get(aid, label, after, before)
+      ORDER BY at DESC LIMIT 300`).all(aid, after, before)
   } catch { return null }
-  if (!row) return null
+  if (!rows.length) return null
+  /* 先按「像不像」找，别按标签：label 是上一轮评出来的，和这一句 feel 常对不上——
+     11-08 那条「看到简笔脸时胸口一松」就被标成了 frustrated。按标签翻，回头翻到的是相反的样子。 */
+  if (text) {
+    let best = null
+    let bestSim = 0
+    try {
+      const q = vectorize(String(text))
+      for (const r of rows) {
+        const s = cosine(q, vectorize(String(r.text)))
+        if (s > bestSim) { bestSim = s; best = r }
+      }
+    } catch { best = null }
+    if (best && bestSim >= sim) { echoShown.set(key, best.at); return best }
+  }
+  if (!label) return null
+  const row = rows.find((r) => r.label === label) || null
   echoShown.set(key, row.at)
   return row
 }
