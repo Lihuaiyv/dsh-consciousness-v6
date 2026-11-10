@@ -415,7 +415,7 @@ export const PARTS = [
     files: ['src/modules/confluence.js', 'src/modules/visibility.js', 'src/modules/asof.js'],
     entry: 'reconstructScene（只读重建现场包）/ runConfluence（bundle → system 段，带预算裁剪）/ buildSnapshot（截面对象）；visibility.js 提供 forgottenTurnIds，asof 出证共用同一层',
     exam: { file: 'test/confluence.test.mjs', score: '56/56', note: '窗口与 gap / 锚点 / 记忆回链与原话 / 六个状态投影 / 只读（行数与 last_decay_at 不变）/ 冷库指纹不变 / 遗忘优先（记忆与轮次与无链老账）/ asof hidden_quotes / system 三条硬规则与预算裁剪 / 截面两档 / 四处登记，56 道' },
-    assert: '表：state_scene / scene_archive / confluence_log / revisit；只读复用 raw_turns / memory_items / memory_timeline / events / rel_event / open_loops；回退：confluence-before-part',
+    assert: '表：state_scene / scene_archive / confluence_log / revisit / raw_turns / memory_items / memory_timeline / events / rel_event / open_loops；读：reconstructScene；回退：confluence-before-part',
     swaps: [],
     rollback: { pointer: 'confluence-before-part', note: '回退 = git checkout confluence-before-part -- src/modules/parts.js src/ports/ownership.js src/features.js src/modules/ops.js src/db.js docs/汇流-基石-2026-11-09.md，再删 src/modules/confluence.js src/modules/visibility.js test/confluence.test.mjs' },
   },

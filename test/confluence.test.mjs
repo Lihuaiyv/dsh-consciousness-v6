@@ -173,6 +173,22 @@ try {
   check('scene.archive=off 时一行不写', wOff.ok === false && wOff.reason === 'off' && cnt('state_scene') === offBase.ss && cnt('scene_archive') === offBase.sa, wOff)
   db.prepare('DELETE FROM agent_params WHERE agent_id=? AND key=?').run(aid, 'scene.archive')
 
+  // ---------- 8.6 会话约束（11-09 已定：锚点也要按会话） ----------
+  const SA = 'sess_alpha', SB = 'sess_beta'
+  appendTurn(db, aid, { sessionId: SA, role: 'user', text: 'A0 这边先开口', at: T(14, 0), turnId: 'a0' })
+  appendTurn(db, aid, { sessionId: SB, role: 'user', text: 'B0 隔壁本子的第一句', at: T(14, 2), turnId: 'b0' })
+  appendTurn(db, aid, { sessionId: SA, role: 'assistant', text: 'A1 这边回一句', at: T(14, 4), turnId: 'a1' })
+  const onlyB = reconstructScene(db, aid, T(14, 2), { level: 'L0', sessionId: SB })
+  check('会话约束：显式会话只翻这本', onlyB.ok === true && onlyB.anchor.session_id === SB && onlyB.window.length === 1, onlyB.anchor)
+  const preferA = reconstructScene(db, aid, T(14, 2), { level: 'L1', sessionId: SA })
+  check('会话约束：显式会话压过更近的隔壁', preferA.ok === true && preferA.anchor.session_id === SA && preferA.window.every((w) => !w.text.includes('B0')), preferA.anchor)
+  const auto = reconstructScene(db, aid, T(14, 2), { level: 'L0' })
+  check('会话约束：不指定时按最近的一句（不改旧口径）', auto.ok === true && auto.session && auto.session.filtered === false, auto.session)
+  const viewA = sceneView(db, aid, { at: '2026-11-05 14:02', level: 'L0', sessionId: SA })
+  check('会话约束：手动入口能带会话', viewA.ok === true && viewA.session && viewA.session.filtered === true && viewA.bundle.anchor.session_id === SA, viewA.session)
+  const none = reconstructScene(db, aid, T(14, 2), { level: 'L0', sessionId: 'sess_no_such' })
+  check('会话约束：指定了一条没话的会话 → no-turns', none.ok === false && none.reason === 'no-turns')
+
   // ---------- 9. 手动入口 / 审计 / 保留策略 ----------
   const view = sceneView(db, aid, { at: '2026-11-05 10:20', level: 'L0' })
   check('手动入口：能拼出可读现场', view.ok === true && view.system.includes('回到 2026-11-05'), view && view.system.slice(0, 80))
