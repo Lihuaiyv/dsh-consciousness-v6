@@ -585,7 +585,9 @@ export function feelLineOf(row) {
  * 所以一天最多带一条、同一条不重复带；它是一次回头，不是新栏位。
  */
 const echoShown = new Map()
-export function echoFeelOf(db, aid, { label, at = Date.now(), minDays = 7, maxDays = 120 } = {}) {
+// 三天起：原来定七天，结果 feel 从 11-04 才开始有，七天的窗口一直是空的，
+// 这功能上线两天一次都没出现过。三天够把「不是刚才」和「还没变淡」分开。
+export function echoFeelOf(db, aid, { label, at = Date.now(), minDays = 3, maxDays = 120 } = {}) {
   if (!label) return null
   const day = localDay(new Date(at))
   const key = aid + ':' + day
