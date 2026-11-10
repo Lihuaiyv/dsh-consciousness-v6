@@ -1,6 +1,7 @@
 import { journalIntent, journalDone, now } from '../db.js'
 import { run as runAlgo, has as algoHas, runBound, resolveVersion } from '../algo/index.js'
-import { err, nid, tx, agent, active, event, getParam } from '../kernel.js'
+import { err, nid, tx, agent, active, event, getParam, model } from '../kernel.js'
+import { judgePair } from './pair_judge.js'
 import { bandOf, heatOf, nowRow } from './tiers.js'
 import { archiveFact } from './archive.js'
 import {
@@ -95,14 +96,20 @@ function detectConflict(db, aid, text, typ = 'fact') {
 
   // 反思/经历是流水账，不承担事实断言，不参与否定词判决
   if (!CONFLICT_TYPES.has(typ)) return [null, null, null, null]
+  /* 11-10：先找「极性相反」，再判「重复」。
+     以前重复判定先跑（s ≥ 0.9 直接 return），最像的那批对立句——
+     比如「生日是十月三日」对「生日不是十月三日」，只差一个「不」——会被当成同一句话合并掉，
+     连冲突都不会记。现在只有「重复的那条不是同一对矛盾」时才合并。 */
   let hit = null
+  let dup = null
   for (const m of rows) {
     if (!CONFLICT_TYPES.has(m.type)) continue
     const other = coreText(m.text)
     const s = sim(probe, other)
-    if (s >= 0.9) return ['duplicate', m, null, null]
+    if (!dup && s >= 0.9) dup = { m, s }
     if (!hit && s >= 0.5 && hasNeg(probe) !== hasNeg(other)) hit = { m, s }
   }
+  if (dup && (!hit || dup.m.id !== hit.m.id)) return ['duplicate', dup.m, null, null]
   if (!hit) return [null, null, null, null]
   const risky = IDENTITY.test(probe + ' ' + hit.m.text) || Number(hit.m.weight || 0) >= 0.8
   // 带上相似度，冲突留痕里要能回答「凭什么判成冲突」
@@ -281,6 +288,25 @@ export function addMemory(db, aid, body) {
             severity,kind,source_turn_id,evidence) VALUES(?,?,?,?, 'resolved', 'superseded', ?, ?, ?, 'low','polarity',?,?)`)
           .run(cid, aid, old.id, mid, '模板相似/否定词差异，两条都保留', now(), now(), body.turn_id || null, evidence)
         event(db, aid, 'memory.conflict_superseded', { conflict_id: cid, a: old.id, b: mid })
+      } else if (conflictJudgeOn(db, aid)) {
+        // 先判后动（11-10）：抽取判出来的冲突也不再直接开卡/作废旧条。
+        // 先落一条 pending，判官回来才动手；判之前不打扰、不问。
+        const kindCol = opt && opt.attr ? 'attribute' : 'polarity'
+        db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,source_turn_id,evidence)
+          VALUES(?,?,?,?, 'pending', ?, 'high',?,?,?)`)
+          .run(cid, aid, old.id, mid, now(), kindCol, body.turn_id || null, evidence)
+        disputeOpen(db, aid, [old.id, mid], cid, { actor: 'extract' })
+        event(db, aid, 'memory.conflict.pending', { conflict_id: cid, a: old.id, b: mid, via: (opt && opt.via) || 'polarity' })
+        try {
+          const complete = typeof body.complete === 'function' ? body.complete : ((req) => model.complete(req))
+          queueConflictJudge(db, aid, {
+            cid,
+            oldRow: old,
+            newRow: { id: mid, text: safe, created_at: now(), fact_key: body.fact_key || null },
+            complete,
+          })
+        } catch { /* 排不进队列就留 pending，等夜里重判 */ }
+        conflictId = cid
       } else {
         // 属性矛盾只顶掉事实/评价；两段摘要（流水账）都留，别把整段纪要判死
         if (!opt || opt.invalidate !== false) {
@@ -358,21 +384,209 @@ export function bumpSelfPattern(db, id, at = null) {
  */
 export function openConflict(db, aid, o = {}) {
   const stamp = o.at || now()
+  const state = o.state || 'open'
   if (o.turnId !== undefined) {
     db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,source_turn_id,evidence)
-      VALUES(?,?,?,?, 'open', ?, ?,?,?,?)`)
-      .run(o.id, aid, o.aId, o.bId, stamp, o.severity || 'high', o.kind || 'polarity', o.turnId || null, o.evidence == null ? null : o.evidence)
+      VALUES(?,?,?,?, ?, ?, ?,?,?,?)`)
+      .run(o.id, aid, o.aId, o.bId, state, stamp, o.severity || 'high', o.kind || 'polarity', o.turnId || null, o.evidence == null ? null : o.evidence)
     return
   }
   db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,severity,kind,evidence,escalation_level)
-    VALUES(?,?,?,?, 'open', ?, ?,?,?,?)`)
-    .run(o.id, aid, o.aId, o.bId, stamp, o.severity || 'high', o.kind || 'polarity', o.evidence == null ? null : o.evidence, o.escalation == null ? 0 : o.escalation)
+    VALUES(?,?,?,?, ?, ?, ?,?,?,?)`)
+    .run(o.id, aid, o.aId, o.bId, state, stamp, o.severity || 'high', o.kind || 'polarity', o.evidence == null ? null : o.evidence, o.escalation == null ? 0 : o.escalation)
+}
+
+/**
+ * 把一条冲突压回「待判」：先判后动时重用的那张卡不能还开着。
+ * （写 conflicts 的口径收在记忆模块里，门控只调这个函数）
+ */
+export function markConflictPending(db, aid, { cid, evidence = null } = {}) {
+  if (!cid) return false
+  try {
+    db.prepare("UPDATE conflicts SET state='pending', resolution=NULL, resolved_at=NULL, evidence=COALESCE(?,evidence) WHERE id=? AND agent_id=?")
+      .run(evidence, cid, aid)
+    return true
+  } catch { return false }
+}
+
+/**
+ * 判官给出结论之后，按结论把冲突了结（11-10：先判后动）。
+ *
+ * 取代 → 旧条收起来、记一笔 resolved（不开「等你拍板」的卡、不排问句）
+ * 补充 / 无关 → 两条都留着，记一笔 resolved
+ * 不确定 / 没判出来 → 留在 pending：面板上挂着，但不冒泡、不开口
+ *
+ * @returns {'supersede'|'supplement'|'unrelated'|'pending'}
+ */
+export function settleConflictByVerdict(db, aid, { cid, verdict, reason = null, oldId = null, at = null } = {}) {
+  if (!cid) return 'pending'
+  const stamp = at || now()
+  const note = String(reason || '').slice(0, 160)
+  let pair = null
+  try { pair = db.prepare('SELECT a_id, b_id FROM conflicts WHERE id=? AND agent_id=?').get(cid, aid) } catch { pair = null }
+  const closeDispute = () => {
+    if (!pair || !pair.a_id || !pair.b_id) return
+    try { disputeClose(db, aid, [pair.a_id, pair.b_id], cid, { at: stamp, actor: 'judge' }) } catch { /* 老的争议区间收不掉就算了 */ }
+  }
+  try {
+    if (verdict === 'supersede') {
+      if (oldId) {
+        try { invalidateMemory(db, aid, oldId, { reason: 'judge_supersede', causeId: cid, actor: 'gate' }) } catch { /* 单条失败不连累 */ }
+      }
+      db.prepare("UPDATE conflicts SET state='resolved', resolution='supersede', reason=?, resolved_at=? WHERE id=? AND agent_id=?")
+        .run(note || '判官：取代', stamp, cid, aid)
+      closeDispute()
+      return 'supersede'
+    }
+    if (verdict === 'supplement' || verdict === 'unrelated') {
+      db.prepare("UPDATE conflicts SET state='resolved', resolution=?, reason=?, resolved_at=? WHERE id=? AND agent_id=?")
+        .run(verdict, note || ('判官：' + verdict), stamp, cid, aid)
+      closeDispute()
+      return verdict
+    }
+    db.prepare('UPDATE conflicts SET reason=? WHERE id=? AND agent_id=?')
+      .run('待判：' + (note || verdict || '不确定'), cid, aid)
+  } catch { /* 结案失败就留着，别把结论吞掉 */ }
+  return 'pending'
+}
+
+/** 门控 / 抽取共用的开关：判官先判，再动手。 */
+export function conflictJudgeOn(db, aid) {
+  try { return String(getParam(db, aid, 'memory.conflict.judge') || 'on') !== 'off' } catch { return true }
+}
+
+// 抽取是同步的，判官是异步的：先记 pending，判完回来结案。
+// 这里存的就是「还没判完的那几件」，夜里对账 / 测试都靠它等一遍。
+const judgeQueue = new Set()
+
+/** 等所有在飞的判官跑完（测试与夜里对账用）。永远不抛。 */
+export function flushConflictJudges() {
+  return Promise.allSettled([...judgeQueue])
+}
+
+/** 给一对「待判」冲突排一次判官。判完按结论结案；判不出来就留在 pending。 */
+export function queueConflictJudge(db, aid, { cid, oldRow, newRow, complete, timeoutMs = 20000 } = {}) {
+  if (!cid || !oldRow || !newRow) return null
+  const p = (async () => {
+    let verdict = 'uncertain'
+    let reason = 'no-model'
+    try {
+      if (typeof complete === 'function') {
+        const r = await judgePair({ db, aid, oldRow, newerRow: newRow, complete, timeoutMs, via: 'extract' })
+        verdict = r.verdict
+        reason = r.reason || ''
+      }
+    } catch (e) {
+      reason = 'error:' + String((e && e.message) || e).slice(0, 60)
+    }
+    try { settleConflictByVerdict(db, aid, { cid, verdict, reason, oldId: oldRow.id }) } catch { /* 结案失败就留 pending */ }
+    return verdict
+  })().catch(() => null)
+  judgeQueue.add(p)
+  p.finally(() => { judgeQueue.delete(p) })
+  return p
+}
+
+/**
+ * 夜里把白天没判出结论的「待判」再问一遍（11-10）。
+ *
+ * 白天判官可能：没模型、超时、回空、或自己说拿不准 —— 那些都停在 pending。
+ * 夜里重问一次；仍然判不出来的，超过 retireAfterMs（默认 7 天）就作废退场，
+ * 免得 pending 越积越多、永远没人看。
+ *
+ * 只判「已经放了 olderThanMs 的」，刚写入的那批留给白天那条异步链，不抢它。
+ */
+export async function rejudgePendingConflicts(db, aid, {
+  complete, limit = 10, olderThanMs = 3600000, retireAfterMs = 7 * 86400000, timeoutMs = 20000,
+} = {}) {
+  const n = Math.max(1, Math.min(100, Number(limit) || 10))
+  let rows = []
+  try {
+    rows = db.prepare("SELECT * FROM conflicts WHERE agent_id=? AND state='pending' ORDER BY opened_at ASC LIMIT ?").all(aid, n)
+  } catch { return { checked: 0, settled: 0, retired: 0, skipped: 'no-table' } }
+  const nowMs = Date.now()
+  const one = (id) => { try { return db.prepare('SELECT * FROM memory_items WHERE id=?').get(id) || null } catch { return null } }
+  let settled = 0
+  let retired = 0
+  let skipped = 0
+  for (const c of rows) {
+    const age = nowMs - (Date.parse(c.opened_at || '') || 0)
+    if (age < olderThanMs) { skipped++; continue }
+    if (age > retireAfterMs) {
+      try {
+        db.prepare("UPDATE conflicts SET state='resolved', resolution='unknown', reason='待判超期，作废', resolved_at=? WHERE id=? AND agent_id=?")
+          .run(now(), c.id, aid)
+        retired++
+      } catch { /* 退场失败就算了 */ }
+      continue
+    }
+    const a = one(c.a_id)
+    const b = one(c.b_id)
+    if (!a || !b) {
+      try {
+        db.prepare("UPDATE conflicts SET state='resolved', resolution='unknown', reason='两侧记忆都不在了', resolved_at=? WHERE id=? AND agent_id=?")
+          .run(now(), c.id, aid)
+        retired++
+      } catch { /* 同上 */ }
+      continue
+    }
+    let verdict = 'uncertain'
+    let reason = 'no-model'
+    try {
+      if (typeof complete === 'function') {
+        const r = await judgePair({ db, aid, oldRow: a, newerRow: b, complete, timeoutMs, via: 'nightly-pending' })
+        verdict = r.verdict
+        reason = r.reason || ''
+      }
+    } catch (e) {
+      reason = 'error:' + String((e && e.message) || e).slice(0, 60)
+    }
+    // 旧条 = 出生更早的那条（judgePair 内部也按时间排，这里保持一致）
+    const older = String(a.created_at || '') <= String(b.created_at || '') ? a : b
+    const out = settleConflictByVerdict(db, aid, { cid: c.id, verdict, reason, oldId: older.id })
+    if (out !== 'pending') settled++
+  }
+  return { checked: rows.length, settled, retired, skipped }
 }
 
 /** 冲突落库时顺手挂一条数据告警（同一句提示）。 */
 export function openConflictAlert(db, aid, at = null) {
   db.prepare('INSERT INTO alerts VALUES(?,?,?,?,?,?,?)')
     .run(nid('alr_'), aid, 'data', 2, '有一条记忆冲突未处理', 'open', at || now())
+}
+
+/**
+ * 同一对说法刚被另一条写入路径记过一次（典型的：addMemory 顺手记了张
+ * 「低风险·自动结案」的卡，1 毫秒后门控又判成要开案）。
+ *
+ * 这张自动结案的卡从没问过人，它只是「同一对已被记过」。再开第二张，
+ * 库里就会躺着「一开一关」两张卡——11-08 那对 get 冲突就是这么来的，
+ * 而且后面排问句时，去重会误把那张死卡当成「问过了」。
+ *
+ * 所以这里不新开：把那张自动结案的翻成 open，身份不变，只用门控的判定覆盖。
+ * 只看最近 windowMs；你亲手拍过板的结案不翻（那是决定，不是重复记录）。
+ *
+ * @returns {string|null} 复用/翻新的冲突 id；该新开一张时返回 null
+ */
+export function promoteAutoClosedConflict(db, aid, { aId, bId, windowMs = 300000, kind = 'polarity', evidence = null } = {}) {
+  if (!aId || !bId) return null
+  const since = new Date(Date.now() - Math.max(0, Number(windowMs) || 0)).toISOString()
+  let row = null
+  try {
+    row = db.prepare(`SELECT id, state, resolution, opened_at FROM conflicts
+      WHERE agent_id=? AND opened_at>=?
+        AND ((a_id=? AND b_id=?) OR (a_id=? AND b_id=?))
+      ORDER BY opened_at DESC LIMIT 1`).get(aid, since, aId, bId, bId, aId)
+  } catch { return null }
+  if (!row) return null
+  if (row.state === 'open') return row.id
+  if (String(row.resolution || '') !== 'superseded') return null
+  try {
+    db.prepare(`UPDATE conflicts SET state='open', resolution=NULL, reason=NULL, resolved_at=NULL,
+      severity='high', kind=?, evidence=COALESCE(?,evidence), opened_at=?, escalation_level=0, escalated_at=NULL
+      WHERE id=?`).run(kind, evidence, now(), row.id)
+  } catch { return null }
+  return row.id
 }
 
 export function listMemory(db, aid, includeDeleted = false) {
@@ -517,7 +731,7 @@ export function resolveConflict(db, aid, cid, body = {}) {
   agent(db, aid)
   const c = db.prepare('SELECT * FROM conflicts WHERE id=? AND agent_id=?').get(cid, aid)
   if (!c) err(404, 'NOT_FOUND', '冲突不存在')
-  if (c.state !== 'open') err(409, 'CONFLICT', '该冲突已经处理过')
+  if (c.state !== 'open' && c.state !== 'pending') err(409, 'CONFLICT', '该冲突已经处理过')
   const keep = String(body.keep || '')
   if (!['a', 'b', 'both'].includes(keep)) err(400, 'INVALID_ARGUMENT', 'keep 只能是 a / b / both')
   const reason = body.reason == null ? null : String(body.reason).slice(0, 160)

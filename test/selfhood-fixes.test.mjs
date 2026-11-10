@@ -6,6 +6,7 @@ import { makeWorld } from './eval-persona/setup.mjs'
 import { memoryTag } from '../src/modules/memory_tag.js'
 import { restorePersonaFromChange, rollbackChange, metricSnapshot } from '../src/modules/selfmod.js'
 import { askAboutConflict } from '../src/modules/conflict_ask.js'
+import { promoteAutoClosedConflict } from '../src/modules/memory.js'
 import { purgeExpired } from '../src/modules/ops.js'
 
 let pass = 0
@@ -83,6 +84,47 @@ const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString()
     ins.run('cfl_3', w.aid, 'm5', 'm6', 'open', iso(500), JSON.stringify({ attribute: { sentence_a: '他喜欢猫', sentence_b: '他对猫过敏' } }))
     const third = askAboutConflict(w.db, w.aid, { cid: 'cfl_3', aId: 'm5', bId: 'm6', aText: '他喜欢猫', bText: '他对猫过敏' })
     check('不同的一对仍然会问', !!third, third)
+  } finally { w.close() }
+}
+
+// ---- 4b. 11-08 回归：抽取路径顺手记的「低风险·自动结案」卡，不能把这边的问句吞掉
+{
+  const w = makeWorld()
+  try {
+    const ev = JSON.stringify({ a_text: '我好像没有get到哎', b_text: '哦，我我好像能get到了', risk: 'low', via: 'polarity' })
+    const ins = w.db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,opened_at,evidence)
+      VALUES(?,?,?,?,?,?,?)`)
+    // 同一对：先一张自动结案的（从没问过人），再一张门控开的（该问）
+    ins.run('cfl_twin', w.aid, 'm9', 'm10', 'resolved', iso(600), ev)
+    w.db.prepare("UPDATE conflicts SET resolution='superseded', resolved_at=? WHERE id='cfl_twin'").run(iso(600))
+    ins.run('cfl_open2', w.aid, 'm9', 'm10', 'open', iso(599), ev)
+    const asked = askAboutConflict(w.db, w.aid, {
+      cid: 'cfl_open2', aId: 'm9', bId: 'm10',
+      aText: '我好像没有get到哎', bText: '哦，我我好像能get到了',
+    })
+    check('自动结案的孪生卡不算问过，问句照排', !!asked, asked)
+  } finally { w.close() }
+}
+
+// ---- 4c. 同一对别再开第二张：自动结案的卡翻成 open，而不是新开一张
+{
+  const w = makeWorld()
+  try {
+    const ins = w.db.prepare(`INSERT INTO conflicts(id,agent_id,a_id,b_id,state,resolution,opened_at,evidence)
+      VALUES(?,?,?,?,?,?,?,?)`)
+    ins.run('cfl_auto', w.aid, 'm11', 'm12', 'resolved', 'superseded', iso(60000), '{}')
+    const promoted = promoteAutoClosedConflict(w.db, w.aid, { aId: 'm11', bId: 'm12', evidence: '{"via":"gate"}' })
+    const row = w.db.prepare("SELECT state, resolution, severity FROM conflicts WHERE id='cfl_auto'").get()
+    check('自动结案的卡被翻成 open，不新开', promoted === 'cfl_auto' && row.state === 'open' && row.resolution === null, { promoted, row })
+    check('配对顺序反过来也能认出来', promoteAutoClosedConflict(w.db, w.aid, { aId: 'm12', bId: 'm11' }) === 'cfl_auto')
+
+    // 你亲手拍过板的不翻（那是决定，不是重复记录）
+    ins.run('cfl_human', w.aid, 'm13', 'm14', 'resolved', 'a', iso(60000), '{}')
+    check('人手拍过板的不翻旧账', promoteAutoClosedConflict(w.db, w.aid, { aId: 'm13', bId: 'm14' }) === null)
+
+    // 太久以前的不翻
+    ins.run('cfl_old', w.aid, 'm15', 'm16', 'resolved', 'superseded', iso(2 * 3600000), '{}')
+    check('两小时前的自动结案不翻', promoteAutoClosedConflict(w.db, w.aid, { aId: 'm15', bId: 'm16' }) === null)
   } finally { w.close() }
 }
 

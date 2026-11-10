@@ -32,6 +32,8 @@ attachDb(db)
 const aid = 'agt_cask'
 db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
   .run(aid, 'cask', 'daily', 'active', now())
+// 这个文件验的是「开案 + 排问句」这条老路（判官关了才走），11-10 起门控/抽取默认先判后动。
+writeParam(db, aid, 'memory.conflict.judge', 'off')
 
 const openCount = () => Number(db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=? AND state='open'").get(aid).n)
 const askCount = () => Number(db.prepare('SELECT COUNT(*) n FROM proactive WHERE agent_id=?').get(aid).n)
@@ -86,7 +88,9 @@ const S3 = '用户提到自己昨天喝的咖啡是酸的。对话中未明确�
 }
 
 // ---------------------------------------------------------------- 门控抽取：同一对只问一遍
+// 11-10 起门控默认「先判后动」（判官说了才算）；这一块验的是判官关掉时的老路，所以显式关掉。
 {
+  writeParam(db, aid, 'memory.conflict.judge', 'off')
   addMemory(db, aid, { text: '用户喜欢喝美式咖啡，不加糖', type: 'fact', importance: 0.6 })
   const before = askCount()
   const out = applyWrite(db, aid, { text: '用户不喜欢喝美式咖啡了' }, (cand) => addMemory(db, aid, {
@@ -94,6 +98,26 @@ const S3 = '用户提到自己昨天喝的咖啡是酸的。对话中未明确�
   }))
   check('门控也判冲突', out.action === 'conflict', out)
   check('同一对说法只问一遍', askCount() === before + 1, { before, after: askCount() })
+}
+
+// ---------------------------------------------------------------- 11-08 回归：低风险自动结案的孪生卡，不能吞掉门控的问句
+{
+  // 同上：这一块验的也是判官关掉时的老路
+  writeParam(db, aid, 'memory.conflict.judge', 'off')
+  // 真实那一对：主人先说「没 get 到」，三分钟后说「能 get 到了」。
+  // addMemory 把它记成「低风险·自动结案」（从没问过人），门控随后也判冲突。
+  // 以前这会开出「一开一关两张卡」，而且排问句时那张死卡会被当成「问过了」。
+  const beforeAsk = askCount()
+  const beforeOpen = openCount()
+  addMemory(db, aid, { text: '我好像没有get到哎', type: 'fact', importance: 0.6 })
+  const out = applyWrite(db, aid, { text: '哦，我我好像能get到了' }, (cand) => addMemory(db, aid, {
+    text: cand.text, type: 'fact', importance: 0.6,
+  }))
+  check('这一对仍判冲突', out.action === 'conflict', out)
+  check('只有一张卡（翻那张自动结案的，不新开）', openCount() === beforeOpen + 1, { beforeOpen, open: openCount() })
+  check('问句照排，不被死卡吞掉', askCount() === beforeAsk + 1, { beforeAsk, after: askCount() })
+  const pairRows = db.prepare("SELECT COUNT(*) n FROM conflicts WHERE agent_id=? AND a_id IN (SELECT id FROM memory_items WHERE text='我好像没有get到哎') AND b_id IN (SELECT id FROM memory_items WHERE text='哦，我我好像能get到了')").get(aid).n
+  check('同一对只留一条冲突记录', Number(pairRows) === 1, pairRows)
 }
 
 // ---------------------------------------------------------------- 开关

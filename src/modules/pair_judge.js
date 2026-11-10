@@ -216,17 +216,46 @@ function withTimeout(promise, ms) {
 export function looksLikeJudgement(raw) {
   if (typeof raw !== 'string') return false
   const t = raw.trim()
-  if (!t || t.length > 160) return false
+  if (!t || t.length > 600) return false
   if (/^[{[]/.test(t)) return false
   if (t.includes('overlap')) return false
-  return /取代|补充|无关|不确定/.test(t)
+  // 开头就是结论、后面还带标点（句号/冒号/换行）→ 是判断，后面解释两句也算
+  if (verdictHead(t) && /^\s*[。.!！;；:：\n]/.test(afterHead(t))) return true
+  if (t.length <= 160) return /取代|补充|无关|不确定/.test(t)
+  return false
 }
 
-/** 严格四档。出现两种以上（或一种都没有）都算不确定。 */
+const VERDICT_WORDS = ['不确定', '取代', '补充', '无关']
+const VERDICT_OF = { 不确定: 'uncertain', 取代: 'supersede', 补充: 'supplement', 无关: 'unrelated' }
+
+/** 开头（跳过引号括号）是不是直接给了结论。 */
+function verdictHead(text) {
+  const s = String(text || '').replace(/^[\s"'「『(（【[]+/, '')
+  for (const w of VERDICT_WORDS) if (s.startsWith(w)) return w
+  return ''
+}
+
+/** 结论词后面剩下的部分（用来判断是不是「给完就解释」）。 */
+function afterHead(text) {
+  const t = String(text || '').trim()
+  const h = verdictHead(t)
+  if (!h) return ''
+  const s = t.replace(/^[\s"'「『(（【[]+/, '')
+  return s.slice(h.length)
+}
+
+/**
+ * 严格四档。规则：
+ *   - 开头就是结论、并且后面紧跟标点（「补充。后一条…」）→ 就认它；
+ *   - 「取代，也可能无关」这种结论后面接逗号的，算含糊；
+ *   - 其余按「整段只出现一种档」判，两种以上 = 不确定。
+ */
 export function parseVerdict(raw) {
   const t = String(raw || '')
-  const hit = []
+  const h = verdictHead(t)
+  if (h && /^\s*[。.!！;；:：\n]/.test(afterHead(t))) return VERDICT_OF[h]
   if (t.includes('不确定')) return 'uncertain'
+  const hit = []
   if (t.includes('取代')) hit.push('supersede')
   if (t.includes('补充')) hit.push('supplement')
   if (t.includes('无关')) hit.push('unrelated')
@@ -288,7 +317,9 @@ export async function judgePair(opt = {}) {
 
   // 太短的对没有上下文，模型也容易乱判（「嗯嗯很好了」被判成取代）。
   // 直接标 uncertain 并缓存：不值得花模型，7 天内也不再问。
-  if (String(old.text || '').trim().length < 12 || String(newer.text || '').trim().length < 12) {
+  // 门槛从 12 降到 6：12 会把「我好像没有get到哎」这种正常口语挡在门外（11-08 那对就是这么沉的），
+  // 6 以下才是真没话可判。
+  if (String(old.text || '').trim().length < 6 || String(newer.text || '').trim().length < 6) {
     return save({ verdict: 'uncertain', reason: 'too-short', model: 'rule', confidence: 0.3 })
   }
 
@@ -299,15 +330,28 @@ export async function judgePair(opt = {}) {
   }
 
   if (typeof complete !== 'function') return fail('no-model')
+  const ask = () => withTimeout(complete({ system: JUDGE_SYS, text: buildUser(old, newer) }), timeoutMs)
   let raw
   try {
-    raw = await withTimeout(complete({ system: JUDGE_SYS, text: buildUser(old, newer) }), timeoutMs)
+    raw = await ask()
   } catch (e) {
     const code = String((e && e.code) || '')
     return fail(code === 'timeout' ? 'timeout' : 'error:' + String((e && e.message) || e).slice(0, 60))
   }
-  if (!looksLikeJudgement(raw)) return fail('bad-shape')
+  // 11-10：宿主模型偶尔回空、或者回一段不像判断的话（回放里 4/40）。
+  // 空一次不算「判不出来」——再问一次；两次都不行才认 bad-shape。
+  // 但重试过的结论只能「留」不能「废」：这种对本来就难判，一重试就偏向「取代」，
+  // 而取代会真作废旧记忆。所以重试来的 supersede 一律降成不确定，宁可不改。
+  let retried = false
+  if (!looksLikeJudgement(raw)) {
+    retried = true
+    try { raw = await ask() } catch { /* 保留第一次的 raw，下面按 bad-shape 处理 */ }
+  }
+  if (!looksLikeJudgement(raw)) return fail('bad-shape', { raw: String(raw == null ? '' : raw).replace(/\s+/g, ' ').slice(0, 80) })
   const verdict = parseVerdict(raw)
+  if (retried && verdict === 'supersede') {
+    return save({ verdict: 'uncertain', reason: 'retried-supersede', model: 'host', confidence: 0.3 }, false)
+  }
   // supersede 是唯一会真改记忆的档：判一次不够，再问一次，两次一致才认。
   // 不一致 / 复核失败 → uncertain，不缓存（下次重判）。宁可不改，也不误改。
   if (verdict === 'supersede') {

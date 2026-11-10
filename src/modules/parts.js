@@ -1,4 +1,4 @@
-// 零件册：一行一个零件。
+﻿// 零件册：一行一个零件。
 // 加零件 = 往 PARTS 里加一行：名字、文件、入口、考卷、回退点。
 // 可换零件 = 登记 + 考卷 + 回退点 + 过独立性界桩，四样缺一，只能叫零件，不能换。
 // 这里是零件册的唯一源；界面上的零件盒只读它，不在客户端另抄一份。
@@ -528,7 +528,7 @@ export const PARTS = [
     owner: 'src/modules/llm_budget.js · llmBudgetAllow',
     files: ['src/modules/llm_budget.js'],
     entry: 'llmBudgetAllow / llmBudgetBump / llmBudgetSnapshot / shouldDeferExtract（src/modules/llm_budget.js）',
-    exam: { file: 'test/exam-budget.test.mjs', score: '17/17', note: '默认一天 16 次 / 拧成 0 才不限 / 种类分桶 / 蒸馏满额或顶见底就推迟抽取，17 道' },
+    exam: { file: 'test/exam-budget.test.mjs', score: '25/25', note: '默认一天 16 次 / 拧成 0 才不限 / 种类分桶 / 蒸馏满额或顶见底就推迟抽取，25 道' },
     assert: '表：flags / extract_queue；读：llmBudgetAllow / llmBudgetSnapshot / shouldDeferExtract；回退：budget-before-part',
     swaps: [],
     rollback: {

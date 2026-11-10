@@ -13,7 +13,7 @@
 
 import { askAboutConflict } from './conflict_ask.js'
 import { attrConflict } from './contradict.js'
-import { buildSearchText, conflictPairExists, openConflict, openConflictAlert } from './memory.js'
+import { buildSearchText, conflictPairExists, openConflict, openConflictAlert, promoteAutoClosedConflict, markConflictPending, settleConflictByVerdict } from './memory.js'
 import { setMemorySearchOnly, strengthenMemory } from './memory_fields.js'
 import { setMemoryFts } from './memory_fields.js'
 import { hasNegation, isPositiveCompoundAt } from './negation.js'
@@ -276,23 +276,57 @@ function applyWriteInner(db, aid, cand, write, opt = {}) {
 
   // 门控判了冲突，就必须落一条可追溯的冲突记录：
   // 不能让 addMemory 自己的相似度判定（可能更低、可能被「不加糖」这类词带偏）把它放过。
-  const cid = 'cfl_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
   const at = new Date().toISOString()
   const kind = d.attr ? 'attribute' : 'polarity'
+  const evidence = JSON.stringify({
+    similarity: d.score, via: 'gate', kind,
+    attribute: d.attr || null,
+    a_text: String(d.target.text || '').slice(0, 120), b_text: String(cand.text || '').slice(0, 120),
+  }).slice(0, 800)
+  // 同一对说法刚被 addMemory 记过一张「低风险·自动结案」的卡：翻它，别再开第二张。
+  // 两张卡一开一关，后面排问句会被那张死卡骗过去（11-08 那对 get 冲突）。
+  let cid = ''
+  try { cid = promoteAutoClosedConflict(db, aid, { aId: d.target.id, bId: r.id, kind, evidence }) || '' } catch { cid = '' }
+  const reused = !!cid
+  if (!cid) cid = 'cfl_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
+  // 先判后动（11-10）：字面规则只负责「挑出看起来像冲突的一对」，判死活交给判官。
+  // 判之前什么都不动：不作废旧条、不开「等你拍板」的卡、不排问句——只留一条 pending。
+  // 结论：取代 → 旧条收起来；补充/无关 → 两条都留；不确定 → 留在 pending 挂面板，不冒泡、不开口。
+  const judgeOn = (() => { try { return String(getParam(db, aid, 'memory.conflict.judge') || 'on') !== 'off' } catch { return true } })()
+  if (judgeOn) {
+    try {
+      if (reused) {
+        markConflictPending(db, aid, { cid, evidence })
+      } else {
+        openConflict(db, aid, { id: cid, aId: d.target.id, bId: r.id, at, kind, evidence, escalation: 0, state: 'pending' })
+      }
+      db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
+        'memory.conflict.pending', JSON.stringify({ conflict_id: cid, a: d.target.id, b: r.id, via: 'gate', ...(reused ? { reused: true } : {}) }), at)
+      const complete = typeof opt.complete === 'function' ? opt.complete : ((req) => model.complete(req))
+      const newRow = r && r.id ? db.prepare('SELECT * FROM memory_items WHERE id=?').get(r.id) : null
+      const oldRow = d.target
+      if (newRow && oldRow) {
+        const p = (async () => {
+          const res = await judgePair({ db, aid, oldRow, newerRow: newRow, complete, timeoutMs: 20000, via: 'gate-conflict' })
+          try { settleConflictByVerdict(db, aid, { cid, verdict: res.verdict, reason: res.reason, oldId: d.target.id }) } catch { /* 结案失败就留 pending */ }
+        })().catch(() => { /* 判官崩了就当没判过 */ })
+        judgeState.pending.add(p)
+        p.finally(() => { judgeState.pending.delete(p) })
+      }
+    } catch { /* 排不进队列就留 pending，等夜里对账 */ }
+    return { action: 'conflict', id: r && r.id, conflict_id: cid, score: d.score, pending: true, ...(reused ? { dedup: 'auto-closed-twin' } : {}) }
+  }
+
   try {
     invalidateMemory(db, aid, d.target.id, { at, reason: 'conflict', causeId: r.id, actor: 'gate' })
     disputeOpen(db, aid, [d.target.id, r.id], cid, { at, actor: 'gate' })
-    openConflict(db, aid, {
-      id: cid, aId: d.target.id, bId: r.id, at, kind,
-      evidence: JSON.stringify({
-        similarity: d.score, via: 'gate', kind,
-        attribute: d.attr || null,
-        a_text: String(d.target.text || '').slice(0, 120), b_text: String(cand.text || '').slice(0, 120),
-      }).slice(0, 800),
-      escalation: 0,
-    })
+    if (!reused) {
+      openConflict(db, aid, {
+        id: cid, aId: d.target.id, bId: r.id, at, kind, evidence, escalation: 0,
+      })
+    }
     db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run('evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8), aid,
-      'memory.conflict', JSON.stringify({ conflict_id: cid, a: d.target.id, b: r.id, via: 'gate' }), at)
+      'memory.conflict', JSON.stringify({ conflict_id: cid, a: d.target.id, b: r.id, via: 'gate', ...(reused ? { reused: true } : {}) }), at)
     openConflictAlert(db, aid, at)
     // 开案之后真的开口问（跟 addMemory 共用同一个问句出口）；
     // attr 的 sentence_a 是候选（新），sentence_b 是旧条——按时间顺序摆
@@ -302,7 +336,7 @@ function applyWriteInner(db, aid, cand, write, opt = {}) {
       bText: (d.attr && d.attr.sentence_a) || cand.text,
     })
   } catch { /* 记录失败也要把新的事实留下来 */ }
-  return { action: 'conflict', id: r && r.id, conflict_id: cid, score: d.score }
+  return { action: 'conflict', id: r && r.id, conflict_id: cid, score: d.score, ...(reused ? { dedup: 'auto-closed-twin' } : {}) }
 }
 
 // ── 模型窄门调度（P4）──────────────────────────────────────

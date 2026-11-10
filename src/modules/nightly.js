@@ -35,6 +35,7 @@ import { run as runProbes } from './persona_probe.js'
 import { auditTimeline } from './timeline.js'
 import { judgeDay } from './pair_judge.js'
 import { reconcileClaims } from './claim_state.js'
+import { rejudgePendingConflicts } from './memory.js'
 
 /** 本地日期（不要用 toISOString，那是 UTC，跨零点会错一天）。 */
 export function localDay(d = new Date()) {
@@ -370,6 +371,26 @@ export async function runNightly(db, aid, opt = {}) {
     }
   } catch (e) {
     push('stale_judge', { ok: true, skipped: 'error', error: String(e && e.message).slice(0, 120) })
+  }
+
+  // ⑪f 待判冲突（11-10）：白天没判出结论的，夜里再问一遍；超 7 天作废退场。
+  //    不开判官（memory.conflict.judge=off）就整段跳过；没模型也算正常跳过。
+  try {
+    const judgeOn = String(getParam(db, aid, 'memory.conflict.judge') || 'on') !== 'off'
+    const engine = opt.model || model
+    let can = false
+    try { can = !!(engine.capabilities() || {}).complete } catch { can = false }
+    if (!judgeOn) {
+      push('conflict_pending', { ok: true, skipped: 'off' })
+    } else {
+      const r = await rejudgePendingConflicts(db, aid, {
+        complete: can ? (req) => engine.complete(req) : null,
+        limit: Math.max(1, Math.min(50, Number(getParam(db, aid, 'memory.conflict.retry_max')) || 10)),
+      })
+      push('conflict_pending', { ok: true, ...r })
+    }
+  } catch (e) {
+    push('conflict_pending', { ok: true, skipped: 'error', error: String(e && e.message).slice(0, 120) })
   }
 
   // ⑪e 断言状态核对（v3）：对「还没做」的旧条，看之后的记录证明做完了没有。

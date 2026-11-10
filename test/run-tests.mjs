@@ -168,6 +168,8 @@ try {
   check('两条都还能召回', pack.items.some((i) => i.id === m1.id) && pack.items.length >= 1, pack)
 
   // 高风险（身份类）才失效旧条 + 告警
+  // 11-10 起默认「先判后动」（判官先判再动）；这一段验的是判官关掉时的老路。
+  await api('PUT', `/v1/agents/${aid}/params/memory.conflict.judge`, { value: 'off' }, { key: key() })
   const hi1 = await api('POST', `/v1/agents/${aid}/memory`, { text: '主人的名字是小明' }, { key: key() })
   const hi2 = await api('POST', `/v1/agents/${aid}/memory`, { text: '主人的名字不是小明' }, { key: key() })
   const hiOld = db.prepare('SELECT invalid_at FROM memory_items WHERE id=?').get(hi1.id)

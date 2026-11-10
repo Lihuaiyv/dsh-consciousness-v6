@@ -15,7 +15,7 @@ import path from 'node:path'
 import { openDb } from '../src/db.js'
 import {
   addMemory, softDelete, restoreMemory, listActiveMemories, memoryStats,
-  setMemoryMark, setMemoryEntity, setFeelProvider, supersedeMany,
+  setMemoryMark, setMemoryEntity, setFeelProvider, supersedeMany, flushConflictJudges,
 } from '../src/modules/memory.js'
 
 let pass = 0
@@ -122,9 +122,13 @@ const archiveOf = (mid) => db.prepare('SELECT id,text FROM fact_archive WHERE me
   const no = addMemory(db, aid, { text: '主人不喜欢喝茶。', type: 'fact' })
   check('第二条判成冲突', no.conflict === true && !!no.conflict_id, { yes: yes.id, no })
   const c = no.conflict_id ? db.prepare('SELECT * FROM conflicts WHERE id=?').get(no.conflict_id) : null
-  check('冲突开案（open）', c && c.state === 'open', c)
-  check('旧的被顶掉', !!byId(yes.id).invalid_at, byId(yes.id))
-  check('留了告警', !!db.prepare("SELECT 1 FROM alerts WHERE agent_id=? AND kind='data'").get(aid))
+  // 11-10 起「先判后动」：不再当场开卡、不再先作废旧条、不再先挂告警。
+  // 考卷里没有模型 → 判官给不出结论，就停在 pending，等人/夜里再判。
+  await flushConflictJudges()
+  const fresh = no.conflict_id ? db.prepare('SELECT * FROM conflicts WHERE id=?').get(no.conflict_id) : null
+  check('不当场开卡（停在 pending）', fresh && fresh.state !== 'open', fresh)
+  check('判成取代之前不收旧条', c && c.state === 'pending' ? !byId(yes.id).invalid_at : (fresh && fresh.resolution === 'supersede' ? !!byId(yes.id).invalid_at : true), { c, inv: byId(yes.id).invalid_at })
+  check('判之前不催人（没告警）', !db.prepare("SELECT 1 FROM alerts WHERE agent_id=? AND kind='data'").get(aid))
 }
 
 // ================================================================ 统计与列表

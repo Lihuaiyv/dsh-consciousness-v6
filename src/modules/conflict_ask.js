@@ -80,12 +80,19 @@ export function askAboutConflict(db, aid, { cid, aId, bId, aText, bText }) {
     if (!text) return null
     // 同一处矛盾被两条不同 conflict id 各开一次时，别问两遍。
     // 归一化后比「说法对」和「问句本身」，7 天内问过就跳过。
+    //
+    // 只认「真问过的」：还开着（问句可能正排着）或者确实排过问句的那些。
+    // 抽取路径顺手记的「低风险·自动结案」卡从来没问过人，不能算数——
+    // 它和门控开的那张是同一对说法，算进去就等于把这边的问句永久吞掉（11-08 那条 get 冲突就是这么沉的）。
     const A = normClaim(aText)
     const B = normClaim(bText)
     const since = new Date(Date.now() - ASK_DEDUP_DAYS * 86400000).toISOString()
     try {
       const recent = db.prepare(
-        "SELECT evidence FROM conflicts WHERE agent_id=? AND id<>? AND opened_at>=?",
+        `SELECT c.evidence FROM conflicts c
+         WHERE c.agent_id=? AND c.id<>? AND c.opened_at>=?
+           AND (c.state='open'
+                OR EXISTS (SELECT 1 FROM proactive p WHERE p.agent_id=c.agent_id AND p.reason='conflict:'||c.id))`,
       ).all(aid, cid, since)
       for (const r of recent) {
         let ev = {}

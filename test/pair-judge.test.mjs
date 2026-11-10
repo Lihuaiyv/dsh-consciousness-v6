@@ -141,6 +141,10 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
   check('形状：规则兜底 JSON 不算', looksLikeJudgement('{"overlap":"unknown","key":"","name":"","definition":""}') === false)
   check('形状：空不算', looksLikeJudgement('') === false)
   check('形状：超长不算', looksLikeJudgement('取代'.repeat(100)) === false)
+  // 11-09：宿主模型爱写完结论再解释两句，160 字上限把它判成 bad-shape（回放里 7/40）
+  check('形状：长回复但开头就给了结论 → 通过', looksLikeJudgement('补充。后一条只是在同一件事上加了细节，前一条不算错，所以两条都留着就可以。') === true)
+  check('解析：长回复只认开头那个结论', parseVerdict('补充。后一条只是加了细节，也不是取代。' + '啊'.repeat(120)) === 'supplement')
+  check('解析：长回复开头没结论 → 不确定', parseVerdict(('这两条看起来像是同一个问题的不同说法，更像是补充，也可能无关。' + '啊'.repeat(120))) === 'uncertain')
 
   check('动作：supersede 才作废', verdictAction('supersede') === 'invalidate')
   check('动作：supplement 只记', verdictAction('supplement') === 'note')
@@ -179,6 +183,12 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
     const r1d = await judgePair({ db: w.db, aid: w.aid, oldRow: short.old, newerRow: short.newer, complete: async () => { shortCalls++; return '取代' }, via: 'test' })
     check('短文本 → uncertain(too-short)', r1d.verdict === 'uncertain' && r1d.reason === 'too-short', r1d)
     check('短文本不调模型', shortCalls === 0, shortCalls)
+
+    // （a5）门槛 12 → 6：8 个字的正常口语要真问模型，别被 short 挡掉（11-08 那对就是被挡的）
+    const short2 = makePair(w, { oldText: '我好像没有get到哎', newText: '哦，我好像能get到了', oldKey: '用户.对话.懂', newKey: '用户.对话.懂了' })
+    let calls2 = 0
+    const r1e = await judgePair({ db: w.db, aid: w.aid, oldRow: short2.old, newerRow: short2.newer, complete: async () => { calls2++; return '补充' }, useCache: false, via: 'test' })
+    check('8 字口语不再被 short 门槛挡住', calls2 === 1 && r1e.verdict === 'supplement', r1e)
 
     // （b）专名闸：不调模型直接 unrelated
     calls = 0
@@ -244,6 +254,24 @@ function makePair(w, { oldText, newText, oldKey = '', newKey = '', gapMin = 60, 
       check('没缓存表 readJudgement 返回 null', readJudgement(w2.db, w2.aid, 'whatever') === null)
       check('没缓存表 writeJudgement 返回 false', writeJudgement(w2.db, w2.aid, { pair_key: 'k', verdict: 'supplement', old_id: 'a', new_id: 'b', via: 'test' }) === false)
     } finally { w2.close() }
+  } finally { w.close() }
+}
+
+// ---- 空回复重试（11-10）：宿主模型偶尔回空，空一次不算判不出来
+{
+  const w = makeWorld()
+  try {
+    const p = makePair(w, { oldText: '用户喜欢喝美式咖啡，不加糖', newText: '用户不喜欢喝美式咖啡了' })
+    let n = 0
+    const r = await judgePair({ db: w.db, aid: w.aid, oldRow: p.old, newerRow: p.newer, useCache: false, complete: async () => { n++; return n === 1 ? '' : '补充' }, via: 'test' })
+    check('空回复会再问一次', n === 2 && r.verdict === 'supplement', { n, r })
+    n = 0
+    const r2 = await judgePair({ db: w.db, aid: w.aid, oldRow: p.old, newerRow: p.newer, useCache: false, complete: async () => { n++; return '' }, via: 'test' })
+    check('两次都空 → bad-shape', n === 2 && r2.reason === 'bad-shape', { n, r2 })
+    // 重试来的「取代」不能作废旧记忆：降成不确定
+    n = 0
+    const r3 = await judgePair({ db: w.db, aid: w.aid, oldRow: p.old, newerRow: p.newer, useCache: false, complete: async () => { n++; return n === 1 ? '' : '取代' }, via: 'test' })
+    check('重试后才说取代 → 降成不确定', r3.verdict === 'uncertain' && r3.reason === 'retried-supersede', { n, r3 })
   } finally { w.close() }
 }
 

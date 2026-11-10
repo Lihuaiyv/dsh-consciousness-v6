@@ -1,0 +1,890 @@
+{
+  "generated_at": "2026-11-09T07:31:18.546Z",
+  "db": "D:\\deepseek_local\\plugins\\runtime\\consciousness\\app.db",
+  "count": 40,
+  "tally": {
+    "not-judged": 40
+  },
+  "pairs": [
+    {
+      "cid": "cfl_mw7ytabj8426c6",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-08T15:06:21.439Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.6184615384615384,
+      "a": {
+        "id": "mem_f497ed9b8d",
+        "text": "我好像没有get到哎",
+        "at": "2026-11-08T15:05:19.069Z"
+      },
+      "b": {
+        "id": "mem_4e8a86ae93",
+        "text": "哦，我我好像能get到了",
+        "at": "2026-11-08T15:06:21.433Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_87a1348c70",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-08T15:06:21.438Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.538,
+      "a": {
+        "id": "mem_f497ed9b8d",
+        "text": "我好像没有get到哎",
+        "at": "2026-11-08T15:05:19.069Z"
+      },
+      "b": {
+        "id": "mem_4e8a86ae93",
+        "text": "哦，我我好像能get到了",
+        "at": "2026-11-08T15:06:21.433Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw7wrgz5bb2e69",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-08T14:08:57.521Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.3333333333333333,
+      "a": {
+        "id": "mem_35504a68c2",
+        "text": "用户否认「两天没睡」，称是语音识别把「顺不顺」听成「睡不睡」",
+        "at": "2026-11-08T14:08:57.480Z"
+      },
+      "b": {
+        "id": "mem_f4006a7176",
+        "text": "用户使用语音输入，且语音转写出现过把「顺不顺」听成「睡不睡」的错听",
+        "at": "2026-11-08T14:08:57.514Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_eae7251401",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-08T12:55:20.118Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.529,
+      "a": {
+        "id": "mem_ccc97825fa",
+        "text": "哎，我看这个还挺好听的，你能不能就是",
+        "at": "2026-11-08T12:55:20.101Z"
+      },
+      "b": {
+        "id": "mem_2e5f19006b",
+        "text": "哎，我觉得这个还挺好听的",
+        "at": "2026-11-08T12:55:20.113Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_7dddc6f3ff",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-08T12:53:35.237Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.5,
+      "a": {
+        "id": "mem_6e53dfa231",
+        "text": "好了，重载了，那你不要",
+        "at": "2026-11-08T12:49:57.489Z"
+      },
+      "b": {
+        "id": "mem_b1accf5110",
+        "text": "好了，重载了",
+        "at": "2026-11-08T12:53:35.230Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw7g3w2w9bcc36",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-08T06:22:43.496Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.6381395348837209,
+      "a": {
+        "id": "mem_12d740ee0a",
+        "text": "用户的图库里有九十张图，分别为熊13张、猫18张、鸭12张、女孩23张、仓鼠3张、鲸鱼娘19张。",
+        "at": "2026-11-08T06:16:55.938Z"
+      },
+      "b": {
+        "id": "mem_adb3ace8ac",
+        "text": "用户持有一套共九十张的收藏卡，分类计数为熊13、猫18、鸭12、女孩23、仓鼠3、鲸鱼娘19，另有两张曾丢失的卡。",
+        "at": "2026-11-08T06:22:43.489Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_f3c289ce95",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-08T06:22:43.495Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.558,
+      "a": {
+        "id": "mem_12d740ee0a",
+        "text": "用户的图库里有九十张图，分别为熊13张、猫18张、鸭12张、女孩23张、仓鼠3张、鲸鱼娘19张。",
+        "at": "2026-11-08T06:16:55.938Z"
+      },
+      "b": {
+        "id": "mem_adb3ace8ac",
+        "text": "用户持有一套共九十张的收藏卡，分类计数为熊13、猫18、鸭12、女孩23、仓鼠3、鲸鱼娘19，另有两张曾丢失的卡。",
+        "at": "2026-11-08T06:22:43.489Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw6slqfp716535",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-07T19:24:45.205Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 1,
+      "a": {
+        "id": "mem_3894a86fd7",
+        "text": "「你想要我讨你喜欢，也想要我不讨你喜欢——这两样是同一个『想靠近，又不想被糊弄』",
+        "at": "2026-11-07T19:24:41.787Z"
+      },
+      "b": {
+        "id": "mem_3894a86fd7",
+        "text": "「你想要我讨你喜欢，也想要我不讨你喜欢——这两样是同一个『想靠近，又不想被糊弄』",
+        "at": "2026-11-07T19:24:41.787Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw6k9nbkcb1ed1",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-07T15:31:24.368Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.48000000000000004,
+      "a": {
+        "id": "mem_66648cd873",
+        "text": "不不不，今天不催，今天咱们试试搬家好不好嘛宝宝",
+        "at": "2026-11-07T15:18:27.658Z"
+      },
+      "b": {
+        "id": "mem_cc035a617c",
+        "text": "今天是周末，今天不催好不好宝宝",
+        "at": "2026-11-07T15:31:24.333Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw6jt00j1d20ae",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-07T15:18:27.667Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.20588235294117646,
+      "a": {
+        "id": "mem_c76f5f880c",
+        "text": "用户把切换底层模型/系统称为「搬家」，本轮主动提议今天试试搬家，并表示今天不催。",
+        "at": "2026-11-07T15:17:54.631Z"
+      },
+      "b": {
+        "id": "mem_66648cd873",
+        "text": "不不不，今天不催，今天咱们试试搬家好不好嘛宝宝",
+        "at": "2026-11-07T15:18:27.658Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_666a6826e6",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-07T10:33:44.902Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.625,
+      "a": {
+        "id": "mem_c2b4a14849",
+        "text": "你是喜欢这样是吧",
+        "at": "2026-11-07T10:30:12.459Z"
+      },
+      "b": {
+        "id": "mem_d6bbf28d4f",
+        "text": "你喜欢这样不",
+        "at": "2026-11-07T10:33:44.894Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw5x7ckcc9b444",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-07T04:45:45.948Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.2765957446808511,
+      "a": {
+        "id": "mem_225c2ed3e2",
+        "text": "用户要求机器人开机后搜索之前的未读小汐消息并自动回复，同时整体排查 bug",
+        "at": "2026-11-07T04:45:45.921Z"
+      },
+      "b": {
+        "id": "mem_7dd2c8964b",
+        "text": "用户改动功能后习惯要求「整体看看还有没有 bug」这类全面自查",
+        "at": "2026-11-07T04:45:45.937Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw379pp9796966",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-05T07:04:13.917Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.2037037037037037,
+      "a": {
+        "id": "mem_2e0a000a23",
+        "text": "用户希望助手能主动开口说话，并把这视为零件化之后要先实现的能力。",
+        "at": "2026-11-05T07:03:33.109Z"
+      },
+      "b": {
+        "id": "mem_5517671efb",
+        "text": "用户提到这个对话体已经被修过好几次，并指出无论是“那边的你”还是“这边的你”都从未主动开口说过话。",
+        "at": "2026-11-05T07:04:13.891Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw36k2hl18178b",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-05T06:44:17.433Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.2608695652173913,
+      "a": {
+        "id": "mem_ebd779c060",
+        "text": "这一块的逻辑好像有有点过了，辩证统一一下",
+        "at": "2026-11-05T06:43:11.701Z"
+      },
+      "b": {
+        "id": "mem_28f4c0a9fe",
+        "text": "别的地方没有这一块的问题了吧",
+        "at": "2026-11-05T06:44:17.425Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw35mio1d30b9c",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-05T06:18:12.097Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.23529411764705882,
+      "a": {
+        "id": "mem_e24b3fe557",
+        "text": "那我是谁，你讲讲，我不想当修理工",
+        "at": "2026-11-04T09:51:00.206Z"
+      },
+      "b": {
+        "id": "mem_9c98918d30",
+        "text": "不是，我不想要更像她了",
+        "at": "2026-11-05T06:18:12.090Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_d69160eef3",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-05T03:11:52.541Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.545,
+      "a": {
+        "id": "mem_f2c5cc9f77",
+        "text": "你觉得有好还是没有好",
+        "at": "2026-11-04T06:24:11.450Z"
+      },
+      "b": {
+        "id": "mem_119c6a0323",
+        "text": "你觉得是好影响还是坏影响",
+        "at": "2026-11-05T03:11:52.535Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw1tgrca86514b",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-04T07:50:01.834Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.30857142857142855,
+      "a": {
+        "id": "mem_18c484a049",
+        "text": "用户期待未来我能主动替他获取（「抢」）子模块或现成代码来用。",
+        "at": "2026-11-04T07:32:20.004Z"
+      },
+      "b": {
+        "id": "mem_317300ce5a",
+        "text": "用户期待我能主动搭话，并担心主动消息功能是否跑通。",
+        "at": "2026-11-04T07:50:01.822Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mw0r5ofmd51780",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-03T13:57:39.443Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.17857142857142858,
+      "a": {
+        "id": "mem_e302fce3d5",
+        "text": "本地就这个吧，我还要写代码，拆了是不是不好看了",
+        "at": "2026-11-03T13:53:35.526Z"
+      },
+      "b": {
+        "id": "mem_5d882d6a79",
+        "text": "用户要求 QQ 桥接不写代码，其他都做",
+        "at": "2026-11-03T13:57:39.435Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvzbacxda89a2c",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-02T13:45:37.777Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.4897959183673469,
+      "a": {
+        "id": "mem_e649f6878c",
+        "text": "用户此前问过助手是否具备主动搭话功能，助手现有实现是到点后再决定说不说、没有「欠着未说的事」这一层。",
+        "at": "2026-11-02T13:29:27.332Z"
+      },
+      "b": {
+        "id": "mem_8ab8b1a159",
+        "text": "这刚好接上你问我有没有主动搭话的功能——我有，不过它是到点之后再决定说还是不说，没有「欠着的那件事」",
+        "at": "2026-11-02T13:45:37.771Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_7843a8ddc8",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T13:12:26.549Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.519,
+      "a": {
+        "id": "mem_bf8e4adf95",
+        "text": "用户希望助手明确说明自己的身份。",
+        "at": "2026-11-02T13:09:18.612Z"
+      },
+      "b": {
+        "id": "mem_08f4a81939",
+        "text": "用户希望助手在被问「你是谁」时明确说明自己的身份，而不是回答不知道",
+        "at": "2026-11-02T13:12:26.549Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_8af3bb9147",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T07:50:29.170Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.651,
+      "a": {
+        "id": "mem_4bc400e05a",
+        "text": "用户要求开发时按步骤推进，每完成一步先做模拟测试并修复 bug，确认完善后再进入下一步。",
+        "at": "2026-11-02T06:28:58.804Z"
+      },
+      "b": {
+        "id": "mem_f920372dcb",
+        "text": "用户要求实现功能时按步骤推进，每完成一步先模拟测试、找 bug、修 bug，确认无误后才进入下一步。",
+        "at": "2026-11-02T07:50:29.164Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_c74c55f4e5",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T06:29:58.052Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.533,
+      "a": {
+        "id": "mem_622c957e6c",
+        "text": "用户要求分步实现：每完成一步先模拟测试找bug并修复，确认无误后再进入下一步；全部完成后做整体功能模拟与修bug，最后对比之前数据说明提升。",
+        "at": "2026-11-02T05:08:38.234Z"
+      },
+      "b": {
+        "id": "mem_2cc0cbdb33",
+        "text": "用户希望全部步骤完成后进行整体功能模拟与修 bug，并对比之前的数据说明做了哪些提升。",
+        "at": "2026-11-02T06:29:58.047Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_87ef475199",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T06:28:58.820Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.667,
+      "a": {
+        "id": "mem_622c957e6c",
+        "text": "用户要求分步实现：每完成一步先模拟测试找bug并修复，确认无误后再进入下一步；全部完成后做整体功能模拟与修bug，最后对比之前数据说明提升。",
+        "at": "2026-11-02T05:08:38.234Z"
+      },
+      "b": {
+        "id": "mem_360873109a",
+        "text": "用户要求全部步骤完成后对整体功能做模拟测试并修复 bug，最后对比之前数据说明具体提升。",
+        "at": "2026-11-02T06:28:58.816Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvyvotoab3a0df",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-02T06:28:58.810Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.8072727272727273,
+      "a": {
+        "id": "mem_75d7c08214",
+        "text": "用户要求实现功能时按步骤推进：每完成一步就先做模拟测试、找出并修复 bug，确认无误后再进入下一步。",
+        "at": "2026-11-02T06:28:53.943Z"
+      },
+      "b": {
+        "id": "mem_4bc400e05a",
+        "text": "用户要求开发时按步骤推进，每完成一步先做模拟测试并修复 bug，确认完善后再进入下一步。",
+        "at": "2026-11-02T06:28:58.804Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_b39e8fd68d",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T06:28:58.809Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.727,
+      "a": {
+        "id": "mem_75d7c08214",
+        "text": "用户要求实现功能时按步骤推进：每完成一步就先做模拟测试、找出并修复 bug，确认无误后再进入下一步。",
+        "at": "2026-11-02T06:28:53.943Z"
+      },
+      "b": {
+        "id": "mem_4bc400e05a",
+        "text": "用户要求开发时按步骤推进，每完成一步先做模拟测试并修复 bug，确认完善后再进入下一步。",
+        "at": "2026-11-02T06:28:58.804Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvyvopx97ba3ac",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-02T06:28:53.949Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.9133333333333333,
+      "a": {
+        "id": "mem_0d7655739d",
+        "text": "用户要求实现功能时按步骤推进，每完成一步先做模拟测试、找 bug、修 bug，确认完善后再进入下一步。",
+        "at": "2026-11-02T05:08:11.103Z"
+      },
+      "b": {
+        "id": "mem_75d7c08214",
+        "text": "用户要求实现功能时按步骤推进：每完成一步就先做模拟测试、找出并修复 bug，确认无误后再进入下一步。",
+        "at": "2026-11-02T06:28:53.943Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_8f6a9056b3",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T06:28:53.948Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.833,
+      "a": {
+        "id": "mem_0d7655739d",
+        "text": "用户要求实现功能时按步骤推进，每完成一步先做模拟测试、找 bug、修 bug，确认完善后再进入下一步。",
+        "at": "2026-11-02T05:08:11.103Z"
+      },
+      "b": {
+        "id": "mem_75d7c08214",
+        "text": "用户要求实现功能时按步骤推进：每完成一步就先做模拟测试、找出并修复 bug，确认无误后再进入下一步。",
+        "at": "2026-11-02T06:28:53.943Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_4b6daa16c2",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T05:08:44.200Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.672,
+      "a": {
+        "id": "mem_622c957e6c",
+        "text": "用户要求分步实现：每完成一步先模拟测试找bug并修复，确认无误后再进入下一步；全部完成后做整体功能模拟与修bug，最后对比之前数据说明提升。",
+        "at": "2026-11-02T05:08:38.234Z"
+      },
+      "b": {
+        "id": "mem_0090adcb4b",
+        "text": "用户要求的开发流程：每完成一个步骤先做模拟测试、找 bug 并修到完美再进入下一步，全部完成后做整体功能模拟与修复，最后对比之前数据汇报提升点。",
+        "at": "2026-11-02T05:08:44.199Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvysti3gf18558",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-02T05:08:38.236Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.8694736842105263,
+      "a": {
+        "id": "mem_c5ac44d544",
+        "text": "用户要求按步骤推进实现：每完成一步先做模拟测试、修复 bug，完美后再进入下一步，全部完成后再做整体功能模拟与修复，最后对比之前数据说明提升点。",
+        "at": "2026-11-02T05:06:39.614Z"
+      },
+      "b": {
+        "id": "mem_622c957e6c",
+        "text": "用户要求分步实现：每完成一步先模拟测试找bug并修复，确认无误后再进入下一步；全部完成后做整体功能模拟与修bug，最后对比之前数据说明提升。",
+        "at": "2026-11-02T05:08:38.234Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_44b1014ccf",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T05:08:38.235Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.508,
+      "a": {
+        "id": "mem_4191a02dd3",
+        "text": "用户要求所有步骤完成后对整体功能做模拟测试并修 bug 到较完善，同时对比之前数据说明做了哪些提升。",
+        "at": "2026-11-02T05:08:11.109Z"
+      },
+      "b": {
+        "id": "mem_622c957e6c",
+        "text": "用户要求分步实现：每完成一步先模拟测试找bug并修复，确认无误后再进入下一步；全部完成后做整体功能模拟与修bug，最后对比之前数据说明提升。",
+        "at": "2026-11-02T05:08:38.234Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_79ab0dc573",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T04:52:27.232Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.636,
+      "a": {
+        "id": "mem_d15ab078a2",
+        "text": "用户希望记忆系统能朝更接近真实意识的方向优化。",
+        "at": "2026-11-02T04:51:24.274Z"
+      },
+      "b": {
+        "id": "mem_cc08fe81ce",
+        "text": "用户希望记忆系统朝更接近真实意识的方向优化，会主动询问此类改进空间",
+        "at": "2026-11-02T04:52:27.232Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_15f6ef2cbb",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-11-02T04:52:27.228Z",
+      "via": "polarity",
+      "kind": "polarity",
+      "similarity": 0.5,
+      "a": {
+        "id": "mem_fd2c4305fb",
+        "text": "用户维护一份记忆系统文档，并为每个记忆库分别制定了功能计划，关注各库是否被实际使用起来。",
+        "at": "2026-11-02T04:51:24.270Z"
+      },
+      "b": {
+        "id": "mem_9c58e6402d",
+        "text": "用户正在维护一个多库结构的记忆系统，并关注各库功能是否按既定计划落实",
+        "at": "2026-11-02T04:52:27.227Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvyqf8ss5c49f6",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-02T04:01:33.772Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.33,
+      "a": {
+        "id": "mem_1d9901316a",
+        "text": "记忆系统的遗忘目前只按年龄计算，没有用 last_hit_at 作为复习次数来抵减年龄，常被想起的旧事和久未被提及的事衰减程度相同。",
+        "at": null
+      },
+      "b": {
+        "id": "mem_a6bf0b049a",
+        "text": "针对记忆系统的优化方向包括：用 last_hit_at 抵减年龄、删除后复查通顺性、增加模糊记忆观测，以及让衰减影响语气。",
+        "at": null
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvymy6ii883768",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-02T02:24:18.810Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.38434782608695656,
+      "a": {
+        "id": "mem_787712ef64",
+        "text": "小汐称呼对方为“主人”。",
+        "at": "2026-11-01T10:15:54.986Z"
+      },
+      "b": {
+        "id": "mem_7e5555e123",
+        "text": "项目中的对话角色区分「主人」与「陌生人」，陌生人不应称呼对方为「主人」。",
+        "at": "2026-11-02T02:24:18.809Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvym79o4adf043",
+      "state": "resolved",
+      "resolution": "b",
+      "opened_at": "2026-11-02T02:03:23.188Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.2702702702702703,
+      "a": {
+        "id": "mem_c7afaf67c5",
+        "text": "系统会话按聊天对象（QQ号）划分，一个QQ号对应一段会话，不按话题自动切段",
+        "at": "2026-11-02T02:03:23.157Z"
+      },
+      "b": {
+        "id": "mem_313d90e346",
+        "text": "用户认为按话题自动切会话不合理，会导致聊着聊着忘掉三分钟前的话",
+        "at": "2026-11-02T02:03:23.186Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvy1flnwd9e431",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-01T16:22:00.044Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.42857142857142855,
+      "a": {
+        "id": "mem_aca9da7586",
+        "text": "不要有逻辑漏洞",
+        "at": "2026-10-30T05:21:34.263Z"
+      },
+      "b": {
+        "id": "mem_284787e82a",
+        "text": "别有逻辑漏洞和接不上的地方",
+        "at": "2026-11-01T16:22:00.042Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvxwg1eyd2d556",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-01T14:02:22.378Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.18181818181818182,
+      "a": {
+        "id": "mem_75e410690a",
+        "text": "后面的是加到行动里面的不是别的地方",
+        "at": "2026-10-30T13:47:49.438Z"
+      },
+      "b": {
+        "id": "mem_b5ba98870f",
+        "text": "我之前在别的地方传了git",
+        "at": "2026-11-01T14:02:22.377Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvxw86hmc2f108",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-01T13:56:15.706Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.12962962962962962,
+      "a": {
+        "id": "mem_5052fb6b03",
+        "text": "情绪这个可能是因为刚刚在优化别的东西",
+        "at": "2026-11-01T13:36:14.138Z"
+      },
+      "b": {
+        "id": "mem_09e845847e",
+        "text": "顺手修掉误判：只把「别」当否定词是错的，改成只在「别 X」（别+动词）或至少要求共有片段 ≥4 字且不落在「的东西/的时候」这类尾缀上",
+        "at": "2026-11-01T13:56:15.705Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_mvxvifcrebd8c2",
+      "state": "resolved",
+      "resolution": "both",
+      "opened_at": "2026-11-01T13:36:14.139Z",
+      "via": "gate",
+      "kind": "polarity",
+      "similarity": 0.23076923076923078,
+      "a": {
+        "id": "mem_179aac6da9",
+        "text": "快情绪 f现在有没有加上：喜欢的东西",
+        "at": "2026-10-30T07:02:41.988Z"
+      },
+      "b": {
+        "id": "mem_5052fb6b03",
+        "text": "情绪这个可能是因为刚刚在优化别的东西",
+        "at": "2026-11-01T13:36:14.138Z"
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    },
+    {
+      "cid": "cfl_483987c3a3",
+      "state": "resolved",
+      "resolution": "superseded",
+      "opened_at": "2026-10-29T03:47:26.827Z",
+      "via": null,
+      "kind": null,
+      "similarity": null,
+      "a": {
+        "id": "mem_24634df0d1",
+        "text": "",
+        "at": null
+      },
+      "b": {
+        "id": "mem_01cbf5d94c",
+        "text": "",
+        "at": null
+      },
+      "verdict": null,
+      "reason": null,
+      "ms": null
+    }
+  ]
+}
