@@ -194,11 +194,52 @@
     function ConflictPanel({ list, loading, error, busyId, onResolve }) {
       const all = Array.isArray(list) ? list : []
       const open = all.filter((c) => c.state === 'open')
-      const done = all.filter((c) => c.state !== 'open').slice(0, 3)
-      const KEEP_WORD = { a: '留先记的', b: '留后记的', both: '两条都留' }
+      // 11-10：判官没给出结论的挂在 pending。以前界面只筛 open，这些等于黑洞。
+      const pending = all.filter((c) => c.state === 'pending')
+      const done = all.filter((c) => c.state === 'resolved').slice(0, 3)
+      const KEEP_WORD = {
+        a: '留先记的', b: '留后记的', both: '两条都留',
+        supersede: '判官：取代', supplement: '判官：补充', unrelated: '判官：无关', unknown: '超期作废',
+      }
       if (loading && !all.length) return h('div', { className: 'dshc-sub' }, '读取冲突…')
       if (error && !all.length) return h('div', { className: 'dshc-err' }, error)
-      if (!open.length) {
+
+      const card = (c, isPending) => {
+        let ev = {}
+        try { ev = JSON.parse(c.evidence || '{}') } catch { ev = {} }
+        const sim = Number(ev.similarity)
+        const meta = [
+          ago(c.opened_at),
+          Number.isFinite(sim) ? '字面相似 ' + (sim * 100).toFixed(0) + '%' : null,
+          c.kind === 'polarity' ? '说法相反' : (c.kind || null),
+          isPending ? '判官还没给结论（夜里会再问一次）' : (c.severity === 'high' ? '它自己有被卡住' : null),
+        ].filter(Boolean).join(' · ')
+        const side = (which, m, tip) => h('div', {
+          key: which, className: 'dshc-item',
+        },
+          h(Pill, { tone: which === 'a' ? 'warn' : undefined, title: tip },
+            which === 'a' ? '先记的' : '后记的'),
+          h('div', { className: 't' }, (m && m.text) || '（这条记忆已经找不到了）'),
+          m && m.invalid_at ? h('span', { className: 'dshc-sub' }, '已被判失效') : null,
+          h(Btn, {
+            sm: true, ghost: true, disabled: busyId === c.id,
+            title: '这条说的对：点完这条留下，另一条会被标成失效',
+            onClick: () => onResolve(c.id, which),
+          }, '留这条，废掉另一条'))
+        return h(Card, { key: c.id, style: { padding: 12, marginBottom: 10 } },
+          h('div', { className: 'dshc-sub', style: { marginBottom: 8 } }, meta),
+          side('a', c.a, '更早记下的那句'),
+          side('b', c.b, '刚记下的那句'),
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 } },
+            h(Btn, {
+              disabled: busyId === c.id,
+              onClick: () => onResolve(c.id, 'both'),
+              title: '判它理解错了：两句其实不矛盾，都留着，并在冲突里记一句原因',
+            }, busyId === c.id ? '处理中…' : '它理解错了，两条都留'),
+            h('span', { className: 'dshc-sub' }, '判完这里就不再是「待处理」了')))
+      }
+
+      if (!open.length && !pending.length) {
         return h('div', null,
           h('div', { className: 'dshc-sub' }, '没有拿不准的事。'),
           done.length
@@ -207,40 +248,13 @@
             : null)
       }
       return h('div', { className: 'dshc-list' },
-        open.map((c) => {
-          let ev = {}
-          try { ev = JSON.parse(c.evidence || '{}') } catch { ev = {} }
-          const sim = Number(ev.similarity)
-          const meta = [
-            ago(c.opened_at),
-            Number.isFinite(sim) ? '字面相似 ' + (sim * 100).toFixed(0) + '%' : null,
-            c.kind === 'polarity' ? '说法相反' : (c.kind || null),
-            c.severity === 'high' ? '它自己有被卡住' : null,
-          ].filter(Boolean).join(' · ')
-          const side = (which, m, tip) => h('div', {
-            key: which, className: 'dshc-item',
-          },
-            h(Pill, { tone: which === 'a' ? 'warn' : undefined, title: tip },
-              which === 'a' ? '先记的' : '后记的'),
-            h('div', { className: 't' }, (m && m.text) || '（这条记忆已经找不到了）'),
-            m && m.invalid_at ? h('span', { className: 'dshc-sub' }, '已被判失效') : null,
-            h(Btn, {
-              sm: true, ghost: true, disabled: busyId === c.id,
-              title: '这条说的对：点完这条留下，另一条会被标成失效',
-              onClick: () => onResolve(c.id, which),
-            }, '留这条，废掉另一条'))
-          return h(Card, { key: c.id, style: { padding: 12, marginBottom: 10 } },
-            h('div', { className: 'dshc-sub', style: { marginBottom: 8 } }, meta),
-            side('a', c.a, '更早记下的那句'),
-            side('b', c.b, '刚记下的那句'),
-            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 } },
-              h(Btn, {
-                disabled: busyId === c.id,
-                onClick: () => onResolve(c.id, 'both'),
-                title: '判它理解错了：两句其实不矛盾，都留着，并在冲突里记一句原因',
-              }, busyId === c.id ? '处理中…' : '它理解错了，两条都留'),
-              h('span', { className: 'dshc-sub' }, '判完这里就不再是「需处理」了')))
-        }))
+        open.length ? h('div', null, open.map((c) => card(c, false))) : null,
+        pending.length
+          ? h('div', { style: { marginTop: open.length ? 10 : 0 } },
+            h('div', { className: 'dshc-sub', style: { marginBottom: 6 } },
+              '待判 ' + pending.length + ' 条：判官没给出结论。可以现在拍板，也可以留给夜里再问一次；超过 7 天自动作废。'),
+            pending.map((c) => card(c, true)))
+          : null)
     }
 
     function MemoryPage({ aid, view, act, setTab, focus, jump }) {

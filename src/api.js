@@ -25,6 +25,7 @@ import * as cf from './modules/conflict.js'
 import * as ni from './modules/nightly.js'
 import * as csl from './modules/consolidate.js'
 import * as jg from './modules/judge.js'
+import * as jr from './modules/judge_replay.js'
 import * as tp from './modules/temps.js'
 import * as vt from './modules/vault.js'
 import * as sd from './modules/study.js'
@@ -659,6 +660,16 @@ async function routes(db, method, path, body, role, bound) {
     // 抽样体检：拿现存自省过一遍「价值裁判」，看写入闸门会拦下多少（只读，不写库）
     if (method === 'GET' && sub === 'memory' && sub2 === 'judge') {
       return jg.judgeSample(db, aid, { limit: Number(q(path, 'limit') || 30), floor: Number(q(path, 'floor') || 0.7) })
+    }
+    // 判官回放：拿库里的冲突喂给宿主模型判一遍（只读，不写记忆、不写判官缓存）。
+    // 命令行进程拿不到宿主 llm，所以这个只能在插件里跑——它就是「用 DSH 的模型判」那条路。
+    if (method === 'POST' && sub === 'memory' && sub2 === 'judge-replay') {
+      return jr.replayConflicts(db, aid, {
+        complete: (req) => kernelModel.complete(req),
+        limit: Number(body.limit) || 20,
+        timeoutMs: Number(body.timeoutMs) || 20000,
+        useCache: body.useCache === true,
+      })
     }
     if (method === 'GET' && sub === 'memory') return c.listMemory(db, aid, q(path, 'include_deleted') === '1')
     // 「按感觉找」：label / 时间段 → 那几条 feel + 同时段的记忆与当天日记。只读。
