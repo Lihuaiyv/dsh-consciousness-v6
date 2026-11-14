@@ -8,7 +8,7 @@ const DB = process.env.DSH_DB || dbPath()
 const db = new DatabaseSync(DB, { readOnly: true })
 
 const aid = process.argv[2] || db.prepare(
-  'SELECT agent_id AS a, COUNT(*) AS n FROM raw_turns GROUP BY agent_id ORDER BY n DESC LIMIT 1'
+  'SELECT agent_id AS a, COUNT(*) AS n FROM fragments GROUP BY agent_id ORDER BY n DESC LIMIT 1'
 ).get()?.a
 
 if (!aid) { console.error('没有找到 agent'); process.exit(1) }

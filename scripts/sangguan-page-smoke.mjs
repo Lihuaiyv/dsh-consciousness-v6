@@ -29,7 +29,7 @@ const { buildConstitution } = await import('../src/modules/sangguan/constitution
 const { injectView } = await import('../src/modules/sangguan/inject.js')
 
 const db = openDb(copy)
-const pick = db.prepare("SELECT agent_id, COUNT(*) n FROM raw_turns WHERE text IS NOT NULL GROUP BY agent_id ORDER BY n DESC LIMIT 1").get()
+const pick = db.prepare("SELECT agent_id, COUNT(*) n FROM fragments WHERE text IS NOT NULL GROUP BY agent_id ORDER BY n DESC LIMIT 1").get()
 const aid = pick.agent_id
 const s0 = loadState(db, aid)
 const byLayer = (l) => Object.values(s0.claims).filter((c) => c.layer === l && c.status === 'active').length

@@ -335,6 +335,36 @@ const CASES = [
     importFrom: "'../src/modules/llm_budget.js'",
     importTo: "'{MUTANT}'",
   },
+  {
+    // 变异点：过线也不写字母——0.60 已经偏出来了，页面上仍当中间。
+    name: '鱼格：过线也不写字母（显示门失效）',
+    impl: 'src/modules/traits.js',
+    exam: 'test/exam-traits.test.mjs',
+    from: '      show = shownLean >= SHOW_LEAN',
+    to: '      show = false',
+    importFrom: "'../src/modules/traits.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：召回命中不设线——一半也算过。考卷盯着七成这条。
+    name: '验收：召回命中不设线（七成门失效）',
+    impl: 'src/modules/eval.js',
+    exam: 'test/exam-eval.test.mjs',
+    from: "{ key: 'memory.recall_hit', op: 'gte', threshold: 0.7, label: '召回命中率 Recall@5' },",
+    to: "{ key: 'memory.recall_hit', op: 'gte', threshold: 0, label: '召回命中率 Recall@5' },",
+    importFrom: "'../src/modules/eval.js'",
+    importTo: "'{MUTANT}'",
+  },
+  {
+    // 变异点：空批次也往下写——本来该当场拒绝。
+    name: '三观账本：空批次也收下（空批门失效）',
+    impl: 'src/modules/sangguan/ledger.js',
+    exam: 'test/exam-sgledger.test.mjs',
+    from: "  if (!Array.isArray(events) || !events.length) invalid('事件批次不能为空')",
+    to: "  if (false) invalid('事件批次不能为空')",
+    importFrom: "'../src/modules/sangguan/ledger.js'",
+    importTo: "'{MUTANT}'",
+  },
 ]
 
 let pass = 0

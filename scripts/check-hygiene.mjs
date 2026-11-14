@@ -26,6 +26,7 @@ const ALLOW_DIRS = new Set([
 const ALLOW_FILES = new Set([
   '.gitignore', '.gitattributes', 'index.js', 'client.js', 'package.json', 'README.md', 'LICENSE',
   'cordis.patch.yml', 'icon.svg', 'model.json.example', 'xmind.json',
+  'AGENTS.md', // 施工规则（2026-11-13 起），根目录要能一眼看到
 ])
 
 function ignored(rel) {

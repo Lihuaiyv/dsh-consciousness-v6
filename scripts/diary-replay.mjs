@@ -64,7 +64,7 @@ const aid = String(flag('agent', '') || (db.prepare("SELECT id FROM agents WHERE
 if (!aid) { console.error('库里没有 agent'); process.exit(1) }
 
 function daysWithMaterial(n = 2) {
-  const rows = db.prepare(`SELECT day, COUNT(*) c FROM raw_turns WHERE agent_id=? GROUP BY day ORDER BY day DESC LIMIT ?`).all(aid, n)
+  const rows = db.prepare(`SELECT day, COUNT(*) c FROM fragments WHERE agent_id=? GROUP BY day ORDER BY day DESC LIMIT ?`).all(aid, n)
   return rows.map((r) => r.day)
 }
 const days = String(flag('days', '') || '').split(',').map((s) => s.trim()).filter(Boolean)

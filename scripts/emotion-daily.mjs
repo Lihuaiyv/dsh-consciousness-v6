@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const DB = path.join(os.homedir(), '.dsh', 'consciousness', 'app.db')
+const DB = process.env.DSH_CONSCIOUSNESS_DB || path.join(os.homedir(), '.dsh', 'consciousness', 'app.db')
 const day = process.argv[2] || new Date().toISOString().slice(0, 10)
 
 /* 当天窗口按本地日算（+08）：00:00 ~ 24:00 */

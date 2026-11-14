@@ -44,7 +44,7 @@ const mems = q('SELECT text FROM memory_items ORDER BY created_at DESC LIMIT 3')
 console.log('最近三条记忆：')
 for (const m of mems) console.log('  · ' + String(m.text).slice(0, 60))
 
-const turns = one('SELECT count(*) AS c, max(created_at) AS last FROM raw_turns')
+const turns = one('SELECT count(*) AS c, max(created_at) AS last FROM fragments')
 console.log('原文：' + (turns ? turns.c + ' 条，最后一条 ' + turns.last : '（没有）'))
 
 db.close()

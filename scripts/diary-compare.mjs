@@ -49,7 +49,7 @@ for (const day of days) {
   const eps = listEpisodes(db, aid, { day, limit: 20 })
   const facts = db.prepare(`SELECT text FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
     AND substr(created_at,1,10)=? ORDER BY importance DESC, created_at LIMIT 12`).all(aid, day)
-  const raw = db.prepare(`SELECT text FROM raw_turns WHERE agent_id=? AND day=? AND role IN ('user','assistant') ORDER BY created_at, seq`).all(aid, day)
+  const raw = db.prepare(`SELECT text FROM fragments WHERE agent_id=? AND day=? AND role IN ('user','assistant') ORDER BY created_at, seq`).all(aid, day)
   const sample = []
   if (raw.length <= 36) sample.push(...raw)
   else for (let i = 0; i < 36; i++) sample.push(raw[Math.round(i * (raw.length - 1) / 35)])

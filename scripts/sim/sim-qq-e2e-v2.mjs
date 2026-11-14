@@ -41,7 +41,7 @@ const SCONV = 'qq:p:76001'
   }
   check('主人多轮：带满 16 条历史', last.body.history_used === 16, last.body.history_used)
   check('主人多轮：learned 仍为 true', last.body.learned === true, last.body.learned)
-  check('原文层一进一出都落了', num("select count(*) n from raw_turns where session_id=?", OCONV) === 16, num("select count(*) n from raw_turns where session_id=?", OCONV))
+  check('原文层一进一出都落了', num("select count(*) n from fragments where session_id=?", OCONV) === 16, num("select count(*) n from fragments where session_id=?", OCONV))
   check('8 轮压出了纪要', num("select count(*) n from episodes where session_id=?", OCONV) >= 1, num("select count(*) n from episodes where session_id=?", OCONV))
 }
 
@@ -54,7 +54,7 @@ const SCONV = 'qq:p:76001'
   check('陌生人 learned=false', last.body.learned === false, last.body.learned)
   check('陌生人拿不到意识体包', last.body.context_chars === 0, last.body.context_chars)
   check('陌生人只带 2 轮', last.body.history_used <= 4, last.body.history_used)
-  check('陌生人不落原文', num("select count(*) n from raw_turns where session_id=?", SCONV) === 0, num("select count(*) n from raw_turns where session_id=?", SCONV))
+  check('陌生人不落原文', num("select count(*) n from fragments where session_id=?", SCONV) === 0, num("select count(*) n from fragments where session_id=?", SCONV))
   check('陌生人不压纪要', num("select count(*) n from episodes where session_id=?", SCONV) === 0)
   check('陌生人不写记忆', num("select count(*) n from memory_items where agent_id=? and text like '%路人第%'", A) === 0, num("select count(*) n from memory_items where agent_id=? and text like '%路人第%'", A))
 }

@@ -1,5 +1,5 @@
 /**
- * 清掉 raw_turns 里冒充用户原话的机器消息。
+ * 清掉 fragments 里冒充用户原话的机器消息。
  * 默认只看不删；--apply 才真删。
  *
  * 认的三种（和 src/text.js 的 MACHINE_MESSAGE 一致）：
@@ -17,7 +17,7 @@ const db = new DatabaseSync(path.join(os.homedir(), '.dsh', 'consciousness', 'ap
 // 必须锚定开头：我自己的正常回复里也会提到「checkpoint」这个词，模糊匹配会把真回复删掉。
 const MACHINE_MESSAGE = /^\s*(?:This is an automatically generated checkpoint|Background (?:subagent|job)\b|<compacted-summary>|Approval prompts are disabled|The approval policy changed|Approval policy changed)/i
 
-const all = db.prepare('SELECT id, role, session_id, seq, created_at, text FROM raw_turns').all();
+const all = db.prepare('SELECT id, role, session_id, seq, created_at, text FROM fragments').all();
 const seen = new Map();
 for (const r of all) {
   if (r.role !== 'user') continue
@@ -49,7 +49,7 @@ if (!APPLY) {
 }
 
 const delFts = db.prepare('DELETE FROM raw_fts WHERE id=?');
-const delRaw = db.prepare('DELETE FROM raw_turns WHERE id=?');
+const delRaw = db.prepare('DELETE FROM fragments WHERE id=?');
 let nRaw = 0, nFts = 0;
 db.exec('BEGIN');
 try {
@@ -64,9 +64,9 @@ try {
   process.exit(1);
 }
 
-console.log(`\n删除 raw_turns ${nRaw} 条，raw_fts ${nFts} 条`);
-console.log('剩余总量:', JSON.stringify(db.prepare('SELECT role, COUNT(*) c FROM raw_turns GROUP BY role').all()));
-console.log('还有 checkpoint?:', db.prepare("SELECT COUNT(*) c FROM raw_turns WHERE text LIKE '%automatically generated checkpoint%'").get().c);
-console.log('还有 compacted-summary?:', db.prepare("SELECT COUNT(*) c FROM raw_turns WHERE text LIKE '%<compacted-summary>%'").get().c);
-console.log('还有后台通报?:', db.prepare("SELECT COUNT(*) c FROM raw_turns WHERE text LIKE '%Background subagent%'").get().c);
+console.log(`\n删除 fragments ${nRaw} 条，raw_fts ${nFts} 条`);
+console.log('剩余总量:', JSON.stringify(db.prepare('SELECT role, COUNT(*) c FROM fragments GROUP BY role').all()));
+console.log('还有 checkpoint?:', db.prepare("SELECT COUNT(*) c FROM fragments WHERE text LIKE '%automatically generated checkpoint%'").get().c);
+console.log('还有 compacted-summary?:', db.prepare("SELECT COUNT(*) c FROM fragments WHERE text LIKE '%<compacted-summary>%'").get().c);
+console.log('还有后台通报?:', db.prepare("SELECT COUNT(*) c FROM fragments WHERE text LIKE '%Background subagent%'").get().c);
 db.close();

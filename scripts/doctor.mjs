@@ -60,7 +60,7 @@ function openReadOnly() {
 
 function dbCounts(db) {
   const t = {}
-  for (const name of ['agents', 'memory_items', 'persona', 'persona_values', 'persona_views', 'relations', 'conflicts', 'proactive', 'changes']) {
+  for (const name of ['agents', 'memory_items', 'persona', 'persona_views', 'relations', 'conflicts', 'proactive', 'changes']) {
     try { t[name] = Number(db.prepare(`SELECT COUNT(*) n FROM ${name}`).get().n) } catch { t[name] = null }
   }
   return t
@@ -160,18 +160,6 @@ if (!db) {
     if (Number(v && v.version) >= 9) ok('schema_meta', 'v' + v.version)
     else warn('schema_meta', 'v' + (v && v.version))
   } catch { warn('schema_meta', '读不到') }
-
-  try {
-    const sum = aid
-      ? db.prepare('SELECT COALESCE(SUM(weight),0) s, COUNT(*) n FROM persona_values WHERE agent_id=?').get(aid).s
-      : 0
-    if (Number(sum) > 0) {
-      if (Math.abs(Number(sum) - 1) > 0.05) fail('库内价值观总和', Number(sum).toFixed(3) + '（这个实例）')
-      else ok('库内价值观总和', Number(sum).toFixed(3) + '（这个实例）')
-    } else if (!aid) {
-      warn('库内价值观总和', '没指定实例，跳过')
-    }
-  } catch { /* 老库 */ }
 
   try {
     const bad = db.prepare("SELECT COUNT(*) n FROM relations WHERE closeness<0 OR closeness>1 OR trust<0 OR trust>1 OR dependence<0 OR dependence>1").get().n

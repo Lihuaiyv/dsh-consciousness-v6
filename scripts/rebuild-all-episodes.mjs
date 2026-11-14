@@ -7,7 +7,7 @@
  *     用「会话+哪天」去压会把几段揉成一句。所以按窗口重算，并用 episodeId 指定写回哪一行。
  *
  * 不动的：source='model' 的（那是模型精修过的，重压会把它降回规则版）。
- * 不动的：raw_turns（原文）和 diaries（日记）。
+ * 不动的：fragments（原文）和 diaries（日记）。
  *
  * 用法：node scripts/rebuild-all-episodes.mjs [--dry-run]
  */
@@ -66,7 +66,7 @@ console.log(`重建 ${ok} 条，跳过 ${skip}，失败 ${fail}`)
 const bad = db.prepare(`
   SELECT COUNT(*) n FROM episodes e
   WHERE e.source <> 'model' AND e.turns <> (
-    SELECT COUNT(*) FROM raw_turns r WHERE r.agent_id=e.agent_id
+    SELECT COUNT(*) FROM fragments r WHERE r.agent_id=e.agent_id
       AND r.session_id IS e.session_id
       AND r.created_at >= e.start_at AND r.created_at <= e.end_at)`).get().n
 console.log(`轮数与原文对不上的行：${bad}`)

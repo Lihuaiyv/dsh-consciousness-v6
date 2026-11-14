@@ -100,7 +100,7 @@ if (fs.existsSync(dbPath())) {
     const db = new DatabaseSync(dbPath(), { readOnly: true })
     const integrity = String(db.prepare('PRAGMA integrity_check').get().integrity_check)
     const counts = {}
-    for (const t of ['agents', 'raw_turns', 'memory_items', 'affect_feel', 'diaries']) {
+    for (const t of ['agents', 'fragments', 'memory_items', 'affect_feel', 'diaries']) {
       try { counts[t] = Number(db.prepare(`SELECT count(*) c FROM ${t}`).get().c) } catch { counts[t] = null }
     }
     db.close()

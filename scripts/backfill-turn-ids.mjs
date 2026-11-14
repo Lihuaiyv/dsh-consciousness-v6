@@ -29,13 +29,13 @@ db.exec('PRAGMA busy_timeout=5000')
 function rowsOf(aid) {
   const where = aid ? 'WHERE agent_id=?' : ''
   const st = db.prepare(`SELECT id, agent_id, session_id, seq, role, turn_id, substr(text,1,42) AS t
-    FROM raw_turns ${where} ORDER BY session_id, seq`)
+    FROM fragments ${where} ORDER BY session_id, seq`)
   return aid ? st.all(aid) : st.all()
 }
 
 const agents = agent
   ? [agent]
-  : db.prepare('SELECT DISTINCT agent_id FROM raw_turns').all().map((r) => r.agent_id)
+  : db.prepare('SELECT DISTINCT agent_id FROM fragments').all().map((r) => r.agent_id)
 
 let totalRows = 0, already = 0, paired = 0, single = 0, sessionCount = new Set()
 const samples = []

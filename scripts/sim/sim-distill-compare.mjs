@@ -103,7 +103,7 @@ async function runMode(label, { distill }) {
       },
       extract: async () => {
         // 用 yDay 原文匹配金标（模拟「从纪要材料抽事实」）
-        const texts = db.prepare('SELECT text FROM raw_turns WHERE agent_id=? AND day=?').all(aid, yDay).map((r) => r.text).join('\n')
+        const texts = db.prepare('SELECT text FROM fragments WHERE agent_id=? AND day=?').all(aid, yDay).map((r) => r.text).join('\n')
         const hit = GOLD.filter((x) => texts.includes(x.talk) || texts.includes(x.fact))
         if (!hit.length) return '[]'
         return JSON.stringify(hit.map((x) => ({ text: '用户' + x.fact, type: 'fact' })))

@@ -154,8 +154,8 @@ const rst = retrievalStats(db, aid, 9999)
 const facts = db.prepare("SELECT COUNT(*) n FROM memory_items WHERE agent_id=? AND status='active'").get(aid).n
 const diaries = db.prepare('SELECT COUNT(*) n FROM diaries WHERE agent_id=?').get(aid).n
 const eps = db.prepare('SELECT COUNT(*) n FROM episodes WHERE agent_id=?').get(aid).n
-const raws = db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=?').get(aid).n
-const sizes = Object.fromEntries(['memory_items', 'raw_turns', 'diaries', 'episodes', 'fact_archive', 'retrieval_log', 'extract_queue', 'entities'].map((t) => {
+const raws = db.prepare('SELECT COUNT(*) n FROM fragments WHERE agent_id=?').get(aid).n
+const sizes = Object.fromEntries(['memory_items', 'fragments', 'diaries', 'episodes', 'fact_archive', 'retrieval_log', 'extract_queue', 'entities'].map((t) => {
   try { return [t, db.prepare('SELECT COUNT(*) n FROM ' + t).get().n] } catch { return [t, -1] }
 }))
 

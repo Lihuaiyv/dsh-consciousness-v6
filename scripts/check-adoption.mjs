@@ -56,6 +56,30 @@ const RULES = [
     allow: ['src/parts/speak/trigger.js', 'src/parts/speak/index.js'],
     test: (line) => /\bproactiveTriggerOf\s*\(/.test(line),
   },
+  {
+    part: '模型预算',
+    desc: '日调用账只有一处：llm.budget.used / llm.budget.detail 只许在 llm_budget.js 里写',
+    allow: 'src/modules/llm_budget.js',
+    test: (line) => /llm\.budget\.(?:used|detail):/.test(line),
+  },
+  {
+    part: '鱼格',
+    desc: '贴墙和单来源净力只有一处：wallFactor / srcNet 只许在 rope.js 里出现',
+    allow: 'src/modules/rope.js',
+    test: (line) => /\b(?:wallFactor|srcNet)\s*\(/.test(line),
+  },
+  {
+    part: '鱼格',
+    desc: '复读比例和讲事回复只有一处：echoRatio / isTechReply 只许在 self_scan.js 里出现',
+    allow: 'src/modules/self_scan.js',
+    test: (line) => /\b(?:echoRatio|isTechReply)\s*\(/.test(line),
+  },
+  {
+    part: '验收',
+    desc: '硬门槛表只有一处：HARD_GATES 只许在 eval.js 里出现',
+    allow: 'src/modules/eval.js',
+    test: (line) => /\bHARD_GATES\b/.test(line),
+  },
 ]
 
 const SKIP_DIRS = new Set(['node_modules', '_回收站'])

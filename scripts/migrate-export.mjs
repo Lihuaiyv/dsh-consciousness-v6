@@ -191,7 +191,7 @@ const { DatabaseSync } = await import('node:sqlite')
 const db = new DatabaseSync(dbSrc)
 db.exec(`VACUUM INTO '${dbOut.replace(/'/g, "''")}'`)
 const counts = {}
-for (const t of ['agents', 'raw_turns', 'memory_items', 'affect_feel', 'diaries']) {
+for (const t of ['agents', 'fragments', 'memory_items', 'affect_feel', 'diaries']) {
   try { counts[t] = Number(db.prepare(`SELECT count(*) c FROM ${t}`).get().c) } catch { counts[t] = null }
 }
 db.close()

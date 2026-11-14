@@ -33,7 +33,7 @@ if (fs.existsSync(out)) {
 const db = new DatabaseSync(src)
 db.exec(`VACUUM INTO '${out.replace(/'/g, "''")}'`)
 
-const TABLES = ['agents', 'raw_turns', 'episodes', 'memory_items', 'affect_feel', 'diaries', 'chat_turns']
+const TABLES = ['agents', 'fragments', 'episodes', 'memory_items', 'affect_feel', 'diaries', 'chat_turns']
 const counts = {}
 for (const t of TABLES) {
   try { counts[t] = Number(db.prepare(`SELECT count(*) AS c FROM ${t}`).get().c) } catch { counts[t] = null }
@@ -48,7 +48,7 @@ function latestOf(table) {
   } catch { return null }
 }
 const latest = {}
-for (const t of ['raw_turns', 'memory_items', 'affect_feel', 'diaries']) latest[t] = latestOf(t)
+for (const t of ['fragments', 'memory_items', 'affect_feel', 'diaries']) latest[t] = latestOf(t)
 db.close()
 
 const bytes = fs.readFileSync(out)

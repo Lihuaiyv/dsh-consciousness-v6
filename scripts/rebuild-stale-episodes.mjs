@@ -5,7 +5,7 @@
  * 查下来 256 条里 124 条盖不满，漏掉 2913 轮。夜巡那边已经改成「当天每条会话都重压」，
  * 这份脚本只需要跑一次，把历史补平。
  *
- * 只动 episodes 的 title / summary / turns 这些投影字段；raw_turns（原文）和 diaries（日记）不碰。
+ * 只动 episodes 的 title / summary / turns 这些投影字段；fragments（原文）和 diaries（日记）不碰。
  * 用法：node scripts/rebuild-stale-episodes.mjs [--dry-run]
  */
 import path from 'node:path'
@@ -20,7 +20,7 @@ const rows = db.prepare(`
   SELECT e.id, e.agent_id, e.session_id, e.day, e.turns, e.title,
          (SELECT COUNT(*) FROM episodes x
             WHERE x.agent_id = e.agent_id AND x.session_id IS e.session_id AND x.day = e.day) AS rows_in_group,
-         (SELECT COUNT(*) FROM raw_turns r
+         (SELECT COUNT(*) FROM fragments r
             WHERE r.agent_id = e.agent_id AND r.session_id IS e.session_id AND r.day = e.day
               AND r.text IS NOT NULL AND r.text <> '') AS actual
   FROM episodes e`).all()

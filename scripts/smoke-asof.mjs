@@ -24,7 +24,7 @@ const gw = (text, key) => applyWrite(db, aid, { text, fact_key: key }, (c) => wr
 const t1 = Date.now()
 // 400 天前的一句原话：让它成为这几条记忆的「说话时间」（不是入库时间）
 const oldAt = new Date(Date.now() - 400 * 86400000).toISOString()
-db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
+db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
   .run('rt_old', aid, 's_old', 't_old', 0, 'user', '我喜欢喝美式咖啡，不加糖；每周二晚上去游泳', oldAt, oldAt.slice(0, 10))
 
 const coffee = addMemory(db, aid, { text: '我喜欢喝美式咖啡，不加糖', type: 'fact', fact_key: 'coffee.pref', source: 'extract', skipConflict: true, turn_id: 't_old' })
