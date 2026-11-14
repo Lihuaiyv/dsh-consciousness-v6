@@ -30,7 +30,7 @@ const write = (cand) => addMemory(db, aid, { text: cand.text, type: 'fact', fact
 
 // W1 出生
 {
-  db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
     .run('r1', aid, 's1', 'turn_1', 0, 'user', '我喜欢喝美式咖啡', '2026-01-01T10:00:00.000Z', '2026-01-01')
   const m = addMemory(db, aid, { text: '我喜欢喝美式咖啡', type: 'fact', source: 'extract', turn_id: 'turn_1' })
   const e = eventsOf(db, aid, m.id)

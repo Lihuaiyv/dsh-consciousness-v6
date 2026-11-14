@@ -36,7 +36,7 @@ db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   const expected = dayKey(at)
   const utcSlice = at.slice(0, 10)
   const r = appendTurn(db, aid, { sessionId: 's_day', role: 'user', text: '凌晨跨日界测试话', at })
-  const row = db.prepare('SELECT day,created_at FROM raw_turns WHERE id=?').get(r.id)
+  const row = db.prepare('SELECT day,created_at FROM fragments WHERE id=?').get(r.id)
   check('P0 appendTurn.day = localDay(created_at)', row.day === expected, { day: row.day, expected, utcSlice })
   check('dayKey 与 localDay 一致', dayKey(at) === localDay(new Date(at)))
   if (expected !== utcSlice) {
@@ -93,7 +93,7 @@ db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   appendTurn(db, aid, { sessionId: sid, role: 'user', text: '另外我喜欢用深色主题写代码。', at: day + 'T10:02:00.000Z' })
   appendTurn(db, aid, { sessionId: sid, role: 'assistant', text: '深色主题，明白。', at: day + 'T10:03:00.000Z' })
   // 纠正 day 列为本地日（append 已用 dayKey；此处确保查询用同一天）
-  const dayUsed = db.prepare('SELECT day FROM raw_turns WHERE session_id=? LIMIT 1').get(sid).day
+  const dayUsed = db.prepare('SELECT day FROM fragments WHERE session_id=? LIMIT 1').get(sid).day
   buildEpisodes(db, aid, { session: sid, day: dayUsed })
   db.prepare("UPDATE episodes SET importance=0.8, source='model', summary=? WHERE agent_id=? AND session_id=?")
     .run('对方决定采用方案甲部署，并喜欢深色主题。', aid, sid)
@@ -176,7 +176,7 @@ db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   writeParam(db, aid3, 'memory.episode.distill', 'on')
   appendTurn(db, aid3, { sessionId: 'sn', role: 'user', text: '我喜欢喝美式咖啡，不加糖。记住这一点。', at: day + 'T08:00:00.000Z' })
   appendTurn(db, aid3, { sessionId: 'sn', role: 'assistant', text: '美式不加糖，记下了。', at: day + 'T08:01:00.000Z' })
-  const dayUsed = db.prepare('SELECT day FROM raw_turns WHERE agent_id=? LIMIT 1').get(aid3).day
+  const dayUsed = db.prepare('SELECT day FROM fragments WHERE agent_id=? LIMIT 1').get(aid3).day
   const nightly = await runNightly(db, aid3, {
     day: dayUsed,
     summarize: async () => '今天对方说喜欢美式咖啡不加糖。',

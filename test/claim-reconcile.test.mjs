@@ -35,7 +35,7 @@ const answer = (obj) => async () => JSON.stringify(obj)
   try {
     const id = seedPending(w)
     seedLater(w)
-    const r = await reconcileClaims({ db: w.db, aid: w.aid, complete: answer({ state: 'done', evidence: 1 }), minAgeDays: 1, limit: 10, via: 'test' })
+    const r = await reconcileClaims({ db: w.db, aid: w.aid, complete: answer({ state: 'done', evidence: 1, quote: '躯干已经拆成零件体系了' }), minAgeDays: 1, limit: 10, via: 'test' })
     check('done：核对了 1 条', r.judged === 1 && r.byState.done === 1, r)
     const c = claimOf(w.db, w.aid, id)
     check('done：claim 变 done', c && c.state === 'done', c)
@@ -63,7 +63,7 @@ const answer = (obj) => async () => JSON.stringify(obj)
   try {
     const id = seedPending(w)
     seedLater(w)
-    await reconcileClaims({ db: w.db, aid: w.aid, complete: answer({ state: 'stale' }), minAgeDays: 1, limit: 10, via: 'test' })
+    await reconcileClaims({ db: w.db, aid: w.aid, complete: answer({ state: 'stale', evidence: 1, quote: '躯干已经拆成零件体系了' }), minAgeDays: 1, limit: 10, via: 'test' })
     const c = claimOf(w.db, w.aid, id)
     check('stale：claim 变 stale', c && c.state === 'stale', c)
     check('stale：不作废记忆', rowOf(w, id).invalid_at === null)
@@ -82,14 +82,26 @@ const answer = (obj) => async () => JSON.stringify(obj)
   } finally { w.close() }
 }
 
-// ⑤ 没有后续记录：不调模型
+// ⑤ 兜底：同主题找不到证据时，也会给之后最近的记录并调模型
 {
   const w = makeWorld()
   try {
-    seedPending(w)
+    seedPending(w, { key: '用户.独门X.计划' })
+    seedLater(w, { key: '用户.别的Y.记录' })
     let calls = 0
-    await reconcileClaims({ db: w.db, aid: w.aid, complete: async () => { calls++; return '{}' }, minAgeDays: 1, limit: 10, via: 'test' })
-    check('无后续记录：不调模型', calls === 0, calls)
+    const r = await reconcileClaims({ db: w.db, aid: w.aid, complete: async () => { calls++; return JSON.stringify({ state: 'still' }) }, minAgeDays: 1, limit: 10, via: 'test' })
+    check('兜底：没有同主题证据也会调模型', calls >= 1 && r.judged >= 1, { calls, r })
+  } finally { w.close() }
+}
+
+// ⑥ 引文本身是「还没…」→ 不算 done（图库那条的误判）
+{
+  const w = makeWorld()
+  try {
+    seedPending(w, { text: '图库还有三张没发', key: '用户.图库Q.计划' })
+    seedLater(w, { text: '已发猫鸭鲸鱼娘，熊、女孩、仓鼠还没发', key: '用户.图库Q.记录' })
+    const r = await reconcileClaims({ db: w.db, aid: w.aid, complete: async () => JSON.stringify({ state: 'done', evidence: 1, quote: '熊、女孩、仓鼠还没发' }), minAgeDays: 1, limit: 10, via: 'test' })
+    check('引文含「还没」→ 降为 still', r.byState.done == null && r.byState.still === 1, r.byState)
   } finally { w.close() }
 }
 
@@ -105,7 +117,7 @@ const answer = (obj) => async () => JSON.stringify(obj)
     writeParam(w.db, w.aid, 'memory.claim.enable', 'shadow')
     const id = seedPending(w)
     seedLater(w)
-    const on = await runNightly(w.db, w.aid, { day: '2026-01-02', force: true, merge: false, model: { capabilities: () => ({ complete: true }), complete: answer({ state: 'done', evidence: 1 }) } })
+    const on = await runNightly(w.db, w.aid, { day: '2026-01-02', force: true, merge: false, model: { capabilities: () => ({ complete: true }), complete: answer({ state: 'done', evidence: 1, quote: '躯干已经拆成零件体系了' }) } })
     const s2 = on.steps.find((x) => x.step === 'claim_reconcile')
     check('开启后步骤 ok', s2 && s2.ok === true && !s2.skipped, s2)
     check('开启后判出 done', s2 && (s2.byState.done || 0) >= 1, s2)

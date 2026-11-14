@@ -16,6 +16,17 @@ export const DSH_SPEECH_SERVICE = 'speechToText'
 /** 默认语言：auto = 让识别自己判（中英混说也稳）。 */
 export const DEFAULT_STT_LANGUAGE = 'auto'
 
+/**
+ * execFile 的 message 开头是整条命令，真正的原因在 stderr 最后一行。
+ * 以前只留前 90 个字，日志里只剩 ffmpeg 路径，看不出为什么失败。
+ */
+function ffmpegFailText(error) {
+  const stderr = String(error?.stderr ?? '').trim()
+  const last = stderr.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).pop()
+  const brief = last || String(error?.message ?? error).split(/\r?\n/)[0]
+  return `ffmpeg 转 16kHz WAV 失败：${String(brief).slice(0, 180)}`
+}
+
 /** 默认的 ffmpeg 执行器（可注入，方便单测）。 */
 function runFfmpeg(command, args, options) {
   return new Promise((resolve, reject) => {
@@ -58,7 +69,7 @@ export async function toWav16k({ buffer, ext = 'amr', ffmpegPath = 'ffmpeg', tmp
     return wav
   } catch (error) {
     if (String(error?.message ?? '').includes('不符合要求')) throw error
-    throw new Error(`ffmpeg 转 16kHz WAV 失败：${String(error?.message ?? error).slice(0, 90)}`)
+    throw new Error(ffmpegFailText(error))
   } finally {
     try { unlinkSync(input) } catch { /* best effort */ }
     try { unlinkSync(output) } catch { /* best effort */ }

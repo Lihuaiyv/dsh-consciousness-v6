@@ -62,6 +62,42 @@ export function llmBudgetAllow(db, aid, day = localDay(), need = 1) {
   return { ok: snap.used + n <= snap.cap, ...snap }
 }
 
+// ---------------------------------------------------------------- 日记的单独立额
+//
+// 为什么单立：日记成文是低频核心产出（一天最多一篇 + 几天补写），而总顶是防
+// 「记忆抽取」这类高频调用烧 token 的。它们挤在同一个桶里，抽取一忙就把日记挤没
+// （11-09/11-10 都是 extract 16、diary 0，日记连试 11 次全是 llm_budget）。
+//
+// 日记额度按「运行日」数，不按目标日记。今天补昨天，花的是今天的额度——
+// 那一天的桶早被别的事用光了，按目标日查等于永远补不上。
+
+export function llmDiaryCap(db, aid) {
+  try {
+    const n = Number(getParam(db, aid, 'memory.llm.diary_cap'))
+    if (!Number.isFinite(n) || n <= 0) return 0 // 0 = 不限额
+    return Math.max(1, Math.min(999, Math.round(n)))
+  } catch { return 8 }
+}
+
+/** 日记今天已经花了几次、还剩几次（只数 diary 桶，不看抽取）。 */
+export function llmDiarySnapshot(db, aid, day = localDay()) {
+  const d = dayKey(day)
+  const cap = llmDiaryCap(db, aid)
+  let detail = parseDetail(null)
+  try { detail = parseDetail(getFlag(db, detailKey(aid, d))) } catch { /* keep */ }
+  const used = Math.max(0, Number(detail.diary) || 0)
+  const left = cap > 0 ? Math.max(0, cap - used) : Infinity
+  return { day: d, cap, used, left }
+}
+
+/** 日记还能不能再调一次模型（cap=0 表示不限）。 */
+export function llmDiaryAllow(db, aid, day = localDay(), need = 1) {
+  const snap = llmDiarySnapshot(db, aid, day)
+  if (!snap.cap) return { ok: true, ...snap }
+  const n = Math.max(1, Number(need) || 1)
+  return { ok: snap.used + n <= snap.cap, ...snap }
+}
+
 /** 记账一次成功的模型调用。 */
 export function llmBudgetBump(db, aid, kind, day = localDay(), n = 1) {
   const d = dayKey(day)
@@ -108,7 +144,7 @@ export function shouldDeferExtract(db, aid, day = localDay()) {
  * 把同日仍 pending 的 extract 延后到次日 00:05（本地），并记 skip 原因到 last_error。
  * @returns {number} 改写条数
  */
-function deferExtractForDay(db, aid, day = localDay(), reason = 'budget') {
+export function deferExtractForDay(db, aid, day = localDay(), reason = 'budget') {
   const d = dayKey(day)
   const [y, m, dd] = d.split('-').map(Number)
   const next = new Date(y, m - 1, dd + 1, 0, 5, 0)

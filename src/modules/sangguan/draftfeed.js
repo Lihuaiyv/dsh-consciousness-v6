@@ -31,7 +31,7 @@ export function clip(s, n = 220) {
 export function pickAgent(db, want) {
   if (want) return want
   const row = db.prepare(
-    "SELECT agent_id, COUNT(*) n FROM raw_turns WHERE text IS NOT NULL AND length(text) > 0 GROUP BY agent_id ORDER BY n DESC LIMIT 1",
+    "SELECT agent_id, COUNT(*) n FROM fragments WHERE text IS NOT NULL AND length(text) > 0 GROUP BY agent_id ORDER BY n DESC LIMIT 1",
   ).get()
   if (!row) throw new Error('库里没有可用的 agent')
   return row.agent_id
@@ -40,7 +40,7 @@ export function pickAgent(db, want) {
 function loadTurns(db, aid, limit) {
   return db.prepare(`
     SELECT id, session_id, role, text, created_at
-    FROM raw_turns
+    FROM fragments
     WHERE agent_id = ? AND text IS NOT NULL AND length(trim(text)) > 0
     ORDER BY created_at DESC
     LIMIT ?

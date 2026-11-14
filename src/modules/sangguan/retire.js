@@ -1,7 +1,7 @@
 /**
  * 旧价值观残根清退（P0）。只做两件事：
  *   1. V 层 origin=seed 的空心命题（旧十维表折出来的那几句）走 CLAIM_WITHDRAW——账本只增，不删
- *   2. 清空 persona_values 的行；表本身留不留由调用方决定
+ *   2. 旧表 persona_values 由 openDb 直接拆掉，这里不再碰它
  *
  * 幂等：没有残根时返回全 0；重复跑不会多记账。
  */
@@ -35,8 +35,6 @@ export function retireOldValues(db, at) {
       } catch { /* 已被别的路径处理 */ }
     }
   }
-
-  try { out.purged = db.prepare('DELETE FROM persona_values').run().changes } catch { out.purged = 0 }
 
   for (const a of agents) {
     try {

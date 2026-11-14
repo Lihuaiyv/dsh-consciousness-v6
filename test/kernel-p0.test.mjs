@@ -67,11 +67,9 @@ const before = loadState(db2, 'agt_old')
 const ret = retireOldValues(db2, now())
 const after = loadState(db2, 'agt_old')
 const liveSeeds = Object.values(after.claims).filter((c) => c.origin === 'seed' && c.status !== 'withdrawn').length
-const rowsLeft = db2.prepare('SELECT COUNT(*) n FROM persona_values').get().n
 check('旧 seed 全撤回（含已长证据的）', ret.withdrawn === 2 && ret.v_seed_after === 0 && liveSeeds === 0, ret)
 check('撤回是终态不是删除', Object.values(after.claims).filter((c) => c.status === 'withdrawn').length === 2
   && Object.keys(after.claims).length === Object.keys(before.claims).length, Object.values(after.claims).map((c) => c.status))
-check('旧表清空', ret.purged === 3 && rowsLeft === 0, { ret, rowsLeft })
 const again = retireOldValues(db2, now())
 check('再跑一次不重复记账', again.withdrawn === 0 && again.purged === 0, again)
 
@@ -79,7 +77,12 @@ check('再跑一次不重复记账', again.withdrawn === 0 && again.purged === 0
 const out = exportFull(db2, 'agt_old')
 check('导出不因旧表存在而失败', !!out.zip_base64 && out.zip_base64.length > 0)
 
-db.close()
 db2.close()
+const db3 = openDb(path.join(dir, 'old.db'))
+const still = db3.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='persona_values'").get().n
+check('再打开时旧表被拆掉', still === 0, still)
+
+db.close()
+db3.close()
 console.log((fail ? '失败 ' : '通过 ') + pass + ' / ' + (pass + fail))
 if (fail) process.exit(1)

@@ -1,8 +1,10 @@
-// 出声 · 四条嗓子：微软（SSML）、任意兼容接口的 /audio/speech、本机 GPT-SoVITS、
-// 系统自带（Windows SAPI）。四条都在这一格，因为它们是同一件事的四个实现：
-// 文字进来，音频出去。换嗓子只改这里；调用方永远只认 synthesizeVoice。
+// 出声 · 五条嗓子：微软（SSML）、任意兼容接口的 /audio/speech、本机 GPT-SoVITS、
+// 系统自带（Windows SAPI）、BreezeBlue（角色音色云端）。五条都在这一格，
+// 因为它们是同一件事的五个实现：文字进来，音频出去。换嗓子只改这里；
+// 调用方永远只认 synthesizeVoice。
 //
 // 厂商名不进代码（INV9）：第二条嗓子只叫「compat」，地址和模型名由主人在设置里填。
+// 第五条单独叫「breeze」，是因为它不吃 /audio/speech 那个形状（见 synthesizeBreezeVoice）。
 //
 // `fetchImpl` / `run` 可注入：考卷不发真请求、不启进程，也不花主人的钱。
 import { execFile } from 'node:child_process'
@@ -22,9 +24,11 @@ export function buildAzureSsml(text, voice, style) {
   return `<speak version="1.0" xml:lang="zh-CN"><voice name="${escapeXml(voice)}"${styleAttr}>${escapeXml(text)}</voice></speak>`
 }
 
-/** 本机 GPT-SoVITS api_v2 的 POST /tts 请求体（纯函数，可单测）。 */
+/** 本机嗓子（GPT-SoVITS api_v2 形状）的 POST /tts 请求体（纯函数，可单测）。
+ *  额外字段（语速 / 情绪）是给「本机薄壳」用的：GPT-SoVITS 会忽略不认识的键，
+ *  IndexTTS 的薄壳会读，用来把语气调软。不填就不发，保持老行为。 */
 export function buildLocalTtsRequest(config, text) {
-  return {
+  const body = {
     text,
     text_lang: config.ttsLocalTextLang || 'zh',
     ref_audio_path: config.ttsLocalRefAudio || '',
@@ -33,6 +37,133 @@ export function buildLocalTtsRequest(config, text) {
     media_type: 'wav',
     streaming_mode: 0,
   }
+  const duration = Number(config.ttsLocalDuration)
+  if (Number.isFinite(duration) && duration >= 0.5 && duration <= 2) body.duration_factor = duration
+  const emo = String(config.ttsLocalEmoVector || '').trim()
+  if (emo) {
+    const vec = emo.split(',').map((x) => Number(x)).filter((n) => Number.isFinite(n)).slice(0, 8)
+    if (vec.length === 8) body.emo_vector = vec
+  }
+  const alpha = Number(config.ttsLocalEmoAlpha)
+  if (Number.isFinite(alpha) && alpha >= 0 && alpha <= 1) body.emo_alpha = alpha
+  return body
+}
+
+/**
+ * BreezeBlue 云端嗓子的请求体（纯函数，可单测）。
+ * 它的字段名不跟 /audio/speech 那套走：model_id / instructions / voice_settings。
+ * 没填语气说明就不发这个键——空串会被当成「要求它别说」。
+ */
+export function buildBreezeTtsRequest(config, text) {
+  const body = { text, model_id: (config && config.ttsBreezeModel) || 'breeze-tts-2' }
+  const instructions = String((config && config.ttsBreezeInstructions) || '').trim()
+  if (instructions) body.instructions = instructions
+  return body
+}
+
+/** 从失败响应里挖一句人话：JSON 的 detail / message / error，取不到就回原文。 */
+async function breezeErrorDetail(response) {
+  try {
+    const body = await response.json()
+    const d = body && (body.detail || body.message || body.error)
+    if (d) return String(typeof d === 'string' ? d : JSON.stringify(d))
+    return ''
+  } catch { return await response.text().catch(() => '') }
+}
+
+/**
+ * BreezeBlue 云端嗓子：POST {base}/v1/text-to-speech/{voice_id}，认证头是 xi-api-key。
+ * 和 compat 分开写，是因为它不吃 /audio/speech 那个形状；
+ * 地址、音色 ID、模型名、语气说明全部由主人在设置里填。
+ */
+export async function synthesizeBreezeVoice(config, text, { fetchImpl = fetch } = {}) {
+  const base = String((config && config.ttsBreezeUrl) || 'https://api.breeze.blue').replace(/\/+$/, '')
+  const voiceId = String((config && config.ttsBreezeVoice) || '').trim()
+  if (!voiceId) throw new Error('BreezeBlue 嗓子缺音色 ID（ttsBreezeVoice）')
+  const response = await fetchImpl(`${base}/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': config.ttsApiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(buildBreezeTtsRequest(config, text)),
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!response.ok) throw new Error(`BreezeBlue TTS HTTP ${response.status}: ${String(await breezeErrorDetail(response)).slice(0, 120)}`)
+  return { audio: Buffer.from(await response.arrayBuffer()), format: 'mp3' }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 造嗓子（不进合成路径）：这两个函数不念话，只跟云端要「一副新嗓子」。
+//   先 design —— 发一段描述，拿回几个候选（每个有自己的 generated_voice_id）；
+//   主人挑一个再 save —— 存成自己账号下的私有音色，之后就拿那个 voice_id 念话。
+// 空手造音色这件事，本机那几条开源嗓子都做不细；这条才走云端。
+// ─────────────────────────────────────────────────────────────────────────
+
+/** 设计请求体（纯函数，可单测）。 */
+export function buildBreezeDesignRequest(config, description) {
+  const line = String(description == null ? '' : description).trim()
+  if (!line) throw new Error('要造什么样的声音？给一句描述（音色、语气、年纪都行）')
+  const body = {
+    voice_description: line,
+    // 候选一次别要太多：每个都花钱，挑不过来看。
+    preview_count: Math.max(1, Math.min(4, Number((config && config.ttsBreezePreviewCount) || 3) || 3)),
+  }
+  if (config && config.ttsBreezeModel) body.model_id = config.ttsBreezeModel
+  if (config && config.ttsBreezeLanguage) body.language_code = config.ttsBreezeLanguage
+  return body
+}
+
+/** 发描述 → 拿候选。回 { previews, text, payload }；候选里每个都有 generated_voice_id。 */
+export async function breezeDesignPreviews(config, description, { fetchImpl = fetch } = {}) {
+  const base = String((config && config.ttsBreezeUrl) || 'https://api.breeze.blue').replace(/\/+$/, '')
+  if (!config || !config.ttsApiKey) throw new Error('造嗓子要密钥（ttsApiKey）：没它云端不认')
+  const response = await fetchImpl(`${base}/v1/voice-previews/design?output_format=mp3`, {
+    method: 'POST',
+    headers: { 'xi-api-key': config.ttsApiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildBreezeDesignRequest(config, description)),
+    signal: AbortSignal.timeout(180_000),
+  })
+  if (!response.ok) throw new Error(`BreezeBlue 设计 HTTP ${response.status}: ${String(await breezeErrorDetail(response)).slice(0, 120)}`)
+  const payload = await response.json()
+  const previews = Array.isArray(payload && payload.previews) ? payload.previews : []
+  if (!previews.length) throw new Error('BreezeBlue 没给候选（回包里没有 previews）')
+  return { previews, text: (payload && payload.text) || '', payload }
+}
+
+/** 取一个候选的试听音频（GET …/voice-previews/{id}/stream）。 */
+export async function breezePreviewAudio(config, generatedVoiceId, { fetchImpl = fetch } = {}) {
+  const base = String((config && config.ttsBreezeUrl) || 'https://api.breeze.blue').replace(/\/+$/, '')
+  const id = String(generatedVoiceId || '').trim()
+  if (!id) throw new Error('要从哪个候选取音频？给我 generated_voice_id')
+  const response = await fetchImpl(`${base}/v1/voice-previews/${encodeURIComponent(id)}/stream`, {
+    headers: { 'xi-api-key': config.ttsApiKey },
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!response.ok) throw new Error(`BreezeBlue 试听 HTTP ${response.status}: ${String(await breezeErrorDetail(response)).slice(0, 120)}`)
+  return { audio: Buffer.from(await response.arrayBuffer()), format: 'mp3' }
+}
+
+/** 挑中的候选存成私有音色。回保存结果（里面有 voice_id）。 */
+export async function breezeSaveDesignPreview(config, generatedVoiceId, { name = '', description = '' } = {}, { fetchImpl = fetch } = {}) {
+  const base = String((config && config.ttsBreezeUrl) || 'https://api.breeze.blue').replace(/\/+$/, '')
+  const id = String(generatedVoiceId || '').trim()
+  if (!id) throw new Error('要保存哪个候选？给我 generated_voice_id')
+  const body = {
+    voice_name: String(name || '').trim() || '小汐',
+    language_code: String((config && config.ttsBreezeLanguage) || 'zh'),
+  }
+  if (String(description || '').trim()) body.voice_description = String(description).trim()
+  const response = await fetchImpl(`${base}/v1/voice-previews/${encodeURIComponent(id)}/save`, {
+    method: 'POST',
+    headers: { 'xi-api-key': config.ttsApiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!response.ok) throw new Error(`BreezeBlue 保存 HTTP ${response.status}: ${String(await breezeErrorDetail(response)).slice(0, 120)}`)
+  const saved = await response.json()
+  if (!saved || !saved.voice_id) throw new Error('存下来了，但回包里没有 voice_id，先别当成功')
+  return saved
 }
 
 /**
@@ -48,6 +179,9 @@ export async function synthesizeTts(config, text, { fetchImpl = fetch, run } = {
   }
   if (config.ttsProvider === 'edge') {
     return synthesizeEdgeVoice(config, text, { run })
+  }
+  if (config.ttsProvider === 'breeze') {
+    return synthesizeBreezeVoice(config, text, { fetchImpl })
   }
   if (config.ttsProvider === 'compat') {
     const base = String(config.ttsBaseUrl).replace(/\/+$/, '')

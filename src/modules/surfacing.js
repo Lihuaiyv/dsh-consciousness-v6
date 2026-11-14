@@ -36,26 +36,34 @@ export function recordSurfaced(db, aid, items, at = Date.now()) {
   return rows.length
 }
 
-/** 回复真的用上了哪条：按 2-gram 覆盖率 ≥ 0.3 判。 */
+/**
+ * 回复真的用上了哪条：按 2-gram 覆盖率 ≥ 0.3 判。
+ * 返回**命中的 memory_id 列表**（去重）——2026-11-14 起兼职「加热」的触发信号：
+ * 只有这几条算「被想起」，调用方据此 touch，不再「塞进提示词就算想起来」。
+ * 想拿条数用 `.length`（旧版返回 number，改签名是因为调用点只有一处）。
+ */
 export function markSurfacedUsed(db, aid, reply, at = Date.now()) {
   const R = grams(reply)
-  if (!R.size) return 0
+  if (!R.size) return []
   let rows = []
   try {
-    rows = db.prepare('SELECT id, text FROM surfaced_items WHERE agent_id=? AND used=0 AND at>=?')
+    rows = db.prepare('SELECT id, memory_id, text FROM surfaced_items WHERE agent_id=? AND used=0 AND at>=?')
       .all(aid, new Date(at - WINDOW_MS).toISOString())
-  } catch { return 0 }
+  } catch { return [] }
   const up = db.prepare('UPDATE surfaced_items SET used=1, used_at=? WHERE id=?')
   const stamp = new Date(at).toISOString()
-  let n = 0
+  const hitIds = []
   for (const r of rows) {
     const g = grams(r.text)
     if (g.size < 4) continue
     let hit = 0
     for (const x of g) if (R.has(x)) hit++
-    if (hit / g.size >= 0.3) { up.run(stamp, r.id); n++ }
+    if (hit / g.size >= 0.3) {
+      up.run(stamp, r.id)
+      if (r.memory_id) hitIds.push(String(r.memory_id))
+    }
   }
-  return n
+  return [...new Set(hitIds)]
 }
 
 /** 最近 N 天的浮现率：注入多少、被用上多少。 */

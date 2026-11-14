@@ -22,6 +22,8 @@ import { isStalePair } from './stale_pair.js'
 import { structureCandidates, judgePair, pairKey } from './pair_judge.js'
 import { pickSuperseded } from './supersede_pick.js'
 import { tx, getParam, model } from '../kernel.js'
+// 2026-11-13：工作模式跳过窄门判定（它只写 shadow 事件，不影响记忆本身）。
+import { isWorkMode } from './work_mode.js'
 
 export const GATE = Object.freeze({
   MERGE: 0.92,
@@ -375,6 +377,9 @@ export function resetJudgeState() {
 
 function maybeJudge(db, aid, cand, out, opt) {
   try {
+    // 2026-11-13：面板开着「工作」时，窄门判定先不发——它落下的是 shadow 事件，
+    // 不是记忆本身；日常模式下行为一个字节都不变。
+    if (isWorkMode(db, aid)) return
     const mode = judgeMode(db, aid)
     if (mode === 'off') return
     if (!out || (out.action !== 'new' && out.action !== 'conflict') || !out.id) return

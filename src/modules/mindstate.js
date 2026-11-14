@@ -116,7 +116,7 @@ function debtLine(db, aid, nowMs) {
 
   let pending = 0
   try {
-    pending = Number(db.prepare('SELECT COUNT(*) AS n FROM raw_turns WHERE agent_id=? AND created_at>=?')
+    pending = Number(db.prepare('SELECT COUNT(*) AS n FROM fragments WHERE agent_id=? AND created_at>=?')
       .get(aid, last.at).n) || 0
   } catch { return '' }
   const needTurns = Math.max(1, Number(getParam(db, aid, 'mind.review.min_turns')) || 20)

@@ -160,7 +160,7 @@ CREATE TABLE IF NOT EXISTS relations(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'acquaintance',
   closeness REAL NOT NULL DEFAULT 0.2, trust REAL NOT NULL DEFAULT 0.2, dependence REAL NOT NULL DEFAULT 0.0,
   root INTEGER NOT NULL DEFAULT 0, notes TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
--- persona_values（旧十维价值观表）已随三观引擎清退：新库不再建，旧库只读不写。
+-- persona_values（旧十维价值观表）已拆：新库不建，老库在 openDb 里 DROP。
 -- 世界观 / 人生观仍是独立的仪表，各自一张表（以前只在老库里手工建过，新库缺表会崩）。
 CREATE TABLE IF NOT EXISTS persona_worldview(
   agent_id TEXT NOT NULL, key TEXT NOT NULL, weight REAL NOT NULL DEFAULT 0.5, evidence TEXT,
@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS action_log(
   status TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS chat_turns(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
-  pack TEXT, mood TEXT, created_at TEXT NOT NULL, conversation_id TEXT);
+  pack TEXT, mood TEXT, created_at TEXT NOT NULL, conversation_id TEXT, turn_id TEXT);
 CREATE INDEX IF NOT EXISTS idx_chat_agent ON chat_turns(agent_id, created_at);
 -- 按会话取「这一段的上一句」：串会话修好之后，presence / 短句上下文 / 收尾倾向都按 conversation_id 查，别再全表扫。
 CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_turns(agent_id, conversation_id, created_at);
@@ -260,15 +260,49 @@ CREATE TABLE IF NOT EXISTS persona_views(
 CREATE INDEX IF NOT EXISTS idx_pview_agent ON persona_views(agent_id, created_at DESC);
 
 -- ================= 分层记忆 T1–T4 =================
--- T4 原文层（冷）：一轮一行，只追加，永不改写。平时的召回**不碰**这张表。
-CREATE TABLE IF NOT EXISTS raw_turns(
+-- T4 原文层 / 碎片层（冷）：一轮一行，只追加，永不改写。平时的召回**不碰**这张表。
+-- 2026-11-12：raw_turns 改名为 fragments，并加 form / snapshot / antecedents 三列。
+CREATE TABLE IF NOT EXISTS fragments(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
   turn_id TEXT, seq INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL,
   text TEXT NOT NULL, tool TEXT, meta TEXT,
-  created_at TEXT NOT NULL, day TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_raw_agent_day ON raw_turns(agent_id, day, seq);
-CREATE INDEX IF NOT EXISTS idx_raw_session ON raw_turns(session_id, seq);
+  created_at TEXT NOT NULL, day TEXT NOT NULL,
+  form TEXT NOT NULL DEFAULT 'text', snapshot TEXT, antecedents TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS raw_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
+
+-- ================= 事件层（2026-11-12 新增） =================
+-- 设计见 docs/设计-事件库-最终版-2026-11-12.md
+-- 冷库：夜里第一刀切出来的事。只追加，永不改；补切就追加新的，旧的一个字不动。
+CREATE TABLE IF NOT EXISTS cold_events(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  title TEXT NOT NULL, story TEXT NOT NULL, who TEXT,
+  start_at TEXT NOT NULL, end_at TEXT NOT NULL,
+  turn_ids TEXT NOT NULL,        -- JSON 数组：这件事覆盖的轮次，首尾都在
+  quotes TEXT NOT NULL,          -- JSON 数组：原文里一字不差的句子
+  cues TEXT,                     -- JSON 数组：出生时的抓手词（切事时顺手给；热库可以改）
+  status TEXT,                   -- 切出来那一刻的过没过
+  weight REAL NOT NULL DEFAULT 0.5,
+  cut_rev INTEGER NOT NULL DEFAULT 1,   -- 这一段第几次切（补切递增）
+  created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_cold_events_agent ON cold_events(agent_id, start_at);
+
+-- 热库：当前在用的那一版。可合并/拆分/改名/沉底，每变一次出新版，旧版 active=0 留档。
+CREATE TABLE IF NOT EXISTS hot_events(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  title TEXT NOT NULL, story TEXT NOT NULL,
+  cues TEXT,                     -- JSON 数组：抓手词
+  source_cold_ids TEXT NOT NULL, -- JSON 数组：来源只记冷库 id，不记热库 id（链条不会越接越长）
+  op TEXT NOT NULL DEFAULT 'born',   -- born/merge/split/rename/compress/sink
+  reason TEXT,                   -- 为什么变
+  version INTEGER NOT NULL DEFAULT 1,
+  active INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL DEFAULT '台面',  -- 台面/旧版/沉底
+  want REAL NOT NULL DEFAULT 0.25,     -- 想头
+  ceiling REAL NOT NULL DEFAULT 1.0,   -- 天花板
+  mentions INTEGER NOT NULL DEFAULT 0,
+  last_mention_at TEXT, last_surface_at TEXT, ticked_at TEXT,
+  created_at TEXT NOT NULL, changed_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_hot_events_agent ON hot_events(agent_id, active, state);
 
 -- T2 纪要层（温）：一次会话 / 一天的压缩，日记的原料。
 CREATE TABLE IF NOT EXISTS episodes(
@@ -315,7 +349,7 @@ CREATE INDEX IF NOT EXISTS idx_fa_agent ON fact_archive(agent_id, created_at DES
 CREATE VIRTUAL TABLE IF NOT EXISTS fact_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
 
 -- G1 时效索引（只追加、无正文）：每条记忆「何时出生 / 改写 / 作废 / 复活 / 有争议 / 被隐藏」。
--- 正文永远从 fact_archive / raw_turns 取；这里只定位时间。写失败静默，漏记由夜巡对账补 SYNC。
+-- 正文永远从 fact_archive / fragments 取；这里只定位时间。写失败静默，漏记由夜巡对账补 SYNC。
 -- 只允许三处删行：单条硬删、意识体整删、journal 回滚。
 CREATE TABLE IF NOT EXISTS memory_timeline(
   seq        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -340,6 +374,48 @@ CREATE TABLE IF NOT EXISTS retrieval_log(
   counts TEXT, kept TEXT, dropped TEXT,
   items INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0, ms INTEGER);
 CREATE INDEX IF NOT EXISTS idx_rlog_agent ON retrieval_log(agent_id, at DESC);
+
+-- ================= 记忆汇流（confluence）=================
+-- 三张留底 + 一条「这次想起」。全部只追加；遗忘（HIDE/DELETE）时一起清。
+-- 为什么要「冻」而不是「算」：状态=算出来的，事后重算会掺进后来（衰减/覆盖/合并/改口）；
+-- 冻下来的才是当时的。events 记「为什么变」，这三张记「当时是什么」「当时摆着什么」。
+-- state_scene 两级：tier=light 每轮一行（记脉搏），tier=heavy 每 20 轮一行（拍照片）。
+CREATE TABLE IF NOT EXISTS state_scene(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, at TEXT NOT NULL,
+  session_id TEXT, episode_id TEXT, turn_id TEXT,
+  tier TEXT NOT NULL DEFAULT 'light',
+  affect_json TEXT, drive_json TEXT, relation_json TEXT, persona_json TEXT,
+  life_json TEXT, loops_json TEXT, voice_json TEXT, params_hash TEXT,
+  source TEXT NOT NULL DEFAULT 'auto', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_state_scene_at ON state_scene(agent_id, tier, at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_state_scene_turn ON state_scene(agent_id, turn_id, tier);
+
+-- 拼好的注入块原文（渲染后）。老账补不了，从建成那天起才精确；L2 才靠它。
+CREATE TABLE IF NOT EXISTS scene_archive(
+  turn_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, at TEXT NOT NULL,
+  session_id TEXT, episode_id TEXT,
+  block TEXT NOT NULL, block_hash TEXT NOT NULL,
+  state_ref TEXT, bytes INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_scene_archive_at ON scene_archive(agent_id, at DESC);
+
+-- 每次汇流的审计账：锚点、档位、bundle 指纹、说了什么、有没有被接住、后来回看过没有。
+CREATE TABLE IF NOT EXISTS confluence_log(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, at TEXT NOT NULL,
+  anchor_turn TEXT, anchor_episode TEXT, level TEXT NOT NULL DEFAULT 'L1',
+  bundle_hash TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'manual',
+  spoken TEXT, adopted INTEGER NOT NULL DEFAULT 0, looked_back_at TEXT,
+  dropped TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_confluence_at ON confluence_log(agent_id, at DESC);
+
+-- 「这次想起」：新记录，不是旧条的修改。
+-- 为什么不并进 memory_items：它一旦进日常召回，就会变成「我想起我想起过」的环。
+-- 只在「问起过去」时当证据用；不进 memory_fts、不 touch 任何旧条。
+CREATE TABLE IF NOT EXISTS revisit(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, at TEXT NOT NULL,
+  anchor_turn TEXT, memory_ids TEXT, mood TEXT, note TEXT,
+  source TEXT NOT NULL DEFAULT 'confluence', created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_revisit_at ON revisit(agent_id, at DESC);
+
 
 -- 开环：还没闭合的事（答应过的 / 要提醒的 / 没做完的）。
 -- 它不参与召回打分，也不受相关度门控：到期或久未提及，就自己浮上来一条。
@@ -602,10 +678,26 @@ export function openDb(file) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   backupBeforeUpgrade(file)
   const db = new DatabaseSync(file)
+  // 2026-11-12：老库的原文表先改名成碎片表，再跑 SCHEMA。
+  // 顺序不能反：SCHEMA 里会 CREATE TABLE IF NOT EXISTS fragments，先跑就会建一张空表，改名就撞上了。
+  try { db.exec('ALTER TABLE raw_turns RENAME TO fragments') } catch { /* 已迁或新库 */ }
   db.exec(SCHEMA)
   db.exec(EXT)
   db.exec(REL)
   db.exec(ACTION)
+  // 老库改名后补三列；新库建表时已有，这里是空操作。
+  try { db.exec("ALTER TABLE fragments ADD COLUMN form TEXT NOT NULL DEFAULT 'text'") } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE fragments ADD COLUMN snapshot TEXT') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE fragments ADD COLUMN antecedents TEXT') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_raw_agent_day ON fragments(agent_id, day, seq)') } catch { /* 老库异常不影响启动 */ }
+  // 2026-11-12：事件冷库先建过一版没 cues，这里补上（出生时的抓手词）。
+  try { db.exec('ALTER TABLE cold_events ADD COLUMN cues TEXT') } catch { /* 已存在或表还没建 */ }
+  // 2026-11-13：事件质量标记（model / local / lexical / local_fallback）
+  try { db.exec("ALTER TABLE cold_events ADD COLUMN quality TEXT NOT NULL DEFAULT 'model'") } catch { /* 已存在或表还没建 */ }
+  try { db.exec("ALTER TABLE hot_events ADD COLUMN quality TEXT NOT NULL DEFAULT 'model'") } catch { /* 已存在或表还没建 */ }
+  // 想头推进要知道「上次推到哪儿」，不然关机一夜就不知道补多久。
+  try { db.exec('ALTER TABLE hot_events ADD COLUMN ticked_at TEXT') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_raw_session ON fragments(session_id, seq)') } catch { /* 老库异常不影响启动 */ }
   try { db.exec('ALTER TABLE affect_events ADD COLUMN formula TEXT') } catch { /* 已存在 */ }
   // 复现：同一段情绪被后续消息重新点亮了几次
   try { db.exec('ALTER TABLE affect_episodes ADD COLUMN renewals INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
@@ -623,6 +715,12 @@ export function openDb(file) {
   try { db.exec('ALTER TABLE proposals ADD COLUMN fork_artifact_id TEXT') } catch { /* 已存在 */ }
   // schema 13：旧库补会话列（新库在建表时已有）；索引必须等列补完再建
   try { db.exec('ALTER TABLE chat_turns ADD COLUMN conversation_id TEXT') } catch { /* 已存在 */ }
+  // 2026-11-13（P1c）：补血缘列——新写入带上轮次号；老行留 NULL=明确「无链」，不猜。
+  try { db.exec('ALTER TABLE chat_turns ADD COLUMN turn_id TEXT') } catch { /* 已存在 */ }
+  // 2026-11-13（B2）：这一轮是「工作」还是「日常」。切事要按它分两个标准；
+  // 老行留 NULL = 明确没标签，按日常处理（不猜）。
+  try { db.exec('ALTER TABLE chat_turns ADD COLUMN mode TEXT') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_chat_turn ON chat_turns(agent_id, turn_id)') } catch { /* 老库异常不影响启动 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_turns(agent_id, conversation_id, created_at)') } catch { /* 老库异常不影响启动 */ }
   // 情绪 v3：底色 / 慢 / 快 / 总。独立表，不动 affect_state 的定长 INSERT。
   db.exec(`CREATE TABLE IF NOT EXISTS affect_v3(
@@ -787,9 +885,12 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, cr
     ['temp_state', "TEXT NOT NULL DEFAULT 'warm'"],
     ['state_since', 'TEXT'],
     ['state_streak', 'INTEGER NOT NULL DEFAULT 0'],
-    // 情绪效价（-1 难受 ~ +1 舒服）：出生那一刻它自己的心情。
-    // 召回时拿它和当前心情做「同向加成」——心情好更容易想起好事（mood-congruent recall）。
+    // 情绪效价（-1 难受 ~ +1 舒服）：这条记忆「本身」是好是坏——出生那一刻的愉悦。
     ['valence', 'REAL NOT NULL DEFAULT 0'],
+    // 出生那一刻的慢情绪背景（-1~+1）：记它的时候我这一阵往哪边偏。
+    // valence 回答「这件事好不好」，这一列回答「写它的时候我是什么底子」。
+    // NULL = 没记过；「当时正好中性」会写成 0。两者都不参与加成，但分开才读得出是哪种。
+    ['slow_at_creation', 'REAL'],
     // 出生那一刻自己写下的 feel（affect_feel.id）。只挂 id，不复制正文：
     // 查记忆时顺着这里能翻到当时那句话，feel 本身仍然是独立的一条。
     ['feel_id', 'TEXT'],
@@ -871,6 +972,8 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, cr
   } catch { /* 已存在 */ }
   // 议程已降级为内部调度：老库里的表直接清掉（数据已无消费方）
   try { db.exec('DROP TABLE IF EXISTS agenda') } catch { /* ignore */ }
+  // 旧十维价值观表：没人再读。打开库就拆掉，幂等。
+  try { db.exec('DROP TABLE IF EXISTS persona_values') } catch { /* ignore */ }
   // 指标键改名：议程没了，回应率归到主动开口名下（历史样本跟着搬）
   try { db.exec("UPDATE metric_samples SET key='drive.proactive_answer' WHERE key='drive.agenda_accept'") } catch { /* 老库没有指标表 */ }
   // 4 号文档 v2：性格五轴。big5.* → axis.*；neuroticism → sensitivity。

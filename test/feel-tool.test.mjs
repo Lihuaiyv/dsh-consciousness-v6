@@ -11,7 +11,7 @@
 import { makeWorld } from './eval-persona/setup.mjs'
 import { moodLabelOf } from '../src/modules/affect.js'
 import { consciousnessBlock } from '../index.js'
-import { recordFeel, latestFeel, feelLineOf, feelTextForInject, cleanFeelText, feelAnchorOf, echoFeelOf, echoFeelLineOf } from '../src/modules/feel.js'
+import { recordFeel, latestFeel, feelLineOf, feelTextForInject, cleanFeelText, feelAnchorOf, echoFeelOf, echoFeelLineOf, FEEL_TRIGGER } from '../src/modules/feel.js'
 import { createActionTools } from '../src/modules/actions/index.js'
 import { writeParam } from '../src/kernel.js'
 
@@ -35,7 +35,9 @@ check('有 parameters', !!(feel && feel.parameters && typeof feel.parameters ===
 check('有 output.schema + render', !!(feel && feel.output && feel.output.schema && typeof feel.output.render === 'function'))
 check('execute 是函数', !!(feel && typeof feel.execute === 'function'))
 check('必填 text 写进了 schema', !!(feel && Array.isArray(feel.parameters.required) && feel.parameters.required.includes('text')), feel && feel.parameters.required)
-check('描述里说清「不写数字、不进正文」', /不写数字/.test(feel.description) && /不会出现在对用户说的话里/.test(feel.description))
+check('描述里说清「不写数字、不进正文」', /不写数字/.test(feel.description) && /不进你要说出口的话/.test(feel.description))
+// 每轮那句不参与预算削减，所以没人拦它变长——这里当闸：超 80 字就红。
+check('每轮那句不超过 80 字（它不参与预算，长了会挤别人）', FEEL_TRIGGER.length <= 80, { len: FEEL_TRIGGER.length, text: FEEL_TRIGGER })
 
 // ---------- 二、落库 ----------
 const before = db.prepare('SELECT slow, fast, total FROM affect_v3 WHERE agent_id=?').get(aid)
@@ -159,7 +161,7 @@ check('注入行不出现「快 +」/「慢 +」', !/快\s*[+\-−]|慢\s*[+\-�
 // consciousnessBlock：以「当前时间」为准，所以把这条挪到刚才
 db.prepare('UPDATE affect_feel SET at=? WHERE agent_id=? AND text=?').run(new Date().toISOString(), aid, fresh.text)
 const block = consciousnessBlock(db, aid)
-check('提示词里有 feel 这条通路', block.includes('给它一个把手'), block.slice(0, 200))
+check('提示词里有 feel 这条通路', block.includes('就调 feel 记一句'), block.slice(0, 200))
 check('提示词里有自己那句话', block.includes('刚跑完步，心还热着'), block.slice(-600))
 const guestBlock = consciousnessBlock(db, aid, { snap: 'off' })
 check('客人会话看不到这条', !guestBlock.includes('刚跑完步，心还热着'), guestBlock.slice(-300))

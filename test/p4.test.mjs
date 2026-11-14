@@ -29,10 +29,10 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
 // ---- 造「昨天」的原文
 const yDay = localDay(new Date(Date.now() - 86400000))
 {
-  const ins = db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+  const ins = db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   ins.run('raw_y1', aid, 's_y', null, 1, 'user', '昨天我们去看了海，风好大', null, null, yDay + 'T10:00:00.000Z', yDay)
   ins.run('raw_y2', aid, 's_y', null, 2, 'assistant', '海风大的时候记得多穿一件', null, null, yDay + 'T10:01:00.000Z', yDay)
-  check('造好昨天的原文', db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND day=?').get(aid, yDay).n === 2)
+  check('造好昨天的原文', db.prepare('SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND day=?').get(aid, yDay).n === 2)
 }
 
 // ---- 巩固昨天

@@ -6,7 +6,7 @@
  *   T1 事实     memory_items（蒸馏出来的语义记忆）       —— 温
  *   T2 纪要     episodes（一次会话 / 一天的压缩）        —— 温
  *   T3 日记     diaries（一天一篇第一人称）              —— 温偏冷
- *   T4 原文     raw_turns（完整对话，只追加）            —— 冷，平时不碰
+ *   T4 原文     fragments（完整对话，只追加）            —— 冷，平时不碰
  *   T4 存根     fact_archive（事实出生时的原样，只追加）  —— 冷不删，只在「翻旧账」时查
  *
  * 短期 / 中期 / 长期不是三张表，而是**每个条目自己的热度 band**：
@@ -170,14 +170,14 @@ export function tierStats(db, aid, at = Date.now()) {
     .sort((a, b) => b.heat - a.heat)
     .slice(0, 10)
     .map((r) => ({ id: r.id, text: String(r.text).slice(0, 60), band: bandOf(r, r.heat), heat: r.heat, hits: Number(r.hits || 0) }))
-  const raw = db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=?').get(aid)?.n || 0
+  const raw = db.prepare('SELECT COUNT(*) n FROM fragments WHERE agent_id=?').get(aid)?.n || 0
   const days = db.prepare('SELECT COUNT(*) n FROM diaries WHERE agent_id=?').get(aid)?.n || 0
   const eps = db.prepare('SELECT COUNT(*) n FROM episodes WHERE agent_id=?').get(aid)?.n || 0
   const arch = db.prepare('SELECT COUNT(*) n FROM fact_archive WHERE agent_id=?').get(aid)?.n || 0
   return {
     at: new Date(at).toISOString(),
     facts: { total: rows.length, ...counts },
-    episodes: Number(eps), diaries: Number(days), raw_turns: Number(raw), facts_archived: Number(arch),
+    episodes: Number(eps), diaries: Number(days), fragments: Number(raw), facts_archived: Number(arch),
     temps: tempStats(db, aid),
     hot,
   }

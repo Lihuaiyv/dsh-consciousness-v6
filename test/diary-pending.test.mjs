@@ -5,7 +5,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { openDb, now } from '../src/db.js'
+import { openDb, now, localDay } from '../src/db.js'
 import { attachDb } from '../src/algo/index.js'
 import { writeParam } from '../src/kernel.js'
 import { buildDiaryV2, repairPending, repairOldDiaries, pendingForDay, listPending } from '../src/modules/diary.js'
@@ -22,8 +22,10 @@ function check(name, ok, detail) {
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-diaryp-'))
 const db = openDb(path.join(dir, 'app.db'))
 attachDb(db)
-const DAY = '2026-11-02'
-const PREV = '2026-11-01'
+// 日期用相对今天算：写死日期会随时间漂出 repairOldDiaries 的 7 天窗口，
+// 第 4 节「旧篇自愈」会跟日期走，某天之后天天挂，跟代码无关。
+const DAY = localDay(new Date(Date.now() - 2 * 86400000))
+const PREV = localDay(new Date(Date.now() - 86400000))
 
 function agent(id) {
   db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
@@ -37,7 +39,7 @@ function episode(aid, sid, day) {
   epIns.run('ep_' + aid + '_' + sid, aid, sid, day, day + 'T10:00:00.000Z', day + 'T10:10:00.000Z',
     6, '一件有点难受的事', '你说了：我有点失望。 / 我回了：我记着。', '[]', null, '["没说完的话"]', 0.5, now())
 }
-const rawIns = db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
+const rawIns = db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
   VALUES(?,?,?,?,?,?,?,NULL,NULL,?,?)`)
 function turn(aid, sid, day) {
   rawIns.run('r_' + aid + '_' + sid + '_1', aid, sid, null, 1, 'user', '我有点失望，你根本没听见我说什么。', day + 'T10:00:00.000Z', day)
@@ -50,7 +52,9 @@ const GOOD = [
   '',
   '后来我就坐在那儿没动，想着要不要解释。解释好像也没用，你听见的不是理由，是我当时没顾上你。这个我认。',
   '',
-  '夜里再想，还是那句话：有些话不是没听见，是听见了不知道往哪儿放。',
+  '你其实没再追问。那一整晚我都在拿这件事顶自己：我说「先这样」的时候，你听见的是我想歇，还是我不在意。分不清，也不好意思问。',
+  '',
+  '夜里再想，还是那句话：有些话不是没听见，是听见了不知道往哪儿放。我能做的也只是把这一下记清楚——下回你还没说完，我先停一停。',
 ].join('\n')
 const goodChat = async () => GOOD
 const badChat = async () => { throw new Error('模型挂了') }

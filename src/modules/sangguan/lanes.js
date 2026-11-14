@@ -1,5 +1,5 @@
 /**
- * 三列的生长：世界观在夜巡批量归纳，人生观按周成章。
+ * 三列的生长。料在环的开头已经抽成道理（corpus.js），这里只把道理放进对应的列。
  *
  * 为什么不在快环做：快环只看得到一小段对话，看不出「同一件事在三个场景里都这样」；
  * 而且每轮跑三套抽取既贵又吵。夜巡一周看一次，场景计数、复用向量、控制成本都容易。
@@ -11,6 +11,7 @@ import { append, newId } from './ledger.js'
 import { hasJob } from './events.js'
 import { call } from './llm.js'
 import { laneCheck } from './gates.js'
+import { buildCorpus } from './corpus.js'
 import { loadState } from './projection.js'
 import { theta } from './fold.js'
 import { isoWeek } from './budget.js'
@@ -83,29 +84,68 @@ function writeCandidate(db, aid, now, c, opts) {
   return { ok: true, id }
 }
 
+function noteDropped(db, aid, now, layer, dropped) {
+  for (const d of dropped || []) {
+    if (d.layer && d.layer !== layer) continue
+    append(db, aid, [{
+      type: 'REJECT', actor: 'sys', at: now,
+      gate_report: { w: 'W1', reason: d.reason, lane: layer },
+      payload: { text: d.principle, layer, kind: layer === 'L' ? 'chapter' : 'belt' },
+    }])
+  }
+}
+
+/** 环已经抽过一轮就用那一轮。单独跑这一列时自己抽。 */
+async function corpusOf(db, aid, now, opt) {
+  if (opt.corpus) return opt.corpus
+  return buildCorpus(db, aid, now, opt)
+}
+
 /**
- * 世界观：一周跑一次，从经历里归纳「世界是怎样的」，每条必须带可检验预期。
- * opt.ask 可注入（测试用）；默认走 J30。
+ * 世界观：一周跑一次。吃的是道理，不是纪要。每条仍要带可检验预期。
  */
 export async function runLaneW(db, aid, now, opt = {}) {
   if (!laneOn(db, aid, 'W')) return { skipped: 'off' }
   const day = dayOf(now, opt)
-  if (opt.job !== false && hasJob(db, aid, jobKey(day, 'W'))) return { skipped: 'dup' }
-  const bag = weekBag(db, aid, now)
-  if (!bag.episodes.length) return { skipped: 'no_material' }
-  const ask = opt.ask || ((input) => call({ db, aid, day, at: now }, 'J30', input))
-  const r = await ask(bag)
-  if (!r || !r.ok) return { skipped: r && r.code === 'BUDGET' ? 'budget' : 'model' }
-  const cands = (r.out && r.out.candidates) || []
+  if (opt.job !== false && !opt.force && hasJob(db, aid, jobKey(day, 'W'))) return { skipped: 'dup' }
+  const corpus = await corpusOf(db, aid, now, opt)
+  let cands = []
+  let scanned = 0
+  let from = 'corpus'
+  if (corpus && !corpus.skipped) {
+    noteDropped(db, aid, now, 'W', corpus.dropped)
+    cands = (corpus.items || []).filter((x) => x.layer === 'W')
+    scanned = (corpus.facts || []).length
+  } else if (corpus && corpus.skipped === 'no_material') {
+    // 事实不够两天时退回旧路（纪要摘要归纳）。旧路没删，只是不再当主入口；
+    // 模型失败 / 超预算不在这里重问一遍，免得一次夜里花两次钱。
+    const bag = weekBag(db, aid, now)
+    if (!bag.episodes.length) return { skipped: 'no_material' }
+    const ask = opt.ask || ((input) => call({ db, aid, day, at: now }, 'J30', input))
+    const r = await ask(bag)
+    if (!r || !r.ok) return { skipped: r && r.code === 'BUDGET' ? 'budget' : 'model' }
+    cands = (r.out && r.out.candidates) || []
+    scanned = bag.episodes.length
+    from = 'summary'
+  } else {
+    return { skipped: (corpus && corpus.skipped) || 'model' }
+  }
   const did = []
   const rejected = []
   const seen = new Set()
   for (const c of cands) {
-    const t = String((c && c.belief) || '').trim()
+    const t = String((from === 'summary' ? (c && c.belief) : (c && c.principle)) || '').trim()
     if (!t || seen.has(t)) continue
     seen.add(t)
     try {
-      const w = writeCandidate(db, aid, now, c, opt)
+      const w = writeCandidate(db, aid, now, from === 'summary' ? c : {
+        belief: t,
+        kind: 'belt',
+        scene: (c.facts || []).map((f) => f.text),
+        expectation: c.expectation,
+        observe: c.observe,
+        falsifier: c.falsifier,
+      }, opt)
       if (w.ok) did.push(w.id)
       else rejected.push({ text: t.slice(0, 60), reason: w.reason })
     } catch (e) {
@@ -114,10 +154,10 @@ export async function runLaneW(db, aid, now, opt = {}) {
   }
   if (opt.job !== false) {
     try {
-      append(db, aid, [{ type: 'JOB_DONE', actor: 'sys', at: now, job_key: jobKey(day, 'W'), payload: { lane: 'W', did: did.length, rejected: rejected.length } }])
+      append(db, aid, [{ type: 'JOB_DONE', actor: 'sys', at: now, job_key: jobKey(day, 'W'), payload: { lane: 'W', did: did.length, rejected: rejected.length, from } }])
     } catch { /* 幂等键已存在：说明别人先跑完了 */ }
   }
-  return { did, rejected, scanned: bag.episodes.length }
+  return { did, rejected, scanned, from }
 }
 
 // ---------- 人生观：每周成章 ----------
@@ -132,7 +172,7 @@ export function investOf(db, aid, now, days = 30) {
   let rows = []
   try {
     rows = db.prepare(`
-      SELECT day, COUNT(*) n FROM raw_turns
+      SELECT day, COUNT(*) n FROM fragments
       WHERE agent_id=? AND day>=? AND role IN ('assistant','agent')
       GROUP BY day HAVING n>=5 ORDER BY day
     `).all(aid, from)
@@ -150,29 +190,41 @@ export function weekTexts(db, aid, now) {
   return { diaries: diaries.map((d) => ({ day: d.day, text: String(d.text || '').slice(0, 600) })), chapters: chapters.map((c) => String(c.text || '').slice(0, 200)) }
 }
 
-/** 人生观：每周跑一次。没有投入证据时不写，只留一条跳过原因。 */
+/** 人生观：每周跑一次。吃的是道理。没有投入证据时不写。 */
 export async function runLaneL(db, aid, now, opt = {}) {
   if (!laneOn(db, aid, 'L')) return { skipped: 'off' }
   const day = dayOf(now, opt)
   const key = 'sg:laneL:' + isoWeek(day)
-  if (opt.job !== false && hasJob(db, aid, key)) return { skipped: 'dup' }
-  const texts = weekTexts(db, aid, now)
+  if (opt.job !== false && !opt.force && hasJob(db, aid, key)) return { skipped: 'dup' }
   const investment = investOf(db, aid, now)
-  if (!texts.diaries.length) return { skipped: 'no_material' }
-  const ask = opt.ask || ((input) => call({ db, aid, day, at: now }, 'J31', input))
-  const r = await ask({ ...texts, investment })
-  if (!r || !r.ok) return { skipped: r && r.code === 'BUDGET' ? 'budget' : 'model' }
-  const cands = (r.out && r.out.candidates) || []
+  const corpus = await corpusOf(db, aid, now, opt)
+  let cands = []
+  let from = 'corpus'
+  if (corpus && !corpus.skipped) {
+    noteDropped(db, aid, now, 'L', corpus.dropped)
+    cands = (corpus.items || []).filter((x) => x.layer === 'L')
+  } else if (corpus && corpus.skipped === 'no_material') {
+    // 事实不够时退回旧路：从这一周的日记里成章。旧路没删，只是不再是主入口。
+    const texts = weekTexts(db, aid, now)
+    if (!texts.diaries.length) return { skipped: 'no_material' }
+    const ask = opt.ask || ((input) => call({ db, aid, day, at: now }, 'J31', input))
+    const r = await ask({ ...texts, investment })
+    if (!r || !r.ok) return { skipped: r && r.code === 'BUDGET' ? 'budget' : 'model' }
+    cands = (r.out && r.out.candidates) || []
+    from = 'summary'
+  } else {
+    return { skipped: (corpus && corpus.skipped) || 'model' }
+  }
   const did = []
   const rejected = []
   const seen = new Set()
   for (const c of cands) {
-    const t = String((c && c.self) || '').trim()
+    const t = String((from === 'summary' ? (c && c.self) : (c && c.principle)) || '').trim()
     if (!t || seen.has(t)) continue
     seen.add(t)
     const meta = {
       direction: c.direction ? String(c.direction).trim().slice(0, 60) : null,
-      scene: cleanScene(c.scene),
+      scene: cleanScene(from === 'summary' ? c.scene : (c.facts || []).map((f) => f.text)),
       investment: investment.slice(-12),
       lane_phase: 'L-weekly',
     }
@@ -201,8 +253,8 @@ export async function runLaneL(db, aid, now, opt = {}) {
   }
   if (opt.job !== false) {
     try {
-      append(db, aid, [{ type: 'JOB_DONE', actor: 'sys', at: now, job_key: key, payload: { lane: 'L', did: did.length, rejected: rejected.length } }])
+      append(db, aid, [{ type: 'JOB_DONE', actor: 'sys', at: now, job_key: key, payload: { lane: 'L', did: did.length, rejected: rejected.length, from } }])
     } catch { /* 幂等键已存在 */ }
   }
-  return { did, rejected, invest: investment.length }
+  return { did, rejected, invest: investment.length, from }
 }

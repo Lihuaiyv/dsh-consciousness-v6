@@ -1,4 +1,4 @@
-﻿import { now } from './db.js'
+import { now } from './db.js'
 import { createModel } from './model.js'
 import { bootstrapAlgos } from './algo/index.js'
 
@@ -153,6 +153,19 @@ export const PARAMS = {
   'memory.recall.archive.days': ['C4', 30],
   'memory.inject.pool': ['C4', 50],
   'memory.inject.budget': ['C4', 800],
+  // 记忆汇流 · 留底（P1）：每轮一条轻截面；每 N 轮一条重截面；注入块原文另存。
+  // scene.archive=off 时一行都不写，行为与接上之前一致。
+  'scene.archive': ['C4', 'on'],
+  'scene.snapshot.every': ['C4', 20],
+  'scene.snapshot.max_per_day': ['C4', 48],
+  // 记忆汇流 · 她自己发起（P4）：默认关；三个数在这里调
+  // 留底保留：0 = 永不删（主人 11-10 定的：盘够，照片一直留着）
+  'scene.retain.days': ['C4', 0],
+  'scene.retain.max_archive': ['C4', 0],
+  'confluence.self': ['C4', 'off'],
+  'confluence.strength': ['C4', 0.35],
+  'confluence.gap_days': ['C4', 7],
+  'confluence.self_per_day': ['C4', 1],
   // 行为示例：把「语气：可爱粘人」这种标签补成几条具体反应（on/off）。
   // off 时与改造前逐字一致，方便对照与回滚。
   'memory.inject.examples': ['C4', 'on'],
@@ -194,6 +207,13 @@ export const PARAMS = {
   // 内容级模糊：30 天以上的旧事，括号 / 数字 / 引号原话会被删掉（只删不改）。
   // 钉住的、重要度 ≥0.7、冲突类不参与；off 时只贴标签、正文一字不动。
   'memory.inject.fade': ['C4', 'on'],
+  // 2026-11-14：加热的触发条件。
+  //   off（默认，旧路）：塞进提示词就 touch 一次；
+  //   shadow：不加热，只把「本该加哪几条」记进 events，先看一天；
+  //   on：只有回复里真说出口（2-gram 覆盖 ≥0.3）的那几条才 touch。
+  // 必须先有这条目录项，getParam 才读得到实例覆盖值——否则写进 agent_params 也不生效。
+  // 见 docs/计划-热度按用上记-2026-11-14.md
+  'memory.heat.on_use': ['C4', 'off'],
   // G1「某天当时」：总开关；时间轴按 said（说话时间）还是 recorded（入库时间）切；
   // auto=on 才会在问句带过去时间时往每轮注入补「那时」段（会占上下文，默认关）。
   'memory.asof': ['C4', 'on'],
@@ -226,8 +246,11 @@ export const PARAMS = {
   'memory.judge.timeout_ms': ['C4', 6000],
   // 两次模型调用之间的最小间隔（毫秒）：抽取高峰时别把宿主模型打满。
   'memory.judge.min_interval_ms': ['C4', 800],
-  // 日模型调用硬顶（提炼 / 聚类 / 日记 / 蒸馏 / 抽取共用）。0 = 不限额，和旋钮没挂上时一样。
-  'memory.llm.daily_cap': ['C4', 0],
+  // 日模型调用硬顶（提炼 / 聚类 / 日记 / 蒸馏 / 抽取共用）。默认 16；写成 0 才不限额。
+  'memory.llm.daily_cap': ['C4', 16],
+  // 日记单独立额：一天最多几次模型调用留给写日记（分主题 / 选场 / 成文 / 质检 / 补写）。
+  // 跟总顶分开数——抽取再忙也挤不掉日记。默认 8；写成 0 才不限额。
+  'memory.llm.diary_cap': ['C4', 8],
   // 纪要蒸馏开关，以及蒸馏自己的日顶。总顶见底或蒸馏满额时，同日抽取应延后。
   'memory.episode.distill': ['C4', 'on'],
   'memory.episode.distill.daily_cap': ['C4', 6],
@@ -275,18 +298,20 @@ export const PARAMS = {
   // ---- 日记 v2：选料 → 原话 → 两段式成文 ----
   // 总开关。off = 回到 v1（当天纪要整包 + 模板兜底），用于对照与回滚。
   'memory.diary.v2': ['C4', 'on'],
-  // 一篇日记写几个场景（1–3）。宁少勿多：写得透比写得全重要。
-  'memory.diary.scenes': ['C4', 2],
+  // 一篇日记写几件事（1–6）。有几件写几件，不必凑数；超过 6 件就只留最重的。
+  'memory.diary.scenes': ['C4', 6],
   // 场景分下限（0–10）。低于它的不选；全低就只写 1 场，按「平常的一天」写。
   'memory.diary.scene.min': ['C4', 3.0],
   // auto = 候选≥6 且有模型时，多调一次小模型选场；off = 纯规则；失败自动回落规则。
   'memory.diary.scene.model': ['C4', 'auto'],
   'memory.diary.select.max_chars': ['C4', 1200],
-  // 每个场景抽多少原话（字符 / 轮数上限）。超了先砍均匀补的，保留头尾和情绪词。
-  'memory.diary.raw.per_scene': ['C4', 1800],
-  'memory.diary.raw.max_turns': ['C4', 12],
-  // 成文目标上限（字）。与宿主 diary maxTokens=900 对齐，超了在句号处截。
-  'memory.diary.max_chars': ['C4', 450],
+  // 每个场景抽多少原话（字符 / 轮数上限）。一场长讨论要是只抽几句散点，
+  // 日记就只剩一两句话——所以给足原话，让前因后果能连起来。
+  // 判据是「对话有没有断」：没断就整段给，不按窗口切。
+  'memory.diary.raw.per_scene': ['C4', 8000],
+  'memory.diary.raw.max_turns': ['C4', 200],
+  // 成文目标和上限（字）。不硬卡：一件小事就短，几件事分开写就长。太短会被打回重写。
+  'memory.diary.max_chars': ['C4', 2500],
   // 写不成进待补队列；重试到上限才落素材卡（source='stub'），素材卡之后仍可被重写。
   'memory.diary.retry.max_attempts': ['C4', 12],
   'memory.diary.retry.interval_min': ['C4', 30],
@@ -309,7 +334,7 @@ export const PARAMS = {
   // 主人 QQ 号，逗号分隔（只填私聊号）。用来区分「主人」和「陌生人」：
   // 桥接插件的 sessionId 是 sha256(chatKey) 前 24 位，只能拿号码正向算去比对，反推不回来。
   'qq.bridge.owner_qq': ['C4', ''],
-  // QQ 对话要不要回流进记忆（chat_turns / raw_turns / 关系账本）。
+  // QQ 对话要不要回流进记忆（chat_turns / fragments / 关系账本）。
   // off 时只注入人格、不记东西；陌生人只会落在 chat_turns，不进长期记忆。
   'qq.bridge.ingest': ['C4', 'on'],
   // 桥接插件的会话映射表（key → sessionId，它自己会写 `qq-sessions.json`）。

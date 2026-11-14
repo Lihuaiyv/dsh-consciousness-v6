@@ -11,8 +11,9 @@ import { ruleGate } from './pair_judge.js'
 
 export const PICK_SYS = [
   '你在判断一条新事实是否让旧事实不再成立。',
-  '从候选旧条里选出「被新事实否定、改口或取代」的编号；没有就返回空数组。',
-  '只输出 JSON：{"invalidate":[1,2]} 或 {"invalidate":[]}。不要解释，不要 markdown。',
+  '从候选旧条里选出「被新事实否定、改口或取代」的条目；没有就返回空数组。',
+  '每一条都必须附一句新事实里的原文作为证据（quote），不能是解释，要原文。',
+  '只输出 JSON：{"invalidate":[{"i":1,"quote":"新事实里否定了它的那句原文"}]} 或 {"invalidate":[]}。',
   '注意：只是同一个话题、同一个专有名词，不算；旧条被新条明确否定、改口、或值变了才算。',
   '两条都只是在描述情绪 / 感受 / 状态，不算取代。',
 ].join('\n')
@@ -42,21 +43,25 @@ export function parsePick(raw, n) {
   let obj = null
   try { obj = JSON.parse(t) } catch { /* 再抠花括号/方括号 */ }
   if (!obj) {
-    const m = t.match(/\{[^}]*\}/) || t.match(/\[[^\]]*\]/)
+    const m = t.match(/\{[\s\S]*\}/) || t.match(/\[[\s\S]*\]/)
     if (m) { try { obj = JSON.parse(m[0]) } catch { obj = null } }
   }
-  if (!obj) return { ok: false, invalidate: [] }
+  if (!obj) return { ok: false, invalidate: [], quotes: {} }
   const arr = Array.isArray(obj) ? obj : (Array.isArray(obj.invalidate) ? obj.invalidate : null)
-  if (!arr) return { ok: false, invalidate: [] }
-  const seen = new Set()
+  if (!arr) return { ok: false, invalidate: [], quotes: {} }
   const out = []
+  const quotes = {}
   for (const x of arr) {
-    const k = Number(x)
-    if (!Number.isInteger(k) || k < 1 || k > n || seen.has(k)) continue
-    seen.add(k)
+    let k = 0
+    let q = ''
+    if (typeof x === 'number') k = x
+    else if (x && typeof x === 'object') { k = Number(x.i); q = String(x.quote || '') }
+    else continue
+    if (!Number.isInteger(k) || k < 1 || k > n || out.includes(k)) continue
     out.push(k)
+    if (q) quotes[k] = q
   }
-  return { ok: true, invalidate: out }
+  return { ok: true, invalidate: out, quotes }
 }
 
 /**
@@ -94,7 +99,17 @@ export async function pickSuperseded(opt = {}) {
   }
   const parsed = parsePick(raw, cands.length)
   if (!parsed.ok) return done({ skipped: 'bad-json', raw: String(raw).slice(0, 120) })
-  // 被专名闸挡掉的编号一律不认
-  const final = parsed.invalidate.filter((k) => !gated.has(k))
-  return { invalidate: final, ok: true, skipped: null, raw: String(raw).slice(0, 200), ms: Date.now() - t0 }
+  // 引文校验：必须能指出一句出现在新事实里的原文，指不出来就不认。
+  // 这是对「QQ 通联记录 / 图库分布被判取代」那两次误判的修正——没有原文证据就不动手。
+  const norm = (x) => String(x || '').replace(/[\s\p{P}]/gu, '')
+  const newerNorm = norm(newer && newer.text)
+  const final = []
+  let noQuote = 0
+  for (const k of parsed.invalidate) {
+    if (gated.has(k)) continue
+    const q = norm(parsed.quotes[k])
+    if (!q || q.length < 2 || !newerNorm.includes(q)) { noQuote++; continue }
+    final.push(k)
+  }
+  return { invalidate: final, ok: true, skipped: noQuote ? 'no-quote' : null, raw: String(raw).slice(0, 200), ms: Date.now() - t0 }
 }

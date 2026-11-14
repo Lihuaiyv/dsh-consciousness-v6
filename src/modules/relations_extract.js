@@ -10,6 +10,8 @@
  */
 import * as R from './relations.js'
 import { now } from '../db.js'
+// 2026-11-13：工作模式不进模型关系抽取队列；关系账本的规则记账（relations.ingest）照跑。
+import { isWorkMode } from './work_mode.js'
 
 const ROLE_HINT = /(?:朋友|同事|同学|室友|闺蜜|兄弟|姐妹|邻居|客户|领导|老板|老师|医生|师傅|教练|搭档|队友|房东|亲戚|家人|叔叔|阿姨|舅舅|姑姑|表哥|表姐|堂哥|堂姐|哥哥|姐姐|弟弟|妹妹|爸爸|妈妈|儿子|女儿|老公|老婆|丈夫|妻子|对象|男友|女友|前妻|前夫|前任)/
 
@@ -88,6 +90,7 @@ const PROMPT = [
 export function enqueueRelationRead(db, aid, opts = {}) {
   const text = String(opts.text == null ? '' : opts.text).trim()
   if (!text) return null
+  if (isWorkMode(db, aid)) return null
   if (!hasPersonSignal(db, aid, text)) return null
   const eventId = opts.eventId ? String(opts.eventId) : null
   try {

@@ -37,6 +37,12 @@ const NOT_STANCE = [
 ]
 for (const t of NOT_STANCE) check('拒收：' + t.slice(0, 18), stanceGate(t) === 'not_stance', stanceGate(t))
 
+const DRESSED = [
+  '我更看重先把测试跑完再上服务器',
+  '我相信把插件和数据库先修好更重要',
+]
+for (const t of DRESSED) check('套了表态的工程句也拒：' + t.slice(0, 18), stanceGate(t) === 'not_stance', stanceGate(t))
+
 // ---------- 原有 W1 判定没被顶掉 ----------
 check('W1 仍拦缺层', fieldCheck({ kind: 'belt', text: '我更看重照顾身边的人' }) === '缺层或层非法')
 check('W1 仍拦模型自评', fieldCheck({ layer: 'W', kind: 'belt', text: '作为一个人工智能语言模型，我会尽量帮你' }) === '模型自评')

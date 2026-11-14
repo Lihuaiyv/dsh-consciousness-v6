@@ -142,17 +142,17 @@ const logRow = db.prepare("SELECT * FROM action_log WHERE agent_id=? AND port='s
 assert.ok(logRow && logRow.status === 'sent')
 ok('发送写入 action_log')
 
-// 发出去的话要落回自己的账本：chat_turns（这段会话的账）+ raw_turns（原文层）。
+// 发出去的话要落回自己的账本：chat_turns（这段会话的账）+ fragments（原文层）。
 // 只推到 QQ 上、本地一句不留的话，回看时她不知道自己说过什么（2026-11-07 修）。
 assert.equal(sent.conversation_id, 'qq:p:10001')
 const chatRow = db.prepare("SELECT role, text, conversation_id FROM chat_turns WHERE agent_id=? AND conversation_id='qq:p:10001'").get(aid)
 assert.ok(chatRow && chatRow.role === 'agent' && chatRow.text === '你好')
 ok('发出的话写进 chat_turns，会话 id 带通道前缀')
-const rawRow = db.prepare("SELECT role, text, turn_id FROM raw_turns WHERE agent_id=? AND session_id='qq:p:10001'").get(aid)
+const rawRow = db.prepare("SELECT role, text, turn_id FROM fragments WHERE agent_id=? AND session_id='qq:p:10001'").get(aid)
 assert.ok(rawRow && rawRow.role === 'assistant' && rawRow.text === '你好' && /^send:/.test(rawRow.turn_id))
-ok('发出的话写进 raw_turns，turn_id 认得出来是「发信」')
+ok('发出的话写进 fragments，turn_id 认得出来是「发信」')
 // 同一条只记一次：再审一遍账本不该多出一行
-assert.equal(db.prepare("SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id='qq:p:10001'").get(aid).n, 1)
+assert.equal(db.prepare("SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id='qq:p:10001'").get(aid).n, 1)
 ok('一句话只记一条原文，不重复记')
 
 // ---------- 5. 提醒 ----------

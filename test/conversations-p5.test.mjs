@@ -1,6 +1,6 @@
 /**
  * P5：记忆加工对齐。
- * QQ 聊完不该只是零散记忆点：原文要落 raw_turns（日记/纪要的料），
+ * QQ 聊完不该只是零散记忆点：原文要落 fragments（日记/纪要的料），
  * 关系账本要认人，每 6 轮要压出一条纪要；陌生人一样都不落。
  */
 import fs from 'node:fs'
@@ -32,14 +32,14 @@ const guest = { channel: 'qq', handle: '5550001' }
 
 // ① 主人聊 3 轮：原文层应该一进一回都落下来
 {
-  const baseRaw = num(db, "SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id=?", aid, CONV)
+  const baseRaw = num(db, "SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id=?", aid, CONV)
   for (const t of ['我叫阿哲，在做一个插件', '小周是我同事', '今天有点累']) {
     const r = await call(db, 'POST', '/v1/chat', { text: t, conversation_id: CONV, speaker: owner, default_agent: aid })
     check('主人可正常回复 [' + t.slice(0, 6) + ']', r.status === 200 && !!r.body.reply, r.body)
   }
-  const raw = num(db, "SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id=?", aid, CONV)
+  const raw = num(db, "SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id=?", aid, CONV)
   check('原文层落了 6 条（3 问 3 答）', raw - baseRaw === 6, raw - baseRaw)
-  const userRaw = num(db, "SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id=? AND role='user'", aid, CONV)
+  const userRaw = num(db, "SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id=? AND role='user'", aid, CONV)
   check('其中 3 条是用户说的', userRaw === 3, userRaw)
 }
 
@@ -79,12 +79,12 @@ const guest = { channel: 'qq', handle: '5550001' }
 // ⑤ 陌生人：一条原文都不落，也不压纪要
 {
   const gconv = 'qq:p:5550001'
-  const rawBefore = num(db, "SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id=?", aid, gconv)
+  const rawBefore = num(db, "SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id=?", aid, gconv)
   const epBefore = num(db, "SELECT COUNT(*) n FROM episodes WHERE agent_id=? AND session_id=?", aid, gconv)
   for (let i = 0; i < 8; i++) {
     await call(db, 'POST', '/v1/chat', { text: '路人第' + i + '句', conversation_id: gconv, speaker: guest, default_agent: aid })
   }
-  check('陌生人不落原文层', num(db, "SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id=?", aid, gconv) === rawBefore)
+  check('陌生人不落原文层', num(db, "SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id=?", aid, gconv) === rawBefore)
   check('陌生人不压纪要', num(db, "SELECT COUNT(*) n FROM episodes WHERE agent_id=? AND session_id=?", aid, gconv) === epBefore)
 }
 

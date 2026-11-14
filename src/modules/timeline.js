@@ -1,7 +1,7 @@
 /**
  * G1 时效索引：每条记忆「何时出生 / 改写 / 作废 / 复活 / 有争议 / 被隐藏」的只追加流水。
  *
- *   - 不存正文：正文永远从冷库取（fact_archive 版本原句、raw_turns 原话）。
+ *   - 不存正文：正文永远从冷库取（fact_archive 版本原句、fragments 原话）。
  *   - 写失败静默：写入主链路不能被日志卡死；漏记由夜巡对账补 SYNC。
  *   - 对 memory_items 的「生效 / 正文 / 可见性」改动统一走这里（check-timeline 守门），
  *     UPDATE 语句与改造前逐字一致，列的含义不变，历史另存。
@@ -54,7 +54,7 @@ export function saidAt(db, aid, o = {}) {
   const turn = o.sourceTurnId ? String(o.sourceTurnId) : ''
   if (!t && turn) {
     try {
-      const r = db.prepare('SELECT MIN(created_at) t FROM raw_turns WHERE agent_id=? AND turn_id=?').get(aid, turn)
+      const r = db.prepare('SELECT MIN(created_at) t FROM fragments WHERE agent_id=? AND turn_id=?').get(aid, turn)
       t = iso(r && r.t)
     } catch { /* 老库 */ }
   }

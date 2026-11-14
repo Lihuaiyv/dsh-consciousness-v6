@@ -31,10 +31,17 @@ export function voiceConfigOf(cfg = {}) {
     ttsLocalUrl: pick('voice.local_url', 'http://127.0.0.1:9880'),
     ttsLocalRefAudio: pick('voice.local_ref'),
     ttsLocalPromptText: pick('voice.local_prompt'),
+    ttsLocalDuration: pick('voice.local_duration'),
+    ttsLocalEmoVector: pick('voice.local_emo'),
+    ttsLocalEmoAlpha: pick('voice.local_emo_alpha'),
     ttsEdgePython: pick('voice.edge_python'),
     ttsEdgeDir: pick('voice.edge_dir'),
     ttsRate: pick('voice.rate'),
     ttsPitch: pick('voice.pitch'),
+    ttsBreezeUrl: pick('voice.breeze_url', 'https://api.breeze.blue'),
+    ttsBreezeVoice: pick('voice.breeze_voice'),
+    ttsBreezeModel: pick('voice.breeze_model', 'breeze-tts-2'),
+    ttsBreezeInstructions: pick('voice.breeze_instructions'),
   }
 }
 

@@ -32,8 +32,17 @@ export {
   settleProactiveAnswered, markProactiveIgnored, proactiveStats, ackProactive,
 }
 import { appendTurn, buildEpisode } from './modules/archive.js'
+import { recordScene, openConfluenceByText } from './modules/confluence.js'
 import * as R from './modules/relations.js'
 import { enqueueRelationRead } from './modules/relations_extract.js'
+import { llmBudgetAllow, llmBudgetBump } from './modules/llm_budget.js'
+// 2026-11-13：工作模式（面板按钮）下的后台降载判断。日常模式读到的永远是 false。
+import { isWorkMode } from './modules/work_mode.js'
+import { writeChatTurns } from './modules/turn_write.js'
+import { episodeWriteEnabled } from './modules/memory_switch.js'
+// D1：非网页通道也要能「自己想起」——和网页共用事件联想与浮现记账。
+import { recallEvents, buildEventLine } from './modules/event_recall.js'
+import { markSurfaced, markMentioned } from './modules/event_drift.js'
 export { DRIVERS, DRIVER_IDS, driverFindings, applyDriverToDrive } from './modules/selfmod_drivers.js'
 export { affectLabels }
 import {
@@ -165,6 +174,27 @@ export function clampContextBlock(s, max) {
   const t = String(s || '')
   if (!t || !max || t.length <= max) return t
   return t.slice(0, Math.max(0, max - 16)) + '\n…（上下文按预算截断）'
+}
+
+/**
+ * D1：非网页通道的「自己想起」。
+ * 和网页同一条规则：一轮最多一条、单开 400 字额度、真拼进提示词才算浮现
+ * （markSurfaced 降想头 / markMentioned 记一笔 / event.inject 落账）。
+ * 返回 '' = 这轮没撞上。
+ */
+export function eventLineForTurn(db, aid, text, { channel = 'chat' } = {}) {
+  try {
+    const hit = recallEvents(db, aid, String(text || ''), { limit: 1 })
+    const one = hit && hit.ok && hit.items && hit.items.length ? hit.items[0] : null
+    if (!one) return ''
+    const budget = Number(getParam(db, aid, 'event.inject.budget')) || 400
+    const built = buildEventLine(one, budget)
+    if (!built.text) return ''
+    try { markSurfaced(db, one.id, { kind: 'cue' }) } catch { /* 记不上不影响提示词 */ }
+    try { markMentioned(db, one.id) } catch { /* 同上 */ }
+    try { event(db, aid, 'event.inject', { id: one.id, chars: built.chars, budget: built.budget, cut: built.cut, channel }) } catch { /* 同上 */ }
+    return built.text
+  } catch { return '' }
 }
 
 /** 测试钩子：可替换自由导入的模型调用（定义在零件里，这里 re-export，测试照旧从 features 注入） */
@@ -401,6 +431,59 @@ function selfJudgeKey(text) {
   return String(text || '').trim().replace(/\s+/g, ' ').slice(0, 200).toLowerCase()
 }
 
+/**
+ * 工作段的主线摘记（2026-11-13）：不调模型，只从用户原话里抓「决定 / 改成 / 跑通 / 报错」
+ * 这类关键句，合成一条很短的 episode，落冷层低权重。
+ * 目的：工作模式下不精读整段，但「这段在干什么」不能丢——以后翻得到，也能被检索到。
+ */
+const workDigestSeen = new Set()
+function workDigest(db, aid, turns, opt = {}) {
+  const users = (Array.isArray(turns) ? turns : [])
+    .filter((t) => String((t && t.role) || 'user') === 'user' && String((t && t.text) || '').trim())
+  if (!users.length) return null
+  const dedupeTid = opt.batchTurnId || users[users.length - 1].turnId || null
+  // 同一轮里我的回复可能分几步提交，commitTurn 会触发好几次——
+  // 按轮次号去重，别把同一条主线写两遍（进程内先挡，再查一次库兜底）。
+  if (dedupeTid) {
+    const key = String(aid) + ':' + String(dedupeTid)
+    if (workDigestSeen.has(key)) return null
+    workDigestSeen.add(key)
+    if (workDigestSeen.size > 800) workDigestSeen.clear()
+    try {
+      const dup = db.prepare("SELECT 1 FROM memory_items WHERE agent_id=? AND source='work-digest' AND source_turn_id=? AND status='active' LIMIT 1").get(aid, dedupeTid)
+      if (dup) return null
+    } catch { /* 查重失败就照写 */ }
+  }
+  const KEY = /(决定|定了|改成|换成|先这样|继续|完成|搞定了|跑通|通过|失败|报错|不对|错了|删掉|加上|试试|下一步|搞定)/
+  const picks = []
+  const seen = new Set()
+  for (const t of users) {
+    for (const raw of String(t.text).split(/[。！？!?；;\n]/)) {
+      const line = raw.trim().replace(/\s+/g, ' ')
+      if (line.length < 6 || line.length > 80) continue
+      if (!KEY.test(line)) continue
+      if (seen.has(line)) continue
+      seen.add(line)
+      picks.push(line)
+      if (picks.length >= 3) break
+    }
+    if (picks.length >= 3) break
+  }
+  if (!picks.length) picks.push(String(users[0].text).replace(/\s+/g, ' ').slice(0, 50))
+  const text = '工作段：' + picks.join(' / ').slice(0, 150)
+  const tid = opt.batchTurnId || users[users.length - 1].turnId || null
+  const seedFn = typeof opt.seed === 'function' ? opt.seed : null
+  try {
+    addMemory(db, aid, {
+      text, type: 'episode', mark: 'normal', speaker: 'user',
+      quote: String(users[0].text).slice(0, 120),
+      turn_id: tid, source: 'work-digest', cold: true, confidence: 0.4,
+      ...(seedFn ? seedFn(text, 'episode') : { importance: 0.35, salience: 0.2 }),
+    })
+  } catch { /* 摘记失败不影响规则落库 */ }
+  return text
+}
+
 export async function ingest(db, aid, body) {
   active(db, aid)
   const turns = Array.isArray(body.turns) ? body.turns : []
@@ -422,7 +505,7 @@ export async function ingest(db, aid, body) {
   })()
   const seed = (text, type) => seedScores(text, type, turnSalience)
   // 这一批的出处。turn_id 由 captureTurn 生成、入队时带上，一路传到 addMemory；
-  // memory_items.source_turn_id 存它，「这条记忆是哪一轮说的」才 join 得回 raw_turns。
+  // memory_items.source_turn_id 存它，「这条记忆是哪一轮说的」才 join 得回 fragments。
   const batchTurnId = (() => {
     for (let i = turns.length - 1; i >= 0; i--) {
       const t = turns[i] && turns[i].turnId
@@ -438,7 +521,7 @@ export async function ingest(db, aid, body) {
     const pasts = findPastFacts(t.text || '')
     for (const pf of pasts) {
       try {
-        const r = addMemory(db, aid, { text: pf.text, type: 'fact', mark: 'normal', turn_id: batchTurnId, ...seed(pf.text, 'fact') })
+        const r = addMemory(db, aid, { text: pf.text, type: 'fact', mark: 'normal', speaker: 'user', quote: String(t.text || '').slice(0, 160), turn_id: batchTurnId, ...seed(pf.text, 'fact') })
         if (r && r.id) invalidateMemory(db, aid, r.id, { clearValidAt: true, reason: 'past_fact', actor: 'extract' })
       } catch { /* 忽略 */ }
     }
@@ -453,7 +536,7 @@ export async function ingest(db, aid, body) {
         invalidateMemory(db, aid, r0.id, { reason: 'negation', actor: 'extract' })
         invalidated++
       }
-      try { addMemory(db, aid, { text: '用户现在没有' + pf.verb + pf.object, type: 'fact', mark: 'normal', turn_id: batchTurnId, ...seed('用户现在没有' + pf.verb + pf.object, 'fact') }) } catch { /* 忽略 */ }
+      try { addMemory(db, aid, { text: '用户现在没有' + pf.verb + pf.object, type: 'fact', mark: 'normal', speaker: 'user', quote: cur.slice(0, 160), turn_id: batchTurnId, ...seed('用户现在没有' + pf.verb + pf.object, 'fact') }) } catch { /* 忽略 */ }
       continue
     }
     if ((t.role || 'user') !== 'user') continue
@@ -465,7 +548,7 @@ export async function ingest(db, aid, body) {
         invalidateMemory(db, aid, r.id, { reason: 'negation', actor: 'extract' })
         invalidated++
       }
-      try { addMemory(db, aid, { text: n.negText, type: 'fact', mark: 'normal', turn_id: batchTurnId, ...seed(n.negText, 'fact') }) } catch { /* 忽略 */ }
+      try { addMemory(db, aid, { text: n.negText, type: 'fact', mark: 'normal', speaker: 'user', quote: String(t.text || '').slice(0, 160), turn_id: batchTurnId, ...seed(n.negText, 'fact') }) } catch { /* 忽略 */ }
     }
   }
 
@@ -486,7 +569,26 @@ export async function ingest(db, aid, body) {
     }
     return bits.join('\n').slice(0, 800)
   })()
-  const extracted = await model.extract(turns, { selfMaterial })
+  let extracted = []
+  const budgetDay = localDay()
+  // 2026-11-13：面板开着「工作」时写下的这几句，只走规则落库，不做精读抽取。
+  // 粗处理不等于丢东西：原文已经在 fragments 里，切回日常还能补。
+  const coarse = (() => {
+    for (const t of turns) {
+      if (String((t && t.role) || 'user') === 'user' && String((t && t.mode) || '') === 'work') return true
+    }
+    // API 通道进来的对话没有逐轮标签：按当前面板模式兜底——
+    // 开着工作模式时，从后门递进来的对话也粗记，不再花一次精读。
+    return isWorkMode(db, aid)
+  })()
+  if (coarse) {
+    try { event(db, aid, 'memory.work.coarse', { turns: turns.length }) } catch { /* 记账失败不影响 */ }
+    // 不精读，但留一条「这段在干什么」的主线；纯规则，不花钱。
+    try { workDigest(db, aid, turns, { seed, batchTurnId }) } catch { /* 摘记失败不影响规则落库 */ }
+  } else if (llmBudgetAllow(db, aid, budgetDay, 1).ok) {
+    extracted = await model.extract(turns, { selfMaterial })
+    try { llmBudgetBump(db, aid, 'extract', budgetDay, 1) } catch { /* 记账失败不挡这一轮 */ }
+  }
   const written = []
   const newPairs = [] // 这一轮真正新落库的条目：{text, id}，开环从它们里长
   const actions = { new: 0, merge: 0, conflict: 0, drop: 0 }
@@ -573,7 +675,8 @@ export async function ingest(db, aid, body) {
   } catch { /* 开环失败不影响这一轮落库 */ }
   // 检索卡：新写入的事实后台补一次「以后可能被怎么问」。
   // 不 await、失败静默——卡片只影响检索，不能拖住这轮回复；没有模型时自动跳过。
-  const freshIds = written.filter((x) => x.action === 'new' && x.id).map((x) => x.id).slice(0, 8)
+  // 2026-11-13：工作模式不补卡片——卡片只影响检索措辞，不是「记得住」本身。
+  const freshIds = isWorkMode(db, aid) ? [] : written.filter((x) => x.action === 'new' && x.id).map((x) => x.id).slice(0, 8)
   if (freshIds.length) {
     const timer = setTimeout(() => {
       ;(async () => {
@@ -583,8 +686,9 @@ export async function ingest(db, aid, body) {
     if (timer.unref) timer.unref()
   }
   // 关系：这一轮里提到的师傅 / 妹妹 / 朋友等，让模型抽一次，按名字合并落库
+  // 2026-11-13：工作模式跳过模型抽取；关系账本的规则记账（上面 R.ingest）照跑，人不会丢。
   let relate = []
-  try { relate = await learnRelationsFromTurns(db, aid, turns) } catch { relate = [] }
+  if (!isWorkMode(db, aid)) try { relate = await learnRelationsFromTurns(db, aid, turns) } catch { relate = [] }
 
   // 摘要要不要进 T1（事实区）。默认 off（见 kernel.js）：关掉后摘要不落库。
   // 为什么要有这个开关：每轮一条「用户事实 / 用户偏好」的第三人称旁白，
@@ -790,21 +894,23 @@ export function metricsHistory(db, aid, days = 30, keys = null) {
 
 // ---------------- 全量导出 / 导入 ----------------
 const TABLES = ['agents', 'memory_items', 'memory_links', 'conflicts', 'persona', 'affect_state', 'alerts',
-  'affect_episodes', 'affect_feel', 'drive_state', 'action_ports', 'relations', 'persona_values', 'preferences',
+  'affect_episodes', 'affect_feel', 'drive_state', 'action_ports', 'relations', 'preferences',
   'taboos', 'condition_state', 'affect_samples', 'cooldowns', 'budgets', 'rule_versions', 'metric_samples',
   'affect_user_read',
   'action_log', 'proposals', 'changes', 'inbox_items', 'events', 'metric_snapshots', 'algo_bindings', 'agent_params',
-  'rule_artifacts', 'agent_bindings', 'chat_turns', 'proactive', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
+  'rule_artifacts', 'agent_bindings', 'chat_turns', 'proactive', 'episodes', 'diaries', 'fragments', 'fact_archive', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
   // 人物账本：tier 先导（person 有外键），event 在投影之前
   'rel_tier', 'rel_event', 'rel_person', 'rel_edge', 'rel_mention', 'rel_evidence', 'rel_channel', 'rel_extract_queue', 'rel_review',
   // 行动层：通道配置 / 研究报告（research_seen 是全局去重表，不跟着实例走）
   'action_config', 'research_runs',
   // 性格拔河：两池与基线跟着实例走，导出/迁移要带上
-  'axis_rope', 'axis_evidence', 'persona_judge']
+  'axis_rope', 'axis_evidence', 'persona_judge',
+  // 记忆汇流：留底、截面、审计账、这次想起（缺表就是缺，别让导出包冒充完整备份）
+  'state_scene', 'scene_archive', 'confluence_log', 'revisit']
 
 function cols(db, t) { return db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name) }
 
-/** 老库可能缺表（如已清退的 persona_values）：导出只看真实存在的表。 */
+/** 老库可能缺表：导出只看真实存在的表。 */
 function presentTables(db) {
   try { return new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name)) } catch { return new Set() }
 }
@@ -898,7 +1004,7 @@ export function importFull(db, aid, body) {
 
 // ---------------- 记忆导出 / 导入（只动记忆仓库的六个分区） ----------------
 // 人格 / 情绪 / 驱力 / 提案这些不在里面：那是「整体意识」，走设置里的全量备份。
-const MEM_TABLES = ['memory_items', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline']
+const MEM_TABLES = ['memory_items', 'episodes', 'diaries', 'fragments', 'fact_archive', 'memory_timeline', 'revisit']
 
 /** 导出记忆：一个只含记忆表的 zip；格式跟全量包一致，导入口两种都吃。 */
 export function exportMemory(db, aid) {
@@ -1044,7 +1150,7 @@ export function importMemory(db, aid, body) {
   return {
     imported: total, by_table: byTable, tables: present.length, fts: 'rebuilt',
     memory: byTable.memory_items || 0, episodes: byTable.episodes || 0,
-    diaries: byTable.diaries || 0, raw: byTable.raw_turns || 0, facts: byTable.fact_archive || 0,
+    diaries: byTable.diaries || 0, raw: byTable.fragments || 0, facts: byTable.fact_archive || 0,
   }
 }
 
@@ -1296,7 +1402,7 @@ export function recentHistory(db, aid, conversationId, rounds) {
 
 // ---------------- QQ 段的叙事加工（和网页那边一个套路） ----------------
 // 网页是 chat_turns → 原文层 → 每 6 轮压纪要 → 每天写日记；QQ 以前只有零散记忆点。
-// 这里补上同一条链路：原文进 raw_turns，关系账本认人，每 6 轮压一条纪要，
+// 这里补上同一条链路：原文进 fragments，关系账本认人，每 6 轮压一条纪要，
 // 事实改成 3 轮抽一次（一句一抽碎片太多，还容易把半句话当事实）。
 const qqNarrativeTick = new Map()
 const qqExtractBuf = new Map()
@@ -1316,9 +1422,16 @@ async function qqBatchExtract(db, aid, conv, text, turnSeed) {
   const buf = qqExtractBuf.get(key) || []
   buf.push(String(text || ''))
   qqExtractBuf.set(key, buf)
-  if (buf.length < 3) return null
+  // 2026-11-13：3 句一读太频繁，改成可调批量（flags: memory.extract.batch，默认 12，范围 3~50）。
+  // 原话照旧存在 chat_turns/fragments，攒批只影响「请模型读」的次数，不影响记没记住。
+  let BATCH = 12
+  try { BATCH = Math.max(3, Math.min(50, Number(getFlag(db, 'memory.extract.batch')) || 12)) } catch { /* 读不到就用默认 */ }
+  if (buf.length < BATCH) return null
+  const budgetDay = localDay()
+  if (!llmBudgetAllow(db, aid, budgetDay, 1).ok) return null
   qqExtractBuf.set(key, [])
   const facts = await model.extract([{ role: 'user', text: buf.join('\n') }])
+  try { llmBudgetBump(db, aid, 'extract', budgetDay, 1) } catch { /* 记账失败不挡这一批 */ }
   let n = 0
   for (const m of facts) {
     try {
@@ -1398,9 +1511,23 @@ export async function chatReply(db, aid, body) {
   try { drive = getDrive(db, aid) } catch { drive = null }
   const style = personaStyle(db, aid)
   const banned = String(style.banned || '').split(/[,，\s]+/).filter(Boolean)
+  // 自然触发：这一句带「回到某天」→ 只在这一轮拼进现场，并落一条审计账。
+  // 以前只有网页那条链认口令，/chat、微信、QQ 完全不认；同一个功能一半有一半没有。
+  let backLine = ''
+  try {
+    const back = openConfluenceByText(db, aid, text, { sessionId: conv || null, mode: 'auto' })
+    if (back.ok) backLine = back.line + '\n\n'
+  } catch { /* 汇流失败不影响回话 */ }
   // 两条路用同一个拼装器：主人拿全份，不熟的人只拿「她是谁、现在什么样、怎么说话」那一半。
   // 关系段按说话人各算各的，陌生人不会拿到主人那一行。
-  const contextBlock = clampContextBlock(buildContextBlock(db, aid, {
+  // D1：非网页通道也要能「自己想起」——和网页同一条规则：一轮最多一条、单开 400 字额度、
+  // 真拼进提示词才算浮现。陌生人那边不浮现（对不熟的人忽然翻旧账，不对）。
+  let eventLine = ''
+  if (canLearn) {
+    const ch = /^wechat/i.test(conv) ? 'wechat' : /^qq/i.test(conv) ? 'qq' : 'chat'
+    try { eventLine = eventLineForTurn(db, aid, text, { channel: ch }) } catch { eventLine = '' }
+  }
+  const contextBlock = (eventLine ? eventLine + '\n\n' : '') + clampContextBlock(backLine + buildContextBlock(db, aid, {
     recall: canLearn ? pack.items : [],
     audience: canLearn ? 'owner' : 'stranger',
     // 把这一句也交进去：网页那头是先看这句话再翻三观/记忆，QQ 这边以前只塞了预召回，
@@ -1425,10 +1552,20 @@ export async function chatReply(db, aid, body) {
   const mood = affect ? (affect.label || affect.primary_label || null) : null
   const turnSeed = (t, type) => seedScores(t, type, affect ? affect.intensity : 0, affect ? affect.pleasure : undefined)
   const at = now()
-  db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, 'user', text, JSON.stringify(canLearn ? pack.items : []), mood, at, body.conversation_id || null)
-  db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, 'agent', reply, '[]', mood, now(), body.conversation_id || null)
+  // 2026-11-13：两行账收进 writeChatTurns（和 commitTurn 共用同一处形状）。
+  // P1c：这一轮先定轮次号，两行都带上——「这句话→哪句原话」以后一条 SQL 走通。
+  const turnId = canLearn ? nid('turn_') : null
+  writeChatTurns(db, aid, {
+    user: text,
+    agent: reply,
+    at,
+    conversationId: body.conversation_id || null,
+    mood,
+    packUser: JSON.stringify(canLearn ? pack.items : []),
+    turnId,
+    // B2：这一轮是「工作」还是「日常」。切事按它分两个标准；老行没标签按日常。
+    mode: isWorkMode(db, aid) ? 'work' : 'chat',
+  })
   // 记忆闸：只有主人号说的话才进长期记忆/关系账本。
   // 陌生人照常聊、照常落 chat_turns（这段会话自己的账），但不许把他的话
   // 抽成「关于主人」的事实——那是串人的根源。
@@ -1438,13 +1575,51 @@ export async function chatReply(db, aid, body) {
   let narrative = null
   if (canLearn) {
     try { learning = learnFromTurn(db, aid, text, affect) } catch { learning = null }
-    try { addMemory(db, aid, { text, type: 'episode', mark: 'normal', ...turnSeed(text, 'episode') }) } catch { /* 合并失败不影响回复 */ }
-    // 原文层：网页那边也是这句先落 raw_turns，日记/纪要才取得到料
+    // 原文层：网页那边也是这句先落 fragments，日记/纪要才取得到料
     // 一轮一个轮次号：一进一回答回同一个号，重放时也认得出是同一轮（别按文本去重，见 archive.appendTurn）
     const sess = conv || ('qq:' + (speakerHandle || 'local'))
-    const turnId = nid('turn_')
-    try { appendTurn(db, aid, { sessionId: sess, role: 'user', text, at, turnId }) } catch { /* 原文失败不影响回复 */ }
-    try { appendTurn(db, aid, { sessionId: sess, role: 'assistant', text: reply, at: now(), turnId }) } catch { /* 原文失败不影响回复 */ }
+    // 状态截面先算：碎片要带上「写下这一刻的状态」。
+    // recordScene 本来就在这一轮跑了，只是以前跑在碎片后面、算完就扔；
+    // 现在把它的轻截面接住，碎片直接带上，不再重算一遍（buildSnapshot 不便宜）。
+    // 截面里那几块是 JSON 字符串，这里拆成真对象再存——以后读的人不用再解析两层。
+    let sceneSnap = null
+    try {
+      const sc = recordScene(db, aid, { turnId, sessionId: sess, at })
+      const l = sc && sc.light
+      if (l) {
+        const j = (s) => { try { return s ? JSON.parse(s) : null } catch { return null } }
+        sceneSnap = JSON.stringify({
+          at: l.at,
+          affect: j(l.affect_json),
+          drive: j(l.drive_json),
+          relation: j(l.relation_json),
+          life: j(l.life_json),
+          loops: j(l.loops_json),
+        })
+      }
+    } catch { /* 留底失败不影响回复 */ }
+    // 汇流要的原话：落记忆时就粘上（speaker + quote + turn_id），别等以后补
+    try {
+      if (episodeWriteEnabled(db) && !/^You are the Team Lead named/.test(String(text))) addMemory(db, aid, { text, type: 'episode', mark: 'normal', speaker: 'user', quote: text.slice(0, 160), turn_id: turnId, ...turnSeed(text, 'episode') })
+    } catch { /* 合并失败不影响回复 */ }
+    let userFrag = null
+    // 机器消息不是主人说的：落成 world，别冒充 user。
+    // 不修的后果是实的——抽取会把定时提醒、领队提示当成「主人亲口说过的事」抽成事实。
+    // 那些行已经躺在库里了（历史不动），从这一句起标对。
+    const machineTurn = looksLikeRuntimeNoise(text)
+    try {
+      userFrag = appendTurn(db, aid, {
+        sessionId: sess, text, at, turnId, snapshot: sceneSnap,
+        ...(machineTurn ? { source: 'world' } : { role: 'user' }),
+      })
+    } catch { /* 原文失败不影响回复 */ }
+    try {
+      appendTurn(db, aid, {
+        sessionId: sess, role: 'assistant', text: reply, at: now(), turnId, snapshot: sceneSnap,
+        // 回答接自那句问话：同一轮里最硬的一条边，不猜、不用模型。
+        antecedents: userFrag && userFrag.id ? [userFrag.id] : null,
+      })
+    } catch { /* 原文失败不影响回复 */ }
     // 关系账本：聊到谁就认谁（以前 QQ 完全没走这一步，关系图不会长人）
     try { R.ingest(db, aid, { text, sessionId: sess, source: 'qq' }) } catch { /* 关系记账失败不影响回复 */ }
     try { enqueueRelationRead(db, aid, { text }) } catch { /* 入队失败下次再说 */ }

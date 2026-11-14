@@ -9,6 +9,7 @@ import {
   disputeOpen, disputeClose,
 } from './timeline.js'
 import { syncClaims, claimEnabled } from './claim_state.js'
+import { parseTimeRange } from './timeparse.js'
 import { normalizeTerms } from './terms.js'
 import { attrConflict } from './contradict.js'
 import { askAboutConflict } from './conflict_ask.js'
@@ -23,6 +24,13 @@ export { normalizeTerms }
  */
 let feelProvider = null
 export function setFeelProvider(fn) { feelProvider = typeof fn === 'function' ? fn : null }
+
+/**
+ * 出生时的慢情绪背景：同样由装配层注入（index.js 交的是 affect.moodValenceOf）。
+ * 没注入就写 NULL——不编一个 0 出来冒充「当时中性」。
+ */
+let slowProvider = null
+export function setSlowProvider(fn) { slowProvider = typeof fn === 'function' ? fn : null }
 
 const SECRET = /(sk-[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{20,})/g
 const NEG = new Set([...'不没别无取消换改'])
@@ -184,6 +192,13 @@ export function addMemory(db, aid, body) {
     return { id: old.id, duplicate: true }
   }
   const mid = nid('mem_')
+  // 「发生时间」：调用方给的第一优先；没给就从文本里规则解析「昨天/上周三/11月5日」。
+  // 解析不出就留空——空表示「不知道」，绝不能默认成现在（那会把去年的事记成今天）。
+  const occurredAt = (() => {
+    const given = body.valid_at || body.occurred_at
+    if (given) { const d = new Date(given); return Number.isNaN(+d) ? null : d.toISOString() }
+    try { const r = parseTimeRange(text); return r && r.from ? r.from : null } catch { return null }
+  })()
   const importance = Math.max(0, Math.min(1, Number(body.importance ?? body.weight ?? 0.5) || 0.5))
   const salience = Math.max(0, Math.min(1, Number(body.salience ?? 0) || 0))
   /* 出生时的情绪效价：调用方给了就用给的（对话里就是这一下的愉悦），
@@ -194,6 +209,19 @@ export function addMemory(db, aid, body) {
   const feelId = (() => {
     try { return body.feel_id || (feelProvider ? feelProvider(db, aid) : null) || null } catch { return null }
   })()
+  /* 出生这一刻的慢情绪背景：调用方给了就用给的，没给就问装配层注入的口。
+     两处都拿不到就写 NULL——「没记过」和「当时正好中性」在加成上一样，在读数上不一样。 */
+  const slowAt = (() => {
+    const given = body.slow_at_creation
+    if (given != null && Number.isFinite(Number(given))) return Math.max(-1, Math.min(1, Number(given)))
+    try {
+      const v = slowProvider ? slowProvider(db, aid) : null
+      // Number(null) 是 0——先挡掉空值，不然「拿不到数」会被写成「正好中性」。
+      if (v == null) return null
+      const num = Number(v)
+      return Number.isFinite(num) ? Math.max(-1, Math.min(1, num)) : null
+    } catch { return null }
+  })()
   const terms = normalizeTerms(body.terms)
   const factKey = String(body.fact_key || body.key || '').trim().slice(0, 120) || null
   const searchText = buildSearchText(safe, factKey, terms)
@@ -202,10 +230,10 @@ export function addMemory(db, aid, body) {
   let conflictId = null
   tx(db, () => {
     db.prepare(`INSERT INTO memory_items(id,agent_id,type,mark,text,source,w0,weight,stability,difficulty,
-        last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version,feel_id)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        last_decay_at,valid_at,invalid_at,status,created_at,deleted_at,version,feel_id,slow_at_creation)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(mid, aid, typ, 'normal', safe, String(body.source || 'manual').slice(0, 24), 0.5, 0.5, 1.0, 5.0,
-        now(), null, null, 'active', now(), null, 1, feelId)
+        now(), occurredAt, null, 'active', now(), null, 1, feelId, slowAt)
     // 分层账本：重要度 / 情绪显著度 / 来源轮次；热度先按默认算一遍
     // 检索卡：fact_key + terms + search_text（写进 FTS 的是 search_text，不是原文）
     db.prepare('UPDATE memory_items SET importance=?, salience=?, valence=?, confidence=?, source_turn_id=?, entity_id=?, fact_key=?, terms=?, search_text=?, feel_id=? WHERE id=?')
@@ -267,6 +295,7 @@ export function addMemory(db, aid, body) {
     // G1：出生事件。text_ref 指向出生照；valid_from 认来源原话/纪要的说话时间
     logAdd(db, aid, mid, {
       sourceTurnId: body.turn_id || null,
+      validAt: occurredAt,   // 发生时间；空则回落「说话时间/入库时间」
       textRef: birthRef,
       actor: String(body.source || 'model').slice(0, 24),
     })

@@ -18,8 +18,12 @@ export const WRITES = Object.freeze({
   who: [],
   memory: ['memory_items', 'memory_fts', 'alerts', 'conflicts', 'memory_provenance'],
   timeline: ['memory_timeline', 'memory_items', 'flags'],
-  layers: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
+  // 记忆汇流：只读复用上面各域，自己只写「现场留底 + 这次想起」这四张。
+  confluence: ['state_scene', 'scene_archive', 'confluence_log', 'revisit'],
+  layers: ['fragments', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
   persona: ['persona', 'relations', 'preferences', 'taboos'],
+  // 拔河：拉力池和证据账。性格轴的值仍写在 persona 里，不在这里。
+  rope: ['axis_rope', 'axis_evidence'],
   selfmod: ['metric_samples', 'persona', 'proposals', 'rule_artifacts', 'rule_versions', 'agent_bindings', 'change_journal', 'inbox_items'],
   affect: ['affect_baseline', 'affect_episodes', 'affect_events', 'affect_review', 'affect_samples', 'affect_state', 'affect_trigger', 'affect_user_read', 'affect_v3'],
   feel: ['affect_feel'],
@@ -39,7 +43,7 @@ export const WRITES = Object.freeze({
   selfhood: [],
   selfread: [],
   poisons: [],
-  values: ['persona_values'],
+  values: [],
   actions: ['action_config'],
   // 听见 / 出声只搬字节；语音基线记一张一人一行的小表（只存滚动平均，不存音频）。
   voice: ['voice_baseline'],
@@ -64,6 +68,15 @@ export const SHARED = Object.freeze([
 
 /** @type {Record<string, { files: string[], tables: string[], reads?: string[], writes?: string[] }>} */
 export const OWNERSHIP = {
+  confluence: {
+    // 记忆汇流：只读复用各域（tables 是「能读的全集」），WRITES 才限制它只能写四张。
+    files: ['modules/confluence.js', 'modules/visibility.js'],
+    tables: [
+      'state_scene', 'scene_archive', 'confluence_log', 'revisit',
+      'fragments', 'memory_items', 'memory_provenance', 'fact_archive', 'memory_timeline',
+      'events', 'rel_event', 'open_loops', 'affect_user_read',
+    ],
+  },
   memory: {
     files: [
       'modules/memory.js',
@@ -75,7 +88,7 @@ export const OWNERSHIP = {
       'algo/recall.js',
     ],
     tables: [
-      'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'alerts', 'raw_turns',
+      'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'alerts', 'fragments',
       // 署名：这条记忆里的话是谁说的（谁写记忆谁落署名，跟正文同域）
       'memory_provenance',
       // 开案后真的开口问：往主动消息队列里排一条
@@ -183,7 +196,13 @@ export const OWNERSHIP = {
   persona: {
     files: ['modules/persona.js', 'modules/traits.js'],
     // chat_turns / axis_rope：traits 只读（说话样本、绳索投影），不写
-    tables: ['persona', 'persona_values', 'changes', 'preferences', 'taboos', 'relations', 'chat_turns', 'axis_rope'],
+    tables: ['persona', 'changes', 'preferences', 'taboos', 'relations', 'chat_turns', 'axis_rope'],
+  },
+  rope: {
+    // 拔河：证据进池、够力才挪轴。axis_evidence.js 是旧调用方的薄适配，写的是同一张证据账。
+    // self_scan 只读下面这些表，写仍走 rope / axis_evidence。
+    files: ['modules/rope.js', 'modules/axis_evidence.js', 'modules/self_scan.js'],
+    tables: ['axis_rope', 'axis_evidence', 'chat_turns', 'affect_episodes', 'memory_items', 'diaries', 'browse_items', 'proactive'],
   },
   relations: {
     // 人物账本：rel_event 是主数据，其余都是可重放投影。
@@ -203,8 +222,8 @@ export const OWNERSHIP = {
   },
   values: {
     files: ['modules/values.js'],
-    // 读外域做证据（记忆/情绪），只写自己的 persona_values
-    tables: ['persona_values', 'memory_items', 'affect_state', 'rel_person', 'relations'],
+    // 读外域做证据（记忆/情绪）。旧表已拆，这里不再写库。
+    tables: ['memory_items', 'affect_state', 'rel_person', 'relations'],
   },
   affect: {
     // 情绪动力搬家：实现搬进 parts/affect/index.js，modules/affect.js 只留转发。
@@ -223,18 +242,17 @@ export const OWNERSHIP = {
       // 只读：拼「这一秒」时要带当时的快/慢和标签
       'affect_v3', 'affect_state', 'affect_events',
       // 只读：回顾时顺带同时段的对话与当天日记
-      'raw_turns', 'chat_turns', 'memory_items', 'diaries',
+      'fragments', 'chat_turns', 'memory_items', 'diaries',
     ],
   },
   drive: {
     files: ['modules/drive.js'],
     // persona 只读：v1d 的设定点由人格调制（候选公式，默认不启用）
-    // persona_values 只读：v3 的「重要度」权重（性格 × 价值观），只读不写
     // affect_events 只读：情绪 → 驱力只吃过了闸的事件（doc 7）
     // relations / affect_v3 / condition_state / browse_items 只读：胃口的四路外部状态
     // affect_state 只读：长期情绪改胃口（跟提示词/页面上写的那个标签同源）
     tables: [
-      'drive_state', 'action_ports', 'action_log', 'cooldowns', 'budgets', 'persona', 'persona_values', 'affect_events',
+      'drive_state', 'action_ports', 'action_log', 'cooldowns', 'budgets', 'persona', 'affect_events',
       'relations', 'rel_person', 'affect_v3', 'condition_state', 'browse_items', 'affect_state',
     ],
   },
@@ -261,13 +279,13 @@ export const OWNERSHIP = {
     tables: [
       'chat_turns', 'bindings', 'flags', 'metric_snapshots', 'metric_samples', 'condition_state',
       // purge / zip 级联（命令式清理，不算业务耦合）
-      'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'persona', 'persona_values', 'preferences', 'taboos',
+      'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'persona', 'preferences', 'taboos',
       'open_loops',
       'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_user_read', 'affect_feel', 'drive_state',
       'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'alerts', 'algo_bindings',
       'agent_params', 'agent_bindings', 'rule_artifacts', 'proactive',
       // 分层记忆的级联清理
-      'episodes', 'diaries', 'raw_turns', 'raw_fts', 'fact_archive', 'fact_fts', 'memory_timeline',
+      'episodes', 'diaries', 'fragments', 'raw_fts', 'fact_archive', 'fact_fts', 'memory_timeline',
       // 人物账本的级联清理（purge 时按子表 → person 顺序删）
       'rel_mention', 'rel_evidence', 'rel_edge', 'rel_channel', 'rel_extract_queue', 'rel_review', 'rel_event', 'rel_person',
     ],
@@ -281,11 +299,11 @@ export const OWNERSHIP = {
     // modules/diary.js：日记原来是这层里的散件，立成零件后文件仍在 layers 名下（写 diaries / diary_pending）
     // modules/episode_fields.js：纪要的窄写口（戳心度），日记只调它，episodes 仍只有归档一个写手
     files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js', 'modules/diary.js', 'modules/episode_fields.js'],
-    tables: ['raw_turns', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
+    tables: ['fragments', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
       // 累计重要性 → 反思的游标（consolidate.js 读写）
       'reflect_cursor',
       // 只读：写日记时快照状态、仓库统计体量、注入用量
-      'persona', 'persona_values', 'drive_state', 'relations', 'preferences', 'taboos', 'metric_samples', 'conflicts',
+      'persona', 'drive_state', 'relations', 'preferences', 'taboos', 'metric_samples', 'conflicts',
       // 只读：日记要写那天的心情，从情绪三张表取（affect_feel 是 feel 快照）
       'affect_samples', 'affect_feel', 'affect_episodes',
       // 只读：检索时的实体扩散（entities）与同实体一跳（memory_links）
@@ -309,9 +327,9 @@ export const OWNERSHIP = {
   },
   timeline: {
     // G1 时效索引：写 memory_timeline；生效 / 正文 / 可见性按字段分写给 memory_items（check-timeline 守门）。
-    // flags 记门开关；其余只读：正文从 memory_items / fact_archive 取，说话时间从 raw_turns / episodes 认。
+    // flags 记门开关；其余只读：正文从 memory_items / fact_archive 取，说话时间从 fragments / episodes 认。
     files: ['modules/timeline.js', 'modules/timeparse.js', 'modules/asof.js'],
-    tables: ['memory_timeline', 'memory_items', 'fact_archive', 'raw_turns', 'episodes', 'conflicts', 'flags'],
+    tables: ['memory_timeline', 'memory_items', 'fact_archive', 'fragments', 'episodes', 'conflicts', 'flags'],
   },
   sangguan: {
     // 三观引擎：L0 只增账本 + 可重建投影 + 判定缓存；claim_purge 只在整 agent 清除的事务里存在
@@ -342,11 +360,11 @@ export const OWNERSHIP = {
       'events', 'agents', 'flags', 'bindings', 'chat_turns', 'proactive', 'proactive_stats', 'proactive_decisions',
       'affect_episodes', 'memory_items', 'memory_fts', 'sqlite_master',
       // 全量导出 / 导入清单
-      'fact_archive', 'fact_fts', 'raw_turns', 'episodes', 'diaries', 'memory_timeline',
+      'fact_archive', 'fact_fts', 'fragments', 'episodes', 'diaries', 'memory_timeline',
       // 全量导出动态 ${t}（扫不到）；保留导出清单核心表以防静态化
       'memory_links', 'persona', 'affect_state', 'alerts', 'drive_state',
       'open_loops',
-      'metric_snapshots', 'algo_bindings', 'persona_values', 'preferences',
+      'metric_snapshots', 'algo_bindings', 'preferences',
       'taboos', 'relations', 'affect_samples', 'affect_user_read', 'agent_params',
       'rule_artifacts', 'agent_bindings',
       // 需求代理只读

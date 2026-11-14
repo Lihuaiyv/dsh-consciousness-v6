@@ -24,7 +24,7 @@ const db = openDb(path.join(dir, 'app.db'))
 let seq = 0
 function turn(agent, role, text, atIso, session) {
   seq++
-  db.prepare(`INSERT INTO raw_turns(id, agent_id, session_id, seq, role, text, created_at, day)
+  db.prepare(`INSERT INTO fragments(id, agent_id, session_id, seq, role, text, created_at, day)
     VALUES(?,?,?,?,?,?,?,?)`).run('t' + seq, agent, session, seq, role, text, atIso, atIso.slice(0, 10))
 }
 const day = (d) => '2026-11-0' + d + 'T10:00:00.000Z'

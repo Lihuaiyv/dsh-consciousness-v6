@@ -41,7 +41,7 @@ function seedStalePair(w, { key = '用户.躯干V.计划' } = {}) {
   try {
     writeParam(w.db, w.aid, 'memory.claim.enable', 'on')
     const { old, newer } = seedStalePair(w)
-    const out = await runNightly(w.db, w.aid, { day: '2026-03-01', force: true, merge: false, model: { capabilities: () => ({ complete: true }), complete: answer({ state: 'done', evidence: 1 }) } })
+    const out = await runNightly(w.db, w.aid, { day: '2026-03-01', force: true, merge: false, model: { capabilities: () => ({ complete: true }), complete: answer({ state: 'done', evidence: 1, quote: '躯干已经拆成零件体系了' }) } })
     const step = out.steps.find((s) => s.step === 'claim_reconcile')
     check('on：夜巡判出 done', step && (step.byState.done || 0) >= 1, step)
     check('on：旧条已作废', rowOf(w, old).invalid_at !== null)
@@ -57,7 +57,7 @@ function seedStalePair(w, { key = '用户.躯干V.计划' } = {}) {
   try {
     writeParam(w.db, w.aid, 'memory.claim.enable', 'shadow')
     const { old } = seedStalePair(w, { key: '用户.躯干W.计划' })
-    await runNightly(w.db, w.aid, { day: '2026-03-02', force: true, merge: false, model: { capabilities: () => ({ complete: true }), complete: answer({ state: 'done', evidence: 1 }) } })
+    await runNightly(w.db, w.aid, { day: '2026-03-02', force: true, merge: false, model: { capabilities: () => ({ complete: true }), complete: answer({ state: 'done', evidence: 1, quote: '躯干已经拆成零件体系了' }) } })
     check('shadow：claim 变 done', claimOf(w.db, w.aid, old).state === 'done')
     check('shadow：记忆没被作废', rowOf(w, old).invalid_at === null)
   } finally { w.close() }

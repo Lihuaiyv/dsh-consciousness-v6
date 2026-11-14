@@ -23,7 +23,7 @@ const other = 'agt_other'
 let seq = 0
 function turn(role, text, atIso, session = 's1', agent = aid) {
   seq++
-  db.prepare(`INSERT INTO raw_turns(id, agent_id, session_id, seq, role, text, created_at, day)
+  db.prepare(`INSERT INTO fragments(id, agent_id, session_id, seq, role, text, created_at, day)
     VALUES(?,?,?,?,?,?,?,?)`).run('t' + seq, agent, session, seq, role, text, atIso, atIso.slice(0, 10))
 }
 const at = (d, h, m = '00') => '2026-11-0' + d + 'T' + h + ':' + m + ':00.000Z'

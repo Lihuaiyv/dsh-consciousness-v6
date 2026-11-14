@@ -28,7 +28,7 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
   .run(aid, '考卷微信收信', 'daily', 'active', new Date().toISOString())
 
 const texts = () => db.prepare("SELECT role, text, conversation_id FROM chat_turns WHERE agent_id=? ORDER BY rowid").all(aid)
-const raws = () => db.prepare('SELECT role, text, turn_id, session_id FROM raw_turns WHERE agent_id=? ORDER BY seq').all(aid)
+const raws = () => db.prepare('SELECT role, text, turn_id, session_id FROM fragments WHERE agent_id=? ORDER BY seq').all(aid)
 
 /** 假读库：把脚本返回的 JSON 塞进来 */
 function fakeRun(frames) {

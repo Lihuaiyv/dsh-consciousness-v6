@@ -1,4 +1,4 @@
-﻿// 零件册：一行一个零件。
+// 零件册：一行一个零件。
 // 加零件 = 往 PARTS 里加一行：名字、文件、入口、考卷、回退点。
 // 可换零件 = 登记 + 考卷 + 回退点 + 过独立性界桩，四样缺一，只能叫零件，不能换。
 // 这里是零件册的唯一源；界面上的零件盒只读它，不在客户端另抄一份。
@@ -294,7 +294,7 @@ export const PARTS = [
     owner: 'src/modules/feel.js · recordFeel',
     files: ['src/modules/feel.js'],
     entry: 'recordFeel / latestFeel / feelRecall（src/modules/feel.js）；工具注册在 src/modules/actions/index.js，提示词里的「我上一句说出来之前」那行在 index.js 拼',
-    exam: { file: 'test/feel-tool.test.mjs', score: '72/72', note: 'AI 味与长度 / 太长的照收、注入时截短 / 频率与重复 / 落点提示不拦 / 不动情绪 / 注入窗口 / 回顾与对照 / 旧感觉一天回来一次、按像不像翻而不是按标签，72 道' },
+    exam: { file: 'test/feel-tool.test.mjs', score: '73/73', note: 'AI 味与长度 / 太长的照收、注入时截短 / 频率与重复 / 落点提示不拦 / 不动情绪 / 注入窗口 / 回顾与对照 / 旧感觉一天回来一次、按像不像翻而不是按标签 / 每轮触发句不超过 80 字，73 道' },
     assert: '表：affect_feel；读：latestFeel / listFeels；回退：feel-before-part',
     swaps: [
       {
@@ -399,7 +399,7 @@ export const PARTS = [
     files: ['src/modules/archive.js', 'src/modules/episode_fields.js'],
     entry: 'appendTurn / archiveFact / buildEpisode / buildDiary（src/modules/archive.js）；纪要的窄写口 setEpisodePoignancy（src/modules/episode_fields.js）；宿主接线：features 与夜间整理调它',
     exam: { file: 'test/exam-archive.test.mjs', score: '37/37', note: '原文按轮去重 / 出生照只拍一次 / 纪要重复跑是更新 / 戳心度窄写口 / 日记读口 / 两个索引重建，37 道' },
-    assert: '表：raw_turns / raw_fts / fact_archive / fact_fts / episodes / diaries；读：listRaw / listFactArchive；回退：archive-before-part',
+    assert: '表：fragments / raw_fts / fact_archive / fact_fts / episodes / diaries；读：listRaw / listFactArchive；回退：archive-before-part',
     swaps: [],
     rollback: { pointer: 'archive-before-part', note: '回退 = git checkout archive-before-part -- src/modules/parts.js src/modules/diary.js src/ports/ownership.js test/exam-archive.test.mjs docs/给人看的/零件-归档.md scripts/exam-sabotage-parts.mjs，再删 src/modules/episode_fields.js' },
   },
@@ -415,7 +415,7 @@ export const PARTS = [
     files: ['src/modules/confluence.js', 'src/modules/visibility.js', 'src/modules/asof.js'],
     entry: 'reconstructScene（只读重建现场包）/ runConfluence（bundle → system 段，带预算裁剪）/ buildSnapshot（截面对象）；visibility.js 提供 forgottenTurnIds，asof 出证共用同一层',
     exam: { file: 'test/confluence.test.mjs', score: '56/56', note: '窗口与 gap / 锚点 / 记忆回链与原话 / 六个状态投影 / 只读（行数与 last_decay_at 不变）/ 冷库指纹不变 / 遗忘优先（记忆与轮次与无链老账）/ asof hidden_quotes / system 三条硬规则与预算裁剪 / 截面两档 / 四处登记，56 道' },
-    assert: '表：state_scene / scene_archive / confluence_log / revisit / raw_turns / memory_items / memory_timeline / events / rel_event / open_loops；读：reconstructScene；回退：confluence-before-part',
+    assert: '表：state_scene / scene_archive / confluence_log / revisit / fragments / memory_items / memory_timeline / events / rel_event / open_loops；读：reconstructScene；回退：confluence-before-part',
     swaps: [],
     rollback: { pointer: 'confluence-before-part', note: '回退 = git checkout confluence-before-part -- src/modules/parts.js src/ports/ownership.js src/features.js src/modules/ops.js src/db.js docs/汇流-基石-2026-11-09.md，再删 src/modules/confluence.js src/modules/visibility.js test/confluence.test.mjs' },
   },

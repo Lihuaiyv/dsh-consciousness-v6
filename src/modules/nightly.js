@@ -15,6 +15,8 @@
 
 import { now } from '../db.js'
 import { nid, getParam, getFlag, model } from '../kernel.js'
+// 2026-11-13：工作模式整轮顺延夜巡——模型重活（日记/巩固/反思/自我记忆）等切回日常再补。
+import { isWorkMode } from './work_mode.js'
 import { writeNote } from './selfnote.js'
 import { growWorldview } from './worldview.js'
 import { growLifeview } from './lifeview.js'
@@ -46,7 +48,7 @@ export function localDay(d = new Date()) {
 /** 这天有没有写日记的原料：原文 / 纪要 / 当天记下的事实。 */
 export function hasDiaryMaterial(db, aid, day) {
   try {
-    if (db.prepare('SELECT 1 FROM raw_turns WHERE agent_id=? AND day=? LIMIT 1').get(aid, day)) return true
+    if (db.prepare('SELECT 1 FROM fragments WHERE agent_id=? AND day=? LIMIT 1').get(aid, day)) return true
   } catch { /* 老库还没有原文层 */ }
   try {
     if (db.prepare('SELECT 1 FROM episodes WHERE agent_id=? AND day=? LIMIT 1').get(aid, day)) return true
@@ -101,6 +103,9 @@ export function consolidationLog(db, aid, days = 14) {
  */
 export async function runNightly(db, aid, opt = {}) {
   const day = String(opt.day || localDay(new Date(Date.now() - 86400000)))
+  // 2026-11-13：工作模式只跳「要模型的步骤」，免费的整理照跑（纪要 / 热度 / 清理 / 对账）。
+  // 需要理解的（日记 / 巩固 / 反思 / 自我记忆 / 判定）等切回日常那一晚再补——原文不会丢。
+  const wm = !opt.force && isWorkMode(db, aid)
   if (!opt.force) {
     const done = db.prepare('SELECT 1 FROM consolidation_log WHERE agent_id=? AND day=?').get(aid, day)
     if (done) return { day, skipped: true, steps: [], reason: '这天已经做过' }
@@ -115,7 +120,7 @@ export async function runNightly(db, aid, opt = {}) {
   //    纪要是原文的投影，重压是幂等的，所以当天每个会话都重算一遍。
   let episodes = 0
   try {
-    const sessions = db.prepare('SELECT DISTINCT session_id FROM raw_turns WHERE agent_id=? AND day=?').all(aid, day)
+    const sessions = db.prepare('SELECT DISTINCT session_id FROM fragments WHERE agent_id=? AND day=?').all(aid, day)
     for (const s of sessions) {
       /* 一组多行是历史分段遗留（老版本按时间切过段），它们的 turns 是按段记的、合起来才对得上原文。
          把几段合并成一条等于把一团历史揉成一句，所以这种组不碰。 */
@@ -141,7 +146,7 @@ export async function runNightly(db, aid, opt = {}) {
     const rows = db.prepare(`SELECT e.agent_id, e.session_id, e.day, e.turns,
         (SELECT COUNT(*) FROM episodes x WHERE x.agent_id=e.agent_id
            AND x.session_id IS e.session_id AND x.day=e.day) AS rows_in_group,
-        (SELECT COUNT(*) FROM raw_turns r WHERE r.agent_id=e.agent_id
+        (SELECT COUNT(*) FROM fragments r WHERE r.agent_id=e.agent_id
            AND r.session_id IS e.session_id AND r.day=e.day
            AND r.text IS NOT NULL AND r.text <> '') AS actual
       FROM episodes e WHERE e.agent_id=? AND e.day>=?`).all(aid, since)
@@ -159,7 +164,9 @@ export async function runNightly(db, aid, opt = {}) {
   let repair = null
   let rewriteOld = null
   const late = localDay(new Date()) === day ? 0 : 1
-  try {
+  if (wm) {
+    push('diary', { ok: true, skipped: 'work' })
+  } else try {
     const ropts = {}
     if (typeof opt.chat === 'function') ropts.chat = opt.chat
     try { repair = await repairPending(db, aid, { ...ropts, limit: 1 }) } catch (e) { repair = { error: String(e && e.message) } }
@@ -207,7 +214,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑤ 用模型把重复的自省/摘要合并掉（没有模型就跳过，不拖慢巩固）
-  try {
+  if (wm) {
+    push('memory_merge', { ok: true, skipped: 'work' })
+  } else try {
     if (opt.merge !== false && canConsolidate()) {
       const m = await consolidatePending(db, aid, { limit: Math.max(1, Math.min(10, Number(opt.mergeLimit) || 3)) })
       push('memory_merge', { ok: !!m.ok, merged: m.done || 0, dropped: m.dropped || 0, failed: m.failed || 0, left: m.left || 0 })
@@ -219,7 +228,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑤b 累计重要性到线：白天没来得及压的流水账，这里补一次反思
-  try {
+  if (wm) {
+    push('memory_reflect', { ok: true, skipped: 'work' })
+  } else try {
     const need = Math.max(0.5, Math.min(50, Number(getParam(db, aid, 'memory.reflect.acc')) || 5))
     const cur = reflectCursor(db, aid)
     const acc = Number(cur.acc || 0)
@@ -234,7 +245,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑤c 她自己的记忆：当天有素材就写一条「今天我怎么过的」（第一人称，一天一条）。
-  try {
+  if (wm) {
+    push('self_day', { ok: true, skipped: 'work' })
+  } else try {
     const sd = await writeSelfDay(db, aid, day, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
     push('self_day', { ok: !!sd.ok, skipped: sd.skipped || null, id: sd.id || null, why: sd.why || null, n: Number.isFinite(sd.n) ? sd.n : null })
   } catch (e) {
@@ -242,7 +255,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑤e 她自己的记忆：日子攒够了，再写一条「今晚想明白的一件事」（不是流水账）。
-  try {
+  if (wm) {
+    push('self_insight', { ok: true, skipped: 'work' })
+  } else try {
     const si = await writeSelfInsight(db, aid, day, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
     push('self_insight', { ok: !!si.ok, skipped: si.skipped || null, id: si.id || null, why: si.why || null, n: Number.isFinite(si.n) ? si.n : null })
   } catch (e) {
@@ -250,7 +265,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑤d 认自己：把最近反复出现的形状攒成「我好像就是这样」。
-  try {
+  if (wm) {
+    push('self_pattern', { ok: true, skipped: 'work' })
+  } else try {
     const sp = await writeSelfPattern(db, aid, typeof opt.chat === 'function' ? { chat: opt.chat } : {})
     push('self_pattern', { ok: !!sp.ok, written: sp.written || 0, merged: sp.merged || 0, skipped: sp.skipped || null, raw: sp.raw || null, empty: sp.empty === true, days: sp.days || null, need: sp.need || null })
   } catch (e) {
@@ -279,7 +296,9 @@ export async function runNightly(db, aid, opt = {}) {
 
   // ⑨ 第二判：词表没认出来的轮次交给模型判，但每条都要被她回复里的原文核对过。
   //    没配模型就跳过，不算失败——这层是锦上添花，不能拖垮夜间巩固。
-  try {
+  if (wm) {
+    push('persona_judge', { ok: true, skipped: 'work' })
+  } else try {
     const j = await runPersonaJudge(db, aid, { limit: 16 })
     push('persona_judge', { ok: true, ...j })
   } catch (e) {
@@ -287,7 +306,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑩ 每周情境探针：只做校准（拿她的选择跟当前字母对一对），不进拉力池。
-  try {
+  if (wm) {
+    push('persona_probe', { ok: true, skipped: 'work' })
+  } else try {
     const pr = await runProbes(db, aid)
     push('persona_probe', { ok: true, ...pr })
   } catch (e) {
@@ -332,12 +353,15 @@ export async function runNightly(db, aid, opt = {}) {
     push('sangguan_seed', { ok: true, skipped: true, error: String(e && e.message) })
   }
   // ⑪c 三观中环（默认关；先过 isEnabled；失败不影响记忆巩固）
-  try {
+  if (wm) {
+    push('sangguan', { ok: true, skipped: 'work' })
+  } else try {
     const { isEnabled } = await import('./sangguan/config.js')
     if (isEnabled(db, aid)) {
       const { runMid } = await import('./sangguan/night.js')
-      const mid = await runMid(db, aid, now(), { day })
-      push('sangguan', { ok: true, status: mid.status })
+      const mid = await runMid(db, aid, now(), { day, force: opt.force === true })
+      // 把取料/入账的计数一起记下来：账上没记录时，先分得清是没料、没模型，还是没开门。
+      push('sangguan', { ok: true, status: mid.status, corpus: mid.corpus ? { ...mid.corpus, reason: mid.corpus.reason || null } : null, laneW: mid.laneW || null, laneL: mid.laneL || null, draft: mid.draft || null })
     }
   } catch (e) {
     push('sangguan', { ok: true, skipped: true, error: String(e && e.message) })
@@ -346,7 +370,9 @@ export async function runNightly(db, aid, opt = {}) {
   // ⑪d 模型窄门（记忆时态）：把当天新增里「结构指得出候选」的对判一次。
   //    只写判定缓存与事件，不改任何记忆；真取代是白天门控（memory.judge.gate=on）的事。
   //    没开总闸 / 没模型都算正常跳过，不能让这一夜失败。
-  try {
+  if (wm) {
+    push('stale_judge', { ok: true, skipped: 'work' })
+  } else try {
     const enabled = String(getParam(db, aid, 'memory.judge.enable') || 'off') === 'on'
     const nightlyOn = String(getParam(db, aid, 'memory.judge.nightly') || 'on') !== 'off'
     const engine = opt.model || model
@@ -375,7 +401,9 @@ export async function runNightly(db, aid, opt = {}) {
 
   // ⑪f 待判冲突（11-10）：白天没判出结论的，夜里再问一遍；超 7 天作废退场。
   //    不开判官（memory.conflict.judge=off）就整段跳过；没模型也算正常跳过。
-  try {
+  if (wm) {
+    push('conflict_pending', { ok: true, skipped: 'work' })
+  } else try {
     const judgeOn = String(getParam(db, aid, 'memory.conflict.judge') || 'on') !== 'off'
     const engine = opt.model || model
     let can = false
@@ -395,7 +423,9 @@ export async function runNightly(db, aid, opt = {}) {
 
   // ⑪e 断言状态核对（v3）：对「还没做」的旧条，看之后的记录证明做完了没有。
   //    shadow：只改 memory_claims.state，不动 invalid_at；off 时整段不跑。
-  try {
+  if (wm) {
+    push('claim_reconcile', { ok: true, skipped: 'work' })
+  } else try {
     const mode = String(getParam(db, aid, 'memory.claim.enable') || 'off')
     const engine = opt.model || model
     let can = false
@@ -441,7 +471,9 @@ export async function runNightly(db, aid, opt = {}) {
   //    为什么放夜里：白天那一轮只该读一份收拾好的东西，不该现拼日记再临时总结——
   //    那既慢又抖，而且模型在对话里同时干「总结」和「回话」很容易写成助手腔。
   //    没有模型就跳过，不拦别的步骤（照 ⑫ 的写法）。
-  try {
+  if (wm) {
+    push('self_note', { ok: true, skipped: 'work' })
+  } else try {
     const engine = opt.model || model
     let can = false
     try { can = !!(engine.capabilities() || {}).complete } catch { can = false }
@@ -475,7 +507,9 @@ export async function runNightly(db, aid, opt = {}) {
   }
 
   // ⑭ 反刍：挑一条被反复想起的旧事，再看一眼。只读记忆，不改情绪；没模型就跳过。
-  try {
+  if (wm) {
+    push('reappraise', { ok: true, skipped: 'work' })
+  } else try {
     const { reappraiseTick } = await import('./reappraise.js')
     const rr = await reappraiseTick(db, aid, { at: Date.now(), model: opt.model || model })
     push('reappraise', rr.ok

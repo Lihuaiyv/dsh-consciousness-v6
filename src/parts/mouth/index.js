@@ -30,11 +30,16 @@ export function checkTtsConfig(config) {
     if (!c.ttsApiKey) return '这条嗓子没配密钥（ttsApiKey）'
     return null
   }
+  if (provider === 'breeze') {
+    if (!c.ttsApiKey) return 'BreezeBlue 嗓子没配密钥（ttsApiKey）'
+    if (!c.ttsBreezeVoice) return 'BreezeBlue 嗓子没配音色 ID（ttsBreezeVoice）：去控制台或音色页复制一个'
+    return null
+  }
   if (provider === 'azure') {
     if (!c.ttsApiKey) return '这条嗓子没配密钥（ttsApiKey）'
     return null
   }
-  return `不认识的嗓子：${String(provider)}（只有 azure / compat / local / system / edge）`
+  return `不认识的嗓子：${String(provider)}（只有 azure / compat / local / system / edge / breeze）`
 }
 
 /**

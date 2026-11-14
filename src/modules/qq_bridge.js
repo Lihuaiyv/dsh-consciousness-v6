@@ -22,9 +22,10 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { moodLabelOf } from './affect.js'
 import { recordReplyResidue } from './self_residue.js'
-import { latestFeel, feelLineOf, FEEL_GUIDE } from './feel.js'
+import { latestFeel, feelLineOf, FEEL_TRIGGER } from './feel.js'
 import { getParam } from '../kernel.js'
 import { now } from '../db.js'
+import { writeChatTurnRow } from './turn_write.js'
 
 export const QQ_SESSION_PREFIX = 'qq-'
 
@@ -209,7 +210,7 @@ export function buildQQFeelText(db, aid, { isOwner = false, at = Date.now(), hou
     const h = Number(hours == null ? getParam(db, aid, 'affect.feel.hours') : hours)
     if (Number.isFinite(h) && h > 0) maxAgeMin = Math.max(1, h) * 60
   } catch { /* 参数读不到就用 2 小时 */ }
-  const parts = [FEEL_GUIDE]
+  const parts = [FEEL_TRIGGER]
   try {
     const row = latestFeel(db, aid, { at, maxAgeMin })
     if (row) parts.push(feelLineOf(row))
@@ -484,7 +485,7 @@ export function attachQQBridge(opts = {}) {
  * 桥接插件的 chatKey（`u:123` / `g:456`）→ 我们库里一直在用的 conversation_id。
  *
  * 私聊刻意映射成 `qq:p:<号>` 而不是 `qq:u:<号>`：库里已经有 148 条 `qq:p:3192248859`
- * 的聊天记录和 136 条同名 raw_turns。换一套前缀等于把同一个人的历史劈成两段，
+ * 的聊天记录和 136 条同名 fragments。换一套前缀等于把同一个人的历史劈成两段，
  * 以后在网页侧翻不到「他在 QQ 上说过什么」。
  */
 export function conversationIdOf(chatKey) {
@@ -571,8 +572,7 @@ export function attachQQIngest(opts = {}) {
     }
     const id = 'cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
     // 记下她说话时的情绪；QQ 这条路径以前也写 null，统计里一半是空的。
-    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-      .run(id, aid, role, text, '[]', moodLabelOf(db, aid), at, conv)
+    writeChatTurnRow(db, aid, { role, text, at, conversationId: conv, pack: '[]', mood: moodLabelOf(db, aid) })
   }
   const callOwnerHook = (ctxArgs) => {
     if (typeof hooks.onOwnerTurn !== 'function') return true

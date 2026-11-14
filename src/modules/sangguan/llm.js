@@ -18,6 +18,14 @@ export function registerTemplate(t) {
   if (!['T1', 'T2'].includes(t.tier)) throw new Error('模板档位只能是 T1 / T2：' + t.id)
   if (typeof t.system !== 'string' || typeof t.build !== 'function' || !t.schema) throw new Error('模板缺 system / build / schema：' + t.id)
   const tag = t.id + '@' + t.version
+  const prev = REGISTRY.get(t.id)
+  // 同一个 id@version 被重新导入（热重载）：用新的内容替换，不算重复注册。
+  // 真要改语义就升 version；这里只保证重载不炸。
+  if (prev && prev.tag === tag) {
+    const tpl = Object.freeze({ pool: 'fast', temperature: 0, max_tokens: 800, judge: false, ...t, tag })
+    REGISTRY.set(t.id, tpl)
+    return tpl
+  }
   if (SEEN.has(tag)) throw new Error('模板已注册：' + tag)
   SEEN.add(tag)
   const tpl = Object.freeze({ pool: 'fast', temperature: 0, max_tokens: 800, judge: false, ...t, tag })
@@ -198,7 +206,7 @@ export async function call(ctx, id, input, opt = {}) {
   let tokens = 0
   const ask = async (messages, repair) => {
     tokens += est(messages)
-    const raw = await chat(messages, tpl.max_tokens, true, tpl.temperature, { template: tpl.id, tier: g.tier, input, repair })
+    const raw = await chat(messages, tpl.max_tokens, tpl.json !== false, tpl.temperature, { template: tpl.id, tier: g.tier, input, repair })
     tokens += est(String(raw == null ? '' : raw))
     return raw
   }
@@ -209,19 +217,18 @@ export async function call(ctx, id, input, opt = {}) {
     const raw = await ask(messages, false)
     let v = judgeRaw(tpl, raw, input)
     let repaired = false
-    if (!v.ok) {
-      // 修复再调一次模型，单独扣一份；扣不到就停在不合格，不白拿第二次
+    let rawOut = raw
+    // 模型偶尔会吐一段话而不是 JSON：修一次不够就再修一次，别让一整夜白跑。
+    for (let attempt = 0; !v.ok && attempt < 2; attempt++) {
       const g2 = grant(db, aid, { ...grantOpt, tier: g.tier })
-      if (!g2.ok) {
-        res = { ok: false, code: 'SCHEMA', errors: v.errors, repaired: false }
-      } else {
-        units += g2.units
-        repaired = true
-        const fix = '上次输出不符合要求：' + v.errors.slice(0, 8).join('；') + '。只输出修正后的 JSON，不要解释。'
-        v = judgeRaw(tpl, await ask([...messages, { role: 'assistant', content: String(raw).slice(0, 4000) }, { role: 'user', content: fix }], true), input)
-        res = v.ok ? { ok: true, out: v.value, repaired } : { ok: false, code: 'SCHEMA', errors: v.errors, repaired }
-      }
-    } else res = { ok: true, out: v.value, repaired }
+      if (!g2.ok) break
+      units += g2.units
+      repaired = true
+      const fix = '上次输出不符合要求：' + v.errors.slice(0, 8).join('；') + '。只输出修正后的 JSON，不要解释。'
+      rawOut = await ask([...messages, { role: 'assistant', content: String(rawOut).slice(0, 4000) }, { role: 'user', content: fix }], true)
+      v = judgeRaw(tpl, rawOut, input)
+    }
+    res = v.ok ? { ok: true, out: v.value, repaired } : { ok: false, code: 'SCHEMA', errors: v.errors, repaired, raw: String(rawOut).slice(0, 240) }
   } catch (e) {
     res = { ok: false, code: 'CALL', error: String((e && e.message) || e) }
   }

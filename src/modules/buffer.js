@@ -4,7 +4,7 @@
  * 这一轮的话还没写进 T4 之前，先挂在这里：注入只取「最近 2 轮」，
  * 保留上限 20 条只是为了重启 / 重连时能重放「刚才说到哪」。
  *
- * 只在内存里，进程没了就没了——真正的账在 raw_turns（T4）；
+ * 只在内存里，进程没了就没了——真正的账在 fragments（T4）；
  * hydrateFromRaw() 负责把最近一个会话的尾巴从 T4 捞回来。
  */
 
@@ -54,10 +54,10 @@ export function bufferSize(aid) {
 export function hydrateFromRaw(db, aid) {
   let last = null
   try {
-    last = db.prepare('SELECT session_id FROM raw_turns WHERE agent_id=? ORDER BY created_at DESC LIMIT 1').get(aid)
+    last = db.prepare('SELECT session_id FROM fragments WHERE agent_id=? ORDER BY created_at DESC LIMIT 1').get(aid)
   } catch { return 0 }
   if (!last) return 0
-  const rows = db.prepare(`SELECT role,text,created_at FROM raw_turns
+  const rows = db.prepare(`SELECT role,text,created_at FROM fragments
     WHERE agent_id=? AND session_id=? ORDER BY created_at DESC, seq DESC LIMIT ?`).all(aid, last.session_id, MAX_TURNS)
   BUFFERS.set(aid, rows.reverse().map((r) => ({
     role: r.role, text: r.text, at: r.created_at, sessionId: last.session_id,

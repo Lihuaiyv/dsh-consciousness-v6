@@ -80,6 +80,20 @@ const tokensOf = (t) => Math.ceil(String(t).length / 2)
   check('略超预算：不超上限', out.tokens <= 800, out.tokens)
 }
 
+// ---- 日记和记忆是多行：先收成几句，不要一挤就整段没了
+{
+  const diary = '最近我自己写下的（日记，不是用户说的）：\n' + Array.from({ length: 8 }, (_, i) => '- 日记第' + i + '句，今天还惦记着那件事。').join('\n')
+  const memory = '关于这句话，你能想起的事（只引用相关的，不要编造）：\n' + Array.from({ length: 8 }, (_, i) => '- 事实第' + i + '条，跟这一句有关。').join('\n')
+  const out = clampInjection(lines({ diary, memory }), 140)
+  const diaryKept = (out.text.match(/日记第\d句/g) || []).length
+  const memKept = (out.text.match(/事实第\d条/g) || []).length
+  check('多行时日记收到一句', diaryKept === 1, { diaryKept, dropped: out.dropped })
+  check('多行时记忆还留着、没有八条全留', memKept >= 2 && memKept < 8, { memKept, dropped: out.dropped })
+  check('收成几句后主动句还在', has(out.text, '你之前想主动说一句'), out.dropped)
+  check('收成几句后不超上限', out.tokens <= 140, out.tokens)
+  check('没收成整段扔掉', !out.dropped.includes('diary') && !out.dropped.includes('memory'), out.dropped)
+}
+
 // ---- 再收紧：示例要比记忆先走（记忆是内容，示例是风格）
 {
   const out = clampInjection(lines(), 100)

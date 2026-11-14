@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
-import { openEmotion, phaseOf } from '../src/modules/emotion_event.js'
+import { openEmotion, phaseOf, shouldSurfaceEmotion, surfaceCounts } from '../src/modules/emotion_event.js'
 
 let pass = 0
 let fail = 0
@@ -71,6 +71,41 @@ const before = db.prepare("SELECT id,intensity,resolution,ended_at FROM affect_e
 openEmotion(db, aid)
 const after = db.prepare("SELECT id,intensity,resolution,ended_at FROM affect_episodes ORDER BY id").all()
 check('读它不改库', JSON.stringify(before) === JSON.stringify(after))
+
+// ---------- 6. 该不该冒（纯判断，不写库） ----------
+const liveOk = { id: 'ep1', intensity: 0.35, ageMin: 15 }
+const base = { live: liveOk, cause: '你一点都不活', machine: false, enabled: true, keptEver: false, todayCount: 0 }
+check('四条都过才冒', shouldSurfaceEmotion(base) === true)
+check('不够强不冒', shouldSurfaceEmotion({ ...base, live: { ...liveOk, intensity: 0.34 } }) === false)
+check('刚说完不冒', shouldSurfaceEmotion({ ...base, live: { ...liveOk, ageMin: 14 } }) === false)
+check('今天第三次以后不冒', shouldSurfaceEmotion({ ...base, todayCount: 3 }) === false)
+check('真留住过的不冒', shouldSurfaceEmotion({ ...base, keptEver: true }) === false)
+check('没有这件事不冒', shouldSurfaceEmotion({ ...base, live: null }) === false)
+check('空话不冒', shouldSurfaceEmotion({ ...base, cause: '  ' }) === false)
+check('机器消息不冒', shouldSurfaceEmotion({ ...base, machine: true }) === false)
+check('开关关掉不冒', shouldSurfaceEmotion({ ...base, enabled: false }) === false)
+
+// ---------- 7. 账怎么数 ----------
+const stamp = (ms) => new Date(ms).toISOString()
+const ins = db.prepare('INSERT INTO events(id,agent_id,type,payload,created_at) VALUES(?,?,?,?,?)')
+ins.run('ev_old', aid, 'affect.surface', JSON.stringify({ episode_id: 'ep1' }), stamp(now - 2 * 86400000))
+ins.run('ev_legacy', aid, 'affect.surface', JSON.stringify({ episode_id: 'ep1', cause: '旧的' }), stamp(now))
+let c = surfaceCounts(db, aid, 'ep1', now)
+check('旧账没有真留住标记：不算这辈子冒过', c.keptEver === false, c)
+check('今天的旧账仍算进一天三次', c.todayCount === 1, c)
+check('昨天的账不进今天', surfaceCounts(db, aid, 'ep9', now).todayCount === 1)
+ins.run('ev_kept', aid, 'affect.surface', JSON.stringify({ episode_id: 'ep1', kept: true }), stamp(now - 86400000))
+c = surfaceCounts(db, aid, 'ep1', now)
+check('标了真留住的，隔天也不再冒', c.keptEver === true, c)
+check('别的事不被它挡住', surfaceCounts(db, aid, 'ep_other', now).keptEver === false)
+ins.run('ev_l2', aid, 'affect.surface', JSON.stringify({ episode_id: 'ep2' }), stamp(now))
+ins.run('ev_l3', aid, 'affect.surface', JSON.stringify({ episode_id: 'ep3' }), stamp(now))
+check('今天满三次', surfaceCounts(db, aid, 'ep_other', now).todayCount === 3)
+const epBefore = db.prepare('SELECT intensity FROM affect_episodes WHERE id=?').get('ep1')
+surfaceCounts(db, aid, 'ep1', now)
+shouldSurfaceEmotion(base)
+const epAfter = db.prepare('SELECT intensity FROM affect_episodes WHERE id=?').get('ep1')
+check('判断和数账都不改情绪', epBefore.intensity === epAfter.intensity)
 
 console.log('')
 console.log('通过 ' + pass + ' / ' + (pass + fail))

@@ -12,8 +12,10 @@ import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 import { writeParam } from '../src/kernel.js'
 import {
-  llmBudgetAllow, llmBudgetBump, llmBudgetSnapshot, llmDailyCap, shouldDeferExtract,
+  llmBudgetAllow, llmBudgetBump, llmBudgetSnapshot, llmDailyCap, shouldDeferExtract, deferExtractForDay,
+  llmDiaryAllow, llmDiarySnapshot, llmDiaryCap,
 } from '../src/modules/llm_budget.js'
+import { enqueueExtraction } from '../src/modules/extract_queue.js'
 
 let pass = 0
 let fail = 0
@@ -36,8 +38,9 @@ const D5 = '2026-11-05'
 
 // ================================================================ 默认不限额，照样记账
 {
-  check('默认日顶是不限额', llmDailyCap(db, aid) === 0)
-  check('不限额时还许', llmBudgetAllow(db, aid, D1, 1).ok === true)
+  check('默认日顶是 16', llmDailyCap(db, aid) === 16)
+  writeParam(db, aid, 'memory.llm.daily_cap', 0)
+  check('拧成 0 就是不限额', llmBudgetAllow(db, aid, D1, 1).ok === true)
 
   const a = llmBudgetBump(db, aid, 'refine', D1, 1)
   check('记一次提炼', a.used === 1 && a.detail.refine === 1, a)
@@ -90,6 +93,35 @@ const D5 = '2026-11-05'
   check('蒸馏关掉后，记满也不为它推迟', off.defer === false, off)
   writeParam(db, aid, 'memory.llm.daily_cap', 100)
   check('顶写成 100 会被夹到 64', llmDailyCap(db, aid) === 64)
+}
+
+{
+  enqueueExtraction(db, aid, [{ role: 'user', text: '预算推迟这一条' }])
+  const n = deferExtractForDay(db, aid, D5, 'daily_cap')
+  const row = db.prepare('SELECT next_at, last_error, state FROM extract_queue WHERE agent_id=?').get(aid)
+  const [y, m, dd] = D5.split('-').map(Number)
+  const nextMorning = new Date(y, m - 1, dd + 1, 0, 5, 0).toISOString()
+  check('满了就把抽取推迟到次日', n === 1 && row && row.state === 'pending' && row.last_error === 'deferred:daily_cap' && row.next_at === nextMorning, row)
+}
+
+// ================================================================ 日记单独立额：抽取再忙也挤不掉它
+{
+  const D6 = '2026-11-06'
+  writeParam(db, aid, 'memory.llm.daily_cap', 4)
+  check('日记默认日额是 8', llmDiaryCap(db, aid) === 8)
+  // 总顶被抽取吃满
+  llmBudgetBump(db, aid, 'extract', D6, 4)
+  check('总顶吃满：抽取不许', llmBudgetAllow(db, aid, D6, 1).ok === false)
+  check('总顶吃满：日记仍许', llmDiaryAllow(db, aid, D6, 1).ok === true)
+  // 日记自己记账：记账进总顶，但日记额度只数自己的桶
+  for (let i = 0; i < 8; i++) llmBudgetBump(db, aid, 'diary', D6, 1)
+  check('日记记满 8 次就不许', llmDiaryAllow(db, aid, D6, 1).ok === false)
+  check('日记的已用只数日记桶', llmDiarySnapshot(db, aid, D6).used === 8)
+  check('另一天的日记是空账', llmDiaryAllow(db, aid, '2026-11-07', 1).ok === true)
+  writeParam(db, aid, 'memory.llm.diary_cap', 0)
+  check('日记顶拧成 0 就是不限额', llmDiaryAllow(db, aid, D6, 1).ok === true)
+  writeParam(db, aid, 'memory.llm.diary_cap', 100)
+  check('日记顶写成 100 就是 100（上限 999）', llmDiaryCap(db, aid) === 100)
 }
 
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))

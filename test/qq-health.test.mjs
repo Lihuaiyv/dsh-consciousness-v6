@@ -117,7 +117,7 @@ test('W1 换下来的旧会话也能借同一个聊天认出是谁（不再写�
     CREATE TABLE agents (id TEXT PRIMARY KEY, name TEXT, status TEXT, created_at TEXT);
     CREATE TABLE bindings (session_id TEXT PRIMARY KEY, agent_id TEXT, state TEXT, source TEXT, bound_at TEXT);
     CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY, agent_id TEXT, channel TEXT, handle TEXT, state TEXT, last_seen_at TEXT);
-    CREATE TABLE raw_turns (session_id TEXT, created_at TEXT);
+    CREATE TABLE fragments (session_id TEXT, created_at TEXT);
     CREATE TABLE events (type TEXT, payload TEXT, created_at TEXT);
   `)
   const aid = 'agt_x'

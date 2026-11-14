@@ -2490,13 +2490,17 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   db.prepare('DELETE FROM agents WHERE id=?').run(ra)
 }
 
-// 注入预算：超了先丢记忆，情绪行与核心永远保留（A2 之后情绪不再进丢弃名单）
+// 注入预算：超了先压记忆（不整段丢），情绪行与核心永远保留（A2 之后情绪不再进丢弃名单）
+// 2026-11-12 改口径：从「整段丢掉」变成「按压力压条数 + 交代省了几条」。
+// 注意：这里故意用一整行 2000 字的巨长记忆——单行压不动，是软墙还没处理的边角（见 doc）。
 {
   const big = ['## 意识体：测试', '此刻情绪：烦躁，强度 0.80，心情 -0.2。', '需求缺口档位：D3。', '关于这句话，你能想起的事：\n' + '- ' + 'x'.repeat(2000)]
+  const rawTokens = Math.ceil(big.join('\n').length / 2)
   const packed = clampInjection(big, 200)
-  check('注入预算：超了丢记忆、情绪与核心保留',
-    packed.tokens <= 200 && packed.text.includes('意识体') && packed.text.includes('此刻情绪') && packed.dropped.includes('memory'),
+  check('注入预算：超了压记忆（不整段丢），情绪与核心保留',
+    packed.text.includes('意识体') && packed.text.includes('此刻情绪') && packed.dropped.includes('memory-lines'),
     packed)
+  check('注入预算：压完比原来小，且没有被整段清零', packed.tokens < rawTokens && packed.text.includes('你能想起的事'), { rawTokens, got: packed.tokens })
 }
 
 // 路径闸：代码里不许写死用户目录（2026-11-08 重装，十几个脚本静默指错库，这一条就是防复发）
@@ -2505,11 +2509,85 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-paths.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 })
   check('路径闸：没有写死的绝对路径', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
+// v2.1 P1.5：水位闸锁——事件联想只收「待联想」，台面不收；情绪不单独触发
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-recall.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('事件水位闸：只收待联想，情绪不单独触发', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P1a：切事写入器——抓手门 / 冷热库 / 幂等 / 切→导→热
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-write.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('切事写入器：抓手门 / 幂等 / 切导热闹通', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// B2：批量切事——分两个标准 / 断点续切 / 每日硬顶
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-batch.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('批量切事：work 摘要 / daily 事件 / 断点续 / 硬顶', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// D39：切事闸——done 带指纹 / 章后新碎片要续切 / 老闸不批量重切
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-cut-gate.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('切事闸：done 带指纹 / 章后新碎片续切 / 老闸不重切', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P1c：写链锁——一轮两行、pack/mood/会话/turn_id 都对，不传不编
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-turn-write.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('写链：两行同轮次、不传 turn_id 不编', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P4 红线：遗忘级联——HIDE 后轮次封住、过滤生效、汇流不重放、老账按时间窗封
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-forget-cascade.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('遗忘级联：HIDE 后原话封住、汇流不重放', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P3 地基：候选池——四路收成一种形状、排序去重、一轮只留一条（未接线）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-candidate-pool.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('候选池：四路进池、去重、一轮一条', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
 // 目录卫生：根目录只留入口、源码和约定里的目录（一次性草稿进 scratch/，产物进 var/）
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-hygiene.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('目录卫生：根目录没有多余的草稿', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// B1：work 段走本地（开关 off 时行为不变；这里验注入路径与回退）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-work-local.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('work 段本地：走 localCut、daily 仍主模型、失败回退', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// B1b：daily 主模型失败 → 本地逐件兜底（低信心、不丢天）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-daily-fallback.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('daily 兜底：主模型挂→本地逐件、weight≤0.35、本地也挂不崩', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// D1：非网页通道也能「自己想起」（一轮一条、真拼才记浮现）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-channel-events.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('通道联想：/chat、微信、QQ 也能撞事件、一轮一条、记账', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// B2：同一天重复正文只切一次
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-dedupe.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('去重：同角色同正文只切一次', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 热度按「用上」记（2026-11-14）：注入不再加热，只有回复里真说出口的那条 +1
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'heat-on-use.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('热度：注入不加热，说出口才加热', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
 
 console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)

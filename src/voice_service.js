@@ -19,11 +19,18 @@ export const VOICE_OUT = 'voiceOut'
 
 /**
  * 桥上的旧配方 → 出声零件认的配方。
- * 桥里第二条嗓子叫 openai；零件里叫 compat（厂商名不进零件代码）。其余字段同名。
+ *
+ * 为什么写成「白名单以外一律当兼容端点」，而不是认某个具体旧名字：
+ * INV9 要求业务代码里不出现任何厂商名（scripts/check-inv9.mjs 会扫 src/）。
+ * 而且这样更稳——桥上不管叫过什么旧名，只要是零件不认识的，都走兼容端点那条路，
+ * 不会再出现「不认识的嗓子」把一句话卡死。
  */
+const MOUTH_PROVIDERS = new Set(['compat', 'azure', 'local', 'system', 'edge'])
+
 export function mouthConfigOf(config = {}) {
   const c = { ...config }
-  if (c.ttsProvider === 'openai') c.ttsProvider = 'compat'
+  const p = c.ttsProvider == null ? '' : String(c.ttsProvider)
+  if (p && !MOUTH_PROVIDERS.has(p)) c.ttsProvider = 'compat'
   return c
 }
 

@@ -355,7 +355,7 @@ export function wakeRuntime(db, agentId, at = null) {
  * 老库迁移（只跑一次）：schema 12 之前「所有会话都归唯一那个 active」，
  * 升级后如果什么都不做，主人正在聊的那段会突然变成普通 DSH——等于把她从对话里抽走。
  *
- * 所以按**已有原文**认领：raw_turns 里出现过的最近几段会话，分别绑回它当时的主人。
+ * 所以按**已有原文**认领：fragments 里出现过的最近几段会话，分别绑回它当时的主人。
  * 只认领有真实对话记录的会话；新对话仍然不绑（主人拍板）。
  */
 export function migrateLegacyBindings(db, { limit = 3, at = null } = {}) {
@@ -364,7 +364,7 @@ export function migrateLegacyBindings(db, { limit = 3, at = null } = {}) {
   let rows = []
   try {
     rows = db.prepare(`SELECT session_id, agent_id, MAX(created_at) AS last_at, COUNT(*) AS n
-      FROM raw_turns WHERE session_id IS NOT NULL AND session_id<>''
+      FROM fragments WHERE session_id IS NOT NULL AND session_id<>''
       GROUP BY session_id, agent_id ORDER BY last_at DESC LIMIT ?`).all(Math.max(1, limit * 4))
   } catch { rows = [] }
   if (!rows.length) {

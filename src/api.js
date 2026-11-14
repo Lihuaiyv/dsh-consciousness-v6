@@ -16,6 +16,8 @@ import { readViews, explainValues } from './modules/sangguan/bridge.js'
 import * as ps from './modules/poisons.js'
 import * as ar from './modules/archive.js'
 import * as diary from './modules/diary.js'
+import * as es from './modules/event_split.js'
+import * as ew from './modules/event_write.js'
 import * as rt from './modules/retrieve.js'
 import * as pk from './modules/pack.js'
 import * as rl from './modules/retrieval_log.js'
@@ -30,6 +32,7 @@ import * as tp from './modules/temps.js'
 import * as vt from './modules/vault.js'
 import * as sd from './modules/study.js'
 import * as asof from './modules/asof.js'
+import * as cnf from './modules/confluence.js'
 import * as R from './modules/relations.js'
 import * as axe from './modules/axis_evidence.js'
 import * as rope from './modules/rope.js'
@@ -218,6 +221,21 @@ async function routes(db, method, path, body, role, bound) {
     const n = db.prepare('SELECT COUNT(*) n FROM agents').get()
     return { ok: true, schema_version: Number(v?.version || 0), mode: 'ok', agents: Number(n?.n || 0), model: c.modelStatus(), pending_agent: f.getFlag(db, 'pending_agent') }
   }
+  // 2026-11-13 B2：手动触发「一天批量切事」。
+  // 为什么要有：模型调用只在插件进程里通；worker 又是半小时一跳，做一次对照要干等。
+  // 这个口子让「先干跑、再决定」立刻能做，且仍然走 cutDayBatch（每块落库、断点续、硬顶都保留）。
+  // 用法：POST /dsh-consciousness/api
+  //   { token:'user', method:'POST', path:'/events/cut-batch',
+  //     body:{ agent_id, day:'2026-10-27', maxCalls:15, __idempotencyKey:'cut-1027-1' } }
+  if (method === 'POST' && path === '/events/cut-batch') {
+    const aid = String(body.agent_id || f.getFlag(db, 'active_agent') || '').trim()
+    if (!aid) err(400, 'INVALID_ARGUMENT', '缺 agent_id')
+    const day = String(body.day || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) err(400, 'INVALID_ARGUMENT', 'day 必须是 YYYY-MM-DD')
+    const { cutDayBatch } = await import('./modules/event_write.js')
+    const out = await cutDayBatch(db, aid, day)
+    return { ok: true, ...out }
+  }
   // ---- 外部通道（QQ）：按会话绑定，不经过网页的 session/bindings ----
   if (method === 'POST' && path === '/v1/chat') {
     const conv = String(body.conversation_id || '').trim()
@@ -342,7 +360,7 @@ async function routes(db, method, path, body, role, bound) {
     const raw = new Map()
     try {
       for (const r of db.prepare(`SELECT session_id, MAX(created_at) AS last_at, COUNT(*) AS turns
-        FROM raw_turns WHERE session_id IS NOT NULL AND session_id<>'' AND session_id<>'legacy'
+        FROM fragments WHERE session_id IS NOT NULL AND session_id<>'' AND session_id<>'legacy'
         GROUP BY session_id`).all()) {
         raw.set(String(r.session_id), { last_at: r.last_at, turns: Number(r.turns || 0) })
       }
@@ -390,7 +408,7 @@ async function routes(db, method, path, body, role, bound) {
       // 不兜这一层它们全会被算成「未归档」。
       if (!ownerId) {
         try {
-          const last = db.prepare('SELECT agent_id FROM raw_turns WHERE session_id=? AND agent_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1').get(sid)
+          const last = db.prepare('SELECT agent_id FROM fragments WHERE session_id=? AND agent_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1').get(sid)
           if (last && last.agent_id) { ownerId = last.agent_id; inferred = true }
         } catch { /* 老库没有 agent_id 列就走空 */ }
       }
@@ -402,7 +420,7 @@ async function routes(db, method, path, body, role, bound) {
       // 标题两套：DSH 侧边栏那个（跟外面一致）优先；没有就退回第一句原文。
       let firstText = ''
       try {
-        const t = db.prepare("SELECT text FROM raw_turns WHERE session_id=? AND role='user' AND text IS NOT NULL AND text<>'' ORDER BY created_at LIMIT 1").get(sid)
+        const t = db.prepare("SELECT text FROM fragments WHERE session_id=? AND role='user' AND text IS NOT NULL AND text<>'' ORDER BY created_at LIMIT 1").get(sid)
         firstText = String((t && t.text) || '').replace(/\s+/g, ' ').trim().slice(0, 80)
       } catch { /* 空 */ }
       const group = cand.group || groupOf(sid)
@@ -655,6 +673,38 @@ async function routes(db, method, path, body, role, bound) {
         axis: q(path, 'axis') || undefined, k: Number(q(path, 'k') || 6),
       })
       return { ...v, text: asof.renderAsOf(v) }
+    }
+    // 记忆汇流 · 手动入口：回到某个时刻，拿到一段可读的现场。
+    // GET /v1/agents/:aid/confluence/scene?at=2026-11-05 15:00&level=L1&ask=...
+    // 只读重建；只写一条审计账（confluence_log）。被忘的锚点会被拒绝。
+    if (method === 'GET' && sub === 'confluence' && sub2 === 'scene') {
+      scoped(bound, aid)
+      agent(db, aid)
+      const v = cnf.sceneView(db, aid, {
+        at: q(path, 'at') || q(path, 'from') || '',
+        level: q(path, 'level') || 'L1',
+        ask: q(path, 'ask') || '',
+        sessionId: q(path, 'session') || undefined,
+        budget: Number(q(path, 'budget') || 0) || undefined,
+      })
+      if (!v.ok) {
+        err(400, 'INVALID_ARGUMENT', v.reason === 'forgotten-anchor'
+          ? '这一轮说好要忘的，不重建'
+          : '重建失败：' + (v.reason || 'unknown'))
+      }
+      cnf.logConfluence(db, aid, { at: v.at, level: v.level, bundle: v.bundle, mode: 'manual', dropped: v.dropped })
+      // 她真开口了才落「这次想起」——只回看、没说话，不记账
+      const spoken = q(path, 'spoken') || q(path, 'said') || ''
+      if (spoken) {
+        cnf.recordRevisit(db, aid, {
+          at: v.at,
+          anchorTurn: v.bundle && v.bundle.anchor ? v.bundle.anchor.turn_id : null,
+          mood: v.bundle && v.bundle.state && v.bundle.state.affect ? v.bundle.state.affect.label : null,
+          note: spoken,
+          source: 'manual',
+        })
+      }
+      return { ok: true, at: v.at, level: v.level, session: v.session, system: v.system, budget: v.budget, dropped: v.dropped }
     }
     if (method === 'GET' && sub === 'memory' && sub2 === 'top') return sd.topMemory(db, aid, { limit: Number(q(path, 'limit') || 99) })
     // 抽样体检：拿现存自省过一遍「价值裁判」，看写入闸门会拦下多少（只读，不写库）
@@ -922,11 +972,31 @@ async function routes(db, method, path, body, role, bound) {
           chat = (messages, opt = {}) => kernelModel.chatPrimary(messages, opt.maxTokens ?? 900, !!opt.json, opt.temperature ?? 0.8)
         }
       } catch { chat = null }
-      const out = await ar.buildDiary(db, aid, day, { force: true, chat })
+      const out = await ar.buildDiary(db, aid, day, { force: true, chat, late: ni.localDay() === day ? 0 : 1 })
       if (!out) return err(404, 'NOT_FOUND', '这一天没有可用的日记材料')
       return out
     }
     if (method === 'GET' && sub === 'tiers') return tierStats(db, aid)
+    // 离线切事（第 1 步）：把一个清醒段的碎片交给宿主模型切成「事」，只写文件不建表。
+    // 在插件进程里跑，才能用到宿主注入的 llm（独立 node 进程里 complete 恒为 false）。
+    if (method === 'POST' && sub === 'events' && sub2 === 'split') {
+      const day = String(body.day || '').trim()
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return err(400, 'INVALID_ARGUMENT', 'day 要形如 2026-11-12')
+      return es.splitDay(db, aid, day, { dry: !!body.dry })
+    }
+    // 回填：从昨天往回 N 天，逐天切 + 直接入库（P1b）。
+    // 必须在这个进程里跑：独立 node 进程拿不到宿主注入的 llm。
+    if (method === 'POST' && sub === 'events' && sub2 === 'backfill') {
+      const days = Math.max(1, Math.min(14, Number(body.days) || 7))
+      return ew.backfillDays(db, aid, { days, dry: !!body.dry })
+    }
+    // 通道实测：只回答「模型能喂多少字」，不切事、不写库。
+    if (method === 'POST' && sub === 'events' && sub2 === 'probe') {
+      const sizes = Array.isArray(body.sizes) && body.sizes.length
+        ? body.sizes.map((n) => Math.max(200, Math.min(40000, Number(n) || 0))).filter(Boolean)
+        : undefined
+      return es.probeModel({ sizes })
+    }
     if (method === 'POST' && sub === 'tiers' && sub2 === 'refresh') return refreshHeat(db, aid)
     if (method === 'GET' && sub === 'diary') return f.diary(db, aid, Number(q(path, 'days') || 7))
     if (method === 'GET' && sub === 'metrics' && sub2 === 'history') return f.metricsHistory(db, aid, Number(q(path, 'days') || 30), q(path, 'keys'))

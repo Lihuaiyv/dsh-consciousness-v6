@@ -1,7 +1,7 @@
 /**
  * 归档零件 · 考卷
  *
- * 管的是「只增不减的那几本底账」：T4 原文（raw_turns）、FA 事实出生照（fact_archive）、
+ * 管的是「只增不减的那几本底账」：T4 原文（fragments）、FA 事实出生照（fact_archive）、
  * T2 纪要（episodes）、T3 日记的读口，以及两个索引的重建。
  *
  * 不管「一条记忆怎么写进抽屉」（记忆存储）、不管「变淡」（冷暖）、不管「怎么召回」（召回）。
@@ -40,7 +40,7 @@ const iso = (ms) => new Date(ms).toISOString()
   check('空文本：不写', appendTurn(db, aid, { text: '  ' }).id === null)
   const a = appendTurn(db, aid, { sessionId: 's1', role: 'user', text: '今天想去看海，可以吗？', turnId: 't1', at: iso(Date.now()) })
   check('写入：拿到 id / seq=1', !!a.id && a.seq === 1 && a.duplicate === false, a)
-  const row = db.prepare('SELECT * FROM raw_turns WHERE id=?').get(a.id)
+  const row = db.prepare('SELECT * FROM fragments WHERE id=?').get(a.id)
   check('原文行：角色 / 会话 / 正文 / 轮次', row && row.role === 'user' && row.session_id === 's1' && row.turn_id === 't1' && row.text.includes('看海'), row)
   check('原文索引也写了一条', count('SELECT COUNT(*) n FROM raw_fts WHERE id=?', a.id) === 1)
 
@@ -148,7 +148,7 @@ const iso = (ms) => new Date(ms).toISOString()
   db.exec('DELETE FROM raw_fts')
   check('清掉原文索引', count('SELECT COUNT(*) n FROM raw_fts') === 0)
   rebuildRawFts(db)
-  const rawN = count('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=?', aid)
+  const rawN = count('SELECT COUNT(*) n FROM fragments WHERE agent_id=?', aid)
   check('重建后条数对得上', count('SELECT COUNT(*) n FROM raw_fts') === rawN, { rawN })
 
   db.exec('DELETE FROM fact_fts')

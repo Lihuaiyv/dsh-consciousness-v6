@@ -102,7 +102,7 @@ const wId = r.body.claim_id
 
 // 给 L 一点投入证据：一天 5 个回合
 for (let i = 0; i < 5; i++) {
-  db.prepare(`INSERT INTO raw_turns(id, agent_id, session_id, seq, role, text, created_at, day)
+  db.prepare(`INSERT INTO fragments(id, agent_id, session_id, seq, role, text, created_at, day)
     VALUES(?,?,?,?,?,?,?,?)`).run('rt' + i, aid, 's1', i, 'assistant', '在。', '2026-11-02T10:0' + i + ':00.000Z', '2026-11-02')
 }
 

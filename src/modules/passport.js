@@ -138,7 +138,7 @@ function diaryNote(db, aid, row, topic) {
 function turnNote(db, aid, row, topic) {
   if (topic.length < 3) return ''
   try {
-    const t = db.prepare(`SELECT created_at, text FROM raw_turns
+    const t = db.prepare(`SELECT created_at, text FROM fragments
       WHERE agent_id=? AND role='user' AND created_at>? AND text LIKE ?
       ORDER BY created_at DESC LIMIT 1`).get(aid, (row && row.created_at) || '', '%' + topic + '%')
     if (!t || !t.text || !related(row.text, t.text, 2)) return ''

@@ -28,6 +28,14 @@ const NOISE_LINE = [
   /^<\/compacted-summary>/i,
   /^You are an AI agent powered by/i,
   /^You are a coding agent powered by/i,
+  // 多代理时候宿主塞进来的领队提示：一句人话都没有，却会被当成主人说的存下来
+  /^You are the Team Lead named/i,
+  /^Use list_agents\(\{\}\) to find your teammates/i,
+  /^To message another teammate, use send_message/i,
+  /^Agent Teams is available in this session/i,
+  // 定时任务唤醒：整条都是宿主写的，不是主人开口
+  /^\[SCHEDULE REMINDER\]/i,
+  /^This is a scheduled message from the user/i,
   /^The following is a system reminder/i,
   /^Non-zero exits are reported/i,
   /^Track every background job/i,
@@ -47,7 +55,7 @@ export function looksLikeRuntimeNoise(text) {
  *
  * 这类消息是「上下文快满了，把前面压成摘要再塞回来」，或者「后台任务跑完了」。
  * 它当轮必须留着（不然我就断片了），但它**不是用户说的话**——
- * 真正的原话早就在更早的 raw_turns 里躺着，摘要只是二手复述。
+ * 真正的原话早就在更早的 fragments 里躺着，摘要只是二手复述。
  * 以前剥不干净，摘要就被当成「用户亲口说过的事实」存进原话层，再被抽成记忆。
  */
 const MACHINE_MESSAGE = /^\s*(?:This is an automatically generated checkpoint|Background (?:subagent|job)\b|<compacted-summary>|<goal_(?:round|complete)>)/i

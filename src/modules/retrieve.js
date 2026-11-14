@@ -17,6 +17,7 @@ import { vectorize, cosine } from './fingerprint.js'
 import { retrievability } from './tiers.js'
 import { run as registryRun, has as registryHas } from '../algo/registry.js'
 import { normalizeTerms } from './terms.js'
+import { vectorEnabled } from './vector_switch.js'
 
 /** 证据门：每个场景的准入线（E 的尺度，0~1）。 */
 export const GATE = { S1: 0.35, S2: 0.30, S3: 0.20 }
@@ -497,7 +498,7 @@ export function searchDiaries(db, aid, query, days = 60) {
 }
 
 /**
- * T4 冷层：对话原文（raw_turns）+ 事实存根（fact_archive）。
+ * T4 冷层：对话原文（fragments）+ 事实存根（fact_archive）。
  *
  * 事实存根是「这条事实出生时的原样」，跟抽屉里那条通常同文——同文时交给
  * pack.dedupe 按优先级留 T1，不重复占预算。它有增量的场合只有一个：抽屉那条
@@ -814,7 +815,7 @@ function collect(db, aid, query, scene, opt = {}) {
       }
     }
     if (Array.isArray(opt.terms) && opt.terms.length) absorb(searchByTerms(db, aid, opt.terms, { includeCold }), '_termE')
-    if (opt.queryVec) absorb(searchByVector(db, aid, opt.queryVec, { limit: 20 }), '_vecE')
+    if (opt.queryVec && vectorEnabled(db)) absorb(searchByVector(db, aid, opt.queryVec, { limit: 20 }), '_vecE')
     out.T1 = [...byId.values()]
     // S1 不塞历史旁白：它们是「用户关心什么」的转述，不是「我记得的事」。
     if (scene === 'S1' && !opt.summaryInjected) out.T1 = dropSummary(out.T1)

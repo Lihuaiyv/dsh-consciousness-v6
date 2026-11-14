@@ -53,12 +53,23 @@ export const DEFAULTS = {
   'voice.local_url': 'http://127.0.0.1:9880',
   'voice.local_ref': '',
   'voice.local_prompt': '',
+  // 语气旋钮（只对本机那条嗓子生效，薄壳读）：语速 1=正常、>1 变慢；
+  // 情绪是 8 维向量 [开心, 生气, 难过, 害怕, 厌恶, 低落, 惊讶, 平静]，逗号分隔。
+  'voice.local_duration': '',
+  'voice.local_emo': '',
+  'voice.local_emo_alpha': '',
   // Edge 在线嗓子（免费、不要 key）：要一个装了 edge-tts 的 python 和它的包目录。
   'voice.edge_python': '',
   'voice.edge_dir': '',
   // 语气旋钮（只对 edge 这条嗓子生效）：语速像 "-10%"，音高像 "-2Hz"。
   'voice.rate': '',
   'voice.pitch': '',
+  // BreezeBlue 角色音色（云端、按量计费）：密钥和 azure / compat 共用 voice.api_key。
+  // 音色 ID 留空，等主人从音色页复制一个再填；默认地址就是它的 API 根。
+  'voice.breeze_url': 'https://api.breeze.blue',
+  'voice.breeze_voice': '',
+  'voice.breeze_model': 'breeze-tts-2',
+  'voice.breeze_instructions': '',
   'voice.play': true, // 念完直接在本机播出来
   // 本机对着麦说话：默认按住说；可切成一直开着麦。
   'voice.mic.mode': 'ptt', // ptt=按住说话 | open=持续听
@@ -74,7 +85,7 @@ const ENUMS = {
   'qq.mode': ['onebot'],
   'qq.default_target_type': ['private', 'group'],
   'research.depth': ['quick', 'standard', 'deep'],
-  'voice.provider': ['azure', 'compat', 'local', 'system', 'edge'],
+  'voice.provider': ['azure', 'compat', 'local', 'system', 'edge', 'breeze'],
   'voice.mic.mode': ['ptt', 'open'],
   'voice.reply.mode': ['auto', 'off'],
 }

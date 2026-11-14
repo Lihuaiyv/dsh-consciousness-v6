@@ -11,6 +11,7 @@
 
 import { model } from '../kernel.js'
 import { now } from '../db.js'
+import { vectorEnabled } from './vector_switch.js'
 
 export const EMBED_TIMEOUT_MS = 800
 export const EMBED_WAIT_MS = 150
@@ -102,6 +103,7 @@ export function writeVector(db, aid, memoryId, vec, modelName = 'default') {
 
 /** 批量回填：只补还没有向量的（或 force 全部重算）。返回计数。 */
 export async function backfillVectors(db, aid, opt = {}) {
+  if (!vectorEnabled(db)) return { ok: false, reason: 'vector.disabled', done: 0, total: 0 }
   if (!canEmbed()) return { ok: false, reason: 'no embedding capability', done: 0, total: 0 }
   const limit = Math.max(1, Math.min(500, Number(opt.limit) || 100))
   const batch = Math.max(1, Math.min(32, Number(opt.batch) || 16))

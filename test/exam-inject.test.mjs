@@ -133,8 +133,14 @@ const tok = (t) => Math.ceil(String(t).length / 2)
   const affectLine = '此刻情绪：偏暖，绷着 0.3'
   const memLine = '关于这句话，你能想起的事：\n' + '这是一条记忆。\n'.repeat(30)
   const out = clampInjection([affectLine, memLine], 60)
-  check('预算紧时丢记忆、不丢情绪', out.text.includes('此刻情绪') && !out.text.includes('关于这句话'), out.text)
-  check('丢记忆留痕', out.dropped.includes('memory'), out.dropped)
+  const keptMem = (out.text.match(/这是一条记忆/g) || []).length
+  check('预算紧时收成几条记忆、不丢情绪', out.text.includes('此刻情绪') && keptMem >= 2 && keptMem < 30 && out.tokens <= 60, { keptMem, tokens: out.tokens, dropped: out.dropped })
+  check('收成几条留痕', out.dropped.includes('memory-lines') && !out.dropped.includes('memory'), out.dropped)
+  const fat = '关于这句话，你能想起的事：\n' + ('- ' + '这是一条长记忆。'.repeat(12) + '\n').repeat(6)
+  const outFat = clampInjection([affectLine, fat], 60)
+  // 2026-11-12 软墙：几条都放不下时不再整段丢，而是压到最少一条 + 交代省了几条。
+  check('几条仍放不下：压到一条 + 留交代，不整段丢',
+    outFat.text.includes('此刻情绪') && outFat.text.includes('还有') && outFat.dropped.includes('memory-lines'), outFat)
 
   const many = ['## 我说话的样子', '不要列点，说人话', '需求缺口档位：D1', '最近我自己写下的：\n' + '日记行。\n'.repeat(20)]
   const c2 = clampInjection(many, 40)

@@ -44,11 +44,11 @@ export function timeline(db, aid, opt = {}) {
 export function turnDetail(db, aid, turnId) {
   const id = String(turnId || '')
   if (!id) return null
-  const turn = db.prepare('SELECT * FROM raw_turns WHERE id=? AND agent_id=?').get(id, aid)
+  const turn = db.prepare('SELECT * FROM fragments WHERE id=? AND agent_id=?').get(id, aid)
   if (!turn) return null
   let around = []
   try {
-    around = db.prepare(`SELECT id,role,text,created_at FROM raw_turns
+    around = db.prepare(`SELECT id,role,text,created_at FROM fragments
       WHERE agent_id=? AND session_id=? AND seq BETWEEN ? AND ? ORDER BY seq`).all(aid, turn.session_id, Number(turn.seq) - 2, Number(turn.seq) + 2)
   } catch { around = [turn] }
   return { turn, around }

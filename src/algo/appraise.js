@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 情绪评价：appraise@v1（现行）与 appraise@v1b（对照）
  * 输入：{ text, hint? }  hint 可为 ModelPort.appraise 结果（source=model 时 v1 优先采用）
  * 输出：appraisal 字段 + algo
@@ -128,3 +128,22 @@ export const appraiseV1 = makeAppraise('v1', true, rulesV1)
 
 /** 对照：始终走敏感规则，便于证明可切换 */
 export const appraiseV1b = makeAppraise('v1b', false, rulesV1b)
+
+/* ───────── 这段字是不是「人对我说的话」（2026-11-10）─────────
+   抽 20 条含糊判决时发现：机器消息、文档段落、引用块都进了情绪评价，
+   在账上表现为「含糊」，其实是根本不该判。
+   这里只做最保守的拦截：宁可漏，不可误伤真人说的话。 */
+const MACHINE_MARKS = /<goal_round>|<goal_complete>|<system-reminder>|Current runtime context|Time sampled while|You are the Team Lead|Agent Teams is available|list_agents\(\{\}\)|reminders_json|schedule_id_json|\[SCHEDULE REMINDER\]|Approval policy|skill_content|available_skills/
+
+/** 返回跳过原因（'machine' / 'document'），不是就直接返回 null。 */
+export function looksNonHuman(text) {
+  const s = String(text == null ? '' : text).trim()
+  if (!s) return 'empty'
+  if (MACHINE_MARKS.test(s)) return 'machine'
+  // 文档段落：章节序号开头、表格行、引用块、或者一大段带三个以上列表项的转贴
+  if (/^([一二三四五六七八九十]+、|附：|\|)/.test(s)) return 'document'   // 不拦「>」引文：真人也会引用一句再说话，宁可漏
+  if (s.includes('「原话：') || s.includes('原话：')) return 'document'
+  const bullets = (s.match(/\n\s*[-*]\s+/g) || []).length
+  if (s.length > 400 && bullets >= 3) return 'document'
+  return null
+}

@@ -18,7 +18,7 @@ import { appendTurn } from '../src/modules/archive.js'
 import { addMemory } from '../src/modules/memory.js'
 import { logEvent } from '../src/modules/timeline.js'
 import { forgottenTurnIds } from '../src/modules/visibility.js'
-import { reconstructScene, runConfluence, buildSnapshot, recordScene, rememberBlock, sceneView, logConfluence, pruneScenes } from '../src/modules/confluence.js'
+import { reconstructScene, runConfluence, buildSnapshot, recordScene, rememberBlock, sceneView, logConfluence, pruneScenes, recordRevisit, parseBackCommand, replayScene, selfReturnTick } from '../src/modules/confluence.js'
 import { retrieveAsOf } from '../src/modules/asof.js'
 import { WRITES } from '../src/ports/ownership.js'
 import { PARTS } from '../src/modules/parts.js'
@@ -62,7 +62,7 @@ try {
   db.prepare('INSERT INTO affect_user_read(agent_id,episode_id,guess_label,actual_label,note,created_at) VALUES(?,?,?,?,?,?)')
     .run(aid, 'ep_cf_1', 'tired', 'tired', '', T(10, 10))
 
-  const tables = ['memory_items', 'raw_turns', 'fact_archive', 'memory_timeline', 'memory_provenance', 'events']
+  const tables = ['memory_items', 'fragments', 'fact_archive', 'memory_timeline', 'memory_provenance', 'events']
   const countsBefore = Object.fromEntries(tables.map((t) => [t, db.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n]))
   const decayBefore = db.prepare('SELECT last_decay_at FROM memory_items WHERE id=?').get(m1.id).last_decay_at
 
@@ -91,10 +91,10 @@ try {
 
   // 冷库纯净（E10）：原文层与存根层的内容指纹不变
   const digest = (sql) => crypto.createHash('sha1').update(db.prepare(sql).all().map((r) => JSON.stringify(r)).join('\n')).digest('hex')
-  const rawDigest = digest('SELECT id,text FROM raw_turns ORDER BY id')
+  const rawDigest = digest('SELECT id,text FROM fragments ORDER BY id')
   const faDigest = digest('SELECT id,text FROM fact_archive ORDER BY id')
   reconstructScene(db, aid, T(10, 20))
-  check('E10 冷库纯净：raw_turns 指纹不变', rawDigest === digest('SELECT id,text FROM raw_turns ORDER BY id'))
+  check('E10 冷库纯净：fragments 指纹不变', rawDigest === digest('SELECT id,text FROM fragments ORDER BY id'))
   check('E10 冷库纯净：fact_archive 指纹不变', faDigest === digest('SELECT id,text FROM fact_archive ORDER BY id'))
 
   // ---------- 3. 遗忘优先 ----------
@@ -184,6 +184,11 @@ try {
   check('会话约束：显式会话压过更近的隔壁', preferA.ok === true && preferA.anchor.session_id === SA && preferA.window.every((w) => !w.text.includes('B0')), preferA.anchor)
   const auto = reconstructScene(db, aid, T(14, 2), { level: 'L0' })
   check('会话约束：不指定时按最近的一句（不改旧口径）', auto.ok === true && auto.session && auto.session.filtered === false, auto.session)
+  // 半截话守卫：抽取截断出来的短生活碎片（实测「那句话是不是」6 字）不进包
+  db.prepare("INSERT INTO memory_items(id,agent_id,type,text,source,status,created_at,last_decay_at) VALUES(?,?,?,?,?,?,?,?)")
+    .run('mem_shortlife', aid, 'fact', '那句话是不是', 'life', 'active', T(13, 0), T(13, 0))
+  const shortLife = reconstructScene(db, aid, T(13, 30), { level: 'L1' })
+  check('半截话：太短的生活碎片不摆进现场', shortLife.ok === true && shortLife.state.life === null, shortLife.ok && shortLife.state.life)
   const viewA = sceneView(db, aid, { at: '2026-11-05 14:02', level: 'L0', sessionId: SA })
   check('会话约束：手动入口能带会话', viewA.ok === true && viewA.session && viewA.session.filtered === true && viewA.bundle.anchor.session_id === SA, viewA.session)
   const none = reconstructScene(db, aid, T(14, 2), { level: 'L0', sessionId: 'sess_no_such' })
@@ -212,6 +217,77 @@ try {
   }
   pruneScenes(db, aid, { days: 9999, maxArchive: 2 })
   check('保留策略：按行数封顶', cnt('scene_archive') <= 2, cnt('scene_archive'))
+
+  // ---------- 9.3 保留：0 = 永不删（11-10 定） ----------
+  const beforeAll = cnt('scene_archive')
+  const pr0 = pruneScenes(db, aid, { days: 0, maxArchive: 0 })
+  check('保留：0 表示永不删', pr0.archive === 0 && cnt('scene_archive') === beforeAll, pr0)
+
+  // ---------- 9.4 自己发起（P4） ----------
+  const at0 = T(200, 0)              // 测试世界里的「八天后」
+  const ten = T(10, 10)              // 那时之前的一个重截面
+  db.prepare("INSERT INTO state_scene(id,agent_id,at,turn_id,tier,affect_json,created_at) VALUES(?,?,?,?,?,?,?)")
+    .run('ss_self', aid, ten, 't_self', 'heavy', JSON.stringify({ label: 'calm' }), ten)
+  check('自己发起：默认关', selfReturnTick(db, aid, { at: at0 }).reason === 'off')
+  db.prepare("INSERT INTO revisit(id,agent_id,at,anchor_turn,memory_ids,mood,note,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
+    .run('rv_manual_1', aid, T(24 * 7, 0), null, null, null, '手动', 'manual', at0)
+  check('自己发起：间隔不够就不开', selfReturnTick(db, aid, { at: at0, force: true }).reason === 'too_soon')
+  db.prepare("DELETE FROM revisit WHERE id='rv_manual_1'").run()
+  const self1 = selfReturnTick(db, aid, { at: at0, force: true })
+  check('自己发起：触发一次', self1.ok === true && String(self1.system).includes('记忆汇流'), self1.reason)
+  check('自己发起：留一条 self 账', db.prepare("SELECT COUNT(*) n FROM revisit WHERE source='self'").get().n === 1)
+  const self2 = selfReturnTick(db, aid, { at: at0, force: true })
+  check('自己发起：当天水位挡住第二次', self2.ok === false && self2.reason === 'waterline', self2.reason)
+
+  // ---------- 9.5 L2 整段重放（P5） ----------
+  rememberBlock('session-confluence-l2', '这是那一轮的注入块原文（L2 测试用）')
+  recordScene(db, aid, { turnId: 'tL2', sessionId: 'session-confluence-l2', at: T(10, 20) })
+  const rp = replayScene(db, aid, { at: T(10, 20), sessionId: 'session-confluence-l2' })
+  check('整段重放：取得到那一轮的注入块', !!rp && String(rp.block).includes('L2 测试用'), rp && rp.bytes)
+  const l2 = sceneView(db, aid, { at: '2026-11-05 10:20', level: 'L2', sessionId: 'session-confluence-l2' })
+  check('整段重放：L2 走整段而不是重建', l2.ok === true && String(l2.system).includes('整段重放'), l2.ok && l2.budget)
+  check('整段重放：预算单开（cap 8000）', l2.ok === true && l2.budget.cap === 8000)
+  appendTurn(db, aid, { sessionId: 'sess_l2miss', role: 'user', text: '这条会话没有留底', at: T(16, 6), turnId: 'l2m1' })
+  const l2miss = sceneView(db, aid, { at: '2026-11-05 16:06', level: 'L2', sessionId: 'sess_l2miss' })
+  check('整段重放：没留底就退回 16 轮并明说', l2miss.ok === true && l2miss.note === 'no-archive', l2miss && { ok: l2miss.ok, note: l2miss.note, reason: l2miss.reason })
+
+  // ---------- 9.6 来路 / 去路（P3.5） ----------
+  for (let i = 0; i < 14; i++) {
+    appendTurn(db, aid, { sessionId: 'sess_ctx', role: i % 2 === 0 ? 'user' : 'assistant', text: 'c' + i + ' 这一句是给来路去路测试用的', at: T(16, i), turnId: 'c' + i })
+  }
+  const cb = reconstructScene(db, aid, T(16, 6), { level: 'L1', sessionId: 'sess_ctx' })
+  check('来路：窗口前有那两句', !!cb.context && !!cb.context.before && cb.context.before.lines.length >= 1, cb.context && cb.context.before)
+  check('来路：每句压到 ≤32 字', !!cb.context && !!cb.context.before && cb.context.before.lines.every((x) => x.length <= 32))
+  check('去路：窗口后有那两句', !!cb.context && !!cb.context.after && cb.context.after.lines.length >= 1, cb.context && cb.context.after)
+  const ctxChars = JSON.stringify(cb.context || {}).length
+  check('来路去路：合计不胀（≤300 字符）', ctxChars <= 300, ctxChars)
+  const sysCtx = runConfluence(cb, {})
+  check('来路去路：进得了现场段', String(sysCtx.system).includes('来路：') && String(sysCtx.system).includes('去路：'))
+
+  // ---------- 9.7 「回到某天」口令（P3.6） ----------
+  const bc1 = parseBackCommand('回到 2026-11-05 15:22')
+  check('口令：认「回到 日期 时间」', !!bc1 && bc1.at === '2026-11-05T07:22:00.000Z', bc1)
+  const bc2 = parseBackCommand('宝宝，翻回 2026-11-09')
+  check('口令：默认下午三点、能带称呼', !!bc2 && bc2.at === '2026-11-09T07:00:00.000Z', bc2)
+  check('口令：普通闲聊不当命令', parseBackCommand('今天吃什么') === null)
+  check('口令：没带日期不当命令', parseBackCommand('回到那天') === null)
+  const idxOut = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  check('口令接进了提示词（index.js）', idxOut.includes('backToSceneLine(d, sid)'))
+  check('口令在收消息那刻就备好现场（index.js）', idxOut.includes('stashBackScene(db, aid, sid, t)'))
+
+  // ---------- 9.8 「这次想起」落账 ----------
+  const rvAt = T(15, 0)
+  const rvId = recordRevisit(db, aid, { at: rvAt, anchorTurn: 'a0', mood: 'tired', note: '刚回到那天看了一眼', source: 'test' })
+  const rvRow = db.prepare('SELECT * FROM revisit WHERE id=?').get(rvId)
+  check('这次想起：落一行', !!rvId && !!rvRow && rvRow.anchor_turn === 'a0', rvRow)
+  check('这次想起：带心情和话', !!rvRow && rvRow.mood === 'tired' && String(rvRow.note).includes('回到那天'))
+  check('这次想起：只写自己的表', db.prepare('SELECT COUNT(*) n FROM revisit WHERE id=?').get(rvId).n === 1)
+
+  // ---------- 9.9 两条回复链都留底 ----------
+  const idxSrc = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  check('桌面回复链也调 recordScene', idxSrc.includes('recordScene(db, aid, { turnId: tid, sessionId: sid'))
+  const featSrc2 = fs.readFileSync(new URL('../src/features.js', import.meta.url), 'utf8')
+  check('外部通道回复链也调 recordScene', featSrc2.includes('recordScene(db, aid'))
 
   // ---------- 10. 登记：表 / 域 / 零件 / 导出 / 清理 ----------
   const NEED = ['state_scene', 'scene_archive', 'confluence_log', 'revisit']

@@ -12,6 +12,8 @@ export const CLAIM_STATES = Object.freeze(['pending', 'done', 'stale', 'na'])
 
 // 「还没做完」同时命中 pending 和 done，所以必须先判 pending。
 const PENDING = /(还没|尚未|未完成|没做完|没弄|没提交|没做|没修|没上线|待办|还挂着|还没开始|没头绪|打算|计划要|计划做|要做|之后要|之后再|等.{0,8}再|明天要|下周要)/
+// 转述句（「用户主张…『未完成陈述』…」）里的状态词是在引用别人，不是她自己的待办。
+const REPORTED = /^(用户|他|她|对方)(说|主张|认为|表示|提到|反馈|问|提出)/
 const DONE = /(做完了|完成了|已完成|做好了|修好了|搞定了|上线了|落地了|改好了|已经做完|已经完成|已经上线|已经修好|已经弄好|已经改好|可以了)/
 
 /**
@@ -22,7 +24,10 @@ export function classifyClaim(text) {
   const s = String(text || '').replace(/\s+/g, ' ').trim()
   if (s.length < 3) return { state: 'na', reason: 'too-short' }  // 「修好了」「没提交」这种 3 字也是合法状态
 
-  if (PENDING.test(s)) return { state: 'pending', reason: 'pending-words' }
+  if (PENDING.test(s)) {
+    if (REPORTED.test(s)) return { state: 'na', reason: 'reported' }
+    return { state: 'pending', reason: 'pending-words' }
+  }
   if (DONE.test(s)) return { state: 'done', reason: 'done-words' }
   return { state: 'na', reason: 'none' }
 }
@@ -101,10 +106,10 @@ export function pendingClaims(db, aid, opt = {}) {
 
 export const CLAIM_SYS = [
   '你在核对一条旧记忆里说的「还没做」，现在还算不算。',
-  '只输出一个 JSON，不要解释，不要 markdown：{"state":"done|stale|still","evidence":序号或null}',
-  'done —— 后面的记录证明已经做完了',
-  'stale —— 后面的记录证明这件事不做了、作废了、或者换成别的了',
-  'still —— 没有证据，还是没做',
+  '只输出一个 JSON，不要解释，不要 markdown：{"state":"done|stale|still","evidence":序号或null,"quote":"证据原文"}',
+  'done —— 后面的记录证明已经做完了；quote 必须是那条记录里的原文，且不能是「还没做/没发」这类否定句。',
+  'stale —— 后面的记录证明这件事不做了、作废了、或者换成别的了；quote 同上。',
+  'still —— 没有证据，还是没做。quote 可为空。',
   '注意：只是提到同一件事不算证据；要能证明它完成或放弃。',
 ].join('\n')
 
@@ -140,6 +145,13 @@ export function laterRecords(db, aid, claimRow, limit = 5) {
         AND source_turn_id=? AND created_at>? ORDER BY created_at ASC LIMIT ?`).all(aid, claimRow.memory_id, claimRow.source_turn_id, claimRow.created_at, limit)) push(r)
     }
   } catch { /* 老库异常就少几路证据 */ }
+  // 兜底：同主题找不到证据时，给之后最近的几条（不保证相关，让模型自己判断）。
+  // 没有这一步，「躯干还没收尾 → 已经拆成零件」这种换了话题的证据永远看不到。
+  if (!out.length) {
+    try {
+      for (const r of db.prepare(`SELECT * FROM memory_items WHERE agent_id=? AND id<>? AND status='active' AND invalid_at IS NULL AND created_at>? ORDER BY created_at ASC LIMIT ?`).all(aid, claimRow.memory_id, claimRow.created_at, limit)) push(r)
+    } catch { /* 兜底也失败就只留空 */ }
+  }
   return out.slice(0, limit)
 }
 
@@ -151,11 +163,11 @@ function parseClaimAnswer(raw) {
     const m = t.match(/\{[^}]*\}/)
     if (m) { try { obj = JSON.parse(m[0]) } catch { obj = null } }
   }
-  if (!obj || typeof obj !== 'object') return { state: null, evidence: null }
+  if (!obj || typeof obj !== 'object') return { state: null, evidence: null, quote: '' }
   const st = String(obj.state || '').toLowerCase()
-  if (!['done', 'stale', 'still'].includes(st)) return { state: null, evidence: null }
+  if (!['done', 'stale', 'still'].includes(st)) return { state: null, evidence: null, quote: '' }
   const ev = Number(obj.evidence)
-  return { state: st, evidence: Number.isFinite(ev) && ev > 0 ? ev : null }
+  return { state: st, evidence: Number.isFinite(ev) && ev > 0 ? ev : null, quote: String(obj.quote || '') }
 }
 
 /**
@@ -187,15 +199,26 @@ export async function reconcileClaims(opt = {}) {
     const ans = parseClaimAnswer(raw)
     if (!ans.state) { out.errors++; continue }
     const evidenceId = ans.evidence ? (evid[ans.evidence - 1] && evid[ans.evidence - 1].id) || null : null
-    if (ans.state === 'still') {
+    // done/stale 都必须有原文证据；引文要真的出现在某条后续记录里。
+    // done 的引文如果是「还没发 / 没做」这种否定句，不算做完（图库那条就是这么误判的）。
+    const NEG = /(还没|尚未|没有|没发|没做|没弄|没修|没提交|没上线)/
+    const normText = (x) => String(x || '').replace(/[\s\p{P}]/gu, '')
+    let state = ans.state
+    if (state !== 'still') {
+      const q = normText(ans.quote)
+      const inEvid = q.length >= 2 && evid.some((e) => normText(e.text).includes(q))
+      if (!q || !inEvid) { state = 'still'; out.noQuote = (out.noQuote || 0) + 1 }
+      else if (state === 'done' && NEG.test(String(ans.quote))) { state = 'still'; out.negQuote = (out.negQuote || 0) + 1 }
+    }
+    if (state === 'still') {
       setClaimState(db, aid, claimRow.memory_id, 'pending', { via, evidenceId, checkedAt: now() })
     } else {
-      setClaimState(db, aid, claimRow.memory_id, ans.state, { via, evidenceId, checkedAt: now() })
+      setClaimState(db, aid, claimRow.memory_id, state, { via, evidenceId, checkedAt: now() })
     }
     out.judged++
-    out.byState[ans.state] = (out.byState[ans.state] || 0) + 1
-    if (ans.state === 'done') out.doneIds.push(claimRow.memory_id)
-    if (ans.state === 'stale') out.staleIds.push(claimRow.memory_id)
+    out.byState[state] = (out.byState[state] || 0) + 1
+    if (state === 'done') out.doneIds.push(claimRow.memory_id)
+    if (state === 'stale') out.staleIds.push(claimRow.memory_id)
   }
   out.ms = Date.now() - t0
   return out

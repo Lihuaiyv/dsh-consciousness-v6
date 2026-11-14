@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 情绪评价编排：关系边偏置 → 评价 → 咽回半句落库。
  * 从 features.js 整段搬出，行为不变；features 只 re-export。
  */
@@ -6,7 +6,7 @@ import { getParam, event, model as kernelModel } from '../kernel.js'
 import { appraise, getAffect } from './affect.js'
 import { computeEdgeBias } from './edges.js'
 import { readAxes } from './traits.js'
-import { rulesAppraise } from '../algo/appraise.js'
+import { rulesAppraise, looksNonHuman } from '../algo/appraise.js'
 import { whoIsSpeaking } from './who.js'
 import { listRelations } from './persona.js'
 import { resolveStructureEdges, affectLabels } from './artifacts.js'
@@ -78,7 +78,16 @@ export async function appraiseWithEdges(db, aid, text, opt = {}) {
   // 口径由 affect.appraise.formula 决定：v1=旧（任务相关性），concern=关切（P1）。
   let hint = null
   const appraiseFormula = String(getParam(db, aid, 'affect.appraise.formula') || 'v1')
-  try { hint = await kernelModel.appraise(text, appraiseFormula, recentUserContext(db, aid, text, opt && opt.conversationId)) } catch { hint = null }
+  /* 机器消息 / 文档块不进评价（2026-11-10 实测：它们被判出情绪，账上算成「含糊」）。
+     直接给一个 none 的假 hint：不调模型、照常往下走，形状不变。 */
+  let skipReason = null
+  try { skipReason = looksNonHuman(text) } catch { skipReason = null }
+  if (skipReason) {
+    hint = { none: true, concern_relevance: 0, concern_congruence: 0, label: 'calm', source: 'skip:' + skipReason }
+    try { event(db, aid, 'affect.skipped', { reason: skipReason, text: String(text || '').replace(/\s+/g, ' ').slice(0, 80) }) } catch { /* 记号失败不影响 */ }
+  } else {
+    try { hint = await kernelModel.appraise(text, appraiseFormula, recentUserContext(db, aid, text, opt && opt.conversationId)) } catch { hint = null }
+  }
   const appraisalForS = hint && hint.label ? hint : rulesAppraise(text)
   const edgeBias = computeEdgeBias({
     sigma: axes.sensitivity, axes, text, appraisal: appraisalForS, mode,

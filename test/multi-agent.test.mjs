@@ -237,8 +237,8 @@ check('schema 到 13', Number(db.prepare('SELECT version FROM schema_meta').get(
   check('老绑定行被标成 released', row.state === 'released' && row.released_by === 'legacy', row)
   check('老行不再算正在挂', runningAgentIds(d3).length === 0, runningAgentIds(d3))
 
-  // 迁移：raw_turns 里出现过的会话认领回来，且只跑一次
-  d3.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,seq,role,text,created_at,day)
+  // 迁移：fragments 里出现过的会话认领回来，且只跑一次
+  d3.prepare(`INSERT INTO fragments(id,agent_id,session_id,seq,role,text,created_at,day)
     VALUES(?,?,?,?,?,?,?,?)`).run('rt1', 'agt_old', 'sess-history', 1, 'user', '你好', now(), now().slice(0, 10))
   const m1 = migrateLegacyBindings(d3, { limit: 3 })
   check('迁回有历史的会话', m1.migrated === 1 && resolveAgentId(d3, 'sess-history') === 'agt_old', m1)

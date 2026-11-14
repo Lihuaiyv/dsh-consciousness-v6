@@ -2,7 +2,7 @@
  * G1-5 「某天当时」查询：时效索引定位 + 冷库出证。
  *
  *   时间 → 那段时间哪些记忆、哪个版本算数（memory_timeline 投影）
- *        → 版本原句（fact_archive）+ 当时原话（raw_turns）
+ *        → 版本原句（fact_archive）+ 当时原话（fragments）
  *        → 带标签回答：当时有效 / 期间改过 / 当时有争议 / 历史陈述（+「现在：…」）
  *
  * 硬规则：只读。绝不 touch（不加 hits、不拨 last_hit_at、不改热度/温度）——
@@ -17,6 +17,7 @@ import { hasLexOverlap } from './recall_tool.js'
 import { parseTimeRange } from './timeparse.js'
 import { projectMany, overlaps, versionRefAt, asofEnabled, asofAxis, eventsOf, projectTimeline } from './timeline.js'
 import { logRetrieval } from './retrieval_log.js'
+import { forgottenTurnIds, forgottenInWindow, forgottenWindows } from './visibility.js'
 
 const GATE = 0.20        // 与 S3 证据门同档
 const SOFT_FLOOR = 0.45  // 无字面重合时的软匹配门槛（与检索工具同规则）
@@ -100,26 +101,44 @@ function nowNote(db, aid, row, proj, thenText) {
   return row.text !== thenText ? '现在是「' + row.text + '」' : null
 }
 
-/** 那段时间里的原话：优先来源轮次，其次按话题在窗口内搜原文。 */
-function quotesFor(db, aid, row, q, from, to) {
+/**
+ * 那段时间里的原话：优先来源轮次。
+ * 被忘掉的轮次（`forgotten`）一律不出，只计 hidden——留半句比全不给更糟。
+ * @returns {{rows: Array, hidden: number}}
+ */
+function quotesFor(db, aid, row, q, from, to, forgotten = null) {
   const out = []
+  let hidden = 0
   if (row.source_turn_id) {
+    if (forgotten instanceof Set && forgotten.has(String(row.source_turn_id))) return { rows: out, hidden: 1 }
     try {
-      const rs = db.prepare("SELECT text,created_at,role FROM raw_turns WHERE agent_id=? AND turn_id=? AND role='user' ORDER BY seq LIMIT 2").all(aid, row.source_turn_id)
-      for (const r of rs) out.push({ at: r.created_at, text: String(r.text).slice(0, 160), inWindow: r.created_at >= from && r.created_at < to })
+      const rs = db.prepare("SELECT text,created_at,role,turn_id FROM fragments WHERE agent_id=? AND turn_id=? AND role='user' ORDER BY seq LIMIT 2").all(aid, row.source_turn_id)
+      for (const r of rs) {
+        if (forgotten instanceof Set && r.turn_id && forgotten.has(String(r.turn_id))) { hidden++; continue }
+        out.push({ at: r.created_at, text: String(r.text).slice(0, 160), inWindow: r.created_at >= from && r.created_at < to })
+      }
     } catch { /* 老库 */ }
   }
-  return out
+  return { rows: out, hidden }
 }
 
-function windowQuotes(db, aid, q, from, to, k = 3) {
+function windowQuotes(db, aid, q, from, to, k = 3, forgotten = null, fw = []) {
   let rows = []
   try { rows = searchRaw(db, aid, q, 40) || [] } catch { rows = [] }
-  return rows
-    .filter((r) => r.role === 'user' && r.created_at >= from && r.created_at < to && hasLexOverlap(q, r.text))
-    .sort((a, b) => (a.created_at < b.created_at ? -1 : 1))
-    .slice(0, k)
-    .map((r) => ({ at: r.created_at, text: String(r.text).slice(0, 160) }))
+  let hidden = 0
+  const kept = []
+  for (const r of rows) {
+    if (r.role !== 'user' || !(r.created_at >= from && r.created_at < to) || !hasLexOverlap(q, r.text)) continue
+    if (forgotten instanceof Set && r.turn_id && forgotten.has(String(r.turn_id))) { hidden++; continue }
+    // 老账没链：落在「已忘」的保守时间窗里，也不出
+    if (Array.isArray(fw) && fw.some((w) => r.created_at >= w.from && r.created_at <= w.to)) { hidden++; continue }
+    kept.push(r)
+  }
+  return {
+    rows: kept.sort((a, b) => (a.created_at < b.created_at ? -1 : 1)).slice(0, k)
+      .map((r) => ({ at: r.created_at, text: String(r.text).slice(0, 160) })),
+    hidden,
+  }
 }
 
 /**
@@ -184,6 +203,8 @@ export function retrieveAsOf(db, aid, query, opt = {}) {
 
   const items = []
   const dropped = { no_history: 0, hidden: 0, out_of_range: 0, weak: 0 }
+  const forgotten = forgottenTurnIds(db, aid)
+  let hiddenQuotes = 0
   for (const row of rows) {
     const p = projs.get(row.id)
     if (!p || !p.born) { dropped.no_history++; continue }
@@ -224,7 +245,11 @@ export function retrieveAsOf(db, aid, query, opt = {}) {
       until: win[1],
       now: label === 'historical' ? null : nowNote(db, aid, row, p, ver.text),
       approx: !!(p.approx || ver.approx),
-      quotes: quotesFor(db, aid, row, q, range.from, range.to),
+      quotes: (() => {
+        const qf = quotesFor(db, aid, row, q, range.from, range.to, forgotten)
+        hiddenQuotes += qf.hidden
+        return qf.rows
+      })(),
       e: rel.e,
       cover: Math.round(cover * 1000) / 1000,
       importance: Number(row.importance || 0.5),
@@ -232,7 +257,13 @@ export function retrieveAsOf(db, aid, query, opt = {}) {
   }
   items.sort((a, b) => b.e - a.e || b.cover - a.cover || b.importance - a.importance)
   const picked = items.slice(0, k)
-  const quotes = windowQuotes(db, aid, q, range.from, range.to)
+  // 老账可能没有 turn 链（现库 55 条 HIDE 全没链），精确到轮封不住：
+  // 退一步用「保守时间窗」——只封每条已忘记忆前后 ±12 小时，不封整个查询区间。
+  const hiddenInWin = forgottenInWindow(db, aid, range.from, range.to)
+  const fw = hiddenInWin > 0 ? forgottenWindows(db, aid, { from: range.from, to: range.to }) : []
+  const wq = windowQuotes(db, aid, q, range.from, range.to, 3, forgotten, fw)
+  const quotes = wq.rows
+  hiddenQuotes += wq.hidden
 
   let beforeBirth = false
   if (!picked.length) {
@@ -242,7 +273,7 @@ export function retrieveAsOf(db, aid, query, opt = {}) {
     } catch { beforeBirth = false }
   }
 
-  const out = { ok: true, query: String(query || ''), topic: q, range, items: picked, quotes, before_birth: beforeBirth, more: Math.max(0, items.length - k), ms: Date.now() - t0 }
+  const out = { ok: true, query: String(query || ''), topic: q, range, items: picked, quotes, hidden_quotes: hiddenQuotes, before_birth: beforeBirth, more: Math.max(0, items.length - k), ms: Date.now() - t0 }
   if (opt.log !== false) {
     logRetrieval(db, aid, {
       scene: 'ASOF', query: String(query || ''), why: { range, topic: q },

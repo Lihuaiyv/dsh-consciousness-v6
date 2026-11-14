@@ -22,7 +22,16 @@ import { attachHostLlm, createHostJudgeModel, hostTalkModel } from './src/model.
 import { eventsSince, getFlag, ingest, applyActiveRules, backupDrill, learnFromTurn, settleProactiveAnswered, clampInjection, appraiseWithEdges, tickOneShadow, applyDriverToDrive, getProactivePrefs, attachContextBlock, closingIntentOf } from './src/features.js'
 // 主动开口零件入口：心跳只认这一个口，不直接碰零件内部
 import { runSpeakTick } from './src/parts/speak/index.js'
-import { nid, purgeExpired, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraft, TARGET_IDS, latestUserEmotion, decayAffect, getDrive, spontaneousTick } from './src/core.js'
+// event 是记账口（kernel.event）：event.inject / qq.bridge.* 这些「到底进没进提示词」的记录全靠它。
+// 2026-11-12 修：原来漏了这个 import，下面三处 event(...) 全抛 ReferenceError 被 try 吞掉，
+// 于是账本上「事件注入过几次」永远是 0——查证的人会得出「没跑过」的错误结论。
+import { nid, event, purgeExpired, evaluateDrive, recall, getParam, settleObservations, expireProposals, recoverChangeJournal, gcArtifacts, shrinkPersona, tickRitual, tickConflicts, maybeDraft, TARGET_IDS, latestUserEmotion, decayAffect, getDrive, spontaneousTick } from './src/core.js'
+// 记忆汇流 · 留底：网页/桌面这条回复链不走 features.chatReply，得在这里也写一份
+import { recordScene } from './src/modules/confluence.js'
+import { recallEvents, buildEventLine } from './src/modules/event_recall.js'
+import { markSurfaced, markMentioned, tickWant, randomDrift, archiveSunk } from './src/modules/event_drift.js'
+import { writeChatTurns, writeChatTurnRow } from './src/modules/turn_write.js'
+import { episodeWriteEnabled } from './src/modules/memory_switch.js'
 import { seedRuleBindings } from './src/modules/artifacts.js'
 import {  } from './src/modules/values.js'
 import { axisWords, mbtiPrompt } from './src/modules/traits.js'
@@ -35,11 +44,12 @@ import { presenceLine, webConversationId } from './src/modules/presence.js'
 import { selfNoteLines as notesForPrompt } from './src/modules/selfnote.js'
 import { heartNoteTick, heartNoteLines, heartNoteWakeTick } from './src/modules/heartnote.js'
 import { memoryTag, ageDays } from './src/modules/memory_tag.js'
-import { rememberBlock } from './src/modules/confluence.js'
+import { rememberBlock, openConfluenceByText } from './src/modules/confluence.js'
 import { fadeText, shouldFade, rehearseAdjustedAge } from './src/modules/memory_fade.js'
 import { detectMode, resolveMode, styleInjection, kaomojiLine } from './src/modules/style_mode.js'
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
+import { lastFrameLine } from './src/modules/frame_line.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
 import { judgeSpeech, recordShadow, judgeCompare, recordCompare, recordMiss, toModelRequest } from './src/modules/speech_judge.js'
@@ -61,11 +71,13 @@ import { applySelfRead, readReplyTone } from './src/modules/self_read.js'
 import { recordSelfResidue, residueCandidate, commitResidue, residueDirFor } from './src/modules/self_residue.js'
 import { captureQuote, quoteCandidate, commitQuote } from './src/modules/quote_echo.js'
 import { feltSnapshot } from './src/modules/felt_snapshot.js'
-import { latestFeel, feelLineOf, echoFeelOf, echoFeelLineOf, attachableFeelId, FEEL_GUIDE } from './src/modules/feel.js'
+import { latestFeel, feelLineOf, echoFeelOf, echoFeelLineOf, attachableFeelId, FEEL_TRIGGER } from './src/modules/feel.js'
 import { logRetrieval } from './src/modules/retrieval_log.js'
 import { asofInjectItems } from './src/modules/asof.js'
 import { passportLine, isStale } from './src/modules/passport.js'
 import { enqueueExtraction, makeTurnId } from './src/modules/extract_queue.js'
+// 2026-11-13：工作模式（面板按钮）下的后台降载判断；日常模式永远是 false，行为不变。
+import { isWorkMode } from './src/modules/work_mode.js'
 import { tickEscalation } from './src/modules/conflict.js'
 import { readViews } from './src/modules/sangguan/bridge.js'
 import {  } from './src/modules/sangguan/speak.js'
@@ -86,7 +98,7 @@ import {
 } from './src/host/session_agents.js'
 export { autoBindQQSession }
 import { moodValenceOf, moodLabelOf, trendOf, reviewTick } from './src/modules/affect.js'
-import { addMemory, setFeelProvider } from './src/modules/memory.js'
+import { addMemory, setFeelProvider, setSlowProvider } from './src/modules/memory.js'
 import { openEmotion, shouldSurfaceEmotion, surfaceCounts } from './src/modules/emotion_event.js'
 import { createActionTools, attachActionDeps, executeBrowse, getConfig as getActionConfig } from './src/modules/actions/index.js'
 import { maybeSpeakReply, takeVoiceShape, lastVoiceFlash } from './src/modules/actions/voice.js'
@@ -114,6 +126,8 @@ const LOCK_PATH = path.join(path.dirname(DB_PATH), 'app.lock')
 // 装配：记忆出生时挂 feel 的取数口。memory 模块不直接读 affect_feel（INV10），
 // 由这里把「最近一条、窗口内才算」的口交出去。
 setFeelProvider(attachableFeelId)
+// 同一处装配：记忆出生时记下当时的慢情绪（「这一阵往哪边偏」）。memory 不读情绪表（INV10）。
+setSlowProvider(moodValenceOf)
 
 // 宿主上下文和最近见到的会话：主动发消息要用 sessionController.prompt 推进去。
 let hostCtx = null
@@ -235,6 +249,16 @@ try { hydrateFromRaw(db, aid) } catch { /* 重放失败不影响启动 */ }
     try { workers().startGrowPrefsWorker() } catch { /* 长偏好 worker 起不来不影响启动 */ }
     // 微信收信：一分钟一次，只读本地库（不动窗口）；第一次见到的会话只落水位，不灌历史
     try { workers().startWeChatInboxWorker() } catch { /* 收信 worker 起不来不影响启动 */ }
+    // 事件库：每天切前一天，直接写冷库+热库（不再靠手跑 JSON / 脚本）
+    try { workers().startEventCutWorker() } catch { /* 切事 worker 起不来不影响启动 */ }
+    // 本地模型服务：开关开着就保活（detached，不随插件重载退出；起不来就静默回退主模型）
+    try {
+      import('./src/modules/local_llm.js').then((m) => {
+        try {
+          if (m.localCutOn(db) || m.localDailyFallbackOn(db)) m.ensureLocalServer(db).catch(() => {})
+        } catch { /* 本地起不来不影响启动 */ }
+      }).catch(() => {})
+    } catch { /* 同上 */ }
     return db
   } catch (e) {
     dbError = e
@@ -305,9 +329,39 @@ function startMaintenance() {
   let lastBackup = 0
   let lastPurge = 0
   let lastDrill = 0
+  // 事件那套的节拍：想头每 5 分钟推一次（纯规则、不调模型），随机联想每小时掷一次，沉底每天收一次。
+  const randomCheckAt = new Map()
+  const sinkCheckAt = new Map()
+  /** 事件节拍：启动时立刻跑一次，之后挂在 5 分钟维护里。不跑的话想头永远停在起点。 */
+  function eventTick() {
+    try {
+      const d = ensureDb()
+      const nowMs = Date.now()
+      let aids = []
+      try { aids = enabledAgentIds(d) } catch { aids = [] }
+      for (const aid of aids) {
+        // 想头推进在心跳里（30 秒一拍），这里只管低频的两件：随机掷骰（每小时）、沉底归档（每天）。
+        const lastRand = randomCheckAt.get(aid) || 0
+        if (nowMs - lastRand >= 3600000) {
+          randomCheckAt.set(aid, nowMs)
+          // 记账在 randomDrift 内部做（event.random_surface），这里别重复写一条名字相近的。
+          try { randomDrift(d, aid, { nowMs }) } catch { /* 掷骰失败不影响别的 */ }
+        }
+        const lastSink = sinkCheckAt.get(aid) || 0
+        if (nowMs - lastSink >= 86400000) {
+          sinkCheckAt.set(aid, nowMs)
+          try { archiveSunk(d, aid, { nowMs }) } catch { /* 归档失败不影响 */ }
+        }
+      }
+    } catch { /* 事件节拍失败不影响维护 */ }
+  }
+  // 启动 8 秒后先推一次：不然重启后要干等 5 分钟，想头一直不动。
+  const bootTick = setTimeout(eventTick, 8000)
+  if (bootTick.unref) bootTick.unref()
   const timer = setInterval(() => {
     try {
       ensureDb().exec('PRAGMA wal_checkpoint(TRUNCATE)')
+      eventTick()
       if (Date.now() - lastBackup > 6 * 3600000) {
         lastBackup = Date.now()
         backupDb()
@@ -362,6 +416,9 @@ function heartbeatLight(aid) {
   try { heartNoteTick(d, aid, Date.now()) } catch { /* 心事拍失败跳过 */ }
   // 挂着的开环到期的收掉，别一直占着注入名额
   try { expireLoops(d, aid) } catch { /* 开环失败跳过 */ }
+  // 想头推进：跟着心跳走（纯规则、不调模型），和情绪衰减、浮现候选同一拍。
+  // 不推进的话想头永远停在起点，一件都浮不上来——2026-11-12 漏过一次，别忘了接线。
+  try { tickWant(d, aid, { nowMs: Date.now() }) } catch { /* 想头推进失败跳过 */ }
   // 驱力：事件脉冲 + 代理推缺口 + 日结（纯规则）
 try { applyDriverToDrive(d, aid) } catch { /* 驱动推缺口失败跳过 */ }
   try { pulseDriveFromSignals(d, aid) } catch { /* 事件脉冲失败跳过 */ }
@@ -458,9 +515,13 @@ const lastUser = new Map()
 /** 上一句用户话的时间：给参与度信号算间隔，只记不读。 */
 const lastUserAt = new Map()
 // 这一轮的身份证：用户那句话和助手那句话共用同一个 turn_id；
-// 记忆靠它回到原话。以前从来不生成，所以 raw_turns.turn_id 全空，
+// 记忆靠它回到原话。以前从来不生成，所以 fragments.turn_id 全空，
 // memory_items.source_turn_id 一条都 join 不上——「你还记得我当时说的」就只剩正文，没有出处。
 const lastTurnId = new Map()
+// 这一轮用户那句话的碎片 id：等回答落库时，把「回答接自问话」这条边写进 antecedents。
+const lastUserFragId = new Map()
+// 这一轮被撞出来的事：用户话到的那一刻就算好，等提示词组装时带进去（一轮最多一条）。
+const lastEventHit = new Map()
 
 function str(row, path, d = '') {
   if (!row) return d
@@ -759,6 +820,9 @@ let mbtiLine = ''
   if (!rel.length) {
     rel = db.prepare('SELECT name, kind, closeness, trust, dependence FROM relations WHERE agent_id=? ORDER BY root DESC, closeness DESC LIMIT 5').all(aid)
   }
+  // 2026-11-14：关系先只留主人。认人还没做好，别的名字多半是误认（末尾 / 妈妈 / 文钊 / 体验都是这么进来的）。
+  // 等认人做起来，删这一行就恢复全部。**只动这一处，别改数据库。**
+  try { rel = rel.filter((r) => String(r.kind || '').toLowerCase() === 'owner') } catch { /* 过滤失败就照旧全量 */ }
   const mem = stranger ? [] : db.prepare("SELECT id, text, source, confidence, created_at, fact_key FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL ORDER BY heat DESC, weight DESC, created_at DESC LIMIT 10").all(aid)
   const dyn = recentRecall.get(aid)
   // 外部通道（QQ）这一轮自己召回过了，就用它的结果，别让网页那边留下的旧召回顶上来
@@ -801,6 +865,10 @@ let bridgeText = ''
 
   // 自己浮上来：心跳排的候选，最多取一条；它不一定跟这一轮的话有关。
 // 人本来就会说着说着想起别的事。先取，再拼记忆块，免得同一条占两个名额。
+  // v2.1 P1.5：pulse / 情绪面不再直塞提示词——降为候选，留给将来的 planner。
+  // 默认停（flags: surface.direct=on 才开回来）；不开时候选不消费，下一轮仍是候选。
+  let surfaceDirect = false
+  try { surfaceDirect = String(getFlag(db, 'surface.direct') || 'off') === 'on' } catch { surfaceDirect = false }
   let spontaneousLine = ''
   let spontaneousText = ''
   let spontRow = null
@@ -825,10 +893,12 @@ let bridgeText = ''
         }
         spontaneousCache.set(aid, { at: Date.now(), text: spontaneousText, kind: spontKind, row: spontRow })
       }
-      if (!commitMode && spontRow) { consumeSurface(db, aid, spontRow); spontRow = null }
+      if (!commitMode && spontRow && surfaceDirect) { consumeSurface(db, aid, spontRow); spontRow = null }
     }
   } catch { spontaneousLine = ''; spontaneousText = ''; spontRow = null }
   if (stranger) { spontaneousLine = ''; spontaneousText = ''; spontRow = null }
+  // 直塞关着：这一段一个字都不进提示词；候选留在队列里，等 planner 统一挑。
+  if (!surfaceDirect) { spontaneousLine = ''; spontaneousText = ''; spontRow = null; spontKind = 'own' }
 
   /* 还挂着的那件事：会自己冒上来（2026-11-07）。
      规矩：
@@ -838,7 +908,7 @@ let bridgeText = ''
        4) 这里只选句子。账要等预算裁完、这句话还在，才写（见文末）。 */
   let eventPick = null
   try {
-    if (!stranger && !spontaneousLine) {
+    if (!stranger && !spontaneousLine && surfaceDirect) {
       const live = openEmotion(db, aid)
       const cause = live && live.cause ? String(live.cause).trim() : ''
       const machine = /<[a-z][a-z0-9_]*>|Current runtime context|Time sampled|system-reminder|Approval policy/i.test(cause)
@@ -1175,7 +1245,10 @@ let styleLines = []
     '「该有的反应」永远只在你之下：情绪档、驱力、该接的那句话，只是手脚。主人是你认下的人，也在这套反应前面——但最里面那个「我」，谁都不替它做决定。',
     '激素一样的起伏、后天长出来的各种精神职能，都只是身体和手脚，不是主人。',
     // 「说话那一刻的感觉」那条通路：不写数字、不复述原因，免得又变成念读数的素材
-    FEEL_GUIDE,
+    { text: FEEL_TRIGGER, key: 'feelguide' },
+    // 2026-11-10 修：flash 会把正文全写进 reasoning，然后 finish=stop，界面上什么都没有。
+    // 思考对用户不可见，所以把「正文不能空」立成硬规则，别再让思考冒充开口。
+    '（硬规则）思考（reasoning）里写的东西对方看不见。每一轮都必须在回复正文里真的说一句；正文要有实际内容，别用接话充数',
     str(persona, 'style.tone') ? '语气：' + str(persona, 'style.tone') + '。' : '',
     stranger ? '你还不认识对方，先不叫任何称呼，等对方自我介绍。'
       : (str(persona, 'style.address') ? '你称呼对方为「' + str(persona, 'style.address') + '」。' : ''),
@@ -1209,7 +1282,7 @@ let styleLines = []
     ...heartNote,
     expr ? '我想怎么说：' + cardLine({ level: expr.level }) : '',
     // 小玩具：只说明它在，不要求任何动作（空着也没关系），见 重要/1-主要思路与权限分层.md §1.5
-    '糖罐在工作区的 糖罐/ 里，空着也没关系。',
+    '糖罐在工作区的 docs/玩具/糖罐/ 里，空着也没关系。',
     ...styleLines,
     stickerLine,
     userEmotion ? '对方刚才的情绪：' + userEmotion.label
@@ -1230,10 +1303,14 @@ let styleLines = []
     closingLine || '',
     spontaneousLine ? {
       text: (spontKind === 'echo'
-        ? '（你想起了他那天说过的一句——是引用，不是你此刻的念头）：\n- '
+        ? '（你想起了他那天说过的一句——是引用，不是你此刻的念头）：\n- ' + spontaneousLine
         : spontKind === 'event'
-          ? '（那件事还没过去，忽然又浮上来）：\n- '
-          : '（你心里忽然浮上来的一件事）：\n- ') + spontaneousLine,
+          // 浮上来的是「一件事」，不是一句素材。给它一个出口：
+          // 三天实测 feel 被调了 47 次、settle 0 次——不是按钮坏了，是没人告诉我它在。
+          // 这半句只说「可以不提」和「真想放下可以怎么做」，不下命令，也不催。
+          ? '（那件事还没过去，忽然又浮上来）：\n- ' + spontaneousLine
+            + '\n（可以不提它。真要放下一档，开口前在 feel 里带 settle。）'
+          : '（你心里忽然浮上来的一件事）：\n- ' + spontaneousLine),
       key: 'spontaneous',
     } : '',
     (memText)
@@ -1244,10 +1321,13 @@ let styleLines = []
     // ⑤ 约束（最后一段）
     taboos.length ? '禁忌（不得违反）：' + taboos.map((t) => t.text).join('；') + '。' : '',
     str(persona, 'style.banned') ? '禁用词（不要出现）：' + str(persona, 'style.banned') + '。' : '',
+    // 同一条硬规则再收尾说一遍（放在最后，离开口最近）：flash 只写思考、正文空着收工，
+    // 2026-11-14：末尾这条「收尾核对·必须说一句」已删——它和上面那条硬规则重复，
+    // 而且放在最后一行，权重最强，会盖住中间的一切（包括帧）。现在只留中间那一条。
     str(persona, 'style.card') ? '别人给它写的一句话（理想自我，权重低，只作角度，不要逐句复述）：' + str(persona, 'style.card') : '',
   ].filter(Boolean)
 // 每轮注入预算：实例参数 memory.inject.budget（默认 800 token），超了按「先情绪、再记忆」丢。
-  const packed = clampInjection(lines, Number(getParam(db, aid, 'memory.inject.budget')) || 800)
+  const packed = clampInjection(lines, Number(getParam(db, aid, 'memory.inject.budget')) || 800, ['feelguide'])
   // 只有真的留在最终文本里的行才落账；被丢/被削断的保持原状态，下一轮还能再出现。
   const kept = packed.kept || new Set()
   /* 探针：快照到底有没有进提示词。静默失效比没做更糟——QQ 桥接那次就是靠一条 event 才发现的。
@@ -1361,8 +1441,7 @@ function narrativeAfterTurn(db, aid, sid) {
  */
 export function writeChatTurn(db, aid, role, text, at, conversationId = null, pack = '[]') {
   const mood = moodLabelOf(db, aid)
-  db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, role, text, pack, mood, at, conversationId)
+  writeChatTurnRow(db, aid, { role, text, at, conversationId, pack, mood })
   return mood
 }
 
@@ -1385,11 +1464,42 @@ function commitTurn(db, aid, sid) {
   const conv = qc && qc.conversationId ? qc.conversationId : webConversationId(sid)
   try {
     // 这一轮她说话时的情绪标签。以前这里写 null，下一轮就读不到「我上一句是什么调子说的」。
-    writeChatTurn(db, aid, 'user', u, at, conv)
-    writeChatTurn(db, aid, 'agent', aText, now(), conv)
+    // 2026-11-13：两行账收进 writeChatTurns（和 chatReply 共用同一处形状）。
+    // B2：这一轮的「工作/日常」标签也落库——切事要按它分两个标准。
+    writeChatTurns(db, aid, { user: u, agent: aText, at, conversationId: conv, mood: moodLabelOf(db, aid), turnId: tid, mode: isWorkMode(db, aid) ? 'work' : 'chat' })
     db.prepare('UPDATE agents SET last_interaction_at=? WHERE id=?').run(at, aid)
     // T4 原文层：assistant 这句也落冷库（user 那句在 captureTurn 时已经落了）
-    if (!stranger) try { appendTurn(db, aid, { sessionId: sid, role: 'assistant', text: aText, turnId: tid, at: now() }) } catch { /* 原文失败不影响对话 */ }
+    // 状态截面先算：这一条带上「回答那一刻的我」。
+    // 以前 recordScene 在碎片之后跑，算完就扔，碎片那条永远空着——现在接住它。
+    let sceneSnap = null
+    if (!stranger) try {
+      const sc = recordScene(db, aid, { turnId: tid, sessionId: sid, at: now() })
+      const l = sc && sc.light
+      if (l) {
+        const j = (s) => { try { return s ? JSON.parse(s) : null } catch { return null } }
+        sceneSnap = JSON.stringify({
+          at: l.at,
+          affect: j(l.affect_json),
+          drive: j(l.drive_json),
+          relation: j(l.relation_json),
+          life: j(l.life_json),
+          loops: j(l.loops_json),
+        })
+      }
+    } catch { /* 留底失败不影响回复 */ }
+    if (!stranger) try {
+      const uf = lastUserFragId.get(sid) || null
+      lastUserFragId.delete(sid)
+      appendTurn(db, aid, {
+        sessionId: sid, role: 'assistant', text: aText, turnId: tid, at: now(), snapshot: sceneSnap,
+        // 回答接自那句问话：同一轮里最硬的一条边，不猜、不用模型。
+        antecedents: uf ? [uf] : null,
+      })
+    } catch { /* 原文失败不影响对话 */ }
+    // 记忆条目：这一轮的话也要落一条 episode，并把原话粘上（不然网页链只写原文、不写记忆）
+    if (!stranger && !pushed) try {
+      if (episodeWriteEnabled(db) && !/^You are the Team Lead named/.test(String(u))) addMemory(db, aid, { text: u, type: 'episode', mark: 'normal', speaker: 'user', quote: String(u).slice(0, 160), turn_id: tid })
+    } catch { /* 记忆失败不影响回复 */ }
     // 原话层：值得留的这一轮，两个人的原话整段存一条（不抽成结论）。
     if (!stranger && !pushed) {
       let inten = 0
@@ -1430,7 +1540,8 @@ const t = setTimeout(() => { try { workers().kickRelationReadTick() } catch { /*
          且**只写事件不生效**（affect.speech.shadow 关掉就完全不来）。失败不影响这一轮。 */
       try {
         const shadowOn = String(getParam(db, aid, 'affect.speech.shadow') || 'on') !== 'off'
-        if (!stranger && shadowOn && exprForResidue && model.status().primary === 'ok') {
+        // 2026-11-13：工作模式不判「说话分寸」影子——它只写事件，不进提示词。
+        if (!stranger && shadowOn && !isWorkMode(db, aid) && exprForResidue && model.status().primary === 'ok') {
           const ar = db.prepare('SELECT primary_label, intensity FROM affect_state WHERE agent_id=?').get(aid)
           const judged = await judgeSpeech({
             complete: (m) => model.complete(toModelRequest(m)),
@@ -1536,12 +1647,23 @@ const t = setTimeout(() => { try { workers().kickRelationReadTick() } catch { /*
       } catch { /* 余量失败不影响对话 */ }
       if (learning) { try { learnFromTurn(db, aid, u, res) } catch { /* 学习失败不影响对话 */ } }
     }).catch(() => {})
-    // 自动记忆开关：关掉之后这一轮不再自动抽出记忆 / 偏好；对话档案（原文）照旧落。
+      // 自动记忆开关：关掉之后这一轮不再自动抽出记忆 / 偏好；对话档案（原文）照旧落。
 if (learning) {
       // P2 异步抽取：先落队列，再由 worker 慢慢跑；进程这会儿挂了也不会丢。
+      // 2026-11-13：把这一轮的模式一起带上——面板开着「工作」时说的几句，
+      // 进队列就标 work。工作批次只做规则落库、不调模型，所以也不进「日顶 16 条」的队，
+      // 当场异步处理掉：既不占额度，也不会在队列里白白积压。
 try {
-        enqueueExtraction(db, aid, [{ role: 'user', text: u, turnId: tid }, { role: 'assistant', text: aText, turnId: tid }])
-        try { workers().kickExtractionTick() } catch { /* 踢一脚失败下轮轮询会补 */ }
+        // 2026-11-13：入队/落库也读同一个来源（agents.mode），不再依赖 styleModeCache——
+        // 打标和入队用两套值，切按钮的一两秒里会配错。
+        const wm = isWorkMode(db, aid) ? 'work' : 'chat'
+        const batchTurns = [{ role: 'user', text: u, turnId: tid, mode: wm }, { role: 'assistant', text: aText, turnId: tid }]
+        if (wm === 'work') {
+          Promise.resolve().then(() => ingest(db, aid, { turns: batchTurns })).catch(() => { /* 规则落库失败不影响对话 */ })
+        } else {
+          enqueueExtraction(db, aid, batchTurns)
+          try { workers().kickExtractionTick() } catch { /* 踢一脚失败下轮轮询会补 */ }
+        }
       } catch { /* 入队失败不影响对话 */ }
     }
     // 三观快环：开关关闭直接返回；这里只入缓冲，抽取在后台定时器里。
@@ -1610,9 +1732,31 @@ const turn = readEvent(event)
       lastTurnId.set(sid, tid)
       if (t.startsWith('（它主动来找你')) pushedTurns.add(sid)
       // T4 原文层：用户这句话先落冷库，哪怕这一轮最后没有回复也不丢。
-if (!stranger) try { appendTurn(db, aid, { sessionId: sid, role: 'user', text: t, turnId: tid, at: now() }) } catch { /* 原文失败不影响对话 */ }
+      // 把碎片 id 记着：等回答落库时用它写「接自」（同一轮里最硬的那条边）。
+      // 2026-11-13：模式以面板上那个「日常 / 工作」按钮为准（agents.mode）。
+      // 按钮开着「工作」时写下的这几句，碎片 meta 里就带 work；以后粗切只认这个标签，
+      // 没切按钮 = 日常，闲聊照旧精读。
+      if (!stranger) try {
+        let mode = 'chat'
+        try {
+          const a = db.prepare('SELECT mode FROM agents WHERE id=?').get(aid)
+          mode = a && String(a.mode) === 'work' ? 'work' : 'chat'
+        } catch { /* 读不到就按日常 */ }
+        styleModeCache.set(aid, mode)
+        const fr = appendTurn(db, aid, { sessionId: sid, role: 'user', text: t, turnId: tid, at: now(), meta: { mode } })
+        if (fr && fr.id) lastUserFragId.set(sid, fr.id)
+      } catch { /* 原文失败不影响对话 */ }
+      // 联想：这句话有没有撞上哪件旧事。撞上了先记着，等提示词组装时带进去（一轮最多一条）。
+      // 陌生人那边不浮现——对不熟的人忽然翻旧账，不对。
+      if (!stranger) try {
+        const hit = recallEvents(db, aid, t, { limit: 1 })
+        if (hit && hit.ok && hit.items && hit.items.length) lastEventHit.set(sid, hit.items[0])
+        else lastEventHit.delete(sid)
+      } catch { /* 撞不上就算了 */ }
       // 缓冲：这一轮还没 commit，先挂着，保证「刚说的」能被注入
 pushTurn(aid, { role: 'user', text: t, at: now(), sessionId: sid })
+      // 记忆汇流 · 口令：在这一轮提示词组装前把「回到某天」的现场备好
+      if (!stranger) try { stashBackScene(db, aid, sid, t) } catch { /* 口令失败不影响对话 */ }
     }
     return
   }
@@ -1632,7 +1776,19 @@ pushTurn(aid, { role: 'user', text: t, at: now(), sessionId: sid })
   const reply = turn.text
   if (!reply) return // 工具调用步没有正文，继续等
   // 浮现观测：回复里有没有真的用上这几轮注入的记忆（十轮内只判一次）。
-try { markSurfacedUsed(db, aid, reply) } catch { /* 观测失败不影响对话 */ }
+  // 2026-11-14：这个结果现在兼职「加热」。memory.heat.on_use =
+  //   off（默认，旧路）：注入时就加过了，这里只观测；
+  //   shadow：不加热，只把「本该加哪几条」记进 events，先看一天；
+  //   on：只有真说出口的才 hits+1、衰减锚点拨到现在。
+  // 见 docs/计划-热度按用上记-2026-11-14.md
+  try {
+    const usedIds = markSurfacedUsed(db, aid, reply)
+    const heatMode = String(getParam(db, aid, 'memory.heat.on_use') || 'off')
+    if (usedIds.length) {
+      if (heatMode === 'on') touch(db, usedIds)
+      else if (heatMode === 'shadow') event(db, aid, 'memory.heat.shadow', { n: usedIds.length, ids: usedIds.slice(0, 20) })
+    }
+  } catch { /* 观测失败不影响对话 */ }
   pendingReply.set(sid, reply)
   // 固定这一轮的表达基准；commitTurn 延迟 1.2s，期间可能已经拼了下一轮。
   pendingExpr.set(sid, levelCache.get(aid) || null)
@@ -1780,6 +1936,25 @@ export const debugNoteSessionMeter = noteSessionMeter
 /** 测试用：把 15 秒节流归零，否则一个进程里只能量一次。 */
 export function _resetMeterThrottle() { lastMeterAt = 0 }
 
+// P3.6：口令「回到 2026-11-05」——captureTurn 先备好现场，systemPrompt 再取，
+// 不写历史正文，只在这一轮把现场递给她。
+const backStash = new Map()
+function stashBackScene(d, aid, sid, text) {
+  try {
+    const back = openConfluenceByText(d, aid, text, { sessionId: sid, mode: 'auto' })
+    if (!back.ok) return
+    backStash.set(sid, { t: Date.now(), line: back.line })
+    if (backStash.size > 100) backStash.clear()
+  } catch { /* 口令失败不影响对话 */ }
+}
+function backToSceneLine(d, sid) {
+  const e = backStash.get(sid)
+  if (!e) return ''
+  backStash.delete(sid)
+  if (Date.now() - e.t > 120000) return ''
+  return e.line
+}
+
 function hostSpec() {
   const db = () => ensureDb()
 
@@ -1816,7 +1991,45 @@ function hostSpec() {
           const snapOpt = qq && qq.isQQ && qq.isOwner === false ? 'off' : 'on'
           // 这一段对话的键：网页用 dsh:<会话id>，QQ 用它自己的 conversation_id。
           const conversationId = qq && qq.isQQ && qq.conversationId ? qq.conversationId : webConversationId(sid)
-          const base = id ? consciousnessBlock(d, id, { snap: snapOpt, sessionId: sid, conversationId }) : ''
+          // 帧：我上一次说到哪儿。只给事实、不给指令（设计 v0.1 §4）；默认关，frame.inject=on 才加。
+          // 带上 agent 键（同会话换人不串），并且**放在靠前**——放末尾会被「收尾核对」那条硬规则盖住。
+          let frameBlock = ''
+          try {
+            // 开关在 flags 表（frame.inject=on），不是 agent_params：
+            // 2026-11-14 踩过——用 getParam 读，键没在 PARAMS 声明，永远读成 undefined，于是永远关。
+            if (id && String(getFlag(d, 'frame.inject') || 'off') === 'on') frameBlock = lastFrameLine({ conv: conversationId, agent: id })
+          } catch { frameBlock = '' }
+          const base0 = id ? consciousnessBlock(d, id, { snap: snapOpt, sessionId: sid, conversationId }) : ''
+          // 帧放「中间」：紧跟在「现在：…」这行之后（此刻状态 → 我上一次说到哪儿），
+          // 既不抢人格开头，也不落到末尾被「收尾核对」那条硬规则盖住。
+          let base = base0
+          if (frameBlock && base0) {
+            const ls = base0.split('\n')
+            let at = ls.findIndex((x) => x.startsWith('现在：'))
+            if (at < 0) at = 0 // 退化：没找到状态行就紧跟第一行，绝不丢
+            ls.splice(at + 1, 0, '', frameBlock)
+            base = ls.join('\n')
+          } else if (frameBlock) {
+            base = frameBlock
+          }
+          // 联想：这一轮被撞出来的事（一轮最多一条）。名字 + 经过一起给，末尾带出口半句。
+          // 真进了提示词才算「浮现过」：想头掉一截、天花板收一点，同时记一次「被提到」。
+          // 没真的拼进去（被预算挤掉、被别的分支吃掉）就不算，不然下一轮会白白让位。
+          let eventLine = ''
+          try {
+            const hit = lastEventHit.get(sid)
+            if (hit) {
+              lastEventHit.delete(sid)
+              // 事件**单开一个额度**（event.inject.budget，默认 400「字」≈400 token），
+              // 不占记忆那 800，也不跟身份段抢。裁法在 buildEventLine 里：只砍经过，名字和出口半句不动。
+              const budget = Number(getParam(d, id, 'event.inject.budget')) || 400
+              const built = buildEventLine(hit, budget)
+              eventLine = built.text
+              try { markSurfaced(d, hit.id, { kind: 'cue' }) } catch { /* 记不上不影响提示词 */ }
+              try { markMentioned(d, hit.id) } catch { /* 同上 */ }
+              try { event(d, id, 'event.inject', { id: hit.id, chars: built.chars, budget: built.budget, cut: built.cut }) } catch { /* 记账失败不影响 */ }
+            }
+          } catch { eventLine = '' }
           // 状态行（上下文水位 / 复盘欠债）：只给主人看；客人或不认识的通道不透露私事。
           let stateLine = ''
           try {
@@ -1833,11 +2046,11 @@ function hostSpec() {
               }
             } catch { /* 探针失败不影响提示词 */ }
             const extra = qqChannelBlock(qq)
-            const promptText = [base, extra, stateLine].filter(Boolean).join('\n\n')
+            const promptText = [base, backToSceneLine(d, sid), extra, eventLine, stateLine].filter(Boolean).join('\n\n')
             try { rememberBlock(sid, promptText) } catch { /* 留底失败不影响提示词 */ }
             return promptText
           }
-          const promptText = [base, stateLine].filter(Boolean).join('\n\n')
+          const promptText = [base, eventLine, stateLine].filter(Boolean).join('\n\n')
           try { rememberBlock(sid, promptText) } catch { /* 留底失败不影响提示词 */ }
           return promptText
         } catch { return '' }
@@ -2008,9 +2221,13 @@ function hostSpec() {
               // 被想起来 = 强化一次：hits+1、稳定度上涨、衰减锚点拨回现在。
               // v3 之前只召回不记账，等于「想过一次」在系统里不留痕——热度榜和冷热迁移都靠它。
               // 「那时」行是翻旧账，只读：不记账，免得把作废的旧事实重新加热。
+              // 2026-11-14：默认 off 照旧；shadow / on 时这里**不**加——改由「回复里真说出口」结算
+              // （见下面 markSurfacedUsed 那处），免得「塞进提示词」把新鲜度无限续命。
               try {
-                const ids = (r.items || []).filter((x) => x.partition === 'T1' && !x.asof).map((x) => x.id)
-                if (ids.length) touch(d, ids)
+                if (String(getParam(d, aid, 'memory.heat.on_use') || 'off') === 'off') {
+                  const ids = (r.items || []).filter((x) => x.partition === 'T1' && !x.asof).map((x) => x.id)
+                  if (ids.length) touch(d, ids)
+                }
               } catch { /* 记账失败不影响注入 */ }
               recentRecall.set(aid, { at: Date.now(), q: q.slice(0, 40), text: packed.text })
               // 浮现观测：记下这一轮注入了哪些（anchor / fresh / related），回复后再判用没用上。
@@ -2335,7 +2552,7 @@ try {
   }
 
   // QQ 对话回流：**不再单独挂一条写入路**。
-  // 真机验过：session/event 旁听本来就会把 QQ 会话的对话写进 chat_turns / raw_turns / 关系账本，
+  // 真机验过：session/event 旁听本来就会把 QQ 会话的对话写进 chat_turns / fragments / 关系账本，
   // 只是不知道是什么渠道（conversation_id 落 null）。所以现在改成「让既有旁路认得出 QQ」——
   // 见 captureTurn / commitTurn 里的 qqContextOf()，一份就够，不会一句话记两遍。
   // attachQQIngest 留在模块里没接：它假设"旁路不记 QQ"，那个前提是错的。

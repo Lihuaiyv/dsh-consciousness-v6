@@ -16,12 +16,14 @@ import { detectPython } from '../modules/actions/wechat.js'
 import { pollWeChatInbox } from '../modules/wechat_inbox.js'
 import { startWeChatTyping } from '../modules/wechat_typing.js'
 import { defaultAgentId } from '../modules/conversations.js'
-import { tickExtraction } from '../modules/extract_queue.js'
+import { tickExtraction, tickExtractionMerged } from '../modules/extract_queue.js'
 import { runNightly, dueDiaryDays, hasDiaryMaterial } from '../modules/nightly.js'
 import { repairPending, repairOldDiaries, defaultDiaryChat } from '../modules/diary.js'
-import { model } from '../kernel.js'
+import { getFlag, setFlag, model } from '../kernel.js'
+import { localDay } from '../db.js'
 import * as R from '../modules/relations.js'
 import { tickRelationRead } from '../modules/relations_extract.js'
+import { cutAndIngest, cutDayBatch, dayCutGate } from '../modules/event_write.js'
 
 const WECHAT_WIN_SCRIPT = fileURLToPath(new URL('../../scripts/wechat_win.py', import.meta.url))
 
@@ -49,7 +51,10 @@ export function createWorkers(deps) {
       // 自动记忆关着就不往库里写：队列先留着，打开后下一轮会慢慢补上
       try { if (getParam(d, aid, 'memory.auto') === false) continue } catch { /* 参数读不到就照常跑 */ }
       try {
-        await tickExtraction(d, aid, (turns) => ingest(d, aid, { turns }), { max: 1 })
+        // 2026-11-13：合并读——一次取几条队列、只请模型读一次（flags: memory.extract.merge，默认 5，范围 1~10）。
+        let mergeN = 5
+        try { mergeN = Math.max(1, Math.min(10, Number(getFlag(d, 'memory.extract.merge')) || 5)) } catch { /* 读不到就用默认 */ }
+        await tickExtractionMerged(d, aid, (turns) => ingest(d, aid, { turns }), { max: mergeN })
       } catch { /* 这一轮失败，下一轮再来 */ }
     }
   }
@@ -391,6 +396,93 @@ export function createWorkers(deps) {
     }
   }
 
+  // ---------------- 事件库：每天切前一天 ----------------
+
+  let eventCutTimer = null
+  let eventCutBusy = false
+
+  /**
+   * 把「前一天」和「所有没切完的天」逐天切 → 冷库 → 热库 born。
+   *
+   * 2026-11-13 B2：改用 cutDayBatch——
+   *   - 每切完一块就落库、存进度（events.cut.<day>.pos），断了从断点续，不再一次赌到底；
+   *   - 不设次数上限：冷库要完整，切不完全部续切，不把一天丢下；
+   *   - 欠账补切：近 30 天里有碎片、但没有落 done 的天，全部捡起来切（不只前一天）；
+   *   - 续跑：flags 里 state 是 pending / retry 的天，也会被捡起来。
+   * 幂等：写入器按稳定 id 去重；即使进度丢了，重切也不会写两遍。
+   */
+  async function cutEventsTick(reason) {
+    if (eventCutBusy) return
+    let d
+    try { d = ensureDb() } catch { return }
+    const aids = enabledAgentIds(d)
+    if (!aids.length) return
+    eventCutBusy = true
+    try {
+      const day = localDay(new Date(Date.now() - 86400000))
+      for (const aid of aids) {
+        // 1) 前一天 + 所有挂着没切完的天
+        const days = new Set([day])
+        try {
+          for (const r of d.prepare("SELECT key,value FROM flags WHERE key LIKE 'events.cut.%'").all()) {
+            const m = /^events\.cut\.(\d{4}-\d{2}-\d{2})\.(.+?)(\.(state|pos|calls))?$/.exec(String(r.key))
+            if (!m || m[2] !== aid) continue
+            const v = String(r.value || '')
+            if (m[4] === 'state') { if (v !== 'done' && v !== 'hold') days.add(m[1]) }
+            else if (v === 'retry') days.add(m[1])
+          }
+        } catch { /* 读不到旧闸就只切前一天 */ }
+        // 2) 欠账：有碎片、但没落 done 的天（包括从没切过的）——冷库要完整，不能留洞
+        try {
+          const cutoff = localDay(new Date(Date.now() - 30 * 86400000))
+          for (const r of d.prepare('SELECT DISTINCT day FROM fragments WHERE agent_id=? AND day>=?').all(aid, cutoff)) {
+            if (r.day && String(r.day) < day) days.add(String(r.day))
+          }
+        } catch { /* 读不到碎片就只切已知的 */ }
+        for (const dDay of [...days].sort()) {
+          if (dDay > day) continue
+          // 2026-11-14（D39）：闸改了——done 必须带指纹，指纹之后又来了新碎片就要续切。
+          // 老闸（只有 agt=done、没有指纹）不批量重切，只补指纹并留一条记录。
+          let gate
+          try { gate = dayCutGate(d, aid, dDay) } catch { gate = { cut: true, reason: 'gate-error' } }
+          if (!gate.cut) {
+            if (gate.reason === 'legacy-done' && gate.backfillGap) {
+              try { setFlag(d, 'events.cut.' + dDay + '.doneAt', gate.latest) } catch { /* 补不上就下次再补 */ }
+              __probe('event-cut-legacy-stamp(' + reason + ') day=' + dDay + ' latest=' + gate.latest)
+            }
+            continue
+          }
+          try {
+            // 不设次数上限：切不完下一跳接着切，断点续保证不会重付。
+            const out = await cutDayBatch(d, aid, dDay)
+            if (!out.ok) {
+              __probe('event-cut-skip(' + reason + ') aid=' + aid.slice(0, 8) + ' day=' + dDay + ' reason=' + out.reason)
+              continue
+            }
+            const w = out.write || {}
+            __probe('event-cut(' + reason + ') aid=' + aid.slice(0, 8) + ' day=' + dDay
+              + ' state=' + out.state + ' calls=' + out.calls
+              + ' events=' + (out.events || 0) + ' added=' + (w.added || 0)
+              + ' skipped=' + (w.skipped || 0) + ' rejected=' + (w.rejected || 0))
+          } catch (e) {
+            __probe('event-cut-err(' + reason + '):' + (e && e.message))
+          }
+        }
+      }
+    } finally {
+      eventCutBusy = false
+    }
+  }
+
+  function startEventCutWorker() {
+    // 启动后先补一次（关机期间错过的那天，这里接上），避开启动迁移
+    const boot = setTimeout(() => { cutEventsTick('boot').catch(() => {}) }, 60000)
+    if (boot.unref) boot.unref()
+    // 每半小时兜底：跨天、休眠、准点被挂起都能接上
+    eventCutTimer = setInterval(() => { cutEventsTick('tick').catch(() => {}) }, 30 * 60 * 1000)
+    if (eventCutTimer.unref) eventCutTimer.unref()
+  }
+
   return {
     startExtractionWorker,
     startRelationWorker,
@@ -398,6 +490,7 @@ export function createWorkers(deps) {
     startNightlyWorker,
     startGrowPrefsWorker,
     startWeChatInboxWorker,
+    startEventCutWorker,
     /** 对话刚入队后立刻踢一脚，不等 30 秒轮询。 */
     kickExtractionTick: () => { runExtractionTick() },
     kickRelationReadTick: () => { runRelationReadTick() },

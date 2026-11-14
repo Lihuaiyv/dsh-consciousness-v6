@@ -171,7 +171,7 @@ export function qqWatchRow(db, key, sid, bindRow, nowMs, inMap) {
   } catch { /* 名字读不到就空着 */ }
   let lastTurn = ''
   try {
-    const r = db.prepare('SELECT MAX(created_at) AS t FROM raw_turns WHERE session_id=?').get(sid)
+    const r = db.prepare('SELECT MAX(created_at) AS t FROM fragments WHERE session_id=?').get(sid)
     lastTurn = r && r.t ? String(r.t) : ''
   } catch { /* 空 */ }
   let conv = null

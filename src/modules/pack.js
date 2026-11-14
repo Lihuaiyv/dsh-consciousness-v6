@@ -216,7 +216,10 @@ export function packInjection(input = {}, opt = {}) {
 // ① 先按「主动句 → 情绪 → 驱力 → 日记 → 记忆」整段丢；
 // ② 还超就从日记 / 记忆块里按行往回砍（保留标题行）；
 // ③ 最后再超才硬截断（留省略号），保证返回的 tokens ≤ budget。
-export function clampInjection(lines, budget = 800) {
+//
+// `reservedKeys`：**单开额度**。带这些 key 的行不参与 cap 的比较，也永不丢、永不削。
+// 它们自己占一份，跟别人抢不到彼此的位置。代价是实际 tokens 会超过 budget（按你说的是「加一点」）。
+export function clampInjection(lines, budget = 800, reservedKeys = []) {
   const est = (t) => Math.ceil(String(t).length / 2)
   const cap = Math.max(40, Number(budget) || 800)
   // 行可以是字符串，也可以是 { text, key }。带 key 的行用于「先拼装、后落账」：
@@ -231,9 +234,13 @@ export function clampInjection(lines, budget = 800) {
   }
   const dropped = []
   const removed = new Set()
-  const total = () => est(parts.join('\n'))
+  // 单开额度的那几行：不参与 cap。
+  const reservedSet = new Set((Array.isArray(reservedKeys) ? reservedKeys : []).map(String))
+  const isReservedIdx = (i) => reservedSet.size > 0 && reservedSet.has(String(keys[i]))
+  const total = () => est(parts.filter((l, i) => !isReservedIdx(i)).join('\n'))
   const dropAt = (idx, label) => {
     if (idx < 0 || idx >= parts.length) return false
+    if (isReservedIdx(idx)) return false // 单开额度的行不丢
     removed.add(keys[idx])
     parts.splice(idx, 1)
     keys.splice(idx, 1)
@@ -250,13 +257,44 @@ export function clampInjection(lines, budget = 800) {
      剪掉尾巴就剩「（上一句落在我身上的样子：你说「…」，那一刻 慢 +0.1…」，
      一半材料读起来比没有更糟：像一句没说完的自言自语。 */
   const SNAPSHOT_TEST = (l) => l.startsWith('（上一句落在我身上') || /^（\d\d:\d\d 那会儿的读数/.test(String(l))
-  const order = [
+  const isDiary = (l) => l.startsWith('最近我自己写下的')
+  const isMemory = (l) => l.startsWith('关于这句话，你能想起的事')
+  // 段级：先收成能开口用的几句。日记留标题加一句，记忆留标题加两条。
+  // 收完还超，才整段拿掉；整段拿掉必须在主动句之前，不然主动句又会每轮先被吃掉。
+  /* 段级压缩（软墙，2026-11-12）：
+     不超预算时按老规矩（日记留 1 句、记忆留 2 条）；
+     超了就按压力算——**超得越多，留得越少**，但最少留一条，并交代省了多少。
+     压力 p = 总量 / 预算。10 条、p=1.5 留 6 条；p=2.5 留 4 条；p=5 留 2 条。
+     不再把它整段拿掉——整段消失等于我会把「没带进来」当成「本来就没有」。 */
+  const trimBlock = (test, label, keep = 1) => {
+    const idx = parts.findIndex((l) => test(l))
+    if (idx < 0) return false
+    const sub = String(parts[idx]).split('\n')
+    if (sub.length <= 1) return false
+    const over = total() > cap
+    const pressure = Math.max(1, total() / cap)
+    const keepN = over
+      ? Math.max(1, Math.floor(sub.length / pressure))
+      : Math.min(keep, sub.length)
+    if (sub.length <= keepN) return false
+    const cut = sub.length - keepN
+    parts[idx] = sub.slice(0, keepN).concat('（还有 ' + cut + ' 条没带进来）').join('\n')
+    if (!removed.has(keys[idx])) removed.add(keys[idx])
+    dropped.push(label + '-lines')
+    return true
+  }
+  const dropNamed = (name, test) => {
+    if (total() <= cap) return
+    const idx = parts.findIndex((l) => test(l))
+    if (idx >= 0) dropAt(idx, name)
+  }
+  const orderHead = [
     ['examples', (l) => l.startsWith('## 我说话的样子')],
     ['guard', (l) => l.startsWith('不要列点')],
     ['drive', (l) => l.startsWith('需求缺口档位')],
-    ['diary', (l) => l.startsWith('最近我自己写下的')],
-    ['memory', (l) => l.startsWith('关于这句话，你能想起的事')],
-    // 主动句排在记忆之后才丢：它是「已经决定要说的话」，又只有一行。
+  ]
+  const orderTail = [
+    // 主动句排在记忆整段拿掉之后才丢：它是「已经决定要说的话」，又只有一行。
     // 以前排第一个丢，结果每轮都被预算先吃掉，commit_after_pack 下永远落不了账，
     // 队列里的消息只能等 ops 七天过期，等于这个功能静默死了（见 2026-11-05 的账）。
     ['proactive', (l) => l.startsWith('（你之前想主动说一句')],
@@ -270,32 +308,23 @@ export function clampInjection(lines, budget = 800) {
     ['residue', (l) => l.startsWith('（上一句你说得') || l.startsWith('（上一句你比平时')],
     // 情绪的方向：一行，丢了只是少个「这两天」的层次，不影响这一轮聊下去
     ['trend', (l) => l.startsWith('（这两天')],
-    ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来')],
+    ['spontaneous', (l) => l.startsWith('（你心里忽然浮上来') || l.startsWith('（那件事还没过去') || l.startsWith('（你想起了他那天说过的一句')],
     // 感受快照：比上面都晚丢（它是「刚才那一刻」的事实，不是装饰），
     // 但预算真紧的时候还是让位——而且只允许整行丢，不许剪半句（见 SNAPSHOT_TEST）。
     ['snapshot', (l) => SNAPSHOT_TEST(l)],
   ]
-  for (const [name, test] of order) {
+  for (const [name, test] of orderHead) {
     if (total() <= cap) break
-    const idx = parts.findIndex((l) => test(l))
-    if (idx >= 0) dropAt(idx, name)
+    dropNamed(name, test)
   }
-  // 段级丢完还超：先砍日记（叙事，隔天还能补），再砍记忆；记忆留 2 条兜底。
-  const trimBlock = (test, label, keep = 1) => {
-    const idx = parts.findIndex((l) => test(l))
-    if (idx < 0) return false
-    const sub = String(parts[idx]).split('\n')
-    if (sub.length <= 1) { dropAt(idx, label); return true }
-    if (sub.length <= keep) return false
-    let touched = false
-    while (sub.length > keep && total() > cap) { sub.pop(); parts[idx] = sub.join('\n'); touched = true }
-    // 一段被砍过就不再是完整注入；带 key 的行（落账用）不能算说过。
-    if (touched && !removed.has(keys[idx])) removed.add(keys[idx])
-    if (touched) dropped.push(label + '-lines')
-    return touched
+  if (total() > cap) trimBlock(isDiary, 'diary', 2)
+  if (total() > cap) trimBlock(isMemory, 'memory', 3)
+  // 不再整段拿掉日记 / 记忆：trimBlock 已经把这两段压到「最少一条 + 交代省了几条」，
+  // 事后再整段删掉就白压了。真到极限想删，等软墙算法把「哪些可以整段丢」定下来再说。
+  for (const [name, test] of orderTail) {
+    if (total() <= cap) break
+    dropNamed(name, test)
   }
-  if (total() > cap) trimBlock((l) => l.startsWith('最近我自己写下的'), 'diary', 1)
-  trimBlock((l) => l.startsWith('关于这句话，你能想起的事'), 'memory', 3)
   /* 快照：要么完整，要么没有。在 shrink 之前就整行拿掉——
      它是那种「剪一半就变味」的行（剩下「…那一刻 慢 +0.1…」，读起来像自言自语没说完）。 */
   if (total() > cap) {
@@ -309,7 +338,8 @@ export function clampInjection(lines, budget = 800) {
     const shrink = (allowAffect) => {
       const list = parts
         .map((l, i) => ({ l, i }))
-        .filter((x) => !x.l.startsWith('## ')
+        .filter((x) => !isReservedIdx(x.i)
+          && !x.l.startsWith('## ')
           && !SNAPSHOT_TEST(x.l)
           && x.l.length > (allowAffect ? 20 : 16)
           && (allowAffect || !AFFECT_TEST(x.l)))
@@ -332,8 +362,12 @@ export function clampInjection(lines, budget = 800) {
     shrink(true)
   }
   let text = parts.join('\n')
-  if (est(text) > cap) {
-    text = text.slice(0, Math.max(0, cap * 2 - 1)).replace(/\s+$/, '') + '…'
+  // 硬截断只看「非单开额度」那部分——单开的那几行不受 cap 约束，截了就等于没单开。
+  if (total() > cap) {
+    const bodyOnly = parts.filter((l, i) => !isReservedIdx(i)).join('\n')
+    const reserveOnly = parts.filter((l, i) => isReservedIdx(i)).join('\n')
+    const bodyCut = bodyOnly.slice(0, Math.max(0, cap * 2 - 1)).replace(/\s+$/, '') + '…'
+    text = reserveOnly ? reserveOnly + '\n' + bodyCut : bodyCut
     // 硬截断后整段都不可信，所有带 key 的行都不落账。
     for (const k of keys) removed.add(k)
     dropped.push('truncate')

@@ -71,7 +71,7 @@ export function warehouse(db, aid, opt = {}) {
   const t1 = bytesOf(db, "SELECT COUNT(*) n, COALESCE(SUM(LENGTH(text)),0) b FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL", [aid])
   const t2 = bytesOf(db, 'SELECT COUNT(*) n, COALESCE(SUM(LENGTH(COALESCE(title,\'\'))+LENGTH(COALESCE(summary,\'\'))),0) b FROM episodes WHERE agent_id=?', [aid])
   const t3 = bytesOf(db, 'SELECT COUNT(*) n, COALESCE(SUM(LENGTH(text)),0) b FROM diaries WHERE agent_id=?', [aid])
-  const t4 = bytesOf(db, 'SELECT COUNT(*) n, COALESCE(SUM(LENGTH(text)),0) b FROM raw_turns WHERE agent_id=?', [aid])
+  const t4 = bytesOf(db, 'SELECT COUNT(*) n, COALESCE(SUM(LENGTH(text)),0) b FROM fragments WHERE agent_id=?', [aid])
   const fa = bytesOf(db, 'SELECT COUNT(*) n, COALESCE(SUM(LENGTH(text)),0) b FROM fact_archive WHERE agent_id=?', [aid])
 
   const parts = [
@@ -127,7 +127,7 @@ const HIST_TABLES = [
   ['memory_items', 'LENGTH(text)'],
   ['episodes', "LENGTH(COALESCE(title,''))+LENGTH(COALESCE(summary,''))"],
   ['diaries', 'LENGTH(text)'],
-  ['raw_turns', 'LENGTH(text)'],
+  ['fragments', 'LENGTH(text)'],
   ['fact_archive', 'LENGTH(text)'],
 ]
 
@@ -325,7 +325,7 @@ export function exportDocs(db, aid, opt = {}) {
   out.days = diaries.length
 
   // 对话档案：一天一个文件
-  const raws = db.prepare('SELECT day,role,text,created_at FROM raw_turns WHERE agent_id=? ORDER BY day, created_at').all(aid)
+  const raws = db.prepare('SELECT day,role,text,created_at FROM fragments WHERE agent_id=? ORDER BY day, created_at').all(aid)
   const rawByDay = new Map()
   for (const r of raws) {
     const arr = rawByDay.get(r.day) || []

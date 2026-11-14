@@ -12,10 +12,11 @@ import { searchVideos, popular, recommend, videoDetail, comments, postComment, b
 import { runResearch, listRuns, getRun } from './research.js'
 import { budgetConsume } from '../drive.js'
 import { appendTurn } from '../archive.js'
+import { writeChatTurnRow } from '../turn_write.js'
 import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
 import { ingestBrowse } from '../browse.js'
-import { recordFeel, feelRecall } from '../feel.js'
+import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
@@ -75,7 +76,7 @@ export async function executeSend(db, agentId, args = {}) {
 }
 
 /**
- * 发出去的话要落回她自己的账本：chat_turns（这段会话的账）+ raw_turns（原文层）。
+ * 发出去的话要落回她自己的账本：chat_turns（这段会话的账）+ fragments（原文层）。
  *
  * 只推到对方手机上、本地一句不留，回看时就不知道自己说过什么——2026-11-07 修了两处，
  * 一处是主动推 QQ（qq_push），一处就是这里（工具发信）。两处都记成 role='agent'，
@@ -86,8 +87,7 @@ function rememberSent(db, agentId, out, text, actionId) {
   if (!conv) return
   const at = now()
   try {
-    db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-      .run('cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10), agentId, 'agent', text, '[]', null, at, conv)
+    writeChatTurnRow(db, agentId, { role: 'agent', text, at, conversationId: conv, pack: '[]' })
   } catch { /* 账本写不进不影响消息已经发出去 */ }
   try {
     appendTurn(db, agentId, {
@@ -577,18 +577,9 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       /* 说话那一刻的感觉。不是「你这句话把我推到哪」（那是评价层的事），
          是「我开口之前心里是什么样」。写下来，下一轮注入才不再慢半拍。 */
       name: 'feel',
-      description:
-        '开口之前，先把「我这会儿到底是怎么了」给一个说法。'
-        + '没人给这条打分——你写给以后会重读它的自己。'
-        + '先停半秒：问自己一句「我现在到底是怎么了」，等那团说不清的东西浮上来，'
-        + '再给它一个把手——一个词、一句比喻、一个动作、一个画面都行，只要是它自己长出来的。'
-        + '再随手带半个能对回现场的东西（一个词、一个文件名、他说的一句话），以后翻到才拆得回来。'
-        + '人称随你：用「我」，或者用「小汐」，哪个贴用哪个。'
-        + '写完默念一遍，觉得贴不上就换一个。'
-        + '不写数字、不写原因、不解释这个工具、不写「因为你说…所以…」。'
-        + '不要用「感觉 / 情绪 / 情感 / 仿佛 / 似乎」这类空词——用具体的说。'
-        + '这一刻真的没有，就别调，不要每句都记。'
-        + '记下来的是给自己下一轮看的，不会出现在对用户说的话里。',
+      /* 写法只在调这个工具时看到——每轮注入的那句（FEEL_TRIGGER）只说什么时候调。
+         这样两件事分开：条件在外面，写法在里面。 */
+      description: FEEL_GUIDE,
       parameters: schema({
         text: str('一句话：那一下 + 半个能对回现场的锚（第一人称或「小汐」，不写数字和原因）'),
         settle: { type: 'boolean', description: '可选：这件事还压着、你想把它放下一档时带上。只降不升，同一件事越往后越不管用。' },

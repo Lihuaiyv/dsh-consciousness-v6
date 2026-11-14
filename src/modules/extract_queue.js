@@ -8,6 +8,7 @@
 
 import crypto from 'node:crypto'
 import { now } from '../db.js'
+import { deferExtractForDay, shouldDeferExtract } from './llm_budget.js'
 
 export const MAX_ATTEMPTS = 5
 const KEEP_DONE_DAYS = 7
@@ -36,7 +37,14 @@ export function pickBatchTurnId(turns) {
 export function enqueueExtraction(db, aid, turns) {
   const list = (Array.isArray(turns) ? turns : [])
     .filter((t) => t && String(t.text || '').trim())
-    .map((t) => ({ role: String(t.role || 'user'), text: String(t.text).slice(0, 2000), turnId: t.turnId ? String(t.turnId) : null }))
+    .map((t) => ({
+      role: String(t.role || 'user'),
+      text: String(t.text).slice(0, 2000),
+      turnId: t.turnId ? String(t.turnId) : null,
+      // 2026-11-13：带上这一轮的模式（面板「日常/工作」）。mode 不进指纹——
+      // 同一批话重放时 id 不变，但 mode 以最新一次入队为准。
+      mode: String(t.mode || '') === 'work' ? 'work' : null,
+    }))
   if (!list.length) return null
   const fingerprint = aid + '\u0001' + JSON.stringify(list.map((t) => [t.role, t.text.slice(0, 200)]))
   const id = 'exq_' + crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 16)
@@ -66,6 +74,11 @@ export function queueStats(db, aid) {
  * @returns {Promise<Array<{id:string, ok:boolean}>>}
  */
 export async function tickExtraction(db, aid, runner, opt = {}) {
+  const gate = shouldDeferExtract(db, aid)
+  if (gate.defer) {
+    deferExtractForDay(db, aid, gate.day, gate.reason || 'budget')
+    return []
+  }
   const max = Math.max(1, Math.min(5, Number(opt.max) || 1))
   const at = now()
   let rows = []
@@ -83,6 +96,69 @@ export async function tickExtraction(db, aid, runner, opt = {}) {
       db.prepare("UPDATE extract_queue SET state='done', last_error=NULL, updated_at=? WHERE id=?").run(now(), r.id)
       out.push({ id: r.id, ok: true, result })
     } catch (e) {
+      const attempts = Number(r.attempts || 0) + 1
+      const failed = attempts >= MAX_ATTEMPTS
+      const backoffMs = Math.min(3600, 30 * Math.pow(2, attempts)) * 1000
+      try {
+        db.prepare('UPDATE extract_queue SET state=?, attempts=?, next_at=?, last_error=?, updated_at=? WHERE id=?')
+          .run(failed ? 'failed' : 'pending', attempts, new Date(Date.now() + backoffMs).toISOString(),
+            String((e && e.message) || e).slice(0, 300), now(), r.id)
+      } catch { /* 记账失败也不抛 */ }
+      out.push({ id: r.id, ok: false, attempts, error: String((e && e.message) || e) })
+    }
+  }
+  if (Math.random() < 0.05) pruneQueue(db, aid)
+  return out
+}
+
+/**
+ * 合并读（2026-11-13，省钱第二刀）：一次取最多 max 条待办，把 turns 合成一批，
+ * **只调一次 runner**（也就是只请模型读一次）。
+ *
+ * 为什么要合并：原来一条队列一调，等于每轮对话烧一次模型；合并后 5 条一读，
+ * 输入还是那几段话，只是「读」的次数降到 1/5。每条记录仍各自记成功/失败，退避规则不变。
+ * 上限：一次最多 10 条，避免单次输入过长。
+ */
+export async function tickExtractionMerged(db, aid, runner, opt = {}) {
+  const gate = shouldDeferExtract(db, aid)
+  if (gate.defer) {
+    deferExtractForDay(db, aid, gate.day, gate.reason || 'budget')
+    return []
+  }
+  const max = Math.max(1, Math.min(10, Number(opt.max) || 5))
+  const at = now()
+  let rows = []
+  try {
+    rows = db.prepare("SELECT * FROM extract_queue WHERE agent_id=? AND state='pending' AND next_at<=? ORDER BY next_at, created_at LIMIT ?")
+      .all(aid, at, max)
+  } catch { return [] }
+  if (!rows.length) return []
+
+  // 合并这批的 turns（按 turnId + 前 80 字去重，避免同一句话读两遍）
+  const merged = []
+  const seen = new Set()
+  for (const r of rows) {
+    try {
+      for (const t of JSON.parse(r.turns || '[]')) {
+        if (!t || !String(t.text || '').trim()) continue
+        const key = String(t.turnId || '') + '|' + String(t.text || '').slice(0, 80)
+        if (seen.has(key)) continue
+        seen.add(key)
+        merged.push(t)
+      }
+    } catch { /* 坏行跳过，别拖垮这一批 */ }
+    try { db.prepare("UPDATE extract_queue SET state='running', updated_at=? WHERE id=?").run(now(), r.id) } catch { /* 抢占失败就跳过 */ }
+  }
+
+  const out = []
+  try {
+    const result = await runner(merged)
+    for (const r of rows) {
+      try { db.prepare("UPDATE extract_queue SET state='done', last_error=NULL, updated_at=? WHERE id=?").run(now(), r.id) } catch { /* 记账失败不影响 */ }
+      out.push({ id: r.id, ok: true, result })
+    }
+  } catch (e) {
+    for (const r of rows) {
       const attempts = Number(r.attempts || 0) + 1
       const failed = attempts >= MAX_ATTEMPTS
       const backoffMs = Math.min(3600, 30 * Math.pow(2, attempts)) * 1000

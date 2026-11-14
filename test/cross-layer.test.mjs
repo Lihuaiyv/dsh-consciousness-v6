@@ -65,7 +65,7 @@ function putEpisode(db, aid, id, day, endAt, summary, openLoops = '[]') {
     w.db.prepare('DELETE FROM memory_items WHERE agent_id=?').run(w.aid)
     const old = addMemory(w.db, w.aid, { text: '用户有个「情绪快照」的事还没做完', type: 'fact', fact_key: '用户.情绪快照.待完成' })
     w.db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(new Date(Date.now() - 3 * 3600000).toISOString(), old.id)
-    w.db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
+    w.db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run('rt_cross_' + w.aid, w.aid, 's1', 't1', 1, 'user', '情绪快照已经弄好了，你看一下', null, null, new Date().toISOString(), new Date().toISOString().slice(0, 10))
     const row = w.db.prepare('SELECT * FROM memory_items WHERE id=?').get(old.id)
     const line = passportLine(w.db, w.aid, row)

@@ -128,8 +128,8 @@ async function turn(label, speaker, conv) {
 {
   const turns = count("SELECT COUNT(*) n FROM chat_turns WHERE agent_id=? AND conversation_id='qq:p:222'", aid)
   check('陌生人的对话照样落 chat_turns', turns >= 2, turns)
-  const raw = count("SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND session_id='qq:p:222'", aid)
-  check('陌生人的原文不落 raw_turns', raw === 0, raw)
+  const raw = count("SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND session_id='qq:p:222'", aid)
+  check('陌生人的原文不落 fragments', raw === 0, raw)
 }
 
 console.log(`\n通过 ${pass} / ${pass + fail}`)

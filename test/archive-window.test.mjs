@@ -32,7 +32,7 @@ db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
 
 const at = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString()
 function putRaw(id, text, daysAgo) {
-  db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO fragments(id,agent_id,session_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?)')
     .run(id, aid, 's1', 1, 'user', text, at(daysAgo), at(daysAgo).slice(0, 10))
   db.prepare('INSERT INTO raw_fts(id,text) VALUES(?,?)').run(id, text)
 }

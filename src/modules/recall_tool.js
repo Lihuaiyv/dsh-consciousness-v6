@@ -23,6 +23,7 @@ import {
 } from './retrieve.js'
 import { searchRaw, searchFactArchive, searchChatTurns } from './archive.js'
 import { canEmbed, embedText } from './vector.js'
+import { vectorEnabled } from './vector_switch.js'
 
 export const LAYERS = ['memory', 'episode', 'diary', 'raw', 'fact']
 export const LAYER_LABEL = { memory: '记忆', episode: '纪要', diary: '日记', raw: '原文', fact: '存根' }
@@ -172,7 +173,7 @@ function memoryChannels(db, aid, q, opt) {
   } catch { /* 同上 */ }
 
   // 向量路：语义相近，说法完全不同也接得上
-  if (opt.queryVec) {
+  if (opt.queryVec && vectorEnabled(db)) {
     try {
       const arr = searchByVector(db, aid, opt.queryVec, { limit: 20 })
         .map((x) => toItem(x, 'memory', q, x.temp_state))
@@ -238,7 +239,7 @@ function rawLayer(db, aid, q, opt) {
     const since = opt.since ? { since: opt.since } : {}
     const limit = Math.min(50, opt.k * 4)
     const mk = (x) => toItem({ ...x, type: x.role || 'raw' }, 'raw', q)
-    // 聊天账本的行 id 和 raw_turns 不是一套，加前缀免得撞车；撞了就会互相顶掉。
+    // 聊天账本的行 id 和 fragments 不是一套，加前缀免得撞车；撞了就会互相顶掉。
     const mkChat = (x) => toItem({ ...x, id: 'chat:' + x.id, type: x.role || 'raw' }, 'raw', q)
     const segs = segmentsOf(q)
     const terms = segs.length ? segs : [q]
@@ -293,11 +294,11 @@ export function fusePhrasings(perPhrase) {
 /** 原文命中时带上前后的几句，别只给一句孤零零的话。 */
 function withContext(db, aid, items, n) {
   if (!n || !items.length) return items
-  const stmt = db.prepare(`SELECT role,seq,text,created_at FROM raw_turns
+  const stmt = db.prepare(`SELECT role,seq,text,created_at FROM fragments
     WHERE agent_id=? AND session_id=? AND seq BETWEEN ? AND ? ORDER BY seq`)
   for (const it of items) {
     try {
-      const row = db.prepare('SELECT session_id,seq FROM raw_turns WHERE id=?').get(it.id)
+      const row = db.prepare('SELECT session_id,seq FROM fragments WHERE id=?').get(it.id)
       if (!row) continue
       const seq = Number(row.seq) || 0
       const rows = stmt.all(aid, row.session_id, seq - n, seq + n)
@@ -391,6 +392,19 @@ export async function recallTool(db, aid, args = {}) {
           if (Number(p.inferred)) it.inferred = 1
         }
       } catch { /* 没这张表就照旧渲染 */ }
+      // 2026-11-13：从记忆条目回到「当时那句原话」——记忆存的是 source_turn_id，
+      // 原话在 fragments 冷库。这一步补上，热/冷记忆才真能向下翻到碎片。
+      try {
+        const src = db.prepare('SELECT source_turn_id FROM memory_items WHERE id=?').get(it.id)
+        const tid = src && src.source_turn_id
+        if (tid) {
+          const q = db.prepare("SELECT text FROM fragments WHERE agent_id=? AND turn_id=? AND role='user' ORDER BY seq LIMIT 1").get(aid, tid)
+          if (q && q.text) {
+            const quote = String(q.text).replace(/\s+/g, ' ').slice(0, 120)
+            if (quote && quote !== it.text) it.quote = quote
+          }
+        }
+      } catch { /* 原话查不到就不带 */ }
     }
   }
   out.ms = Date.now() - t0
@@ -425,6 +439,8 @@ export function renderRecall(v) {
     const by = it.by === 'self' ? '〔我〕' : it.by === 'user' ? '〔你〕' : it.by === 'both' ? '〔两边〕' : ''
     const guess = it.inferred ? '（我推的）' : ''
     lines.push('- ' + tag + ' ' + shortTime(it.at) + ' ' + by + it.text + guess + mark)
+    // 记忆条目回挂的「当时那句原话」：继续向下，翻到碎片层
+    if (it.quote) lines.push('    ↘ 原话〔你〕：' + it.quote)
     for (const n of it.near || []) {
       lines.push('    ' + (n.rel === 'prev' ? '↑' : '↓') + ' ' + (WHO[n.role] || n.role) + '：' + n.text)
     }

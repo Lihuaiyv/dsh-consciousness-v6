@@ -15,6 +15,7 @@ import { loadState } from './projection.js'
 import { checkDue, conCheck, degenCheck, repairHurt, deriveCross, attributeCross, suspendStaleKappas } from './practice.js'
 import { establishCores } from './core.js'
 import { runLaneW, runLaneL } from './lanes.js'
+import { buildCorpus, fileValuePrinciples } from './corpus.js'
 import { runDraftRound } from './draftrun.js'
 import { openCandidates } from './open.js'
 import { elevTimeouts, runElev } from './elev.js'
@@ -66,7 +67,7 @@ export async function runMid(db, aid, now, opt = {}) {
   if (opt.requireEnabled !== false && !isEnabled(db, aid) && !opt.force) return { status: 'off' }
   const day = dayOf(now, opt)
   const key = nightKey(day)
-  if (opt.job !== false && hasJob(db, aid, key)) return { status: 'dup', job_key: key }
+  if (opt.job !== false && !opt.force && hasJob(db, aid, key)) return { status: 'dup', job_key: key }
   const prev = lastNight(db, aid)
   const degraded = judgeHealth(db, aid, Date.parse(now)).degraded
   const errors = []
@@ -84,14 +85,25 @@ export async function runMid(db, aid, now, opt = {}) {
     }
   }
   const settle = opt.settle === false ? { did: [] } : await trap(errors, 'settle', () => settleTrials(db, aid, now), { did: [] })
-  // 世界观：夜里批量归纳一周的经历；开关关着时直接返回，不算失败
-  const laneW = opt.lanes === false ? { skipped: 'off' } : await trap(errors, 'laneW', () => runLaneW(db, aid, now, opt), { skipped: 'error' })
-  const laneL = opt.lanes === false ? { skipped: 'off' } : await trap(errors, 'laneL', () => runLaneL(db, aid, now, opt), { skipped: 'error' })
-  // 价值观：每周起一轮草稿，只进收件箱、不写账本；入不入库由人定。
-  const draft = opt.draft === false || !sangguanConfig(db, aid).lanes.V ? { skipped: 'off' } : await trap(errors, 'draft', async () => {
+  // 环的开头先抽语料：原话 → 道理。三列共用这一轮，不再各压一遍纪要或日记。
+  const cfg = sangguanConfig(db, aid)
+  const wantCorpus = opt.lanes !== false && (cfg.lanes.W || cfg.lanes.L || cfg.lanes.V)
+  const corpus = !wantCorpus
+    ? null
+    : await trap(errors, 'corpus', () => (opt.corpus ? opt.corpus : buildCorpus(db, aid, now, opt)), { facts: [], items: [], dropped: [], skipped: 'error' })
+  const laneOpt = corpus ? { ...opt, corpus } : opt
+  const laneW = opt.lanes === false ? { skipped: 'off' } : await trap(errors, 'laneW', () => runLaneW(db, aid, now, laneOpt), { skipped: 'error' })
+  const laneL = opt.lanes === false ? { skipped: 'off' } : await trap(errors, 'laneL', () => runLaneL(db, aid, now, laneOpt), { skipped: 'error' })
+  // 价值观：道理进草稿，不写账本；入不入库由人定。
+  const draft = opt.draft === false || !cfg.lanes.V ? { skipped: 'off' } : await trap(errors, 'draft', async () => {
     const dkey = 'sg:draft:' + isoWeek(day)
     if (opt.job !== false && hasJob(db, aid, dkey)) return { skipped: 'dup' }
-    const r = await runDraftRound(db, aid, { ...opt, at: now })
+    let r
+    if (corpus && !corpus.skipped) r = fileValuePrinciples(db, aid, now, corpus)
+    else if (corpus && corpus.skipped && corpus.skipped !== 'no_material') r = { skipped: corpus.skipped, created: 0, episodes: 0, errors: [] }
+    // 事实不够时才退回旧起草流水线（它自己从原话里找取舍）；模型失败不重问。
+    else r = await runDraftRound(db, aid, { ...opt, at: now })
+    if (r.skipped) return r
     if (opt.job !== false) {
       try {
         append(db, aid, [{ type: 'JOB_DONE', actor: 'sys', at: now, job_key: dkey, payload: { lane: 'V', created: r.created, episodes: r.episodes, errors: r.errors.length } }])
@@ -127,7 +139,14 @@ export async function runMid(db, aid, now, opt = {}) {
   const sum = opt.summary === false ? { did: [] } : await trap(errors, 'summary', () => buildSummary(db, aid, now, opt), { did: [] })
   const res = {
     status: n1.postponed ? 'budget' : 'done', degraded, job_key: key, errors,
-    n1, cross, settle: settle.did, laneW, laneL, draft, con: con.did, core: core.did, repair: repair.did, degen: degen.did, stale: stale.did, elev: elev.did, open: open.did, night,
+    n1, cross, settle: settle.did, corpus: corpus ? {
+      facts: (corpus.facts || []).length,
+      items: (corpus.items || []).length,
+      dropped: (corpus.dropped || []).length,
+      dropped_why: (corpus.dropped || []).slice(0, 3).map((d) => d.reason + (d.principle ? ':' + String(d.principle).slice(0, 24) : '')),
+      skipped: corpus.skipped || null,
+      reason: corpus.reason || null,
+    } : null, laneW, laneL, draft, con: con.did, core: core.did, repair: repair.did, degen: degen.did, stale: stale.did, elev: elev.did, open: open.did, night,
     inquiry: inq.did, abduce: abd.did, flip: flip.did, qi, move, week, summary: sum.did,
   }
   if (opt.job !== false) {

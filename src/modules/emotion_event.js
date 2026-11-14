@@ -182,3 +182,58 @@ export function settleEmotion(db, aid, { episodeId = null, note = '', at = Date.
   } catch { return { ok: false, reason: 'write_failed' } }
   return { ok: true, id: row.id, label: row.label || null, from, to, times }
 }
+
+/* ───────── 那件事要不要自己冒上来 ─────────
+   只判断，不写库。四个数沿用 2026-11-08 的门槛，不在这里新造一套。
+   「冒过」只认 payload.kept === true 的账（真的留在提示词里之后才写）。
+   没有这个标记的旧账，仍然算进「今天几次」，但不算「这辈子冒过」——
+   那些账是选中时就写的，人可能根本没听见。 */
+export const SURFACE_GATE = Object.freeze({
+  minIntensity: 0.35,
+  minAgeMin: 15,
+  maxPerDay: 3,
+})
+
+function dayStartIso(at) {
+  const d = new Date(at)
+  d.setHours(0, 0, 0, 0)
+  return d.toISOString()
+}
+
+/**
+ * 这件事现在该不该冒。纯函数：库里的账由调用方先数好传进来。
+ * @param {{live?:object|null, cause?:string, machine?:boolean, enabled?:boolean, keptEver?:boolean, todayCount?:number}} p
+ */
+export function shouldSurfaceEmotion(p = {}) {
+  if (p.enabled === false) return false
+  const live = p.live
+  const cause = String(p.cause || '').trim()
+  if (!live || !cause || p.machine) return false
+  if (!(Number(live.intensity) >= SURFACE_GATE.minIntensity)) return false
+  if (!(Number(live.ageMin) >= SURFACE_GATE.minAgeMin)) return false
+  if (p.keptEver) return false
+  if ((Number(p.todayCount) || 0) >= SURFACE_GATE.maxPerDay) return false
+  return true
+}
+
+/**
+ * 浮现账：今天一共几笔（含没标 kept 的旧账），以及这件事有没有「真留住过」。
+ * @returns {{keptEver:boolean, todayCount:number}}
+ */
+export function surfaceCounts(db, aid, episodeId, at = Date.now()) {
+  const out = { keptEver: false, todayCount: 0 }
+  let rows = []
+  try {
+    rows = db.prepare("SELECT payload, created_at FROM events WHERE agent_id=? AND type='affect.surface'").all(aid)
+  } catch { return out }
+  const start = dayStartIso(at)
+  const id = String(episodeId || '')
+  for (const r of rows) {
+    let payload = null
+    try { payload = JSON.parse(r.payload || 'null') } catch { payload = null }
+    const kept = !!(payload && payload.kept === true)
+    if (r.created_at >= start) out.todayCount++
+    if (kept && id && String(payload.episode_id || '') === id) out.keptEver = true
+  }
+  return out
+}

@@ -4,8 +4,8 @@
  *
  * 验证：
  *   1. feelRecall 找当天日记用本地日历日（凌晨 0-8 点也能找到）；
- *   2. buildDiaryV1 按本地日的时间边界取 raw_turns / 记忆（不再拿本地日去对 UTC 的 day 字段）；
- *   3. fetchSceneLines 取场景原话不再依赖 raw_turns.day（created_at 范围已足够）。
+ *   2. buildDiaryV1 按本地日的时间边界取 fragments / 记忆（不再拿本地日去对 UTC 的 day 字段）；
+ *   3. fetchSceneLines 取场景原话不再依赖 fragments.day（created_at 范围已足够）。
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -52,22 +52,22 @@ console.log((couldDiffer ? '' : '[提示] 当前时区本地日与 UTC 日相同
   }
 }
 
-// ---------- 2. buildDiaryV1 按时间边界取 raw（raw_turns.day 故意写成 UTC 日）----------
+// ---------- 2. buildDiaryV1 按时间边界取 raw（fragments.day 故意写成 UTC 日）----------
 {
   const at = dawn.toISOString()
-  db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run('raw_dawn_u', aid, 'sess_dawn', 'turn_dawn', 1, 'user', '凌晨这一句要进日记', null, null, at, utcD)
-  db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run('raw_dawn_a', aid, 'sess_dawn', 'turn_dawn', 2, 'assistant', '凌晨回的这一句也是', null, null, at, utcD)
   const d = await buildDiaryV1(db, aid, localD, { force: true })
   check('buildDiaryV1 用本地日能拿到凌晨的原文', !!d, d)
   check('日记的 day 是本地日', d && d.day === localD, d && d.day)
   if (couldDiffer) {
-    check('（对照）raw_turns.day 是 UTC 日，与本地日不同', utcD !== localD, { utcD, localD })
+    check('（对照）fragments.day 是 UTC 日，与本地日不同', utcD !== localD, { utcD, localD })
   }
 }
 
-// ---------- 3. fetchSceneLines 不再依赖 raw_turns.day ----------
+// ---------- 3. fetchSceneLines 不再依赖 fragments.day ----------
 {
   db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,turns,title,summary,topics,open_loops,importance,source,feel_id,created_at)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(

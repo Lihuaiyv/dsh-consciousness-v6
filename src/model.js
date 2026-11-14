@@ -17,7 +17,7 @@ const RULES = {
  * self 必须第一人称、最多 3 条、拿不准就丢——宁可少记，不要编归属。
  */
 export const EXTRACT_SYS = '从对话抽取值得长期记住的东西。只输出 JSON 数组：'
-  + '[{"text":"","type":"fact|episode|appraisal","who":"user|self","speaker":"user|self|both","quote":"","inferred":0,"mark":"normal|sensitive","key":"","terms":[""]}]，最多 20 条。'
+  + '[{"text":"","type":"fact|episode|appraisal","who":"user|self","speaker":"user|self|both","quote":"","inferred":0,"mark":"normal|sensitive","key":"","terms":[""],"occurred_at":""}]，最多 20 条。'
   + 'who 是「这条关于谁」，speaker 是「这句话是谁说的」——两个不是一回事。'
   + '你转述对方说过的话（「用户说…」「他提到…」）时 who=user、speaker=user；'
   + '写我自己做的事 / 想法 / 答应的话时 who=self、speaker=self；'
@@ -31,6 +31,7 @@ export const EXTRACT_SYS = '从对话抽取值得长期记住的东西。只输�
   + '必须用第一人称、以「我」开头，6~120 字，写具体的事；不要写对方的事，不要第三人称旁白（「用户正在…」「助手…」）；'
   + '拿不准是谁做的就丢掉这条；每轮最多 3 条，没有就整条不给。'
   + 'terms 只写词，不要句子，不要解释；没有就留空数组。'
+    + 'occurred_at 是这件事本身发生的时间（ISO 8601，如 2026-11-12T00:00:00+08:00）；原文里明确说了「昨天/上周三/11月5日」就换算成绝对时间填上，没提就留空串——空表示不知道，绝不要填现在的时间。'
 
 
 /** 抽取的用户消息：对话原文 + （可选）这一轮她自己做过的事。 */

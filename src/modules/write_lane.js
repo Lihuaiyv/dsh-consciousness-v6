@@ -154,6 +154,7 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
             text: body, type: 'episode', mark: (m && m.mark) || 'normal',
             source: 'self', confidence: 0.5, importance: score, cold: true, turn_id: opt.turnId || null,
             speaker: 'self', quote: (m && m.quote) || null, inferred: (m && m.inferred) || 0,
+    valid_at: (m && (m.occurred_at || m.valid_at)) || null,
           })
           id = row && row.id
           forceCold(db, id)
@@ -183,6 +184,7 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
           text: body, type: 'episode', mark: (m && m.mark) || 'normal',
           source: 'self', confidence: 0.5, importance: score, cold: true, turn_id: opt.turnId || null,
           speaker: 'self', quote: (m && m.quote) || null, inferred: (m && m.inferred) || 0,
+    valid_at: (m && (m.occurred_at || m.valid_at)) || null,
         })
         id = row && row.id
         forceCold(db, id)
@@ -197,6 +199,7 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
       text: body, type: 'episode', mark: (m && m.mark) || 'normal',
       source: 'self', confidence: 0.75, importance: score, turn_id: opt.turnId || null,
       speaker: 'self', quote: (m && m.quote) || null, inferred: (m && m.inferred) || 0,
+    valid_at: (m && (m.occurred_at || m.valid_at)) || null,
     })
     return { action: row && row.duplicate ? 'merge' : 'new', id: row && row.id, self: true, score }
   }
@@ -220,6 +223,7 @@ export function writeExtractedItem(db, aid, m, opt = {}) {
     cold: narr, turn_id: opt.turnId || null, ...seedFn(cand.text, type),
     fact_key: cand.fact_key || cand.key || '', terms: cand.terms || [],
     speaker, quote: (m && m.quote) || null, inferred: (m && m.inferred) || 0,
+    valid_at: (m && (m.occurred_at || m.valid_at)) || null,
   }))
   if (narr && out.id && out.action !== 'new') {
     try {

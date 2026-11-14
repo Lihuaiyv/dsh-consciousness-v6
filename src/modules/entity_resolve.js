@@ -7,6 +7,8 @@ import { getParam } from '../kernel.js'
 import { localDay, localDayBounds } from '../db.js'
 import { listEntities, resolveEntity, normalizeName } from './entities.js'
 import { llmBudgetAllow, llmBudgetBump } from './llm_budget.js'
+// 2026-11-13：工作模式跳过「模型合并实体别名」，规则合并照跑（规则在上面先执行了）。
+import { isWorkMode } from './work_mode.js'
 
 function parseJson(raw) {
   const t = String(raw || '').replace(/```[a-zA-Z]*/g, '').trim()
@@ -95,7 +97,7 @@ export async function resolveEntitiesForDay(db, aid, day, completeFn, opt = {}) 
 
   let modelMerges = 0
   const cap = Math.max(0, Number(opt.dailyCap != null ? opt.dailyCap : (getParam(db, aid, 'memory.entity.resolve.daily_cap') ?? 2)) || 0)
-  if (typeof completeFn === 'function' && ents.length >= 2 && llmBudgetAllow(db, aid, d, 1).ok && (cap <= 0 || modelMerges < cap)) {
+  if (typeof completeFn === 'function' && ents.length >= 2 && !isWorkMode(db, aid) && llmBudgetAllow(db, aid, d, 1).ok && (cap <= 0 || modelMerges < cap)) {
     try {
       const raw = await completeFn([
         {

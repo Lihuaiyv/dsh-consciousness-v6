@@ -544,6 +544,7 @@
         const w = String(why || '')
         if (w === 'no_model') return '当时没有可用的写日记模型'
         if (w === 'empty') return '模型回了空内容'
+        if (w === 'llm_budget') return '当天的模型调用额度用完了'
         if (w.startsWith('gate:too_short')) return '写得太短'
         if (w.startsWith('gate:too_long')) return '写得太长'
         if (w.startsWith('gate:paragraphs')) return '段落数不对'

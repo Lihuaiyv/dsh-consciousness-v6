@@ -581,7 +581,7 @@
             ? '回完只出文字，不念。'
             : '你用麦克风说完、她回完之后，本机自动念出来。打字聊天不会念。')),
         h(Field, { label: '嗓子' }, h(Seg, {
-          items: [['azure', '微软'], ['compat', '兼容接口'], ['local', '本机']],
+          items: [['azure', '微软'], ['compat', '兼容接口'], ['local', '本机'], ['breeze', 'BreezeBlue']],
           value: d['voice.provider'] || 'azure', onChange: (v) => set('voice.provider', v),
         })),
         h(Field, { label: '嗓子密钥' }, h(Input, {
@@ -598,6 +598,23 @@
               value: d['voice.local_ref'] || '', placeholder: '参考音频路径（克隆嗓子用）',
               onChange: (e) => set('voice.local_ref', e.target.value),
             }))) : null,
+        (d['voice.provider'] || '') === 'breeze' ? h(Field, { label: 'BreezeBlue 音色 / 模型', wide: true },
+          h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+            h(Input, {
+              value: d['voice.breeze_voice'] || '', placeholder: '音色 ID，例如 voc_u3nxkd5578wc',
+              onChange: (e) => set('voice.breeze_voice', e.target.value),
+            }),
+            h(Input, {
+              value: d['voice.breeze_model'] || '', placeholder: 'breeze-tts-2',
+              onChange: (e) => set('voice.breeze_model', e.target.value),
+            }),
+            h(Input, {
+              value: d['voice.breeze_instructions'] || '', placeholder: '语气说明（可留空），例如：轻软一点，别念得太板',
+              onChange: (e) => set('voice.breeze_instructions', e.target.value),
+            }),
+            h('div', { className: 'dshc-sub' },
+              '密钥填上面那个「嗓子密钥」（brz_ 开头）。大肥鱼两款：机灵版 voc_u3nxkd5578wc / 迷糊版 voc_8yud7hz7c9q2。')))
+          : null,
         h(Field, { label: '念完播放' }, h(Btn, {
           sm: true, primary: d['voice.play'] !== false,
           onClick: () => set('voice.play', !(d['voice.play'] !== false)),

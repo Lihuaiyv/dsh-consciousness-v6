@@ -31,7 +31,7 @@ check('提示词明确空数组合法', PICK_SYS.includes('空数组'))
 {
   const short = await pickSuperseded({
     oldCandidates: [{ id: 'a', text: '嗯嗯很好了' }], newer: { text: '这样有点暴力' },
-    complete: async () => '{"invalidate":[1]}',
+    complete: async () => '{"invalidate":[{"i":1,"quote":"检索最后定成乙方案了，下周开始执行"}]}',
   })
   check('短文本不调模型', short.skipped === 'too-short' && short.invalidate.length === 0, short)
 
@@ -53,9 +53,25 @@ check('提示词明确空数组合法', PICK_SYS.includes('空数组'))
       { id: 'b', text: '用户住杭州滨江，周末才回市区', created_at: '2026-11-02' },
     ],
     newer: { text: '用户咖啡偏好改成手冲了，不加糖', created_at: '2026-11-06' },
-    complete: async () => { calls++; return '{"invalidate":[1]}' },
+    complete: async () => { calls++; return '{"invalidate":[{"i":1,"quote":"用户咖啡偏好改成手冲了"}]}' },
   })
-  check('指认第一条', r.ok && JSON.stringify(r.invalidate) === '[1]' && calls === 1, r)
+  check('带引文指认第一条', r.ok && JSON.stringify(r.invalidate) === '[1]' && calls === 1, r)
+
+  // 没给引文 → 不认（防「QQ 通联记录 / 图库分布」那类误判）
+  const noq = await pickSuperseded({
+    oldCandidates: [{ id: 'a', text: '用户咖啡偏好是冰美式，不加糖', created_at: '2026-11-01' }],
+    newer: { text: '用户咖啡偏好改成手冲了，不加糖', created_at: '2026-11-06' },
+    complete: async () => '{"invalidate":[{"i":1,"quote":"检索最后定成乙方案了，下周开始执行"}]}',
+  })
+  check('无引文不认', noq.ok && noq.invalidate.length === 0 && noq.skipped === 'no-quote', noq)
+
+  // 引文不在新条里 → 不认
+  const badq = await pickSuperseded({
+    oldCandidates: [{ id: 'a', text: '用户咖啡偏好是冰美式，不加糖', created_at: '2026-11-01' }],
+    newer: { text: '用户咖啡偏好改成手冲了，不加糖', created_at: '2026-11-06' },
+    complete: async () => '{"invalidate":[{"i":1,"quote":"完全不存在的原话"}]}',
+  })
+  check('引文对不上不认', badq.invalidate.length === 0, badq)
   check('空数组也是合法答案', true)
 }
 
@@ -72,7 +88,7 @@ check('提示词明确空数组合法', PICK_SYS.includes('空数组'))
     w.db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(ago(120), old.id)
     const out = applyWrite(w.db, w.aid, { text: '检索最后定成乙方案了，下周开始执行', fact_key: '用户.检索P.升级' }, (c) => addMemory(w.db, w.aid, {
       text: c.text, type: 'appraisal', fact_key: c.fact_key || c.key || '',
-    }), { complete: async () => '{"invalidate":[1]}' })
+    }), { complete: async () => '{"invalidate":[{"i":1,"quote":"检索最后定成乙方案了，下周开始执行"}]}' })
     await flushJudges()
     const evs = w.db.prepare("SELECT payload FROM events WHERE agent_id=? AND type='memory.judge.pick'").all(w.aid).map((e) => JSON.parse(e.payload))
     check('shadow：写了指认事件', evs.length === 1, evs)
@@ -95,7 +111,7 @@ check('提示词明确空数组合法', PICK_SYS.includes('空数组'))
     w.db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(ago(120), old.id)
     applyWrite(w.db, w.aid, { text: '检索最后定成乙方案了，下周开始执行', fact_key: '用户.检索Q.升级' }, (c) => addMemory(w.db, w.aid, {
       text: c.text, type: 'appraisal', fact_key: c.fact_key || c.key || '',
-    }), { complete: async () => '{"invalidate":[1]}' })
+    }), { complete: async () => '{"invalidate":[{"i":1,"quote":"检索最后定成乙方案了，下周开始执行"}]}' })
     await flushJudges()
     check('on：旧条被作废', rowOf(w, old.id).invalid_at !== null)
     const sup = w.db.prepare("SELECT COUNT(*) n FROM events WHERE agent_id=? AND type='memory.judge.superseded'").get(w.aid).n

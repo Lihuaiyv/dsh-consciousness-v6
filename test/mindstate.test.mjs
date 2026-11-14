@@ -81,7 +81,7 @@ const T0 = Date.parse('2026-11-03T12:00:00.000Z')
   db.prepare('INSERT INTO consolidation_log(id,agent_id,day,at,steps,ok,ms) VALUES(?,?,?,?,?,?,?)')
     .run('cl_1', aid, '2026-11-02', lastAt, '[]', 1, 100)
 
-  const insTurn = db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
+  const insTurn = db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
   for (let i = 0; i < 19; i++) {
     insTurn.run('rt_' + i, aid, 's1', 't' + i, i, 'user', '话 ' + i, new Date(T0 - 10 * H + i * 1000).toISOString(), '2026-11-03')
   }
@@ -116,7 +116,7 @@ const T0 = Date.parse('2026-11-03T12:00:00.000Z')
   const lastAt = new Date(T0 - 30 * H).toISOString()
   db.prepare('INSERT INTO consolidation_log(id,agent_id,day,at,steps,ok,ms) VALUES(?,?,?,?,?,?,?)')
     .run('cl_b', aid, '2026-11-01', lastAt, '[]', 1, 100)
-  const insTurn = db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
+  const insTurn = db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
   for (let i = 0; i < 21; i++) {
     insTurn.run('bt_' + i, aid, 's1', 't' + i, i, 'user', '话', new Date(T0 - 5 * H).toISOString(), '2026-11-03')
   }

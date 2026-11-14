@@ -529,7 +529,7 @@ function onIngest(db, ctx, extra = {}) {
 }
 
 test('S3-01 conversationIdOf 和库里已有格式对齐（私聊用 qq:p:，不是 qq:u:）', () => {
-  // 库里已有 148 条 qq:p:3192248859 和 136 条同名 raw_turns；这里必须是同一个 id
+  // 库里已有 148 条 qq:p:3192248859 和 136 条同名 fragments；这里必须是同一个 id
   assert.equal(conversationIdOf(`u:${OWNER_QQ}`), `qq:p:${OWNER_QQ}`)
   assert.equal(conversationIdOf('g:55555'), 'qq:g:55555')
   assert.equal(conversationIdOf(''), '')

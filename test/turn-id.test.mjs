@@ -1,7 +1,7 @@
 /**
  * 阶段 0：记忆溯源链。
  *
- * 以前 raw_turns.turn_id 全是空的、memory_items.source_turn_id 一条都 join 不上，
+ * 以前 fragments.turn_id 全是空的、memory_items.source_turn_id 一条都 join 不上，
  * 所以「你上次说过什么」只有正文，没有出处。这里验证整条链：
  *   captureTurn 生成 turn_id → 入队保留 → ingest 取出 → addMemory 存下 → 能 join 回原话。
  *
@@ -66,8 +66,8 @@ const tid = makeTurnId()
 {
   const res = appendTurn(db, aid, { sessionId: 'sess1', role: 'user', text: '主人今天在改接线，说要先跑一遍', turnId: tid, at: now() })
   check('appendTurn 写入成功', !!res.id, res)
-  const row = db.prepare('SELECT turn_id FROM raw_turns WHERE id=?').get(res.id)
-  check('raw_turns.turn_id 不再是空', row.turn_id === tid, row)
+  const row = db.prepare('SELECT turn_id FROM fragments WHERE id=?').get(res.id)
+  check('fragments.turn_id 不再是空', row.turn_id === tid, row)
 }
 
 // ---- 记忆存下 turn_id，并且能 join 回原话
@@ -78,7 +78,7 @@ const tid = makeTurnId()
   check('memory_items.source_turn_id 存下了', row.source_turn_id === tid, row)
 
   const joined = db.prepare(
-    'SELECT r.text FROM memory_items m JOIN raw_turns r ON r.turn_id = m.source_turn_id WHERE m.id=?',
+    'SELECT r.text FROM memory_items m JOIN fragments r ON r.turn_id = m.source_turn_id WHERE m.id=?',
   ).all(mem.id)
   check('能 join 回原话', joined.length >= 1 && joined[0].text.includes('改接线'), joined)
 }
@@ -92,7 +92,7 @@ const tid = makeTurnId()
 
 // ---- 库里原文必须是原样（溯源不能改正文）
 {
-  const txt = db.prepare('SELECT text FROM raw_turns WHERE turn_id=?').get(tid)
+  const txt = db.prepare('SELECT text FROM fragments WHERE turn_id=?').get(tid)
   check('原文一个字没动', txt && txt.text === '主人今天在改接线，说要先跑一遍', txt)
 }
 
@@ -115,11 +115,11 @@ const tid = makeTurnId()
 
   const n = backfillTurnIds(db, aid)
   check('回溯补了行', n >= 4, n)
-  const rows = db.prepare("SELECT role,seq,turn_id FROM raw_turns WHERE session_id='bf' ORDER BY seq").all()
+  const rows = db.prepare("SELECT role,seq,turn_id FROM fragments WHERE session_id='bf' ORDER BY seq").all()
   check('user + 紧邻 assistant 共用一轮', rows[0].turn_id === rows[1].turn_id, rows.slice(0, 2))
   check('连续两条 user 不并成一轮', rows[2].turn_id !== rows[3].turn_id, rows.slice(2, 4))
   check('补上后没有空 turn_id',
-    db.prepare("SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND (turn_id IS NULL OR turn_id='')").get(aid).n === 0)
+    db.prepare("SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND (turn_id IS NULL OR turn_id='')").get(aid).n === 0)
   const again = backfillTurnIds(db, aid)
   check('重复跑不重复改', again === 0, again)
 }

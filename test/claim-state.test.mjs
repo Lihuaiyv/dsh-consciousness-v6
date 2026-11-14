@@ -36,6 +36,8 @@ const samples = [
   ['用户问语气这块怎么调', 'na'],
   ['已经改好了', 'done'],
   ['之后要做两件事', 'pending'],
+  ['用户主张处理记忆时不要靠加约束，而要判断「过时未完成陈述」是否仍成立', 'na'],
+  ['用户说这个功能已经做完了', 'done'],
 ]
 for (const [text, want] of samples) {
   const got = classifyClaim(text)

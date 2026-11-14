@@ -1,7 +1,7 @@
 /**
  * 分层记忆 · 冷/温层
  *
- * T4 raw_turns  原文：只追加，一行一句，永不改写。写入是同步的，失败就抛。
+ * T4 fragments  原文：只追加，一行一句，永不改写。写入是同步的，失败就抛。
  * T4 fact_archive 事实存根：每条事实第一次被蒸馏出来的样子，留一句原文，永不改写。
  * T2 episodes   纪要：一次会话 + 一天一压缩，给日记当原料。
  * T3 diaries    日记：一天一篇，第一人称；可重建，旧版本号保留。
@@ -17,6 +17,7 @@ import { now, localDay, localDayBounds } from '../db.js'
 import { feelIdIn, feelIdsOnDay } from './feel.js'
 import { nid } from '../kernel.js'
 import { cleanLine } from '../text.js'
+import { normalizeSource, toDbRole, normalizeForm } from './fragment_vocab.js'
 import { rebuildMemoryFts as rebuildMemoryFtsRows } from './memory_fields.js'
 import {  } from './sangguan/vweights.js'
 import {
@@ -90,34 +91,50 @@ function clipSentence(text, n) {
  */
 export function appendTurn(db, aid, input = {}) {
   const sessionId = String(input.sessionId || input.session_id || 'local')
-  const role = String(input.role || 'user')
   const text = String(input.text || '')
   if (!text.trim()) return { id: null, seq: 0, duplicate: false }
   const at = String(input.at || now())
   const turnId = input.turnId || null
+  // 2026-11-12：来源和形式按词表走（fragment_vocab）。
+  // 老调用方传 role='user' / 'assistant' / 'agent' 的，原样落库，一行不用改；
+  // 新的非人来源走 source='other' | 'world'，落到 role 列里也是这两个词。
+  // 关键：id 指纹只用落库后的 role，所以同一句话不管从哪条路进来，id 都一样。
+  const role = input.source
+    ? toDbRole(normalizeSource(input.source))
+    : (input.role ? String(input.role) : 'user')
+  // 2026-11-12：三列开始有值。
+  // snapshot = 写下这一刻的状态截面（由调用方从 buildSnapshot 拿来），没有就是 null。
+  // antecedents = 这句话接自哪几条（JSON 数组，只许指更早的碎片），没有就是 null。
+  // 注意：这几列都不进 id 指纹——旧句子的 id 一个都不会变。
+  const form = normalizeForm(input.form)
+  const snapshot = input.snapshot ? (typeof input.snapshot === 'string' ? input.snapshot : JSON.stringify(input.snapshot)) : null
+  const antecedents = input.antecedents && input.antecedents.length
+    ? (typeof input.antecedents === 'string' ? input.antecedents : JSON.stringify(input.antecedents))
+    : null
   const fingerprint = [aid, sessionId, role, turnId || '', text, turnId ? '' : at].join('\u0001')
   const id = 'raw_' + crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 20)
   if (turnId) {
     // 有轮次号：同一轮同一角色只算一条。重放同一轮时轮次号不变，id 也稳。
     // 不能按文本去重——问答里「好」「嗯」这种话，前后两轮说得一模一样是常事，
     // 按文本去重会把真说过的第二句吃掉（conversations-p5 那条 4/6 就是这么来的）。
-    const same = db.prepare('SELECT id,seq FROM raw_turns WHERE session_id=? AND role=? AND turn_id=?')
+    const same = db.prepare('SELECT id,seq FROM fragments WHERE session_id=? AND role=? AND turn_id=?')
       .get(sessionId, role, turnId)
     if (same) return { id: same.id, seq: Number(same.seq), duplicate: true }
   } else {
     // 老调用方没给轮次号：沿用「同会话同角色同文本 3 秒内算重放」的老办法。
     const since = new Date(Date.parse(at) - 3000).toISOString()
-    const near = db.prepare(`SELECT id,seq FROM raw_turns WHERE session_id=? AND role=? AND text=? AND created_at>=?
+    const near = db.prepare(`SELECT id,seq FROM fragments WHERE session_id=? AND role=? AND text=? AND created_at>=?
       ORDER BY created_at DESC LIMIT 1`).get(sessionId, role, text, since)
     if (near) return { id: near.id, seq: Number(near.seq), duplicate: true }
   }
-  const old = db.prepare('SELECT id,seq FROM raw_turns WHERE id=?').get(id)
+  const old = db.prepare('SELECT id,seq FROM fragments WHERE id=?').get(id)
   if (old) return { id, seq: Number(old.seq), duplicate: true }
-  const seq = Number(db.prepare('SELECT COALESCE(MAX(seq),0)+1 n FROM raw_turns WHERE session_id=?').get(sessionId).n)
-  db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+  const seq = Number(db.prepare('SELECT COALESCE(MAX(seq),0)+1 n FROM fragments WHERE session_id=?').get(sessionId).n)
+  db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day,form,snapshot,antecedents)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, aid, sessionId, turnId, seq, role, text,
     input.tool || null, input.meta ? JSON.stringify(input.meta) : null, at, dayOf(at),
+    form, snapshot, antecedents,
   )
   try { db.prepare('INSERT INTO raw_fts(id,text) VALUES(?,?)').run(id, text) } catch { /* 索引失败不挡原文 */ }
   return { id, seq, duplicate: false }
@@ -134,10 +151,10 @@ export function appendTurn(db, aid, input = {}) {
 export function backfillTurnIds(db, aid) {
   let rows = []
   try {
-    rows = db.prepare(`SELECT id, session_id, seq, role, turn_id FROM raw_turns
+    rows = db.prepare(`SELECT id, session_id, seq, role, turn_id FROM fragments
       WHERE agent_id=? ORDER BY session_id, seq`).all(aid)
   } catch { return 0 }
-  const upd = db.prepare('UPDATE raw_turns SET turn_id=? WHERE id=?')
+  const upd = db.prepare('UPDATE fragments SET turn_id=? WHERE id=?')
   let n = 0
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]
@@ -174,7 +191,7 @@ export function migrateArchive(db, aid) {
   try { if (db.prepare('SELECT value FROM flags WHERE key=?').get(key)) return 0 } catch { return 0 }
   const n = migrateChatTurns(db, aid)
   try {
-    const days = db.prepare("SELECT DISTINCT day FROM raw_turns WHERE agent_id=? AND session_id='legacy'").all(aid)
+    const days = db.prepare("SELECT DISTINCT day FROM fragments WHERE agent_id=? AND session_id='legacy'").all(aid)
     for (const d of days) buildEpisode(db, aid, { session: 'legacy', day: d.day })
   } catch { /* 纪要失败不影响原文 */ }
   try {
@@ -187,7 +204,7 @@ export function migrateArchive(db, aid) {
 export function rebuildRawFts(db) {
   try {
     db.exec('DELETE FROM raw_fts')
-    db.prepare('INSERT INTO raw_fts(id,text) SELECT id,text FROM raw_turns').run()
+    db.prepare('INSERT INTO raw_fts(id,text) SELECT id,text FROM fragments').run()
     return true
   } catch { return false }
 }
@@ -201,7 +218,7 @@ export function listRaw(db, aid, opt = {}) {
   if (opt.day) { where.push('day=?'); args.push(String(opt.day)) }
   if (opt.session) { where.push('session_id=?'); args.push(String(opt.session)) }
   args.push(limit, offset)
-  const rows = db.prepare(`SELECT id,session_id,seq,role,text,tool,created_at,day FROM raw_turns
+  const rows = db.prepare(`SELECT id,session_id,seq,role,text,tool,created_at,day FROM fragments
     WHERE ${where.join(' AND ')} ORDER BY created_at DESC, seq DESC LIMIT ? OFFSET ?`).all(...args)
   return rows.reverse().map((r) => ({ ...r, seq: Number(r.seq) }))
 }
@@ -221,7 +238,7 @@ export function searchRaw(db, aid, query, k = 8, opt = {}) {
       const fts = terms.map((t) => '"' + t.replace(/"/g, '""') + '"').join(' OR ')
       const args = since ? [fts, aid, since, limit] : [fts, aid, limit]
       const rows = db.prepare(`SELECT r.*, bm25(raw_fts) AS rank FROM raw_fts
-        JOIN raw_turns r ON r.id=raw_fts.id
+        JOIN fragments r ON r.id=raw_fts.id
         WHERE raw_fts MATCH ? AND r.agent_id=?${sinceSql} ORDER BY rank LIMIT ?`).all(...args)
       if (rows.length) return rows.map((r) => ({ ...r, seq: Number(r.seq) }))
     } catch { /* 回退 LIKE */ }
@@ -230,7 +247,7 @@ export function searchRaw(db, aid, query, k = 8, opt = {}) {
   if (!short) return []
   const like = '%' + short.slice(0, 8) + '%'
   const args = since ? [aid, like, since, limit] : [aid, like, limit]
-  return db.prepare(`SELECT * FROM raw_turns WHERE agent_id=? AND text LIKE ?${sinceSqlBare} ORDER BY created_at DESC LIMIT ?`)
+  return db.prepare(`SELECT * FROM fragments WHERE agent_id=? AND text LIKE ?${sinceSqlBare} ORDER BY created_at DESC LIMIT ?`)
     .all(...args).map((r) => ({ ...r, seq: Number(r.seq) }))
 }
 
@@ -238,7 +255,7 @@ export function searchRaw(db, aid, query, k = 8, opt = {}) {
 export function listSessions(db, aid, limit = 50) {
   return db.prepare(`SELECT session_id, MIN(created_at) start_at, MAX(created_at) end_at,
       COUNT(*) turns, MIN(day) day
-    FROM raw_turns WHERE agent_id=? GROUP BY session_id ORDER BY end_at DESC LIMIT ?`)
+    FROM fragments WHERE agent_id=? GROUP BY session_id ORDER BY end_at DESC LIMIT ?`)
     .all(aid, Math.max(1, Math.min(200, Number(limit) || 50)))
 }
 
@@ -404,7 +421,7 @@ export function buildEpisode(db, aid, opt = {}) {
   if (sessionId) { where.push('session_id=?'); args.push(sessionId) }
   if (from) { where.push('created_at>=?'); args.push(from) }
   if (to) { where.push('created_at<=?'); args.push(to) }
-  const rows = db.prepare(`SELECT * FROM raw_turns WHERE ${where.join(' AND ')} ORDER BY created_at, seq`).all(...args)
+  const rows = db.prepare(`SELECT * FROM fragments WHERE ${where.join(' AND ')} ORDER BY created_at, seq`).all(...args)
   if (!rows.length) return null
 
   const users = rows.filter((r) => r.role === 'user').map((r) => r.text)
@@ -582,7 +599,7 @@ export async function buildDiary(db, aid, day, opt = {}) {
 
 export async function buildDiaryV1(db, aid, day, opt = {}) {
   // day 是本地日历日（nightly 也传本地日）；查询按本地日的时间边界，不拿 day 去对
-  // raw_turns.day 那套 UTC 日期——凌晨 0-8 点两边会差一天。
+  // fragments.day 那套 UTC 日期——凌晨 0-8 点两边会差一天。
   const d = String(day || localDay(new Date()))
   const bounds = localDayBounds(d)
   const eps = listEpisodes(db, aid, { day: d, limit: 20 })
@@ -591,11 +608,11 @@ export async function buildDiaryV1(db, aid, day, opt = {}) {
     ORDER BY importance DESC, created_at LIMIT 12`).all(aid, bounds.start, bounds.end)
   let raw = []
   try {
-    raw = db.prepare(`SELECT role,text FROM raw_turns
+    raw = db.prepare(`SELECT role,text FROM fragments
       WHERE agent_id=? AND created_at>=? AND created_at<? AND role IN ('user','assistant')
       ORDER BY created_at, seq`).all(aid, bounds.start, bounds.end)
   } catch { raw = [] }
-  const rawCount = raw.length || Number(db.prepare('SELECT COUNT(*) n FROM raw_turns WHERE agent_id=? AND created_at>=? AND created_at<?')
+  const rawCount = raw.length || Number(db.prepare('SELECT COUNT(*) n FROM fragments WHERE agent_id=? AND created_at>=? AND created_at<?')
     .get(aid, bounds.start, bounds.end).n)
   if (!eps.length && !facts.length && !rawCount) return null
 
@@ -681,7 +698,7 @@ export async function buildDiaryV1(db, aid, day, opt = {}) {
   const refs = JSON.stringify({
     episodes: eps.map((e) => e.id),
     facts: facts.map((f) => f.id),
-    raw_turns: rawCount,
+    fragments: rawCount,
   })
   const at = now()
   const late = Number(opt.late) === 1 ? 1 : 0
@@ -708,18 +725,43 @@ export function getDiary(db, aid, day) {
   return { ...row, highlights: safeJson(row.highlights, []), refs: safeJson(row.refs, {}), context: safeJson(row.context, null) }
 }
 
-/** 注入用：最近几天的日记，压成几行。 */
+/**
+ * 注入用：最近几天的日记，压成「摘要 + 可追溯标记」。
+ *
+ * 2026-11-13（记忆统一 v2.1，今天第 6 件）：
+ * 以前是「- 2026-11-12：<正文截到 160 字>」——半截话、也看不出它从哪来。
+ * 现在改成：`- 〔日记 11-12｜318 段原文·12 纪要·3 记忆〕<摘要>`。
+ *   - 摘要优先用 highlights（当晚最要紧的两三条）；没有才退回正文第一段；
+ *   - 标记里的数字来自 refs，指回那天的原文 / 纪要 / 条目——能顺着查，不是凭空一句；
+ *   - 生成侧（buildDiary）一个字不动，只改「怎么讲给当下听」。
+ */
 export function recentDiaryLines(db, aid, days = 3, maxChars = 200) {
   const since = new Date(Date.now() - days * DAY_MS).toISOString().slice(0, 10)
-  const rows = db.prepare("SELECT day,text FROM diaries WHERE agent_id=? AND day>=? ORDER BY day DESC LIMIT ?")
+  const rows = db.prepare('SELECT day,text,highlights,refs FROM diaries WHERE agent_id=? AND day>=? ORDER BY day DESC LIMIT ?')
     .all(aid, since, days)
-  return rows.map((r) => `- ${r.day}：${trim(r.text.split('\n').slice(1).join(' '), maxChars)}`)
+  return rows.map((r) => {
+    const hs = safeJson(r.highlights, [])
+    const refs = safeJson(r.refs, {})
+    const nEp = Array.isArray(refs.episodes) ? refs.episodes.length : 0
+    const nFact = Array.isArray(refs.facts) ? refs.facts.length : 0
+    const nFrag = Number(refs.fragments) || 0
+    const body = String(r.text || '').split('\n').slice(1).join(' ').trim()
+    const rawSum = hs.length ? hs.slice(0, 2).join('；') : body
+    const sum = trim(rawSum, maxChars)
+    // 标记只列真有的：0 段原文不写成「0 段原文」，那看着像坏账。
+    const parts = []
+    if (nFrag) parts.push(`${nFrag} 段原文`)
+    if (nEp) parts.push(`${nEp} 纪要`)
+    if (nFact) parts.push(`${nFact} 记忆`)
+    const trace = parts.length ? `〔日记 ${r.day}｜${parts.join('·')}〕` : `〔日记 ${r.day}〕`
+    return '- ' + trace + sum
+  })
 }
 
 
 /**
- * 翻聊天账本（chat_turns）：QQ / 微信这些通道的对话只落在这里，不进 raw_turns。
- * 所以「翻原文」如果只查 raw_turns，就会觉得「存档只到今晚两条」——不是没存，是查错了表。
+ * 翻聊天账本（chat_turns）：QQ / 微信这些通道的对话只落在这里，不进 fragments。
+ * 所以「翻原文」如果只查 fragments，就会觉得「存档只到今晚两条」——不是没存，是查错了表。
  * 只读，不写任何东西。
  */
 export function searchChatTurns(db, aid, query, k = 8, opt = {}) {

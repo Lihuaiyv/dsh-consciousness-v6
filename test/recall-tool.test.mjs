@@ -83,7 +83,7 @@ db.prepare('UPDATE memory_items SET created_at=? WHERE id=?').run(ago(60), memOl
 for (let i = 0; i < 10; i++) add('记忆召回评测第 ' + i + ' 次讨论，召回率还是低')
 
 const putRaw = (id, seq, role, text, at) => {
-  db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO fragments(id,agent_id,session_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?)')
     .run(id, aid, 'sess1', seq, role, text, at, at.slice(0, 10))
   db.prepare('INSERT INTO raw_fts(id,text) VALUES(?,?)').run(id, text)
 }

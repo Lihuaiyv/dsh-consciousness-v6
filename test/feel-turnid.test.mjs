@@ -4,7 +4,7 @@
  *
  * 验证：
  *   1. affect_feel 有 turn_id 列，recordFeel 会写；
- *   2. 不传 turnId 时，从 raw_turns 里最近一条 user 行自己找（同会话优先）；
+ *   2. 不传 turnId 时，从 fragments 里最近一条 user 行自己找（同会话优先）；
  *   3. 有 turn_id 的 feel，around 按轮取 user/agent，不再靠 5 分钟时间窗猜；
  *   4. 两条相邻 feel 不会串到隔壁轮；
  *   5. 老 feel（无 turn_id）仍能按时间窗兜底；
@@ -38,9 +38,9 @@ const cols = db.prepare("SELECT name FROM pragma_table_info('affect_feel')").all
 check('affect_feel 有 turn_id 列', cols.includes('turn_id'), cols)
 
 // ---------- 2. 造两轮原文 ----------
-db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   .run('raw_u1', aid, 's1', 'turnA', 1, 'user', 'A 轮那句', null, null, iso(-60), '2026-11-05')
-db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   .run('raw_a1', aid, 's1', 'turnA', 2, 'assistant', 'A 轮的回复', null, null, iso(-58), '2026-11-05')
 
 // 测试里把频率闸关掉：两条 feel 只差几秒，真实对话里也不会这样密
@@ -56,9 +56,9 @@ const r2 = recordFeel(db, aid, { text: '被这么一钉反而踏实', sessionId:
 check('自动解析取到最近 user 轮的 turn_id', r2.ok && r2.turn_id === 'turnA', r2)
 
 // ---------- 3. 新的一轮到来后，自动解析切到新轮 ----------
-db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   .run('raw_u2', aid, 's1', 'turnB', 3, 'user', 'B 轮那句', null, null, iso(-20), '2026-11-05')
-db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   .run('raw_a2', aid, 's1', 'turnB', 4, 'assistant', 'B 轮的回复', null, null, iso(-18), '2026-11-05')
 
 const r3 = recordFeel(db, aid, { text: '这会儿肩膀落下来了', sessionId: 's1', at: Date.now() - 15000 })
@@ -94,7 +94,7 @@ const db2 = openDb(path.join(db2dir, 'app.db'))
 const aid2 = 'agt_feelturn2'
 db2.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,1)')
   .run(aid2, '旧', 'daily', 'active', new Date().toISOString())
-db2.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+db2.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
   .run('raw_ancient', aid2, 's2', 'turnAncient', 1, 'user', '两小时前那句', null, null, iso(-7200), '2026-11-05')
 const r4 = recordFeel(db2, aid2, { text: '太久了不该挂', sessionId: 's2', at: Date.now() })
 check('60 分钟外的轮不认，turn_id 留空', r4.ok && r4.turn_id === null, r4)

@@ -98,7 +98,7 @@ db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
 }
 
 // ---- T2 纪要
-// day 必须用本地日历日（dayKey/localDay），不能 now().slice(0,10)——UTC 跨日会跟 raw_turns.day 对不上
+// day 必须用本地日历日（dayKey/localDay），不能 now().slice(0,10)——UTC 跨日会跟 fragments.day 对不上
 {
   const day = localDay()
   const ep = buildEpisode(db, aid, { session: 'sess_a', day })
@@ -351,7 +351,7 @@ db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
     return out.body
   }
   const tiers = await api('GET', `/v1/agents/${aid}/tiers`)
-  check('HTTP 档位统计', tiers.facts && tiers.raw_turns >= 2, tiers)
+  check('HTTP 档位统计', tiers.facts && tiers.fragments >= 2, tiers)
   const raw = await api('GET', `/v1/agents/${aid}/archive?session=sess_a`)
   check('HTTP 原文时间线', Array.isArray(raw.items) && raw.items.length === 2, raw)
   const found = await api('GET', `/v1/agents/${aid}/archive?q=${encodeURIComponent('海风')}`)

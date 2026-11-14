@@ -7,7 +7,7 @@
  * 运行：node test/exam-mouth.test.mjs
  */
 import { synthesizeVoice, checkTtsConfig } from '../src/parts/mouth/index.js'
-import { buildAzureSsml, buildLocalTtsRequest } from '../src/parts/mouth/providers.js'
+import { buildAzureSsml, buildLocalTtsRequest, buildBreezeTtsRequest, buildBreezeDesignRequest, breezeDesignPreviews, breezeSaveDesignPreview } from '../src/parts/mouth/providers.js'
 import { sniffAudioFormat } from '../src/parts/mouth/format.js'
 
 let pass = 0
@@ -103,6 +103,65 @@ function fakeFetch(body, { ok = true, status = 200 } = {}) {
   const sent = JSON.parse(String(f.calls[0].init.body))
   check('本机：参考音频与提示文本都带上', sent.ref_audio_path === 'ref.wav' && sent.prompt_text === '提示', sent)
   check('本机：请求体有默认值，不缺字段', buildLocalTtsRequest({}, 'x').text_lang === 'zh' && buildLocalTtsRequest({}, 'x').media_type === 'wav')
+}
+
+// ================================================================ BreezeBlue
+{
+  check('BreezeBlue 缺密钥：明说缺什么', String(checkTtsConfig({ ttsProvider: 'breeze', ttsBreezeVoice: 'voc_x' })).includes('密钥'))
+  check('BreezeBlue 缺音色 ID：明说缺什么', String(checkTtsConfig({ ttsProvider: 'breeze', ttsApiKey: 'k' })).includes('音色'))
+  check('BreezeBlue 配齐了：放行', checkTtsConfig({ ttsProvider: 'breeze', ttsApiKey: 'k', ttsBreezeVoice: 'voc_x' }) === null)
+
+  const f = fakeFetch(mp3)
+  const got = await synthesizeVoice({
+    ttsProvider: 'breeze', ttsApiKey: 'brz_k', ttsBreezeUrl: 'https://api.breeze.blue/',
+    ttsBreezeVoice: 'voc_abc', ttsBreezeModel: 'breeze-tts-2', ttsBreezeInstructions: '轻一点',
+  }, '晚安', { fetchImpl: f })
+  check('BreezeBlue：拿回 mp3', got.format === 'mp3' && got.audio.length > 0, got.format)
+  check('BreezeBlue：地址拼对（去多余斜杠）',
+    f.calls[0].url.startsWith('https://api.breeze.blue/v1/text-to-speech/voc_abc'), f.calls[0].url)
+  check('BreezeBlue：认证头是 xi-api-key', f.calls[0].init.headers['xi-api-key'] === 'brz_k', f.calls[0].init.headers)
+  const sent = JSON.parse(String(f.calls[0].init.body))
+  check('BreezeBlue：body 用它的字段名', sent.text === '晚安' && sent.model_id === 'breeze-tts-2' && sent.instructions === '轻一点', sent)
+  check('BreezeBlue：语气说明留空就不发这个键', !('instructions' in buildBreezeTtsRequest({}, 'x')), buildBreezeTtsRequest({}, 'x'))
+}
+
+// ================================================================ BreezeBlue · 造嗓子
+{
+  /** 假服务：回一段 JSON，记下请求。 */
+  const jsonFetch = (payload) => {
+    const calls = []
+    const impl = async (url, init) => {
+      calls.push({ url: String(url), init })
+      return {
+        ok: true, status: 200,
+        arrayBuffer: async () => new ArrayBuffer(0),
+        text: async () => JSON.stringify(payload),
+        json: async () => payload,
+      }
+    }
+    impl.calls = calls
+    return impl
+  }
+  const cfg = { ttsApiKey: 'brz_k', ttsBreezeUrl: 'https://api.breeze.blue' }
+
+  check('设计：没给描述就问要什么声音', await throwsWith(() => Promise.resolve(buildBreezeDesignRequest({}, '  ')), '一句描述'))
+
+  const f = jsonFetch({ previews: [{ generated_voice_id: 'gen_1' }, { generated_voice_id: 'gen_2' }], text: '试听台词' })
+  const got = await breezeDesignPreviews(cfg, ' 清亮一点 ', { fetchImpl: f })
+  check('设计：去 /v1/voice-previews/design', f.calls[0].url.startsWith('https://api.breeze.blue/v1/voice-previews/design'), f.calls[0].url)
+  check('设计：认证头是 xi-api-key', f.calls[0].init.headers['xi-api-key'] === 'brz_k', f.calls[0].init.headers)
+  const sent = JSON.parse(String(f.calls[0].init.body))
+  check('设计：描述去空白、候选数默认 3', sent.voice_description === '清亮一点' && sent.preview_count === 3, sent)
+  check('设计：回包里的候选和试听台词拿出来', got.previews.length === 2 && got.text === '试听台词', got)
+  check('设计：回包没候选就不当成功', await throwsWith(() => breezeDesignPreviews(cfg, '清亮一点', { fetchImpl: jsonFetch({}) }), '没给候选'))
+
+  const sf = jsonFetch({ voice_id: 'voc_new', voice_name: '小汐' })
+  const saved = await breezeSaveDesignPreview(cfg, 'gen_1', { name: '小汐' }, { fetchImpl: sf })
+  check('保存：去 …/voice-previews/gen_1/save', sf.calls[0].url === 'https://api.breeze.blue/v1/voice-previews/gen_1/save', sf.calls[0].url)
+  const sbody = JSON.parse(String(sf.calls[0].init.body))
+  check('保存：名字和语言都带上', sbody.voice_name === '小汐' && sbody.language_code === 'zh', sbody)
+  check('保存：拿得到新的 voice_id', saved.voice_id === 'voc_new', saved)
+  check('保存：回包没 voice_id 不假装成功', await throwsWith(() => breezeSaveDesignPreview(cfg, 'gen_1', {}, { fetchImpl: jsonFetch({}) }), '没有 voice_id'))
 }
 
 // ================================================================ 出事的时候

@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db.js'
 import { loadState } from '../src/modules/sangguan/projection.js'
-import { runLaneW, weekBag } from '../src/modules/sangguan/lanes.js'
+import { runLaneW } from '../src/modules/sangguan/lanes.js'
 import { setSangguanConfig } from '../src/modules/sangguan/config.js'
 
 let pass = 0
@@ -22,14 +22,15 @@ const db = openDb(path.join(dir, 'app.db'))
 const aid = 'agt_sgwan'
 const NOW = '2026-11-10T15:00:00.000Z'
 
-// 一周的经历
-const ins = db.prepare(`INSERT INTO episodes(id,agent_id,day,start_at,created_at,turns,title,summary,source)
+// 一周的原话。三天各一句，不走纪要。
+const turn = db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day)
   VALUES(?,?,?,?,?,?,?,?,?)`)
-for (let i = 0; i < 3; i++) {
-  const d = '2026-11-0' + (5 + i)
-  ins.run('ep_t' + i, aid, d, d + 'T10:00:00.000Z', d + 'T11:00:00.000Z', 20, '第' + i + '天',
-    i === 0 ? '你说难受，我先给了方案，你半天没回' : i === 1 ? '你说累，我问要不要休息，你说了很多' : '你半夜说睡不着，我陪你聊到困', 'rules')
-}
+const lines = [
+  ['2026-11-05', '你说难受，我先给了方案，你半天没回'],
+  ['2026-11-06', '你说累，我问要不要休息，你说了很多'],
+  ['2026-11-07', '你半夜说睡不着，我陪你聊到困'],
+]
+lines.forEach((x, i) => turn.run('rt' + i, aid, 's1', 't' + i, i + 1, 'user', x[1], x[0] + 'T10:00:00.000Z', x[0]))
 
 const good = {
   belief: '人难受的时候多数不是要一个答案，是要有人先把话接住',
@@ -48,16 +49,19 @@ check('关着：直接跳过', r.skipped === 'off' && Object.keys(loadState(db, 
 
 setSangguanConfig(db, aid, { lanes: { W: true } })
 
-// 材料：读到三条经历
-const bag = weekBag(db, aid, NOW)
-check('材料：读到一周经历', bag.episodes.length === 3, bag.episodes.length)
-
 // 跑一轮：一条合格、两条不合格
 const asked = []
-r = await runLaneW(db, aid, NOW, {
-  ask: async (input) => { asked.push(input); return { ok: true, out: { candidates: [good, badNoScene, badSelf] } } },
+const item = (c, facts) => ({
+  principle: c.belief, layer: 'W', facts,
+  expectation: c.expectation, observe: c.observe, falsifier: c.falsifier || null,
 })
-check('模型：拿到经历', asked.length === 1 && asked[0].episodes.length === 3)
+r = await runLaneW(db, aid, NOW, {
+  ask: async (input) => {
+    asked.push(input)
+    return { ok: true, out: { items: [item(good, [0, 1, 2]), item(badNoScene, [0, 1]), item(badSelf, [0, 1, 2])] } }
+  },
+})
+check('模型：拿到原话', asked.length === 1 && asked[0].facts.length === 3, asked[0])
 check('入账：只收合格的那一条', r.did.length === 1, r)
 check('拒收：场景不足', r.rejected.some((x) => x.reason === 'scene_too_few'))
 check('拒收：预期在说自己', r.rejected.some((x) => x.reason === 'expectation_about_self'))

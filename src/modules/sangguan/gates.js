@@ -72,10 +72,11 @@ export function instructionLike(text) {
  * 起因（2026-11-02）：页首长出过「电脑关机或插件没开，这套服务就不存在」「先做开机自启和后台守护，
  * 再考虑上服务器」——那是主人的工程记录，被抽取当成它的世界观。W1 原来只查形式，从来不问这个。
  *
- * 判定只有三条，都能当场说清：
- *   1. 有取向词 → 放行（说什么都算它在表态）
- *   2. 没取向词、却提到工程语汇 → 拒（说的是这套系统怎么搭，不是世界怎样）
- *   3. 没取向词、又是明确的待办口吻 → 拒
+ * 判定：
+ *   1. 有取向词，且工程词少于两个 → 放行
+ *   2. 工程词到了两个，就算套了「我看重」也拒
+ *   3. 没取向词、却提到工程语汇 → 拒
+ *   4. 没取向词、又是明确的待办口吻 → 拒
  * 拒收记 REJECT + reason=not_stance，可在 tech 视图回查；不静默丢。
  */
 const STANCE_WORD = /(看重|在意|认[为定]|觉得|相信|应该|值得|宁可|宁愿|愿意|不肯|不[接愿]受|不[信服认]|讨厌|喜欢|更[想重看愿]|好过|胜过|不如)/
@@ -83,12 +84,19 @@ const TECH_WORD = /(插件|代码|测试|脚本|接口|数据库|服务器|配�
 export { TECH_WORD }
 const PLAN_WORD = /(待办|排期|下一步|计划(?:先|要|是|中)|要做的是|得先做|需要先做|重构一下|发版|上线排)/
 
-/** 立场闸：返回拒收理由，合法返回 null。 */
+/** 工程词出现几次。一个词不算数：日常取舍里也会碰到「数据」「测试」。 */
+function techHits(t) {
+  return (String(t || '').match(new RegExp(TECH_WORD.source, 'g')) || []).length
+}
+
+/** 立场闸：返回拒收理由，合法返回 null。
+ *  有取向词本来放行。两个以上工程词再套一句「我看重」，仍是在说这套系统怎么搭，不收。 */
 export function stanceGate(text) {
   const t = String(text || '').trim()
   if (!t) return 'not_stance'
-  if (STANCE_WORD.test(t)) return null
-  if (TECH_WORD.test(t)) return 'not_stance'
+  const tech = techHits(t)
+  if (STANCE_WORD.test(t)) return tech >= 2 ? 'not_stance' : null
+  if (tech >= 1) return 'not_stance'
   if (PLAN_WORD.test(t)) return 'not_stance'
   return null
 }

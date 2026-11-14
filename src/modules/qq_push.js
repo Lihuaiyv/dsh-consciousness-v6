@@ -15,6 +15,7 @@ import { now } from '../db.js'
 import { event } from '../kernel.js'
 import { markDelivered } from './proactive.js'
 import { appendTurn } from './archive.js'
+import { writeChatTurnRow } from './turn_write.js'
 
 /** 私聊 chatKey：桥的格式是 `u:<QQ号>`。 */
 export function ownerChatKey(qq) {
@@ -66,11 +67,7 @@ export async function pushProactiveToQQ({ db, aid, api, chatKey, line, proactive
   try {
     const cid = conversationIdOfChatKey(chatKey)
     if (cid) {
-      db.prepare(`INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id)
-        VALUES(?,?,?,?,?,?,?,?)`).run(
-        'cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10),
-        aid, 'agent', text, '[]', null, now(), cid,
-      )
+      writeChatTurnRow(db, aid, { role: 'agent', text, at: now(), conversationId: cid })
     }
   } catch { /* 写不进账本不影响消息已经发出去 */ }
   // 原文层（T4）也留一条：主动推出去的话，她自己的「翻得到」靠的是这里。

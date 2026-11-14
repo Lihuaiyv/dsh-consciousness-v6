@@ -63,9 +63,9 @@ function feel(text, offsetMin = 0) {
 {
   const fid = feel('这会儿聊得挺专注的', -20)
   const day = now().slice(0, 10)
-  db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run('raw_lay_u', aid, 'sess_lay', 'turnLay', 1, 'user', '今天我们聊了纪要带感觉这件事', null, null, new Date(Date.now() - 25 * 60000).toISOString(), day)
-  db.prepare('INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+  db.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
     .run('raw_lay_a', aid, 'sess_lay', 'turnLay', 2, 'assistant', '嗯，写进去之后翻纪要就能看见。', null, null, new Date(Date.now() - 18 * 60000).toISOString(), day)
   const ep = buildEpisode(db, aid, { session: 'sess_lay' })
   check('纪要带时段内最近的 feel_id', ep && ep.feel_id === fid, ep && ep.feel_id)

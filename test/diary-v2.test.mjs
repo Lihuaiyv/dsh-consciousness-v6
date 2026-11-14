@@ -43,7 +43,7 @@ function episode(aid, sid, title, summary, opt = {}) {
     opt.turns || 12, title, summary, '[]', null, JSON.stringify(opt.loops || []),
     opt.importance == null ? 0.5 : opt.importance, now())
 }
-const rawIns = db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
+const rawIns = db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
   VALUES(?,?,?,?,?,?,?,NULL,NULL,?,?)`)
 function turn(aid, sid, i, role, text, at) {
   rawIns.run('raw_' + sid + '_' + i, aid, sid, null, i, role, text, at, DAY)
@@ -79,7 +79,7 @@ affectIns.run('as1', A, DAY + 'T12:00:00.000Z', 'irritated', 0.82, 0.8, -0.5)
   })
   check('打分在 0–10', scoreScene(db, A, bad) >= 0 && scoreScene(db, A, bad) <= 10, scoreScene(db, A, bad))
   const picked = ruleSelect(db, A, cs, diaryParams(db, A), {})
-  check('规则选场：最多 2 条', picked.scenes.length <= 2 && picked.scenes.length >= 1, picked.scenes.map((s) => s.title))
+  check('规则选场：最多 6 条', picked.scenes.length <= 6 && picked.scenes.length >= 1, picked.scenes.map((s) => s.title))
   check('规则选场：第一条是吵架那条', picked.scenes[0].session_id === 's_bad', picked.scenes.map((s) => s.session_id))
   check('规则选场：select=rule', picked.select === 'rule', picked.select)
 }
@@ -100,7 +100,7 @@ affectIns.run('as1', A, DAY + 'T12:00:00.000Z', 'irritated', 0.82, 0.8, -0.5)
 
 // 参数覆盖
 {
-  check('参数默认：scenes=2', diaryParams(db, A).scenes === 2, diaryParams(db, A).scenes)
+  check('参数默认：scenes=6', diaryParams(db, A).scenes === 6, diaryParams(db, A).scenes)
   writeParam(db, A, 'memory.diary.scenes', 1)
   check('参数覆盖：scenes=1', diaryParams(db, A).scenes === 1, diaryParams(db, A).scenes)
   writeParam(db, A, 'memory.diary.scenes', 2)

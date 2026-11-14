@@ -522,6 +522,58 @@ export const J31 = registerTemplate({
   },
 })
 
+// ---------- 环的开头：从原话抽道理 ----------
+// 输入是一句句原话。抽出事实撑得住的判断。复述或写成流水的不要。
+export const J34 = registerTemplate({
+  id: 'J34', version: 1, tier: 'T2', pool: 'mid', temperature: 0.2, max_tokens: 2000, json: false,
+  system: `你在读一周里发生过的事。每条料有两种样子：
+- 单句：当时的一句原话，或事件 / 日记里记下的一句话。
+- 弧：三行「她先说 / 主人顶 / 她改成」——同一件事的三步，走完了一遍。
+看弧的时候先回答三件事：她原来怎么想、被顶在哪一句、后来改成了什么；道理要落在这三步的变化上，不是复述其中一句。
+从这些料里抽出道理：一句判断，是这几条合在一起才撑得住的。
+道理不能是把某句原话换个说法；要能接一句「所以以后遇到___，她会___」。接不上的不要写。
+只能把原话缩短、或者按时间把一天重讲一遍的，不要写。
+每条标 layer：
+- W 世界或人是怎样的。先看这几条里具体发生了什么场景，再说什么样的人才总会这样。给 expectation（以后能对上的预期，主语是对方或世界）和 observe（不插手也能看见的事）。
+- L 这一段时间她为什么这样过、想往哪走。给 direction（具体方向，不要写「变好」）。
+- V 同一批事里，她在两件都说得通的做法之间放弃了什么。给 alt（另一条路）、foregone（放弃了什么）、exclusion（所以她不会怎样）。
+facts 写事实编号，至少两条，而且不是同一天。
+先把料过一遍：哪一条弧或哪两句原话能接上「所以以后遇到___，她会___」，就写一条出来；真的每一条都接不上，才返回空数组。
+先在脑子里想，不要写推理过程；输出里除了这个 JSON 不要有任何别的话。
+只输出 JSON：{"items":[{"principle":"…","layer":"W","facts":[0,1],"expectation":null,"observe":null,"direction":null,"alt":null,"foregone":null,"exclusion":null}]}`,
+  build: (input) => JSON.stringify(input),
+  schema: {
+    type: 'object', required: ['items'],
+    props: {
+      items: {
+        type: 'array', max: 5, default: [],
+        items: {
+          type: 'object', required: ['principle', 'layer', 'facts'],
+          props: {
+            principle: s(80),
+            layer: { type: 'string', enum: ['W', 'L', 'V'] },
+            facts: { type: 'array', max: 8, items: ref },
+            expectation: opt({ type: 'string', max: 200 }),
+            observe: opt({ type: 'string', max: 200 }),
+            direction: opt({ type: 'string', max: 60 }),
+            alt: opt({ type: 'string', max: 160 }),
+            foregone: opt({ type: 'string', max: 160 }),
+            exclusion: opt({ type: 'string', max: 120 }),
+          },
+        },
+      },
+    },
+  },
+  check: (out, input) => {
+    const n = (input && input.facts || []).length
+    const bad = []
+    for (const it of out.items) {
+      for (const i of it.facts) if (!(i >= 0 && i < n)) bad.push('facts 越界：' + i)
+    }
+    return bad
+  },
+})
+
 // ---------- 草稿：反事实标注 ----------
 // 每个取舍现场都要回答三问：当时另一条路是什么、放弃了什么、谁受损。答不上来就丢掉。
 export const J32 = registerTemplate({

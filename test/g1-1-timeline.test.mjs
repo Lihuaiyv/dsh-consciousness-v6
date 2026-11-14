@@ -140,7 +140,7 @@ const disputedAt = (p, t) => p.disputes.some((iv) => overlaps(iv, t, new Date(Da
   const nope = invalidateMemory(db, aid, 'missing', { reason: 'x' })
   check('不存在的 id 不记事件', Number(nope.changes) === 0 && eventsOf(db, aid, 'missing').length === 0)
   // saidAt：原话 / 纪要 / 兜底
-  db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
     .run('r1', aid, 's1', 't1', 0, 'user', '我喜欢美式', d(10, -1), '2026-03-11')
   db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,created_at) VALUES(?,?,?,?,?,?,?)`)
     .run('ep1', aid, 's1', '2026-03-11', d(10, -2), d(10, -1), d(10, 1))

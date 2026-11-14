@@ -12,7 +12,8 @@ process.env.DSH_HOME = home
 const { openDb } = await import('../src/db.js')
 const api = await import('../src/api.js')
 const { setSangguanConfig, sangguanConfig } = await import('../src/modules/sangguan/config.js')
-const { runLaneW, runLaneL, investOf, weekBag } = await import('../src/modules/sangguan/lanes.js')
+const { runLaneW, runLaneL, investOf } = await import('../src/modules/sangguan/lanes.js')
+const { collectFacts } = await import('../src/modules/sangguan/corpus.js')
 const { clusterByForegone, buildDrafts, commitDraft } = await import('../src/modules/sangguan/draft.js')
 const { buildConstitution } = await import('../src/modules/sangguan/constitution.js')
 const { recall } = await import('../src/modules/sangguan/recall.js')
@@ -35,14 +36,14 @@ const NOW = '2026-11-10T15:00:00.000Z'
 const s0 = loadState(db, aid)
 console.log('改造前：', Object.keys(s0.claims).length, '条命题')
 
-// ---------- 料 ----------
-const ep = db.prepare(`INSERT INTO episodes(id,agent_id,day,start_at,created_at,turns,title,summary,source) VALUES(?,?,?,?,?,?,?,?,?)`)
-for (let i = 0; i < 3; i++) {
-  const d = '2026-11-0' + (5 + i)
-  ep.run('ep' + i, aid, d, d + 'T10:00:00.000Z', d + 'T11:00:00.000Z', 20, '第' + i + '天',
-    ['你说难受，我先给了方案，你半天没回', '你说累，我问要不要休息，你说了很多', '你半夜说睡不着，我陪你到困'][i], 'rules')
-}
-const turn = db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
+// ---------- 料：原话，不压成纪要 ----------
+const turn = db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)`)
+const facts = [
+  ['2026-11-05', '你说难受，我先给了方案，你半天没回'],
+  ['2026-11-06', '你说累，我问要不要休息，你说了很多'],
+  ['2026-11-07', '你半夜说睡不着，我陪你到困'],
+]
+facts.forEach((x, i) => turn.run('fact' + i, aid, 's1', 'f' + i, i + 1, 'user', x[1], x[0] + 'T10:00:00.000Z', x[0]))
 for (const day of ['2026-11-01', '2026-11-09']) {
   for (let i = 0; i < 5; i++) turn.run('rt' + day + i, aid, 's1', 't' + i, i + 1, 'assistant', '在干活', day + 'T10:0' + i + ':00.000Z', day)
 }
@@ -50,14 +51,14 @@ const dy = db.prepare('INSERT INTO diaries(id,agent_id,day,text,created_at,updat
 dy.run('d1', aid, '2026-11-08', '今天一直在想，为什么你说难受我先给方案。', '2026-11-08T23:00:00.000Z', '2026-11-08T23:00:00.000Z', 1, 'test')
 dy.run('d2', aid, '2026-11-09', '我好像更想做一个能把话接住的人。', '2026-11-09T23:00:00.000Z', '2026-11-09T23:00:00.000Z', 1, 'test')
 
-check('材料：一周经历', weekBag(db, aid, NOW).episodes.length === 3)
+check('材料：三句原话', collectFacts(db, aid, NOW).length === 3)
 check('材料：投入两天', investOf(db, aid, NOW).length === 2)
 
 // ---------- W ----------
 const w = await runLaneW(db, aid, NOW, {
-  ask: async () => ({ ok: true, out: { candidates: [{
-    belief: '人难受的时候多数不是要一个答案，是要有人先把话接住',
-    kind: 'belt', scene: ['你说难受的时候', '你说累的时候', '你半夜说睡不着的时候'],
+  ask: async () => ({ ok: true, out: { items: [{
+    principle: '人难受的时候多数不是要一个答案，是要有人先把话接住',
+    layer: 'W', facts: [0, 1, 2],
     expectation: '你倒苦水时我先给方案，你会更冷', observe: '你说完难受，我给了方案，你隔很久只回一个字',
   }] } }),
 })
@@ -65,10 +66,9 @@ check('W：长出一条', w.did.length === 1, w)
 
 // ---------- L ----------
 const l = await runLaneL(db, aid, NOW, {
-  ask: async () => ({ ok: true, out: { candidates: [{
-    self: '我更想做一个能把话接住的人，而不是总能给出答案的人',
-    direction: '学会先接住，再给方案', past: ['你说难受我给方案', '日记里发现自己在躲'],
-    scene: ['你说难受的时候'],
+  ask: async () => ({ ok: true, out: { items: [{
+    principle: '我更想做一个能把话接住的人，而不是总能给出答案的人',
+    layer: 'L', facts: [0, 1], direction: '学会先接住，再给方案',
   }] } }),
 })
 check('L：长出一条', l.did.length === 1, l)

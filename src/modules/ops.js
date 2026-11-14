@@ -7,6 +7,7 @@ import { inbox, listProposals } from './selfmod.js'
 import { memoryStats } from './memory.js'
 import { deleteMemoryFts, deleteMemoryFtsOrphans, setMemoryFts } from './memory_fields.js'
 import { rebuildMemoryFts, rebuildRawFts, rebuildFactFts } from './archive.js'
+import { pruneScenes } from './confluence.js'
 import { purgeAgent, purgeOrphans } from './sangguan/purge.js'
 import { readEvents } from './sangguan/ledger.js'
 import { expireStaleProactive } from './proactive.js'
@@ -24,7 +25,7 @@ export function auditStore(db, opt = {}) {
   const n = (sql) => { try { return Number(db.prepare(sql).get().n || 0) } catch { return -1 } }
   const checks = [
     { name: 'memory_fts', bad: n("SELECT COUNT(*) n FROM memory_items m WHERE m.status='active' AND NOT EXISTS(SELECT 1 FROM memory_fts f WHERE f.id=m.id)") },
-    { name: 'raw_fts', bad: n("SELECT COUNT(*) n FROM raw_turns r WHERE NOT EXISTS(SELECT 1 FROM raw_fts f WHERE f.id=r.id)") },
+    { name: 'raw_fts', bad: n("SELECT COUNT(*) n FROM fragments r WHERE NOT EXISTS(SELECT 1 FROM raw_fts f WHERE f.id=r.id)") },
     { name: 'fact_fts', bad: n("SELECT COUNT(*) n FROM fact_archive f WHERE NOT EXISTS(SELECT 1 FROM fact_fts x WHERE x.id=f.id)") },
     { name: 'memory_links', bad: n("SELECT COUNT(*) n FROM memory_links l WHERE NOT EXISTS(SELECT 1 FROM memory_items m WHERE m.id=l.from_id) OR NOT EXISTS(SELECT 1 FROM memory_items m WHERE m.id=l.to_id)") },
     { name: 'feel_refs', bad: n(`SELECT (
@@ -72,12 +73,13 @@ export function setCondition(db, aid, body) {
 export function purgeExpired(db) {
   const cutoff = new Date(Date.now() - 7 * 86400000).toISOString()
   let agents = 0, memories = 0
-  const TABLES = ['memory_items', 'conflicts', 'persona', 'persona_values', 'preferences', 'taboos',
+  const TABLES = ['memory_items', 'conflicts', 'persona', 'preferences', 'taboos',
     'relations', 'affect_state', 'affect_episodes', 'affect_samples', 'affect_feel', 'affect_user_read', 'condition_state', 'drive_state',
     'action_ports', 'action_log', 'proposals', 'changes', 'inbox_items', 'events',
     'metric_snapshots', 'metric_samples', 'chat_turns', 'bindings', 'agent_bindings', 'algo_bindings', 'agent_params', 'persona_views', 'thoughts',
-    'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'raw_turns', 'fact_archive', 'memory_timeline', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
-    'axis_rope', 'axis_evidence', 'persona_judge']
+    'proactive', 'proactive_stats', 'proactive_decisions', 'episodes', 'diaries', 'fragments', 'fact_archive', 'memory_timeline', 'retrieval_log', 'entities', 'extract_queue', 'consolidation_log',
+    'axis_rope', 'axis_evidence', 'persona_judge',
+    'state_scene', 'scene_archive', 'confluence_log', 'revisit']
   for (const a of db.prepare("SELECT id FROM agents WHERE status='soft_deleted' AND deleted_at<?").all(cutoff)) {
     const arts = db.prepare('SELECT active_id,previous_id,pinned_id,v0_id FROM agent_bindings WHERE agent_id=?').all(a.id)
     for (const t of TABLES) { try { db.prepare(`DELETE FROM ${t} WHERE agent_id=?`).run(a.id) } catch { /* 表不存在或列不同 */ } }
@@ -93,7 +95,7 @@ export function purgeExpired(db) {
       }
     }
     try { deleteMemoryFtsOrphans(db) } catch { /* 忽略 */ }
-    try { db.prepare('DELETE FROM raw_fts WHERE id NOT IN (SELECT id FROM raw_turns)').run() } catch { /* 忽略 */ }
+    try { db.prepare('DELETE FROM raw_fts WHERE id NOT IN (SELECT id FROM fragments)').run() } catch { /* 忽略 */ }
     try { db.prepare('DELETE FROM fact_fts WHERE id NOT IN (SELECT id FROM fact_archive)').run() } catch { /* 忽略 */ }
     // 整实例清除：账本只增的唯一例外。失败不挡 agent 清除，孤儿留给 purgeOrphans
     try { purgeAgent(db, a.id) } catch { /* 三观清除失败不挡主流程 */ }
@@ -126,7 +128,15 @@ export function purgeExpired(db) {
   } catch { /* 老库没有 proactive 表 */ }
   // agents 里已经没有、三观数据还在的（上次清除失败的），补清
   try { purgeOrphans(db) } catch { /* 补清失败下次再来 */ }
-  return { agents, memories, idem, staleProactive }
+  // 记忆汇流的留底按天/按行数回收（注入块 180 天 + 2 万行；轻 180 天；重 360 天）
+  let scenes = { archive: 0, light: 0, heavy: 0 }
+  try {
+    for (const a of db.prepare("SELECT id FROM agents WHERE status!='soft_deleted'").all()) {
+      const r = pruneScenes(db, a.id)
+      scenes.archive += r.archive; scenes.light += r.light; scenes.heavy += r.heavy
+    }
+  } catch { /* 老库没有汇流表 */ }
+  return { agents, memories, idem, staleProactive, scenes }
 }
 
 // ---------------- export / import ----------------

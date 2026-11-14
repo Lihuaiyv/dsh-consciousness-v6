@@ -7,7 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 
-/** 指定本地日的钟点 → ISO（写入 raw_turns 后 day 仍落在该本地日） */
+/** 指定本地日的钟点 → ISO（写入 fragments 后 day 仍落在该本地日） */
 function atLocal(day, h = 12, m = 0) {
   const [y, mo, d] = String(day).split('-').map(Number)
   return new Date(y, mo - 1, d, h, m, 0).toISOString()
@@ -122,7 +122,7 @@ db.prepare("INSERT INTO agents(id,name,mode,status,created_at,schema_version) VA
 {
   const dayR = '2026-10-20'
   appendTurn(db, aid, { sessionId: 'repair', role: 'user', text: '今晚要不要部署？', at: atLocal(dayR, 20, 0) })
-  check('D3 原料落在本地日', db.prepare('SELECT day FROM raw_turns WHERE session_id=?').get('repair').day === dayR)
+  check('D3 原料落在本地日', db.prepare('SELECT day FROM fragments WHERE session_id=?').get('repair').day === dayR)
   const first = await runNightly(db, aid, { day: dayR, summarize: null })
   check('D3 首次巩固写出日记', !!first.diary_day && !first.skipped, first)
   db.prepare('DELETE FROM diaries WHERE agent_id=? AND day=?').run(aid, dayR)

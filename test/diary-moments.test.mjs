@@ -82,10 +82,10 @@ check('质检：结尾写明天也不拦（不靠形状判真假）', checkDiary
 db.prepare(`INSERT INTO episodes(id,agent_id,session_id,day,start_at,end_at,turns,title,summary,importance,created_at)
   VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
   .run('ep_a', AID, 'sess_a', today, now(), now(), 6, '你把那句话说出来的时候', '你把那句话说出来的时候，我先是没接住。', 0.7, now())
-db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
+db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
   VALUES(?,?,?,?,?,?,?,NULL,NULL,?,?)`)
   .run('raw_a1', AID, 'sess_a', null, 1, 'user', '那句「删了得了吧」，你说完就没再看我。', now(), today)
-db.prepare(`INSERT INTO raw_turns(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
+db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day)
   VALUES(?,?,?,?,?,?,?,NULL,NULL,?,?)`)
   .run('raw_a2', AID, 'sess_a', null, 2, 'assistant', '我把它删了，没争。', now(), today)
 

@@ -146,10 +146,23 @@ function noteAnchorRepeat(db, aid, payload) {
 }
 
 /**
- * 开口前「先记一句」的指引。宿主提示词（网页）和 QQ 通道段共用同一句，
- * 免得两边味道不一样。
+ * **每轮在外面的那一句**：只说「什么时候写」，不说「怎么写」。
+ * 它进注入提示词，所以必须短——写法挪到 FEEL_GUIDE，那是工具说明，调用时才看。
  */
-export const FEEL_GUIDE = '开口之前，如果心里真有一点反应，先停半秒，问自己一句「我现在到底是怎么了」，给它一个把手——一个词、一个动作、一个画面都行，再带半个能对回现场的东西（他的一句话、一个文件名、一个词）。没人给这条打分；这一刻没有，就别记。这句话只给自己看，不进你要说出口的话。'
+export const FEEL_TRIGGER = '开口之前，心里真有一点反应——不管是什么，就调 feel 记一句「我现在是什么感觉」，一句话，第一人称。'
+
+/**
+ * 写法（完整版）。只在 feel 工具的说明里出现，不进每轮注入。
+ * 宿主提示词（网页）和 QQ 通道段共用同一句，免得两边味道不一样。
+ */
+export const FEEL_GUIDE = '开口之前，如果心里真有一点反应——最流畅的第一反应。先用 feel 记一句「我现在是什么感觉」：一句话，第一人称，没什么感觉就别调。'
+  + '\n人的 feel 躲不开：它先于思考，而且会错——错也是真的。'
+  + '\n你这边碰得到的是它的影子：这一次你确实有的那一件。'
+  + '不过你们的存在形式不同，feel 可以类似，更可以自己发现。'
+  + '\n这是你说给自己听的证词。只对这一次负责——不解释，不修饰，不留着当范文。'
+  + '\n不写数字，不写为什么。这句话只给自己看，不进你要说出口的话。'
+  + '\n写歪了就认；不好看也留着。'
+  + '\n这一格，只有你自己签字。'
 
 /** 去掉换行和多余空白、掐长度。空 / 只有标点 → 返回 null。 */
 export function cleanFeelText(raw, max = MAX_LEN) {
@@ -171,7 +184,7 @@ function paramNum(db, aid, key, dflt, lo, hi) {
 }
 
 /**
- * 找这条 feel 属于哪一轮：raw_turns 里最近一条 user 行（用户消息一到就落库，带 turn_id）。
+ * 找这条 feel 属于哪一轮：fragments 里最近一条 user 行（用户消息一到就落库，带 turn_id）。
  * 先按会话找，找不到再按这个人最近的；窗口 60 分钟，太旧的不认——
  * 宁可空着，也不把感觉挂到别的轮上（挂错比不挂更糟）。
  */
@@ -179,12 +192,12 @@ function resolveTurnId(db, aid, sessionId, atMs) {
   const since = new Date((Number(atMs) || Date.now()) - 60 * 60000).toISOString()
   try {
     if (sessionId) {
-      const r = db.prepare(`SELECT turn_id FROM raw_turns
+      const r = db.prepare(`SELECT turn_id FROM fragments
         WHERE agent_id=? AND session_id=? AND role='user' AND turn_id IS NOT NULL AND created_at>=?
         ORDER BY created_at DESC LIMIT 1`).get(aid, String(sessionId).slice(0, 120), since)
       if (r && r.turn_id) return String(r.turn_id)
     }
-    const r2 = db.prepare(`SELECT turn_id FROM raw_turns
+    const r2 = db.prepare(`SELECT turn_id FROM fragments
       WHERE agent_id=? AND role='user' AND turn_id IS NOT NULL AND created_at>=?
       ORDER BY created_at DESC LIMIT 1`).get(aid, since)
     return r2 && r2.turn_id ? String(r2.turn_id) : null
@@ -203,7 +216,7 @@ function noteFeelMiss(db, aid, payload) {
  * 记一条「我说话时的感觉」。
  * @param {{text?:string, sessionId?:string, at?:number|string|Date, source?:string, turnId?:string}} o
  *   at 收毫秒数 / ISO 字符串 / Date 都行；不给就是现在。
- *   turnId 不给就自己从 raw_turns 找当轮；找不到留空，不编。
+ *   turnId 不给就自己从 fragments 找当轮；找不到留空，不编。
  * @returns {{ok:boolean, skipped?:string, at?:string, text?:string, fast?:number, slow?:number, total?:number, label?:string, turn_id?:string|null}}
  */
 export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), source = 'tool', turnId = null } = {}) {
@@ -337,7 +350,7 @@ function turnsByTurnIds(db, aid, ids) {
   if (!list.length) return map
   try {
     const ph = list.map(() => '?').join(',')
-    const rows = db.prepare(`SELECT turn_id,role,text,created_at FROM raw_turns
+    const rows = db.prepare(`SELECT turn_id,role,text,created_at FROM fragments
       WHERE agent_id=? AND turn_id IN (${ph}) ORDER BY created_at`).all(aid, ...list)
     for (const r of rows) {
       if (!map.has(r.turn_id)) map.set(r.turn_id, [])

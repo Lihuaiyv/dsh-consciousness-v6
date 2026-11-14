@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { now } from '../db.js'
 import { isOwner } from './conversations.js'
 import { appendTurn } from './archive.js'
+import { writeChatTurnRow } from './turn_write.js'
 
 const SCRIPT_PATH = fileURLToPath(new URL('../../scripts/wechat-inbox.py', import.meta.url))
 const PYTHON = process.env.DSHC_PYTHON || 'python'
@@ -219,8 +220,7 @@ export async function pollWeChatInbox(o = {}) {
       } catch { /* 原文写不进也要继续把这一批剩下的记完 */ }
       if (!dup) {
         try {
-          db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id) VALUES(?,?,?,?,?,?,?,?)')
-            .run('cht_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10), aid, role, text, '[]', null, at, conv)
+          writeChatTurnRow(db, aid, { role, text, at, conversationId: conv, pack: '[]' })
         } catch { /* 账本写不进不影响消息已经读到 */ }
         added.push({ chat: name, role, text: text.slice(0, 80) })
       }

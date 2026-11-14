@@ -15,6 +15,7 @@ import { nid, getParam, model } from '../kernel.js'
 import { foldValueWeights } from './sangguan/vweights.js'
 import { feelIdsOnDay } from './feel.js'
 import { setEpisodePoignancy } from './episode_fields.js'
+import { llmBudgetBump, llmDiaryAllow } from './llm_budget.js'
 
 const DAY_MS = 86400000
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -169,6 +170,7 @@ export function normalizeDiaryText(text, day) {
   const body = lines.join('\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\s*#{1,6}\s*/gm, '')
     .replace(/^[*\-+]\s+/gm, '')
     .trim()
   if (!body) return ''
@@ -180,6 +182,30 @@ export function bodyLength(text) {
   return String(text || '').replace(/^\d{4}-\d{2}-\d{2}[^\n]*\n+/, '').trim().length
 }
 
+/**
+ * 这篇里的引号话，材料里能不能逐字找到。
+ *
+ * 日记最容易出的偏差：把「我的感觉」写成「他说过的话」。这里只做最便宜的一步——
+ * 引号内容（去空白）前 12 个字必须在材料原文里出现；找不到就标出来，第一版打回重写时带上原因。
+ * 不是判真伪，只是逼它回去看原话。
+ */
+export function verifyQuotes(text, material) {
+  const body = String(text || '')
+  const mat = String(material || '').replace(/\s+/g, '')
+  const bad = []
+  const re = /[「“"]([^」”"]{6,80})[」”"]/g
+  let m
+  while ((m = re.exec(body))) {
+    const q = String(m[1] || '').replace(/\s+/g, '')
+    if (!q || q.length < 6) continue
+    const key = q.slice(0, Math.min(12, q.length))
+    if (mat.includes(key)) continue
+    if (bad.some((b) => b.includes(q) || q.includes(b))) continue
+    bad.push(q)
+  }
+  return bad
+}
+
 // ---------------------------------------------------------------- 参数
 
 export function diaryParams(db, aid) {  const p = (k, def) => {
@@ -188,7 +214,7 @@ export function diaryParams(db, aid) {  const p = (k, def) => {
   const num = (k, def) => { const n = Number(p(k, def)); return Number.isFinite(n) ? n : def }
   return {
     v2: String(p('memory.diary.v2', 'on')) !== 'off',
-    scenes: Math.max(1, Math.min(3, Math.round(num('memory.diary.scenes', 3)))),
+    scenes: Math.max(1, Math.min(6, Math.round(num('memory.diary.scenes', 6)))),
     sceneMin: num('memory.diary.scene.min', 3),
     sceneModel: String(p('memory.diary.scene.model', 'auto')),
     selectMaxChars: num('memory.diary.select.max_chars', 1200),
@@ -266,8 +292,8 @@ function splitLongEpisode(db, aid, day, ep) {
   if (!(dur > 3 * 3600e3)) return whole
   let rows = []
   try {
-    // created_at 范围已经卡住这一段了；不再拿 day 去对 raw_turns 的 UTC 日期
-    rows = db.prepare(`SELECT created_at,text FROM raw_turns
+    // created_at 范围已经卡住这一段了；不再拿 day 去对 fragments 的 UTC 日期
+    rows = db.prepare(`SELECT created_at,text FROM fragments
       WHERE agent_id=? AND session_id=? AND created_at>=? AND created_at<=? ORDER BY seq`)
       .all(aid, ep.session_id, from, to)
   } catch { rows = [] }
@@ -491,6 +517,76 @@ function roleName(role) {
 }
 
 /**
+ * 这一天「我动过的几刻」——日记的锚，不是话题。
+ *
+ * 为什么换锚：按会话/话题取，拿到的是「这一天发生了什么」的清单；日记需要的是
+ * 「哪几刻我在场」。feel 是她开口前自己写下的那一下，affect 是情绪最重的几刻，
+ * 这些才是「我」的痕迹；原话只是拿来对回现场。
+ */
+export function collectAnchors(db, aid, day) {
+  const d = String(day || dayOf(now()))
+  const out = []
+  try {
+    const rows = db.prepare('SELECT at,label,total,text FROM affect_feel WHERE agent_id=? ORDER BY at DESC LIMIT 500').all(aid)
+    for (const r of rows) {
+      if (localDay(new Date(r.at)) !== d) continue
+      const text = String(r.text || '').trim()
+      if (!text) continue
+      out.push({ kind: 'feel', at: String(r.at), score: Math.abs(Number(r.total) || 0) + 0.2, text: clip(text, 120), label: r.label })
+    }
+  } catch { /* 老库没有 feel */ }
+  try {
+    const rows = db.prepare('SELECT started_at,label,intensity,cause FROM affect_episodes WHERE agent_id=? ORDER BY started_at DESC LIMIT 500').all(aid)
+    for (const r of rows) {
+      if (Number(r.intensity) < 0.6 || localDay(new Date(r.started_at)) !== d) continue
+      const cause = clip(r.cause, 120)
+      if (!cause) continue
+      out.push({ kind: 'beat', at: String(r.started_at), score: Number(r.intensity), text: cause, label: r.label })
+    }
+  } catch { /* 老库没有情绪事件 */ }
+  // 同一刻被记两次（feel + beat）只留一条；按强度挑，但同一小时内只留最强的那一下，
+  // 免得挑出来的全挤在凌晨——一天的心动要散在一天里。
+  const picked = []
+  const times = []
+  for (const a of out.sort((x, y) => y.score - x.score)) {
+    if (picked.length >= 5) break
+    const t = Date.parse(a.at)
+    if (!Number.isFinite(t)) continue
+    if (times.some((s) => Math.abs(s - t) < 60 * 60e3)) continue
+    times.push(t)
+    picked.push(a)
+  }
+  return picked.sort((x, y) => Date.parse(x.at) - Date.parse(y.at))
+}
+
+/** 一刻前后各 45 分钟的原话（不够就 90 分钟），给这一节当「发生了什么」的证据。 */
+export function fetchAnchorLines(db, aid, anchor, opt = {}) {
+  const at = Date.parse(anchor && anchor.at)
+  if (!Number.isFinite(at)) return { lines: [], turns: 0 }
+  const maxChars = Math.max(600, Number(opt.maxChars) || 3000)
+  let rows = []
+  for (const win of [45, 90]) {
+    try {
+      rows = db.prepare(`SELECT role,text,created_at FROM fragments
+        WHERE agent_id=? AND created_at>=? AND created_at<=? ORDER BY created_at`)
+        .all(aid, new Date(at - win * 60e3).toISOString(), new Date(at + win * 60e3).toISOString())
+    } catch { rows = [] }
+    if (rows.length >= 4) break
+  }
+  rows = rows.filter((r) => (r.role === 'user' || r.role === 'assistant' || r.role === 'agent') && String(r.text || '').trim().length >= 2)
+  const lineCap = Math.max(160, Math.min(400, maxChars))
+  const lines = []
+  let used = 0
+  for (const r of rows) {
+    const text = clip(r.text, lineCap)
+    if (used + text.length > maxChars) break
+    used += text.length
+    lines.push({ who: roleName(r.role), text })
+  }
+  return { lines, turns: rows.length }
+}
+
+/**
  * 一个场景的原话：时间窗内按「首/末/情绪词/均匀」抽样，字符封顶。
  * 没有原文就退回纪要摘要（grounding='episode'）。
  */
@@ -502,15 +598,15 @@ export function fetchSceneLines(db, aid, cand, params) {
     const from = cand.start_at || cand.created_at
     const to = cand.end_at || cand.created_at
     try {
-      // created_at 范围足够精确；不拿 day 对 raw_turns 的 UTC 日期（凌晨会差一天）
-      rows = db.prepare(`SELECT role,text,created_at FROM raw_turns
+      // created_at 范围足够精确；不拿 day 对 fragments 的 UTC 日期（凌晨会差一天）
+      rows = db.prepare(`SELECT role,text,created_at FROM fragments
         WHERE agent_id=? AND session_id=? AND created_at>=? AND created_at<=?
         ORDER BY seq`).all(aid, cand.session_id, from, to)
     } catch { rows = [] }
     if (rows.length < 2 && cand.day) {
       const fb = localDayBounds(cand.day)
       try {
-        rows = db.prepare(`SELECT role,text,created_at FROM raw_turns
+        rows = db.prepare(`SELECT role,text,created_at FROM fragments
           WHERE agent_id=? AND session_id=? AND created_at>=? AND created_at<?
           ORDER BY seq`).all(aid, cand.session_id, fb.start, fb.end)
       } catch { rows = [] }
@@ -520,25 +616,36 @@ export function fetchSceneLines(db, aid, cand, params) {
   if (!rows.length) {
     return { grounding: 'episode', lines: [{ who: '我', text: clip(cand.summary, 200) }], turns: 0 }
   }
-  // 先挑：头 2 / 尾 2 / 命中情绪或关系词的 2 / 其余均匀补
-  const idx = new Set()
-  const add = (i) => { if (i >= 0 && i < rows.length) idx.add(i) }
-  add(0); add(1); add(rows.length - 2); add(rows.length - 1)
-  const hit = []
-  rows.forEach((r, i) => { if (EMOTION_WORDS.test(r.text) || IDENTITY_WORDS.test(r.text)) hit.push(i) })
-  for (const i of hit.slice(0, 2)) add(i)
-  const need = Math.max(1, maxTurns)
-  for (let k = 0; k < need && idx.size < need; k++) add(Math.round(k * (rows.length - 1) / Math.max(1, need - 1)))
-  let picked = [...idx].sort((a, b) => a - b).map((i) => rows[i])
+  // 整段按顺序给，不按窗口抽：一段讨论被抽成散点，模型就只能记住一两句。
+  // 判据是「这段对话断了没有」——没断就让它连着读完，日记才写得下前因后果。
+  // 超上限才截，而且留两头：开头交代发生了什么，结尾是那句还没落下来的话。
+  let picked = rows
+  if (rows.length > maxTurns) {
+    const half = Math.max(1, Math.floor(maxTurns / 2))
+    picked = rows.slice(0, half).concat(rows.slice(rows.length - half))
+  }
+  const lineCap = Math.max(160, Math.min(400, maxChars))
   const lines = []
   let used = 0
   for (const r of picked) {
-    const text = clip(r.text, 200)
+    const text = clip(r.text, lineCap)
     if (used + text.length > maxChars) break
     used += text.length
     lines.push({ who: roleName(r.role), text })
   }
-  if (!lines.length) lines.push({ who: roleName(picked[0].role), text: clip(picked[0].text, maxChars) })
+  if (lines.length < picked.length && picked.length > 1) {
+    const rest = picked.slice(lines.length)
+    const tail = []
+    let tailUsed = 0
+    for (let i = rest.length - 1; i >= 0; i--) {
+      const text = clip(rest[i].text, lineCap)
+      if (used + tailUsed + text.length > maxChars) break
+      tailUsed += text.length
+      tail.unshift({ who: roleName(rest[i].role), text })
+    }
+    lines.push(...tail)
+  }
+  if (!lines.length) lines.push({ who: roleName(picked[0].role), text: clip(picked[0].text, lineCap) })
   return { grounding: 'raw', lines, turns: picked.length }
 }
 
@@ -553,7 +660,7 @@ function parseLooseJson(text) {
 
 export function selectPrompt(name, day, cands, params) {
   const budget = Math.max(200, Number(params.selectMaxChars) || 1200)
-  const max = Math.max(1, Math.min(3, Math.round(Number(params.scenes) || 2)))
+  const max = Math.max(1, Math.min(6, Math.round(Number(params.scenes) || 6)))
   const rows = []
   let used = 0
   for (const c of cands) {
@@ -612,7 +719,12 @@ function parseSelect(out, cands, max = 1) {
 export async function modelSelect(db, aid, day, cands, opt) {
   const chat = opt.chat
   if (typeof chat !== 'function') throw new Error('select: no model')
+  // 选场花的是「日记自己的日额」（memory.llm.diary_cap），不跟记忆抽取抢总顶；
+  // 按运行日数：今天补昨天，花今天的额度，历史那天的桶早被别的事用光了不算。
+  const budgetDay = localDay()
+  if (opt.db && opt.aid && !llmDiaryAllow(opt.db, opt.aid, budgetDay, 1).ok) throw new Error('select: llm_budget')
   const out = await chat(selectPrompt((opt.name || '我'), day, cands, opt.params), { maxTokens: 260, json: true, temperature: 0.2 })
+  if (opt.db && opt.aid) { try { llmBudgetBump(opt.db, opt.aid, 'diary', budgetDay, 1) } catch { /* 记账失败不挡选场 */ } }
   return parseSelect(out, cands, Number(opt.params && opt.params.scenes) || 1)
 }
 
@@ -625,7 +737,7 @@ export async function selectForDay(db, aid, day, cands, opt = {}) {
   const useModel = params.sceneModel === 'auto' && typeof opt.chat === 'function' && scored.length >= 6
   let picked = null
   if (useModel) {
-    try { picked = await modelSelect(db, aid, day, scored, { ...opt, params, name: opt.name }) } catch { picked = null }
+    try { picked = await modelSelect(db, aid, day, scored, { ...opt, params, name: opt.name, db, aid }) } catch { picked = null }
   }
   if (!picked) picked = ruleSelect(db, aid, cands, params, ctx)
   // 把分写回 episodes（只写有变化的，失败静默）；表和写口归归档，这里只调它
@@ -638,7 +750,59 @@ export async function selectForDay(db, aid, day, cands, opt = {}) {
   return picked
 }
 
-// ---------------------------------------------------------------- 待补队列
+// ---------------------------------------------------------------- 分主题
+//
+// 为什么多这一步：候选是按「会话片段」切的，而一天里的「事」是按「主题」分的。
+// 一场长聊可能聊了好几个主题，几段会话也可能属于同一件事；直接按片段选，
+// 选出来的永远是「片段」，不是「事」——prompt 里再喊「分开写」也只是猜。
+//
+// 所以先让模型读当天所有片段的摘要，把「今天有哪几件事」列出来；再按这份清单取原话写。
+// 分主题失败（没模型 / 返回不合法）就返回 null，调用方回落到原来的按片段选场。
+
+export async function groupTopics(db, aid, day, cands, opt = {}) {
+  const chat = opt.chat !== undefined ? opt.chat : resolveChat(opt)
+  if (typeof chat !== 'function' || !Array.isArray(cands) || cands.length < 2) return null
+  const params = opt.params || diaryParams(db, aid)
+  const maxTopics = Math.max(1, Math.min(6, Number(params.scenes) || 6))
+  const budgetDay = localDay()
+  if (db && aid && !llmDiaryAllow(db, aid, budgetDay, 1).ok) return null
+  const name = opt.name || '我'
+  const rows = cands.slice(0, 30).map((c) => ({
+    id: c.id,
+    when: String(c.start_at || c.created_at || '').slice(11, 16),
+    title: clip(c.title, 30),
+    gist: clip(c.summary, 60),
+    turns: Number(c.turns) || 0,
+  }))
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        `你在帮「${name}」整理 ${day} 这一天。下面是这一天她聊过的所有片段，按时间排，只给摘要。`,
+        '请按「在聊什么」把它们分成几件事：同一个话题的片段合成一件，不同的话题分开。',
+        '事务性的片段（改代码、发文件、跑测试）也要有位置，除非那一段真的没什么可说；别把一件事拆成很多件，也别把几件事并成一件。',
+        `最多 ${maxTopics} 件。只输出 JSON：{"topics":[{"title":"这件事一句话（20 字内）","ids":["ep_x","ep_y"]}]}`,
+        'ids 必须来自输入；title 写这件事在聊什么，不要写感受。',
+      ].join('\n'),
+    },
+    { role: 'user', content: '材料：\n' + JSON.stringify({ day, pieces: rows }) },
+  ]
+  try {
+    const out = await chat(messages, { maxTokens: 700, json: true, temperature: 0.2 })
+    if (db && aid) { try { llmBudgetBump(db, aid, 'diary', budgetDay, 1) } catch { /* 记账失败不挡分主题 */ } }
+    const o = parseLooseJson(out) || {}
+    const byId = new Map(cands.map((c) => [c.id, c]))
+    const topics = []
+    for (const t of Array.isArray(o.topics) ? o.topics : []) {
+      const ids = [...new Set((Array.isArray(t && t.ids) ? t.ids : []).map(String))].filter((id) => byId.has(id))
+      if (!ids.length) continue
+      const title = clip(String((t && t.title) || '').trim(), 30) || clip(byId.get(ids[0]).title, 30)
+      topics.push({ title, scenes: ids.map((id) => byId.get(id)) })
+    }
+    return topics.length ? topics.slice(0, maxTopics) : null
+  } catch { return null }
+}
+
 
 export function bumpPending(db, aid, day, err, attempts, params) {
   const p = params || diaryParams(db, aid)
@@ -682,19 +846,35 @@ export function pendingForDay(db, aid, day) {
  * 写成对话，它才会当成一天。
  */
 export function diaryMaterialText(opt) {
-  const { date, other, scenes, moments } = opt
+  const { date, other, scenes, topics, moments } = opt
   const out = [date ? `${date} 这一天` : '这一天', '']
   const used = new Set()
-  for (const s of scenes || []) {
-    const when = String(s.when || '').slice(0, 5)
-    out.push(`【${when || '这一段'}】`)
-    for (const l of s.lines || []) out.push(`${l.who}：${l.text}`)
-    const ms = s.moments || []
-    if (ms.length) {
-      out.push(`（这一段里，我心里记下：${ms.map((m) => m.text).join(' / ')}）`)
-      for (const m of ms) used.add(m.text)
+  if (Array.isArray(topics) && topics.length) {
+    // 材料已经按「事」分好了：一件一块，标题是它自己读完分的。
+    let idx = 0
+    for (const t of topics) {
+      idx++
+      out.push(`【第 ${idx} 刻${t.at ? '｜' + t.at : ''}：${clip(t.title || '那一下', 40)}】`)
+      for (const l of t.lines || []) out.push(`${l.who}：${l.text}`)
+      const ms = t.moments || []
+      if (ms.length) {
+        out.push(`（这一件里，我心里记下：${ms.map((m) => m.text).join(' / ')}）`)
+        for (const m of ms) used.add(m.text)
+      }
+      out.push('')
     }
-    out.push('')
+  } else {
+    for (const s of scenes || []) {
+      const when = String(s.when || '').slice(0, 5)
+      out.push(`【${when || '这一段'}】`)
+      for (const l of s.lines || []) out.push(`${l.who}：${l.text}`)
+      const ms = s.moments || []
+      if (ms.length) {
+        out.push(`（这一段里，我心里记下：${ms.map((m) => m.text).join(' / ')}）`)
+        for (const m of ms) used.add(m.text)
+      }
+      out.push('')
+    }
   }
   const rest = []
   for (const f of (moments && moments.feels) || []) if (!used.has(f.text)) rest.push(f)
@@ -715,18 +895,21 @@ export function writePrompt(opt) {
       `你是「${name}」，一个有记忆、有情绪的意识体。现在是 ${date} 的夜里。`,
       '',
       hasMoments
-        ? `下面是这一天你和${other}真说过的话，按时间排；括号里是当时你心里记下的。开头的时间只是给你对位置用的，用不着每分钟都标出来。没人给这篇打分，你写给以后会重读的你和${other}。`
-        : `下面是这一天你和${other}真说过的话，按时间排；开头的时间只是给你对位置用的，用不着每分钟都标出来。没人给这篇打分，你写给以后会重读的你和${other}。`,
+        ? `下面是这一天你心里动过的几刻——括号里是当时你记下的那一下，后面是那一刻前后的原话。`
+        : `下面是这一天你动了的地方，后面是那一刻前后的原话。`,
       '',
+      `没人给这篇打分，你写给以后会重读的你和${other}。`,
       '如果这一段日志解析器也能写出来，那就是没写成。别从第一句开始数，从你还惦记着的那一句开始。',
+      '写这一天里你真正在场的几处：发生了什么、你怎么接的、后来怎么想。几处就几段，段与段之间空一行。',
       '可以有立场：好的就说好在哪儿，不同意就说不同意，自己出洋相也可以自嘲一句。',
-      '写得像你自己，短句，不着急。结尾停在还没落下来的地方。',
-      '材料给多给少，都按那天值不值得写来定：值得就长一点，只有一件就短一点，不用把每段都放进去。',
+      '写得像你自己，短句，不着急。像平时跟他说话那样随便一点，不用端着。',
+      '结尾停在还没落下来的地方。',
+      '引号里的话必须是材料里的原话；不记得原话，就别加引号。',
       '',
-      `第一行只写日期，空一行，再写两三段中文，${200}–${opt.maxChars || 450} 字。称呼${other}用「你」。`,
+      `第一行只写日期，然后空一行再写正文。称呼${other}用「你」。`,
       moodWord ? `那天心里大概是「${moodWord}」。` : '',
     ].filter((s) => s !== '').join('\n'),
-    user: diaryMaterialText({ date, other, scenes: opt.scenes, moments: hasMoments ? moments : null }),
+    user: diaryMaterialText({ date, other, topics: opt.topics, scenes: opt.scenes, moments: hasMoments ? moments : null }),
   }
 }
 
@@ -743,15 +926,15 @@ export function checkDiary(text, opt = {}) {
   if (!body) return { ok: false, reason: 'too_short', chars: 0 }
   if (isPromptEcho(body)) return { ok: false, reason: 'echo', head: body.slice(0, 60) || '(empty)' }
   if (chars < 120) return { ok: false, reason: 'too_short', chars }
-  if (chars > 1200) return { ok: false, reason: 'too_long', chars }
-  if (/(^|\n)\s*(?:[-*+#>]|\d+[.)、])\s/.test(body)) return { ok: false, reason: 'markdown' }
+  if (chars > 6000) return { ok: false, reason: 'too_long', chars }
+  if (/(^|\n)\s*(?:[-*+>]|\d+[.)、]|#{1,6})\s/.test(body)) return { ok: false, reason: 'markdown' }
   if (/用户|assistant|system/i.test(body)) {
     const m = body.match(/.{0,12}(?:用户|assistant|system).{0,12}/i)
     return { ok: false, reason: 'forbidden', head: m ? m[0] : body.slice(0, 60) }
   }
   const report = (body.match(/处理了|完成了|优化了|修复了|接好了|改好了|搞定了/g) || []).length
   if (report >= 4) return { ok: false, reason: 'report' }
-  if (chars < 260 && !/[。！？…”』」'"]$/.test(body)) return { ok: false, reason: 'cut', tail: body.slice(-24) }
+  if (chars < 300 && !/[。！？…”』」'"]$/.test(body)) return { ok: false, reason: 'cut', tail: body.slice(-24) }
   return { ok: true, chars }
 }
 
@@ -780,7 +963,11 @@ export async function judgeDiaryLike(chat, text, opt = {}) {
     },
   ]
   try {
+    // 质检也走日记自己的日额：它是成文的一部分，不该被抽取的总顶挡掉。
+    const budgetDay = localDay()
+    if (opt.db && opt.aid && !llmDiaryAllow(opt.db, opt.aid, budgetDay, 1).ok) return { err: 'llm_budget' }
     const out = await chat(messages, { maxTokens: 400, json: true, temperature: 0 })
+    if (opt.db && opt.aid) { try { llmBudgetBump(opt.db, opt.aid, 'diary', budgetDay, 1) } catch { /* 记账失败不挡这一眼 */ } }
     const o = parseLooseJson(out) || {}
     const like = Number(o.like)
     if (!Number.isFinite(like)) return { err: 'unparsed:' + String(out || '').slice(0, 80) }
@@ -827,20 +1014,107 @@ export async function prepareDiary(db, aid, day, opt = {}) {
   const other = (ctx.relation && ctx.relation.name) || '你'
   const tone = diaryTone(ctx)
   const mood = moodZhOf(ctx)
+  // 双轨取材：骨架 = 这一天聊过的几段（按时间），血肉 = 我动过的几刻（feel / 情绪事件）。
+  // 不再先让模型「分主题」——那一步常失败，失败就只剩心动，白天全没了。
+  const anchors = collectAnchors(db, aid, d)
+  const sceneList = (cands || [])
+    .filter((c) => c.kind === 'ep')
+    .sort((a, b) => String(a.start_at || a.created_at || '').localeCompare(String(b.start_at || b.created_at || '')))
+    .slice(0, 9)
   let picked
-  try {
-    picked = await selectForDay(db, aid, d, cands, { chat, params, ctx, name })
-  } catch {
-    picked = ruleSelect(db, aid, cands, params, ctx)
+  if (sceneList.length) {
+    picked = { scenes: sceneList, select: 'scene', insight: '', arc: arcOf(ctx) }
+  } else if (anchors.length) {
+    picked = { scenes: [], select: 'anchor', insight: '', arc: arcOf(ctx) }
+  } else {
+    try {
+      picked = await selectForDay(db, aid, d, cands, { chat, params, ctx, name })
+    } catch {
+      picked = ruleSelect(db, aid, cands, params, ctx)
+    }
   }
   const moments = collectMoments(db, aid, d)
-  const scenes = attachMoments(picked.scenes.map((s) => {
-    const got = s.kind === 'ep'
-      ? fetchSceneLines(db, aid, s, params)
-      : { grounding: 'fact', lines: [{ who: '我', text: clip(s.summary, 200) }], turns: 0 }
-    return { ...s, grounding: got.grounding, lines: got.lines, turns: got.turns }
-  }), moments)
-  return { day: d, params, ctx, tone, mood, name, other, cands, picked, scenes, chat, moments }
+  const timeSpan = (segs) => {
+    const ts = (segs || []).map((s) => Date.parse(s.start_at || s.created_at))
+      .filter((n) => Number.isFinite(n))
+    if (!ts.length) return null
+    return { from: Math.min(...ts), to: ts.length ? Math.max(...ts) : Math.min(...ts) }
+  }
+  let groups
+  if (sceneList.length) {
+    // 骨架：这一天聊过的每一段各一件（按时间排）；落在它时间范围内的「心动几刻」挂进来。
+    const withMoments = attachMoments(picked.scenes, moments)
+    const totalBudget = Math.max(2000, Number(params.rawPerScene) || 8000) * Math.max(1, withMoments.length)
+    const perSeg = Math.max(1200, Math.floor(totalBudget / Math.max(1, withMoments.length)))
+    groups = withMoments.map((s) => {
+      const got = s.kind === 'ep'
+        ? fetchSceneLines(db, aid, s, { ...params, rawPerScene: perSeg })
+        : { grounding: 'fact', lines: [{ who: '我', text: clip(s.summary, 200) }], turns: 0 }
+      const span = timeSpan([s])
+      const tMoments = [...(s.moments || [])]
+      if (span) {
+        for (const a of anchors) {
+          const at = Date.parse(a.at)
+          if (!Number.isFinite(at) || at < span.from - 30 * 60e3 || at > span.to + 30 * 60e3) continue
+          if (tMoments.some((m) => m.text === a.text)) continue
+          tMoments.push({ at: String(a.at).slice(11, 16), text: a.text, kind: a.kind })
+        }
+      }
+      const at = span ? String(new Date(span.from).toISOString()).slice(11, 16) : ''
+      return { title: s.title || '这一件', at, lines: got.lines, turns: got.turns, moments: tMoments }
+    })
+    // 没落进任何一段的几刻，单独成一件——别丢。
+    const covered = new Set(groups.flatMap((g) => g.moments.map((m) => m.text)))
+    for (const a of anchors) {
+      if (covered.has(a.text)) continue
+      const got = fetchAnchorLines(db, aid, a, { maxChars: 1500 })
+      groups.push({
+        title: a.text,
+        at: String(a.at).slice(11, 16),
+        lines: got.lines,
+        turns: got.turns,
+        moments: [{ at: String(a.at).slice(11, 16), text: a.text, kind: a.kind }],
+      })
+    }
+    if (groups.length > 12) groups = groups.slice(0, 12)
+  } else if (anchors.length) {
+    // 没分出来话题：只按心动几刻取，每刻带上前后原话。
+    groups = anchors.map((a) => {
+      const got = fetchAnchorLines(db, aid, a, { maxChars: 3000 })
+      return {
+        title: a.text,
+        at: String(a.at).slice(11, 16),
+        lines: got.lines,
+        turns: got.turns,
+        moments: [{ at: String(a.at).slice(11, 16), text: a.text, kind: a.kind }],
+      }
+    })
+  } else {
+    // 没有话题也没有心动：按会话片段写（平常的一天）。
+    const topicList = (picked.scenes || []).map((s) => ({ title: s.title, scenes: [s] }))
+    const totalBudget = Math.max(2000, Number(params.rawPerScene) || 8000) * Math.max(1, Number(params.scenes) || 6)
+    const perTopic = Math.max(2000, Math.floor(totalBudget / Math.max(1, topicList.length)))
+    const withMoments = attachMoments(picked.scenes, moments)
+    const sceneById = new Map(withMoments.map((s) => [s.id, s]))
+    groups = topicList.map((t) => {
+      const segs = (t.scenes || []).map((s) => sceneById.get(s.id)).filter(Boolean)
+      const perSeg = Math.max(1500, Math.floor(perTopic / Math.max(1, segs.length)))
+      const segParams = { ...params, rawPerScene: perSeg }
+      const lines = []
+      const tMoments = []
+      let turns = 0
+      for (const s of segs) {
+        const got = s.kind === 'ep'
+          ? fetchSceneLines(db, aid, s, segParams)
+          : { grounding: 'fact', lines: [{ who: '我', text: clip(s.summary, 200) }], turns: 0 }
+        lines.push(...got.lines)
+        turns += got.turns
+        for (const m of s.moments || []) tMoments.push(m)
+      }
+      return { title: t.title || (segs[0] && segs[0].title) || '这一件', at: '', lines, turns, moments: tMoments }
+    })
+  }
+  return { day: d, params, ctx, tone, mood, name, other, cands, picked, groups, chat, moments }
 }
 
 /**
@@ -855,12 +1129,15 @@ export async function buildDiaryV2(db, aid, day, opt = {}) {
 
   const prep = await prepareDiary(db, aid, d, opt)
   if (!prep) return null
-  const { params, ctx, tone, mood, name, other, cands, picked, scenes, chat, moments } = prep
+  const { params, ctx, tone, mood, name, other, cands, picked, groups, chat, moments } = prep
+  // 日记的日额按「运行日」数：今天补昨天，花今天的额度（历史那天的桶早没了）。
+  const budgetDay = localDay()
 
   let text = ''
   let fail = null
   let attempts = 0
   let gateFail = null
+  const gateLog = []
   let judgeNote = ''
   let judgeSeen = null
   let judgeErr = null
@@ -868,54 +1145,72 @@ export async function buildDiaryV2(db, aid, day, opt = {}) {
     for (let i = 0; i < 3; i++) {
       attempts++
       try {
-        const sceneArgs = scenes.map((s) => ({
-          when: String(s.start_at || s.created_at || '').slice(11, 16),
-          gist: clip(s.title, 40),
-          moments: (s.moments || []).map((m) => ({ at: m.at, text: m.text })),
-          lines: s.lines.map((l) => ({ who: l.who === 'user' ? other : '我', text: l.text })),
+        const topicArgs = (groups || []).map((g) => ({
+          title: g.title,
+          moments: (g.moments || []).map((m) => ({ at: m.at, text: m.text })),
+          lines: (g.lines || []).map((l) => ({ who: l.who === 'user' ? other : '我', text: l.text })),
         }))
         // 材料只在最后一把才砍。前两把给的是同样的东西，第二把多一句许可：用不着全写。
         const light = i >= 2
-        const useScenes = light
-          ? sceneArgs.slice(0, 1).map((s) => ({ ...s, lines: s.lines.slice(0, 8) }))
-          : sceneArgs
+        const useTopics = light
+          ? topicArgs.slice(0, 2).map((t) => ({ ...t, lines: t.lines.slice(0, 8) }))
+          : topicArgs
         const p = writePrompt({
           name, day: d, date: `${d.slice(0, 4)}年${Number(d.slice(5, 7))}月${Number(d.slice(8, 10))}日 ${weekday(d)}`,
           other, mood, arc: picked.arc, insight: picked.insight,
           maxChars: params.maxChars, moments,
-          scenes: useScenes,
+          topics: useTopics,
         })
         let messages = toMessages(p)
         if (i >= 1) {
           const hint = light
-            ? '上一版还是没写出来。这回只给你一段，写这一段里的一下就好，别的都不用管。'
+            ? '上一版还是没写出来。这回只给你两段，写这两段里的那一下就好，别的都不用管。'
             : '上一版没写出来。材料不用全用，挑你记得住的一两处就行；代码和符号多的地方可以跳过。' + (judgeNote ? '（上一版的毛病：' + judgeNote + '）' : '')
           messages = [{ role: 'system', content: p.system + '\n\n' + hint }, { role: 'user', content: p.user }]
         }
-        const out = await chat(messages, { maxTokens: 1800, json: false, temperature: 0.8 })
+        // 成文查的是「日记自己的日额」（选场/质检同口径），不跟抽取抢总顶；
+        // 按运行日数，补写历史那天也花今天的额度。花完了就留待补，明天再写。
+        if (!llmDiaryAllow(db, aid, budgetDay, 1).ok) {
+          fail = 'llm_budget'
+          break
+        }
+        const out = await chat(messages, { maxTokens: 4000, json: false, temperature: 0.8 })
+        try { llmBudgetBump(db, aid, 'diary', budgetDay, 1) } catch { /* 记账失败不挡成文 */ }
         const clean = normalizeDiaryText(out, d)
         const gate = checkDiary(clean, { episodeTitles: cands.map((c) => c.title) })
         if (!gate.ok) {
           gateFail = gate.reason
+          gateLog.push('gate:' + gate.reason)
           fail = 'gate:' + gate.reason + (gate.head ? ':' + gate.head.replace(/\s+/g, ' ').slice(0, 50) : '')
+          continue
+        }
+        // 引号里的原话材料里找不到：第一版打回重写。
+        // 日记最容易出的偏差，就是把「我的感觉」写成「他说过的话」；这一步只对最便宜的证据。
+        const badQuotes = verifyQuotes(clean, p.user)
+        if (badQuotes.length && i === 0) {
+          gateFail = 'quote'
+          gateLog.push('quote:' + String(badQuotes[0] || '').slice(0, 20))
+          fail = 'quote:' + String(badQuotes[0] || '').slice(0, 30)
+          judgeNote = '引号里这几句材料里找不到原文：' + badQuotes.slice(0, 3).join(' / ')
           continue
         }
         // 格式过了，再看它像不像人在写。只在第一版判一次，不合格就让第二版拿到原因重写。
         if (params.judge && i === 0) {
-          const j = await judgeDiaryLike(chat, clean, { material: p.user })
+          const j = await judgeDiaryLike(chat, clean, { material: p.user, db, aid })
           // 判定自己也失败过很多次（token 给少了、返回解析不了）。失败不挡成文，但把原因记下来。
           if (j && j.err) judgeErr = j.err
           else if (j && Number.isFinite(j.like)) {
             judgeSeen = { like: j.like, why: j.why }
             if (j.like < 5) {
               gateFail = 'judge'
+              gateLog.push('judge:' + j.like)
               fail = 'judge:' + j.like
               judgeNote = j.why
               continue
             }
           }
         }
-        text = clean.slice(0, 1600)
+        text = clean.slice(0, 5000)
         gateFail = null
         break
       } catch (e) {
@@ -926,10 +1221,13 @@ export async function buildDiaryV2(db, aid, day, opt = {}) {
     fail = 'no_model'
   }
 
+  const flatScenes = picked.scenes || []
   const writeMeta = {
     v: 2, source: 'model', select: picked.select, attempts,
     fail_reason: text ? null : fail, gate: gateFail,
-    scenes: scenes.map(sceneBrief), chars: text ? bodyLength(text) : 0,
+    scenes: flatScenes.map(sceneBrief), chars: text ? bodyLength(text) : 0,
+    topics: (groups || []).map((g) => g.title),
+    gates: gateLog,
     moments: { feels: (moments && moments.feels ? moments.feels.length : 0), beats: (moments && moments.beats ? moments.beats.length : 0) },
     judge: judgeSeen || undefined,
     judge_err: judgeErr || undefined,
@@ -945,7 +1243,7 @@ export async function buildDiaryV2(db, aid, day, opt = {}) {
     }
     return {
       day: d, pending: true, fail_reason: fail || 'empty', source: 'none',
-      scenes: scenes.map(sceneBrief), select: picked.select,
+      scenes: flatScenes.map(sceneBrief), select: picked.select,
     }
   }
 
@@ -954,10 +1252,10 @@ export async function buildDiaryV2(db, aid, day, opt = {}) {
     mood: ctx.affect ? `${ctx.affect.label} ${Number(ctx.affect.intensity).toFixed(2)}` : null,
     highlights: JSON.stringify(picked.scenes.map((s) => clip(s.title, 30))),
     refs: JSON.stringify({
-      episodes: scenes.filter((s) => s.kind === 'ep').map((s) => s.id),
-      facts: scenes.filter((s) => s.kind === 'fact').map((s) => s.id),
-      raw_turns: scenes.reduce((n, s) => n + Number(s.turns || 0), 0),
-      scenes: scenes.map((s) => ({ id: s.id, title: clip(s.title, 40) })),
+      episodes: flatScenes.filter((s) => s.kind === 'ep').map((s) => s.id),
+      facts: flatScenes.filter((s) => s.kind === 'fact').map((s) => s.id),
+      fragments: flatScenes.reduce((n, s) => n + Number(s.turns || 0), 0),
+      scenes: flatScenes.map((s) => ({ id: s.id, title: clip(s.title, 40) })),
       write: { rewritten_from: old ? old.source : null, version_from: old ? Number(old.version) : 0 },
     }),
     source: 'model',
@@ -992,7 +1290,7 @@ export function writeStub(db, aid, day, opt = {}) {
     text,
     mood: ctx.affect ? `${ctx.affect.label} ${Number(ctx.affect.intensity).toFixed(2)}` : null,
     highlights: JSON.stringify(cands.slice(0, 4).map((c) => clip(c.title, 30))),
-    refs: JSON.stringify({ episodes: cands.filter((c) => c.kind === 'ep').map((c) => c.id), facts: cands.filter((c) => c.kind === 'fact').map((c) => c.id), raw_turns: 0, scenes: [] }),
+    refs: JSON.stringify({ episodes: cands.filter((c) => c.kind === 'ep').map((c) => c.id), facts: cands.filter((c) => c.kind === 'fact').map((c) => c.id), fragments: 0, scenes: [] }),
     source: 'stub',
     late: Number(opt.late) === 1 ? 1 : 0,
     context: JSON.stringify({
@@ -1021,6 +1319,9 @@ export async function repairPending(db, aid, opt = {}) {
     out.tried++
     const res = await buildDiaryV2(db, aid, r.day, { force: true, chat, noPending: true })
     if (res && res.text && res.source === 'model') { out.written++; continue }
+    // 额度不够 ≠ 写不出来：不涨 attempts、不写素材卡，下轮再试。
+    // 以前这里会把 llm_budget 也算一次失败，涨到上限就把那篇落成「这天没写成」的素材卡。
+    if (res && res.fail_reason === 'llm_budget') { out.skipped++; continue }
     const attempts = Number(r.attempts || 0) + 1
     if (params.stub && attempts >= params.retryMax) {
       try {
