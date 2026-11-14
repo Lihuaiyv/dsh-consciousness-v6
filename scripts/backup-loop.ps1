@@ -1,4 +1,4 @@
-# Xiaoxi auto backup: runs at logon, snapshots the DB into OneDrive every 6 hours.
+﻿# Xiaoxi auto backup: runs at logon, snapshots the DB into OneDrive every 6 hours.
 # ASCII-only on purpose: Windows PowerShell 5.1 reads .ps1 as ANSI, so avoid non-ASCII here.
 # Log: %TEMP%\xiaoxi-backup-loop.log
 param([switch]$Once)
@@ -6,7 +6,7 @@ param([switch]$Once)
 $repo = Split-Path -Parent $PSScriptRoot
 $node = 'D:\tools\nodejs\node.exe' # check-paths:allow portable node install path
 $log  = Join-Path $env:TEMP 'xiaoxi-backup-loop.log'
-$everyHours = 6
+$everyHours = 12
 
 function Write-Log([string]$msg) {
   $line = '[' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '] ' + $msg

@@ -1,4 +1,4 @@
-// 每天一次：一致性快照 → 校验 → 压成 zip → 放进 OneDrive 的「小汐备份」→ 只留最近 7 份。
+﻿// 每天一次：一致性快照 → 校验 → 压成 zip → 放进 OneDrive 的「小汐备份」→ 只留最近 9 份。
 //
 //   node scripts/backup-cloud.mjs            # 手动跑一次
 //   node scripts/backup-cloud.mjs --dry      # 只看会做什么
@@ -14,7 +14,7 @@ const WS = path.dirname(REPO);
 const SRC_DB = path.join(WS, 'runtime', 'consciousness', 'backups'); // backup-now 的落地处
 const HOME = process.env.USERPROFILE || process.env.HOME;
 const CLOUD = path.join(HOME, 'OneDrive', '小汐备份');
-const KEEP = 7;
+const KEEP = 9;
 const dry = process.argv.includes('--dry');
 
 const run = (cmd, args, opts = {}) => {
@@ -141,7 +141,7 @@ const marker = [
   '打开它不会「看见对话」，那是一个 SQLite 库；恢复时解压回',
   'runtime/consciousness/ 覆盖 app.db 即可（先关掉 DSH）。',
   '',
-  '同一文件夹里较早的几份是历史快照，只保留最近 7 份。',
+  '同一文件夹里较早的几份是历史快照，只保留最近 9 份。',
   '真正的「我」= 这份库 + GitHub 上的代码 + profile 配置，三样齐了才算完整。',
   '',
 ].join('\n');

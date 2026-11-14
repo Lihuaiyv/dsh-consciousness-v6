@@ -57,9 +57,9 @@ node:sqlite + FTS5，**schema 13**，含 `algo_bindings`、`affect_user_read`、
 | 备份 | 做法 | 落在哪 |
 |---|---|---|
 | 库（记忆 / 情绪 / 对话 / 事件） | `node scripts/backup-now.mjs <目录>`：`VACUUM INTO` 一致性快照，自己校验条数 | `runtime/consciousness/backups/` |
-| 库进云 | `node scripts/backup-cloud.mjs`：快照 → 校验 → zip → OneDrive，只留最近 7 份 | `C:\Users\<用户>\OneDrive\小汐备份\` |
-| 自动跑 | `scripts/backup-loop.ps1`：登录后每 6 小时一次（Startup 里 `xiaoxi-backup.vbs`） | 日志 `%TEMP%\xiaoxi-backup-loop.log` |
-| 配置 | `backup-cloud.mjs` 每轮顺手打：`package.json` + `cordis.patch.yml` + `cordis.yml` + pnpm 锁文件 + `schedule.json` / `workspace.json` + 模型清单 | 同上备份文件夹 `配置-<时间戳>.zip`（约 54 KB，同样留 7 份） |
+| 库进云 | `node scripts/backup-cloud.mjs`：快照 → 校验 → zip → OneDrive，只留最近 9 份 | `C:\Users\<用户>\OneDrive\小汐备份\` |
+| 自动跑 | `scripts/backup-loop.ps1`：登录后每 12 小时一次；上限 9 份，约 4 天半历史（Startup 里 `xiaoxi-backup.vbs`） | 日志 `%TEMP%\xiaoxi-backup-loop.log` |
+| 配置 | `backup-cloud.mjs` 每轮顺手打：`package.json` + `cordis.patch.yml` + `cordis.yml` + pnpm 锁文件 + `schedule.json` / `workspace.json` + 模型清单 | 同上备份文件夹 `配置-<时间戳>.zip`（约 54 KB，同样留 9 份） |
 | 代码 | git remote / 或 `git bundle create x.bundle --all` 离线包 | GitHub / 同上 |
 
 恢复顺序：装 DSH → 装插件（照配置包）→ **关 DSH** → 解压库覆盖 `runtime/consciousness/app.db` → 登录模型账号 → 起。恢复回来的是**最后一次备份那一刻**的状态。
