@@ -14,6 +14,8 @@ import { now } from '../db.js'
 import { isWorkMode } from './work_mode.js'
 // 帧：只加一条原始帧（不含向量），开关 frame.write，默认 off。
 import { appendTurnFrame } from './frame_store.js'
+// 帧写完立刻补算向量/偏离（python 子进程，后台，不占开口时间），开关 frame.compute。
+import { kickFrameCompute } from './frame_compute.js'
 
 /** 调用方给了就用；没给（null/空串）就按当前工作模式现算。算不出才留 null。 */
 function resolveMode(db, aid, mode) {
@@ -39,7 +41,10 @@ export function writeChatTurns(db, aid, {
     .run(nid('cht_'), aid, 'agent', String(agent ?? ''), packAgent, mood, now(), conversationId, turnId || null, m)
   // 帧：一轮 = 一帧，按会话分链。失败不影响这轮账（记账坏了不能连累回话）。
   try {
-    if (agent) appendTurnFrame(db, aid, { user, agent, conv: conversationId })
+    if (agent && appendTurnFrame(db, aid, { user, agent, conv: conversationId })) {
+      // 写完就把它算掉：否则要等 5 分钟心跳，那时“力”早就失效了。
+      kickFrameCompute(db)
+    }
   } catch { /* 帧写坏了不算这轮的错 */ }
   return { at, mood, mode: m }
 }
@@ -65,7 +70,9 @@ export function writeChatTurnRow(db, aid, {
   // 只有 agent 行算「我说了一句」；user 行不该单独成帧。
   try {
     if (String(role || 'agent') === 'agent' && text) {
-      appendTurnFrame(db, aid, { user: '（单行）', agent: String(text), conv: conversationId })
+      if (appendTurnFrame(db, aid, { user: '（单行）', agent: String(text), conv: conversationId })) {
+        kickFrameCompute(db)
+      }
     }
   } catch { /* 同上：帧坏了不连累这行 */ }
   return m

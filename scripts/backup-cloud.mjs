@@ -66,6 +66,51 @@ for (const old of zips.slice(KEEP)) {
   console.log('删旧：' + path.basename(old));
 }
 
+// 4b) 配置包：没它，新机器装不回插件（库和代码齐了也起不来）
+//     profile 配置 + storages（定时 / 工作区）+ 模型清单，几十 KB
+const CONFIG = [
+  ['profile', path.join(HOME, '.dsh', 'profiles', 'desktop'), ['package.json', 'cordis.patch.yml', 'cordis.yml', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'compatibility.json']],
+  ['storages', path.join(HOME, '.dsh', 'storages'), ['schedule.json', 'workspace.json']],
+  ['models', path.join(WS, 'runtime', 'models'), ['index.json', 'README.md']],
+];
+const stampCfg = path.basename(snap, '.db').replace(/^app-/, '');
+const configZip = path.join(CLOUD, '配置-' + stampCfg + '.zip');
+let configZipName = null;
+if (!dry) {
+  const stage = path.join(process.env.TEMP || HOME, 'xiaoxi-config-' + stampCfg);
+  fs.rmSync(stage, { recursive: true, force: true });
+  let copied = 0;
+  for (const [sub, dir, names] of CONFIG) {
+    fs.mkdirSync(path.join(stage, sub), { recursive: true });
+    for (const n of names) {
+      const src = path.join(dir, n);
+      if (!fs.existsSync(src)) continue;
+      fs.copyFileSync(src, path.join(stage, sub, n));
+      copied++;
+    }
+  }
+  if (copied === 0) throw new Error('配置一个都没拷到，先别传');
+  if (fs.existsSync(configZip)) fs.rmSync(configZip);
+  run('powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-Command',
+    `Compress-Archive -Path '${path.join(stage, '*').replace(/'/g, "''")}' -DestinationPath '${configZip.replace(/'/g, "''")}' -Force`,
+  ]);
+  fs.rmSync(stage, { recursive: true, force: true });
+  configZipName = path.basename(configZip);
+  console.log('配置包：' + configZipName + '  ' + (fs.statSync(configZip).size / 1024).toFixed(0) + ' KB（' + copied + ' 个文件）');
+} else {
+  console.log('[dry] 会打配置包：' + path.basename(configZip));
+}
+// 配置包也只留最近 KEEP 份
+const cfgZips = fs.readdirSync(CLOUD).filter((n) => n.startsWith('配置-') && n.endsWith('.zip'))
+  .map((n) => path.join(CLOUD, n))
+  .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+for (const old of cfgZips.slice(KEEP)) {
+  if (dry) { console.log('[dry] 会删旧配置：' + path.basename(old)); continue; }
+  fs.rmSync(old, { force: true });
+  console.log('删旧配置：' + path.basename(old));
+}
+
 // 5) 记一笔清单，方便以后核对「最近一次是什么时候」
 const manifestPath = path.join(CLOUD, 'manifest.json');
 const prev = fs.existsSync(manifestPath) ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')) : {};
@@ -75,6 +120,8 @@ const entry = {
   snapBytes: fs.statSync(snap).size,
   zip: path.basename(zip),
   zipBytes: fs.existsSync(zip) ? fs.statSync(zip).size : null,
+  config: configZipName,
+  configBytes: configZipName && fs.existsSync(configZip) ? fs.statSync(configZip).size : null,
   keep: KEEP,
 };
 const hist = [entry, ...(Array.isArray(prev.history) ? prev.history : [])].slice(0, 30);
@@ -102,4 +149,4 @@ if (!dry) fs.writeFileSync(path.join(CLOUD, '看这里-哪个是小汐.txt'), ma
 console.log(dry ? '[dry] 完' : '云端备份完成：' + CLOUD);
 console.log('提示：文件要真上云，OneDrive 客户端得在跑并已登录。');
 // ASCII 汇总行：给只读 ASCII 的 Windows PowerShell 5.1 记日志用，中文在它那儿会乱码
-console.log('OK backup ok snap=' + path.basename(snap) + ' zip=' + (fs.existsSync(zip) ? path.basename(zip) : 'dry') + ' at=' + new Date().toISOString());
+console.log('OK backup ok snap=' + path.basename(snap) + ' zip=' + (fs.existsSync(zip) ? path.basename(zip) : 'dry') + ' cfg=' + (configZipName || 'dry') + ' at=' + new Date().toISOString());
