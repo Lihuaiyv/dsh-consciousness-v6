@@ -16,10 +16,16 @@
 
 ### 收工前三件事
 
-1. `node test/run-tests.mjs` —— 全绿（当前 **566/566**）。
+1. `node test/run-tests.mjs` —— 全绿（当前 **573/573**，2026-11-15）。
 2. `npm run check:arch` —— INV9 / 参数 / 归属 / 依赖图 / 宿主契约。
-3. `git add -A && git commit -m "一句中文"`；要异地备份就 `git push`。
+3. `git add -A && git commit -m "一句中文"`，然后 `git push`（分支 `refactor/brain-box` 跟踪 `origin`）。
    不要再建 `*.bak` 或整目录副本——git 已经有历史了。
+
+## 文档入口
+
+- 跨项目总入口：工作区根 `docs/INDEX.md`（意识体 / Live2D / BCI / QQ 桥 / 视频皮肤 / 规划）。
+- 本仓库按功能分：`docs/功能/` 八块（读与联想 / 写与切事 / 夜里整理 / 帧与收场 / 情绪与说话 / 语音 / 记忆统一 v2 主线 / 工程门禁与文档），每块一份 `README.md`。
+- 文档闸：`node scripts/check-docs-index.mjs`（链接、收录、最后更新、总入口必须项）。
 
 ## 搬家（换机器 / 重装）
 
@@ -40,7 +46,23 @@ npm run move:export    # 打包到桌面「搬家包\」（--lean 只带库和�
 
 ## 数据
 
-`~/.dsh/consciousness/app.db`（node:sqlite + FTS5，schema 11，含 `algo_bindings`、`affect_user_read`、`action_config`、`research_seen`、`research_runs`）。
+`runtime/consciousness/app.db`（工作区里；插件内走 `../../runtime/consciousness/app.db`，`src/paths.js` 解析）——
+node:sqlite + FTS5，**schema 13**，含 `algo_bindings`、`affect_user_read`、`action_config`、`research_seen`、`research_runs`。
+同目录还有 `hook.log`、`research/`、`events/`、`drawings/`、`backups/`。
+
+## 备份（2026-11-15 起）
+
+「我」= 库 + 代码 + profile 配置，三样分开备，缺一样都恢复不了：
+
+| 备份 | 做法 | 落在哪 |
+|---|---|---|
+| 库（记忆 / 情绪 / 对话 / 事件） | `node scripts/backup-now.mjs <目录>`：`VACUUM INTO` 一致性快照，自己校验条数 | `runtime/consciousness/backups/` |
+| 库进云 | `node scripts/backup-cloud.mjs`：快照 → 校验 → zip → OneDrive，只留最近 7 份 | `C:\Users\<用户>\OneDrive\小汐备份\` |
+| 自动跑 | `scripts/backup-loop.ps1`：登录后每 6 小时一次（Startup 里 `xiaoxi-backup.vbs`） | 日志 `%TEMP%\xiaoxi-backup-loop.log` |
+| 配置 | `~/.dsh/profiles/desktop` 的 `package.json` + `cordis.patch.yml` + `pnpm-lock.yaml` | 同上备份文件夹 `配置-<日期>.zip` |
+| 代码 | git remote / 或 `git bundle create x.bundle --all` 离线包 | GitHub / 同上 |
+
+恢复顺序：装 DSH → 装插件（照配置包）→ **关 DSH** → 解压库覆盖 `runtime/consciousness/app.db` → 登录模型账号 → 起。恢复回来的是**最后一次备份那一刻**的状态。
 
 ## 接口
 
@@ -73,7 +95,7 @@ POST /dsh-consciousness/api
 ## 测试
 
 ```bash
-node test/run-tests.mjs     # 566/566
+node test/run-tests.mjs     # 573/573
 node scripts/render-audit.mjs  # 40 个页面组合渲染审计（含设置页分组 / 参数行）
 npm run check:host          # 宿主契约自检：19 条 mock 宿主用例，不启 DSH
 npm run check:arch          # INV9 / 参数 / 归属 / 依赖图 / 宿主契约
@@ -263,13 +285,13 @@ DSH 破坏性更新时：先跑 `npm run check:host`；红了就只改 `src/host
 - 去重：`research_seen` 记归一化 URL（去 utm、锚点），窗口默认 60 天；重复跑到没新料时明确写「本轮没有新来源」。
 - 模型不可用时退化为「检索 + 摘要」模板，并注明没做语义交叉验证；抽取失败也计数进 `stats.extract_failed`。
 
-报告落 `~/.dsh/consciousness/research/<run_id>.md`，同时进 `research_runs` 表。
+报告落 `runtime/consciousness/research/<run_id>.md`，同时进 `research_runs` 表。
 接口：`POST /v1/agents/:id/research`、`GET /v1/agents/:id/research`、`GET /v1/agents/:id/research/:run_id`。
 注意：HTTP 手动触发没有会话上下文，宿主 `web` 服务可能拒绝调用；**要在对话里让模型用 `act_research`**。
 
 ## 日志
 
-`~/.dsh/consciousness/hook.log` 只记关键行（接缝状态 / 召回 / 回合落库 / 报错原因）。
+`runtime/consciousness/hook.log` 只记关键行（接缝状态 / 召回 / 回合落库 / 报错原因）。
 
 - 逐事件行（`event:*`）默认关，一次工具调用就一行，太吵；排查事件链路时设 `DSHC_PROBE_EVENTS=1`。
 - 每次启动检查大小，超过 **4MB** 就把上一份挪成 `hook.log.1`（只留一代）。
@@ -279,7 +301,7 @@ DSH 破坏性更新时：先跑 `npm run check:host`；红了就只改 `src/host
 ```
 index.js           宿主：业务内容（注入什么 / 事件做什么 / 挂哪些路由 / 四个行动工具），接缝交给 host/
 client.js          Client：window.__ModuleLoader__.load → settings.section（含行动接口配置面板）
-src/host/dsh.js    宿主适配层：六个接缝的探测 / 安装 / 降级 / 报告
+src/host/dsh.js    宿主适配层：四个接缝的探测 / 安装 / 降级 / 报告
 src/db.js          schema / journal / recover
 src/core.js        兼容层：按域再导出 kernel / modules/*
 src/features.js    关系、价值观、偏好、禁忌、工况、预算、规则版本、指标采样、主动开口判据与决策记录
