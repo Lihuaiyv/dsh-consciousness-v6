@@ -88,7 +88,7 @@ export const OWNERSHIP = {
       'algo/recall.js',
     ],
     tables: [
-      'memory_items', 'memory_links', 'memory_fts', 'conflicts', 'alerts', 'fragments',
+      'memory_items', 'memory_links', 'memory_fts', 'raw_fts', 'conflicts', 'alerts', 'fragments',
       // 署名：这条记忆里的话是谁说的（谁写记忆谁落署名，跟正文同域）
       'memory_provenance',
       // 开案后真的开口问：往主动消息队列里排一条

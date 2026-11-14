@@ -77,6 +77,8 @@ export const PARAMS = {
   // 心情一致：心情好更容易想起好事，低落更容易想起坏事（mood-congruent recall）
   'memory.recall.weights.mood': ['C4', 0.15],
   'memory.recall.formula': ['C3', 'v2'],
+  // 空窗兜底（D10）：episode 停写后，检索不够 k 条时从 fragments 补原话（默认 off）。
+  'memory.fragment.fallback': ['C4', 'off'],
   'memory.retrieve.formula': ['C3', 'v2'],
   // 召回增强：off = 纯词法；low = 只在低置信时叫模型（默认）；always = 每轮都叫。
   'memory.retrieve.expand': ['C4', 'low'],

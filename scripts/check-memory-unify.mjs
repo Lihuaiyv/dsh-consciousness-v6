@@ -35,7 +35,7 @@ say(sd === 'on' ? 'WARN' : 'PASS', 'pulse/情绪直塞', sd === 'on' ? '开着�
 // 2) 事件库
 const hot = one('SELECT COUNT(*) n, MAX(created_at) last FROM hot_events WHERE agent_id=? AND active=1', aid)
 const cold = one('SELECT COUNT(*) n, MAX(created_at) last FROM cold_events WHERE agent_id=?', aid)
-const recentCut = all('SELECT key, value FROM flags WHERE key LIKE ? ORDER BY key DESC LIMIT 8', 'events.cut.%')
+const recentCut = all('SELECT key, value FROM flags WHERE key LIKE ? ORDER BY key DESC LIMIT 400', 'events.cut.%')
 say(Number(hot.n) >= 5 ? 'PASS' : 'WARN', '事件热库', `active=${hot.n || 0}，最近 ${hot.last || '-'}`)
 say(Number(cold.n) >= 5 ? 'PASS' : 'WARN', '事件冷库', `总数=${cold.n || 0}，最近 ${cold.last || '-'}`)
 // 2026-11-14（D43）：有闸 ≠ 切完了。done 要看 state；pending/retry 要报 WARN 并带进度，
@@ -50,7 +50,11 @@ say(Number(cold.n) >= 5 ? 'PASS' : 'WARN', '事件冷库', `总数=${cold.n || 0
     dayFlags.set(m[1], o)
   }
   const days = [...dayFlags.entries()].sort((a, b) => b[0].localeCompare(a[0]))
-  const unfinished = days.filter(([, f]) => f.state !== 'done')
+  // 只看最近两个「已经过完的天」：今天还在进行中，pending 正常；
+  // 更早的旧天（10-27~11-11）是老闸遗留的 pending，不是现在的故障，不该天天报。
+  const today = new Date().toISOString().slice(0, 10)
+  const check = days.filter(([d]) => d < today).slice(0, 2)
+  const unfinished = check.filter(([, f]) => f.state !== 'done')
   const latest = days[0]
   if (!days.length) say('WARN', '切事闸', '还没有 events.cut.*（重启后等第一次 tick）')
   else if (unfinished.length) {

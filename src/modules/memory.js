@@ -719,7 +719,7 @@ export function recall(db, aid, query, k = 8, budget = 512, opt = {}) {
   const relation = Math.max(0, Math.min(1, Number(getParam(db, aid, 'memory.recall.weights.relation')) || 0))
   const moodW = Math.max(0, Math.min(1, Number(getParam(db, aid, 'memory.recall.weights.mood')) || 0))
   const mood = Math.max(-1, Math.min(1, Number(opt.mood) || 0))
-  return runBound('recall', aid, { db, aid }, {
+  const res = runBound('recall', aid, { db, aid }, {
     query, k, budget, decayVersion,
     decayScale: decayScaleOf(db, aid),
     floor: recallFloorOf(db, aid),
@@ -729,6 +729,55 @@ export function recall(db, aid, query, k = 8, budget = 512, opt = {}) {
     mood: moodW > 0 ? mood : 0,
     moodW,
   }, fallback)
+  return withFragmentFallback(db, aid, query, res, k, opt)
+}
+
+/**
+ * 空窗兜底（D10）：episode 停写后，原话还在 fragments。
+ * 检索凑不够 k 条时，用 raw_fts 从碎片里补；补进来的条低分（0.35），排在后面。
+ * 开关：param memory.fragment.fallback = on（默认 off，测试隔离）。
+ */
+function withFragmentFallback(db, aid, query, res, k, opt = {}) {
+  try {
+    if (opt.fragmentFallback === false) return res
+    if (String(getParam(db, aid, 'memory.fragment.fallback') || '') !== 'on') return res
+    const items = Array.isArray(res?.items) ? res.items : []
+    const q = String(query || '').trim()
+    if (q.length < 3) return res
+    const grams = []
+    for (let i = 0; i + 3 <= q.length; i++) grams.push(q.slice(i, i + 3))
+    const uniq = [...new Set(grams)]
+    const match = uniq.slice(0, 8).map((g) => '"' + g.replace(/"/g, '""') + '"').join(' OR ')
+    // bm25 归一化 + 时间衰减：让原话按「有多像这句」竞争，不是固定分硬挤。
+    const rows = db.prepare(`SELECT f.id, f.text, f.created_at, bm25(raw_fts) AS rank FROM raw_fts x JOIN fragments f ON f.id=x.id
+      WHERE raw_fts MATCH ? AND f.agent_id=? ORDER BY rank LIMIT ?`).all(match, aid, Math.max(2, k))
+    const ranks = rows.map((r) => -Number(r.rank || 0)).filter(Number.isFinite)
+    const hi = ranks.length ? Math.max(...ranks) : 1
+    const lo = ranks.length ? Math.min(...ranks) : 0
+    const seen = new Set(items.map((it) => String(it.text || '').slice(0, 60)))
+    const add = []
+    const quota = Math.max(2, Math.ceil(k / 3))   // 原话最多占 k 的 1/3
+    for (const r of rows) {
+      if (add.length >= quota) break
+      const t = String(r.text || '').trim()
+      if (!t) continue
+      const head = t.slice(0, 60)
+      if (seen.has(head)) continue
+      if (items.some((it) => { const s = String(it.text || ''); return s.includes(t) || (t && t.includes(s)) })) continue
+      seen.add(head)
+      const norm = hi > lo ? (-Number(r.rank || 0) - lo) / (hi - lo) : 0.5
+      const ageH = Math.max(0, (Date.now() - Date.parse(r.created_at || Date.now())) / 3600000)
+      const decay = 1 / (1 + (Number.isFinite(ageH) ? ageH : 0) / 168)
+      const score = 0.35 + 0.45 * Math.max(0, Math.min(1, norm)) * decay
+      add.push({ id: 'frag_' + String(r.id).replace(/^frag_/, ''), text: t.slice(0, 160), type: 'fragment', source: 'fragments', score: +score.toFixed(3), created_at: r.created_at })
+    }
+    if (!add.length) return res
+    // 不是「凑数」，是**参选**：原话命中了就有资格挤进前 k；分数给 0.55（高于低分旧记忆，低于强相关）。
+    const merged = [...items, ...add]
+      .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+      .slice(0, Math.max(1, k))
+    return { ...res, items: merged, fragmentFallback: add.length }
+  } catch { return res }
 }
 
 /** 指定版本或临时权重跑召回（影子 / 测试）；未登记版本会抛错 */

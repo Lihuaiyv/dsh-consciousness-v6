@@ -190,7 +190,7 @@ function statementNote(s, opt) {
   if (Date.now() - t < STATEMENT_DAYS * 86400000) return ''
   const from = md(s.occurred)
   if (!from) return ''
-  return '（' + from + ' 记下的判断，不是说现在）'
+  return '（' + from + ' 的旧判断）'
 }
 
 /**

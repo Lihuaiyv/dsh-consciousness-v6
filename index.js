@@ -938,7 +938,12 @@ const memFallbackAll = mem.filter((m) => oneLine(m.text, 60) !== spontaneousText
     })()
     : memFallbackAll
   // 兜底记忆块也要贴来源：否则「我猜的」和「你亲口说的」在这里又长成同一句。
-  const memLineOf = (m) => '- ' + memoryTag(m, Date.now(), { provenance: provOn, age: ageOnMem }) + oneLine(m.text, 60) + passportLine(db, aid, m, { on: passportOn, weak: weakOn })
+  const memLineOf = (m) => {
+    const tag = memoryTag(m, Date.now(), { provenance: provOn, age: ageOnMem })
+    // D47：tag 里已经有来源/年龄/不一定对，就别再叠「旧判断」那个括号。
+    const note = passportLine(db, aid, m, { on: passportOn, weak: weakOn, statement: tag ? 'off' : 'on' })
+    return '- ' + tag + oneLine(m.text, 60) + note
+  }
 const memText = recallOverride
     ? dynText
     : (dynText || (memFallback.length ? memFallback.slice(0, 4).map(memLineOf).join('\n') : ''))

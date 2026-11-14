@@ -16,6 +16,7 @@
  *   - 宁可少，不可编；说不清就给 3 件
  *   - 喂模型前剔掉机器消息
  */
+import { oneLine } from './pack.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { dataDir } from '../paths.js'
@@ -514,7 +515,7 @@ function makeWorkEvent(parsed, rows, quality = 'local') {
   // 规则从原文补一层文件名/模块/版本，保证以后真能撞上（软联想也要有钩子）。
   const cues = mergeNameCues(parsed?.cues, textAll)
   return {
-    title: '工作段：' + digest.slice(0, 18),
+    title: '工作段：' + oneLine(digest, 18),
     who: '主人',
     started_at: rows[0].created_at,
     ended_at: rows[rows.length - 1].created_at,

@@ -2570,7 +2570,12 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-daily-fallback.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('daily 兜底：主模型挂→本地逐件、weight≤0.35、本地也挂不崩', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
-// D1：非网页通道也能「自己想起」（一轮一条、真拼才记浮现）
+// D10：碎片兜底（episode 停写后，检索不够时从 fragments 补原话）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-fragment-fallback.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('碎片兜底：开关 on 补原话、off 不补', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-channel-events.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })

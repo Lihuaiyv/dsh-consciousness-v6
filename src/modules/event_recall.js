@@ -59,35 +59,51 @@ export function currentMood(db, aid) {
 }
 
 /**
- * 词命中分：完整命中 1 分；沾边（连续 3 字重叠）0.5 分。
+ * 词命中分：完整命中按「抓手稀有度」加权；沾边（连续 3 字重叠）再打半折。
  *
- * 去重：同一句话里，两条指同一件事的抓手（「双层麦辣鸡」和它的别名「麦辣鸡」）
- * 只算一次。原来两条各加 1 分，同一件事的分数会翻倍，把别的事压下去——
- * 这不是更贴切，是记账重复。长的优先，短的若被长的包含就不再加分。
+ * 2026-11-15：回填后事件涨到 1900+，乱撞率 63%。根因是「继续 / 代码 / 微信 / 感觉」
+ * 这种泛词也算完整命中——一句话带出七八件旧事，那不是联想，是噪音。
+ * 解法：先在热库里算每个抓手的 df（被多少件事用了），越常见越不值钱：
+ *   df=1 → 1 分；df=2 → 0.8；df 3~4 → 0.5；df 5~8 → 0.25；df>8 → 0（泛词不触发）。
+ * 去重规则不变：同一句话里长抓手包含短抓手只算一次。
  */
-export function wordScore(text, cues) {
+export function wordScore(text, cues, cueWeight = null) {
   let score = 0
   const hits = []
   const fuzzy = []
+  const w = (cue) => {
+    if (typeof cueWeight !== 'function') return 1
+    const v = Number(cueWeight(cue))
+    return Number.isFinite(v) && v > 0 ? v : 0
+  }
+  // 2026-11-15：泛词不单独触发。「继续 / 整理 / 模型 / 微信 / 感觉」这种 2~3 字常用词，
+  // 回填后 1900+ 件里一撞一大片；只认「像专名」的抓手：含字母数字，或 ≥4 字。
+  const specific = (cue) => /[A-Za-z0-9]/.test(cue) || Array.from(cue).length >= 3
+  // 2026-11-15 晚：原先是 >=4，把「抓手甲」这种三字专名也排掉了，门禁和真库都撞不上。
+  // 两字泛词（继续/模型/微信）仍然排除；三字以上交给下文的 df 稀有度兜。
   const full = []
   for (const c of cues) {
     const cue = String(c || '').trim()
-    if (cue && text.includes(cue)) full.push(cue)
+    if (cue && specific(cue) && text.includes(cue)) full.push(cue)
   }
   full.sort((a, b) => b.length - a.length)
   for (const cue of full) {
     if (hits.some((h) => h.includes(cue))) continue
-    score += 1
+    const cw = w(cue)
+    if (cw <= 0) continue
+    score += cw
     hits.push(cue)
   }
   for (const c of cues) {
     const cue = String(c || '').trim()
-    if (!cue || text.includes(cue)) continue
-    if (cue.length < 3) continue
+    if (!cue || !specific(cue) || text.includes(cue)) continue
+    if (cue.length < 4) continue
     if (hits.some((h) => h.includes(cue))) continue
+    const cw = w(cue)
+    if (cw <= 0) continue
     for (let i = 0; i + 3 <= cue.length; i++) {
       const frag = cue.slice(i, i + 3)
-      if (text.includes(frag)) { score += 0.5; fuzzy.push(cue + '~' + frag); break }
+      if (text.includes(frag)) { score += 0.5 * cw; fuzzy.push(cue + '~' + frag); break }
     }
   }
   return { score, hits, fuzzy }
@@ -111,14 +127,39 @@ export function recallEvents(db, aid, text, { limit = 3, minScore = MIN_SCORE, n
       FROM hot_events h WHERE h.agent_id=? AND h.active=1 AND h.state='待联想'`).all(aid)
   } catch { return { ok: false, reason: 'no-event-tables', text: q, mood, items: [] } }
 
+  // 抓手稀有度（IDF 思路）：先数每个抓手被多少件事用了。
+  // 「继续 / 代码 / 微信 / 感觉」这种泛词 df 高 → 权重 0，不单独触发；
+  // 只有专名/少见的抓手才值分。回填后 1900+ 件，这一步是防乱撞的关键。
+  const df = new Map()
+  for (const r of rows) {
+    let cs = []
+    try { cs = JSON.parse(r.cues || '[]') } catch { cs = [] }
+    for (const c of cs) {
+      const k = String(c || '').trim()
+      if (k) df.set(k, (df.get(k) || 0) + 1)
+    }
+  }
+  const cueWeight = (cue) => {
+    const n = df.get(String(cue || '').trim()) || 1
+    if (n <= 1) return 1
+    if (n === 2) return 0.8
+    if (n <= 4) return 0.5
+    if (n <= 8) return 0.25
+    return 0
+  }
+
   const items = []
   for (const r of rows) {
     let cues = []
     try { cues = JSON.parse(r.cues || '[]') } catch { cues = [] }
     if (!cues.length) continue
 
-    const ws = wordScore(q, cues)
+    const ws = wordScore(q, cues, cueWeight)
     if (ws.score <= 0) continue   // 情绪不单独触发：没有词撞上，就什么也不想
+    // 2026-11-15：只认整词命中。回填后事件 1900+，「连续 3 字沾边」会把「像」当成「是」
+    // （自启动服务~自启动、成品摄像头~摄像头），乱撞率压不下来。先关掉沾边触发，
+    // 等抓手质量（专名）上来再考虑开；自撞不依赖它（撞自己用的是整词）。
+    if (!ws.hits.length) continue
 
     const born = r.event_end || null
     if (born) {
