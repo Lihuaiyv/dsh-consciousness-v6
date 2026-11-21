@@ -10,10 +10,9 @@
  *   2. 绑定的实例被用户暂停时，解析也返回 null，但**保留绑定**；用户唤醒后接着用。
  *   3. 自动动作（空闲回收）只释放绑定，不改 `agents.status` —— 用户的意图不许被系统覆盖。
  */
-import fs from 'node:fs'
-import os from 'node:os'
 import { now } from '../db.js'
 import { nid } from '../kernel.js'
+import { defaultFileSeam } from '../host/fs.js'
 
 /** 同时能「挂着」的实例上限（防止一口气开十个，每个都在打模型）。 */
 export const DEFAULT_MAX_RUNNING = 3
@@ -22,22 +21,19 @@ export const DEFAULT_IDLE_RELEASE_DAYS = 30
 // 归档名单读盘有成本，心跳里每个实例都要问一遍，所以记 2 秒。
 let _archCache = { at: 0, set: null }
 
-/** DSH 的家目录（DSH_HOME 没设就是 ~/.dsh），和 api.js 的 dshHome() 同一口径。 */
-function dshHome() { return process.env.DSH_HOME || (os.homedir() + '/.dsh') }
-
 /**
  * DSH 的归档名单：`~/.dsh/storages/workspace.json` 里 global.archivedSessionIds。
- * 读不到就当「没有归档」——宁可多算一段，也不误松用户还在用的会话。
+ * 读文件走 host/fs.js（唯一读口）；读不到就当「没有归档」——宁可多算一段，也不误松用户还在用的会话。
  * @returns {Set<string>}
  */
 export function archivedSessionIds({ maxAgeMs = 2000 } = {}) {
   const t = Date.now()
   if (_archCache.set && t - _archCache.at < maxAgeMs) return _archCache.set
   const out = new Set()
-  try {
-    const ws = JSON.parse(fs.readFileSync(dshHome() + '/storages/workspace.json', 'utf8'))
+  const ws = defaultFileSeam().readOr('workspace', null)
+  if (ws) {
     for (const id of ((ws.global && ws.global.archivedSessionIds) || [])) out.add(String(id))
-  } catch { /* 没有 workspace.json / 解析失败：当作没有归档 */ }
+  }
   _archCache = { at: t, set: out }
   return out
 }

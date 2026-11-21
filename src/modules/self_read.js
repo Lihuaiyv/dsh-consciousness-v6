@@ -18,6 +18,7 @@
  */
 
 import { getParam } from '../kernel.js'
+import { v4ValenceOf } from './affect_live.js'
 import { writeFastOnly } from '../parts/affect/index.js'
 
 const CLAMP = (x, lo, hi) => Math.max(lo, Math.min(hi, Number(x) || 0))
@@ -65,6 +66,9 @@ export function applySelfRead(db, aid, text, { at = Date.now() } = {}) {
   let cur = null
   try { cur = db.prepare('SELECT slow, fast FROM affect_v3 WHERE agent_id=?').get(aid) } catch { cur = null }
   if (!cur) return { observed: r.warmth, warmth: r.warmth, delta: 0, applied: false, reason: 'no_state' }
+  // v4 当场的读者已经接上来了：这时候自读只当观察，不再回头拨旧 fast。
+  const v4 = v4ValenceOf(db, aid)
+  if (v4) return { observed: r.warmth, warmth: r.warmth, delta: 0, applied: false, reason: 'v4_live', v4: v4.v }
   const fast = CLAMP(cur.fast, -1, 1)
   const slow = CLAMP(cur.slow, -1, 1)
   if (Math.abs(r.warmth - fast) < 0.35) return { observed: r.warmth, warmth: r.warmth, delta: 0, applied: false, reason: 'close' }

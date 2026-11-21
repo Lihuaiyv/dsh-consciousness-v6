@@ -1,3 +1,84 @@
+    /* 三维球（2026-11-18）：把 v4 的 S / N / D 投到球里一个点。
+       这不是装饰：三条轴各是一个 0~1，点在球里的位置就是「这一下推到了哪儿」。
+       x = 现状 S，y = 奔头 D（往上），z = 被惊到 N（朝观察者）。固定视角 + 透视，不转，免得看晕。 */
+    function AffectBall({ v4 }) {
+      const W = 380, H = 260, cx = 190, cy = 120, R = 96
+      const rotY = 0.62, tiltX = 0.34
+      const pt = (x, y, z) => {
+        const x1 = x * Math.cos(rotY) + z * Math.sin(rotY)
+        const z1 = -x * Math.sin(rotY) + z * Math.cos(rotY)
+        const y1 = y * Math.cos(tiltX) - z1 * Math.sin(tiltX)
+        const z2 = y * Math.sin(tiltX) + z1 * Math.cos(tiltX)
+        const k = 1 / (1 - z2 * 0.32)
+        return [cx + x1 * R * k, cy - y1 * R * k, z2]
+      }
+      const ring = (fn, n = 72) => {
+        let d = ''
+        for (let i = 0; i <= n; i++) {
+          const t = i / n * Math.PI * 2
+          const p = fn(t)
+          d += (i ? 'L' : 'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)
+        }
+        return d + 'Z'
+      }
+      const m1 = ring((t) => pt(Math.cos(t), Math.sin(t), 0))
+      const m2 = ring((t) => pt(0, Math.cos(t), Math.sin(t)))
+      const m3 = ring((t) => pt(Math.cos(t), 0, Math.sin(t)))
+      const ok = v4 && ['s', 'n', 'd'].every((k) => Number.isFinite(Number(v4[k])))
+      const s = ok ? Number(v4.s) : 0.5
+      const n = ok ? Number(v4.n) : 0.15
+      const d = ok ? Number(v4.d) : 0.5
+      const p = pt((s - 0.5) * 1.7, (d - 0.5) * 1.7, (n - 0.5) * 1.7)
+      const CORNERS = [
+        ['安', 1, 0, 0], ['怡', 1, 0, 1], ['惊', 1, 1, 0], ['乐', 1, 1, 1],
+        ['悲', 0, 0, 0], ['怯', 0, 0, 1], ['惧', 0, 1, 0], ['怒/慌', 0, 1, 1],
+      ]
+      let best = null
+      for (const c of CORNERS) {
+        const dd = Math.hypot((c[1] - s), (c[2] - n), (c[3] - d))
+        if (!best || dd < best.dd) best = { zh: c[0], dd }
+      }
+      const near = best ? Math.max(0, Math.round((1 - best.dd / Math.sqrt(3)) * 100)) : 0
+      const axisLabel = (x, y, z, text, color) => {
+        const q = pt(x, y, z)
+        return h('text', {
+          x: q[0], y: q[1], fill: color, fontSize: 11, textAnchor: 'middle',
+          style: { paintOrder: 'stroke', stroke: '#0b1018', strokeWidth: 3 },
+        }, text)
+      }
+      return h('div', null,
+        h('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: '100%', maxWidth: 430, display: 'block', margin: '0 auto' } },
+          h('defs', null,
+            h('radialGradient', { id: 'affball-fill', cx: '34%', cy: '28%', r: '75%' },
+              h('stop', { offset: '0%', stopColor: '#8fd6ff', stopOpacity: 0.30 }),
+              h('stop', { offset: '58%', stopColor: '#1b3a55', stopOpacity: 0.55 }),
+              h('stop', { offset: '100%', stopColor: '#0a1420', stopOpacity: 0.92 }))),
+          h('ellipse', { cx, cy, rx: R * 1.02, ry: R * 1.02, fill: 'url(#affball-fill)', stroke: 'rgba(140,200,255,.28)' }),
+          [m1, m2, m3].map((dd, i) => h('path', {
+            key: 'ring' + i, d: dd, fill: 'none',
+            stroke: 'rgba(150,210,255,.20)', strokeWidth: 1, strokeDasharray: i === 0 ? null : '3 4',
+          })),
+          CORNERS.map((c) => {
+            const q = pt((c[1] - 0.5) * 1.55, (c[3] - 0.5) * 1.55, (c[2] - 0.5) * 1.55)
+            return h('circle', { key: 'c' + c[0], cx: q[0], cy: q[1], r: 2.6, fill: 'rgba(190,235,255,.40)' })
+          }),
+          h('circle', { cx, cy, r: 2.2, fill: 'rgba(200,240,255,.45)' }),
+          h('line', { x1: cx, y1: cy, x2: p[0], y2: p[1], stroke: '#5ec8ff', strokeWidth: 1, strokeDasharray: '3 4', opacity: 0.7 }),
+          h('circle', { cx: p[0], cy: p[1], r: 18, fill: '#5ec8ff', opacity: 0.14 }),
+          h('circle', { cx: p[0], cy: p[1], r: 5.6, fill: '#d9f3ff', stroke: '#5ec8ff', strokeWidth: 1.6,
+            style: { filter: 'drop-shadow(0 0 6px #5ec8ff)' } }),
+          axisLabel(1.22, 0, 0, '现状 S', '#9fe0ff'),
+          axisLabel(0, 1.22, 0, '奔头 D', '#ffd79a'),
+          axisLabel(0, 0, 1.22, '惊 N', '#ff9b9b')),
+        h('div', { style: { display: 'flex', justifyContent: 'center', gap: 18, marginTop: 2, fontSize: 12, opacity: 0.75 } },
+          h('span', null, '现状 ' + s.toFixed(2)),
+          h('span', null, '惊 ' + n.toFixed(2)),
+          h('span', null, '奔头 ' + d.toFixed(2)),
+          ok ? h('span', { style: { color: '#9fe0ff' } }, '最像「' + best.zh + '」 ' + near + '%') : h('span', { style: { opacity: 0.6 } }, '这一轮还没算当场')),
+        !ok && h('div', { className: 'dshc-sub', style: { textAlign: 'center', marginTop: 4 } },
+          '它还没算出来——等它回过一句，这里就是一个点。'))
+    }
+
     function AffectPage({ aid, view, act, setTab }) {
       const [tick, setTick] = useState(0)
       const [trange, setTrange] = useState(7)
@@ -19,7 +100,10 @@
          涓嶇劧鍋滃湪寮€椤甸偅涓€鍒荤殑蹇収涓婏紝鐪嬬潃灏卞儚銆岀畻娉曟病鏇存柊銆嶃€?*/
       useLive(() => { reloadA(); reloadT() }, 10000)
       const cur = a.data || {}
-      const label = AFFECT_KEY[cur.primary_label] || cur.primary_label || '—'
+      // v4 有就用它的词和「离中立多远」当强度；没有才回旧 PAD 的标签/强度。
+      const v4 = (cur && cur.v4) || null
+      const label = v4 && v4.label ? v4.label : (AFFECT_KEY[cur.primary_label] || cur.primary_label || '—')
+      const intensity = v4 && Number.isFinite(Number(v4.v)) ? Math.abs(Number(v4.v)) : Number(cur.intensity || 0)
       /* 鏈€鏂伴偅鏉℃秷鎭鍒ゆ柇鎴愪粈涔堬紙杩樻病琚儻鎬у帇杩囩殑鍘熷鍒ゆ柇锛?*/
       const latestRaw = (() => {
         const e = (eps.data && eps.data[0]) || null
@@ -61,7 +145,7 @@
         return Number.isFinite(mood) ? (mood - 0.5) * 2 : 0
       })()
       /* 瓒婄Н鏋佽秺娲绘臣锛堜寒銆佸揩銆佸線涓婇锛夛紱瓒婃秷鏋佽秺娑堟矇锛堟殫銆佹參銆佸線涓嬫矇锛?*/
-      const look = emoLook(tNow, cur.intensity)
+      const look = emoLook(tNow, intensity)
 
       return h('div', null,
         h(LoadErr, { error: a.error || eps.error, retry: () => { reloadA(); setTick((t) => t + 1) } }),
@@ -101,8 +185,8 @@
                 }, label),
                 h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 6 } },
                   h('span', { className: 'dshc-sub', style: { minWidth: 30 }, title: '这股情绪有多强，0 到 1' }, '强度'),
-                  h(Bar, { value: cur.intensity, tone: Number(cur.intensity) > 0.75 ? 'warn' : undefined }),
-                  h('span', { className: 'dshc-mono' }, Number(cur.intensity || 0).toFixed(2)),
+                  h(Bar, { value: intensity, tone: Number(intensity) > 0.75 ? 'warn' : undefined }),
+                  h('span', { className: 'dshc-mono' }, Number(intensity).toFixed(2)),
                   h('span', { className: 'dshc-sub', style: { opacity: 0.38 } }, '0 到 1')),
                 h('div', { style: { display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 } },
                   h('span', { className: 'dshc-sub', style: { minWidth: 30 }, title: '整体舒服不舒服，0 到 1；0.5 是不好不坏。和「此刻」是同一个数，只是换了刻度' }, '心情'),
@@ -112,13 +196,14 @@
                 (function () {
                   const v3 = (cur && cur.v3) || null
                   if (!v3) return null
+                  const v4 = (cur && cur.v4) || null
                   const sg = (x) => (Number(x) >= 0 ? '+' : '') + Number(x).toFixed(2)
                   const items = [
                     ['水位', v3.baseline, '底色 + 日节律 + 激素纹 + 累积负荷：慢情绪要去的地方'],
                     ['负荷', v3.base_off, '累积负荷：被持续情绪拖走的那部分，几天代谢回来'],
-                    ['慢情绪', v3.slow, '慢情绪（v3.slow）：最近几小时到几天的整体；它不是上面那个 0~1 的「心情」'],
-                    ['快情绪', v3.fast, '快情绪（v3.fast）：这一下的反应 + 共情，按分钟回落'],
-                    ['此刻', v3.total, '总情绪：慢情绪 + 0.35×快情绪'],
+                    ['慢情绪', v3.slow, '慢情绪（v3.slow）：跨会话的底色，最近几小时到几天'],
+                    ['当场', v4 ? v4.v : v3.fast, v4 ? '当场（v4）：这一句把三条轴推到哪儿，再投影到正负轴；各会话独立' : '快情绪（旧 v3.fast）：这一下的反应 + 共情，按分钟回落'],
+                    ['此刻', v3.total, v4 ? '总情绪：慢情绪 + 0.35×当场（v4 投影）' : '总情绪：慢情绪 + 0.35×快情绪'],
                   ]
                   const shown = items.filter((it) => it[1] !== null && it[1] !== undefined && Number.isFinite(Number(it[1])))
                   if (!shown.length) return null
@@ -170,7 +255,7 @@
                     '次选 ' + (AFFECT_KEY[g.second] || g.second) +
                     ' · 占它这次读你的 ' + Math.round(Number(g.topP || 0) * 100) + '%')),
                 h('div', { className: 'dshc-readself' },
-                  h('div', { className: 'dshc-sub' }, '它自己此刻'),
+                  h('div', { className: 'dshc-sub' }, '它当时自己'),
                   h('div', { style: { marginTop: 2 } },
                     h(Pill, null, AFFECT_KEY[g.self.label] || g.self.label),
                     h('span', { className: 'dshc-mono', style: { marginLeft: 6, opacity: 0.7 } },
@@ -201,7 +286,11 @@
                 : '它学到的偏差：还没有')) : null)
         })(),
 
-        h(Sec, { title: '它现在的情绪', desc: '最近 24 小时的情绪成分，越近的越重（半衰 4 小时）、越强的越重；不是历史累计。' },
+        h(Sec, { title: '它现在的三维位置', desc: '现状 S（现在好不好）/ 惊 N（被惊到多少）/ 奔头 D（还有没有奔头）。球心是平静，点离球心越远，这一下越重。' },
+          h(Card, null,
+            h(AffectBall, { v4: cur.v4 || null }))),
+
+        h(Sec, { techOnly: true, title: '旧口径：最近 24 小时的情绪成分', desc: '按旧情绪账的 8 个词，越近的越重（半衰 4 小时）；只留技术页对照。' },
           h(Card, null,
             h(RadarChart, { labels: (radar.data && radar.data.labels) || {} }),
             h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8, justifyContent: 'center' } },

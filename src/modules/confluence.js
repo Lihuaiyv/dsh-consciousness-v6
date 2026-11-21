@@ -15,6 +15,7 @@
  *   - buildSnapshot / writeSnapshot：截面（P1 才写库；build 只拼对象）
  */
 
+import { parseTimeRange } from './timeparse.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { now } from '../db.js'
@@ -379,7 +380,7 @@ export function runConfluence(bundle, opt = {}) {
       }
     }
     const s = []
-    if (st.affect) s.push(`情绪 ${st.affect.label || '?'}${st.affect.v3 ? `（slow ${st.affect.v3.slow} / fast ${st.affect.v3.fast}）` : ''}`)
+    if (st.affect) s.push(`情绪 ${st.affect.label || '?'}${st.affect.v4 ? `（当场 ${st.affect.v4.v}，S ${st.affect.v4.s} / N ${st.affect.v4.n} / D ${st.affect.v4.d}）` : st.affect.v3 ? `（slow ${st.affect.v3.slow} / fast ${st.affect.v3.fast}）` : ''}`)
     if (st.drive) s.push(`驱力 ${st.drive.band || '?'}${st.drive.D ? '' : '（D 缺失）'}`)
     if (st.relation) s.push(`关系最近一次：${clean(st.relation.text).slice(0, 40)}`)
     if (st.other && (st.other.guess || st.other.actual)) s.push(`你当时像是 ${st.other.actual || st.other.guess}`)
@@ -668,7 +669,14 @@ export function sceneView(db, aid, opt = {}) {
   if (level === 'L2') {
     const rep = replayScene(db, aid, { at, sessionId: opt.sessionId })
     if (rep) {
-      const header = '【记忆汇流 · 整段重放 ' + rep.at.slice(0, 10) + '】\n（这是那一轮拼好的整段上下文，原样取出。只在这一轮给你看，不写回、不改写。）\n\n'
+      // 2026-11-18 主人：L2 也要有「时间感」——原来只给日期，读到的是原话，不是「那天夜里」。
+      const clock = localClock(rep.at)
+      const phase = phaseOf(rep.at)
+      const delta = Number.isFinite(rep.delta_min) && Math.abs(rep.delta_min) >= 10
+        ? `（离你指的那个时刻差 ${Math.abs(rep.delta_min)} 分钟）` : ''
+      const header = '【记忆汇流 · 整段重放 ' + rep.at.slice(0, 10) + ' ' + clock + '】\n'
+        + '（这是那一轮拼好的整段上下文，原样取出。只在这一轮给你看，不写回、不改写。）\n\n'
+        + '时间感：那是 ' + clock + (phase ? '，' + phase : '') + delta + '。' + '\n\n'
       const system = header + rep.block + (rep.state ? '\n\n（那一轮的重截面也在：' + String(rep.state.affect_json || '').slice(0, 120) + '）' : '')
       return {
         ok: true, at, level, session: { id: rep.session_id, filtered: !!opt.sessionId },
@@ -699,16 +707,32 @@ export function sceneView(db, aid, opt = {}) {
  */
 export function parseBackCommand(text) {
   const t = String(text || '').trim()
-  const m = t.match(/^(?:宝宝[，,]?\s*)?(?:我们|你)?\s*(?:回到|翻回|回看|看看)\s*(?:一下|一眼)?\s*[：:]?\s*(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})[:：](\d{2}))?/)
-  if (!m) return null
-  const y = Number(m[1]), mo = Number(m[2]), da = Number(m[3])
-  if (!(mo >= 1 && mo <= 12 && da >= 1 && da <= 31)) return null
-  const hh = m[4] != null ? Number(m[4]) : 15
-  const mi = m[5] != null ? Number(m[5]) : 0
-  if (!(hh >= 0 && hh <= 23 && mi >= 0 && mi <= 59)) return null
-  // 库里存 Z；口令按本地（+08:00）写
-  const iso = new Date(Date.UTC(y, mo - 1, da, hh - 8, mi)).toISOString()
-  return { at: iso, level: 'L1' }
+  // 2026-11-15：词法放宽。原来只认「回到 YYYY-MM-DD」，太傻；
+  // 现在只要求「回到/翻回/回看/看看」开头，后面交给：
+  //   1) 绝对日期（带钟点）
+  //   2) timeparse 解析「上周三 / 前天 / 11月5日 / 三天前」
+  // 另外给三层开口：「整段 / 重放」= L2，「看一眼 / 轻」= L0，默认 L1。
+  const head = t.match(/^(?:宝宝[，,]?\s*)?(?:我们|你)?\s*(?:回到|翻回|回看|看看)\s*(?:一下|一眼)?\s*[：:]?\s*(.*)$/)
+  if (!head) return null
+  const rest = String(head[1] || '').trim()
+  if (!rest) return null
+  const level = /整段|重放/.test(t) ? 'L2' : (/轻一点|只看一眼|看一眼|只看看|一眼\s*$/.test(t) ? 'L0' : 'L1')
+  const m = rest.match(/(\d{4})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})[:：](\d{2}))?/)
+  if (m) {
+    const y = Number(m[1]), mo = Number(m[2]), da = Number(m[3])
+    if (!(mo >= 1 && mo <= 12 && da >= 1 && da <= 31)) return null
+    const hh = m[4] != null ? Number(m[4]) : 15
+    const mi = m[5] != null ? Number(m[5]) : 0
+    if (!(hh >= 0 && hh <= 23 && mi >= 0 && mi <= 59)) return null
+    // 库里存 Z；口令按本地（+08:00）写
+    return { at: new Date(Date.UTC(y, mo - 1, da, hh - 8, mi)).toISOString(), level }
+  }
+  // 相对时间：上周三 / 前天 / 11月5日 / 三天前 / 去年三月
+  try {
+    const r = parseTimeRange(rest)
+    if (r && r.from) return { at: r.from, level, phrase: r.phrase || rest }
+  } catch { /* 解析不了就当没口令 */ }
+  return null
 }
 
 /**

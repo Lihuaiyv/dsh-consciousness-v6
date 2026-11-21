@@ -39,7 +39,10 @@ import { llmBudgetAllow, llmBudgetBump } from './modules/llm_budget.js'
 // 2026-11-13：工作模式（面板按钮）下的后台降载判断。日常模式读到的永远是 false。
 import { isWorkMode } from './modules/work_mode.js'
 import { writeChatTurns } from './modules/turn_write.js'
-import { episodeWriteEnabled } from './modules/memory_switch.js'
+
+// 2026-11-22：episode 记忆写入口已随 memory_switch 删除；这里留一个恒假桩，老调用点直接跳过。
+const episodeWriteEnabled = () => false
+
 // D1：非网页通道也要能「自己想起」——和网页共用事件联想与浮现记账。
 import { recallEvents, buildEventLine } from './modules/event_recall.js'
 import { markSurfaced, markMentioned } from './modules/event_drift.js'
@@ -486,6 +489,10 @@ function workDigest(db, aid, turns, opt = {}) {
 
 export async function ingest(db, aid, body) {
   active(db, aid)
+  // 2026-11-22：事实库旧路径默认停；没显式打开就一眼跳过，一个条目不写。
+  let legacyFact = 'off'
+  try { legacyFact = String(getParam(db, aid, 'memory.legacy.fact') || 'off') } catch { /* 读不到按停 */ }
+  if (legacyFact !== 'on') return { skipped: 'legacy-fact-off', extracted: 0, written: 0 }
   const turns = Array.isArray(body.turns) ? body.turns : []
   if (!turns.length) err(400, 'INVALID_ARGUMENT', 'turns 不能为空')
   // 这一批记忆出生时的情绪强度：抽取是异步的，但评价在收到消息那一轮就落过
@@ -1200,6 +1207,76 @@ export function activateAgent(db, aid, role) {
     id: aid, status: 'active', pending: true, runtime_state,
     running, max_running: (() => { try { return maxRunning(db) } catch { return 3 } })(),
   }
+}
+
+/** 2026-11-15 P3：网页主路径的「自己想起」——同一行文字、同一处记账。 */
+export function webSelfRecallLine(db, aid, ev) {
+  if (!db || !aid || !ev || !ev.id) return ''
+  const title = String(ev.title || ev.story || '').replace(/\s+/g, ' ').trim()
+  if (!title) return ''
+  const at = new Date().toISOString()
+  try { db.prepare("UPDATE hot_events SET state='台面', changed_at=? WHERE id=? AND agent_id=?").run(at, ev.id, aid) } catch { /* 没有就不改 */ }
+  try {
+    db.prepare('INSERT INTO events(id, agent_id, type, payload, created_at) VALUES(?,?,?,?,?)')
+      .run('evt_' + Math.random().toString(36).slice(2, 10), aid, 'event.inject', JSON.stringify({ event_id: ev.id, title, via: 'web' }), at)
+  } catch { /* 记账失败不影响这一行 */ }
+  return `忽然想起：${title.slice(0, 60)}。`
+}
+
+/** 2026-11-15 P3：一轮里最多给一条「自己想起」：事件命中 > 浮现（直塞开关）> 到期开放环。 */
+export function selfRecallLineForTurn(db, aid, userText, opt = {}) {
+  if (!db || !aid) return ''
+  const text = String(userText || '').trim()
+  // 1) 事件命中：拿用户这句话去撞台面上的热事件（按 3–6 字的片段撞，别整句 LIKE）
+  if (text) {
+    try {
+      let hit = null
+      outer: for (let len = Math.min(6, text.length); len >= 3; len--) {
+        for (let i = 0; i + len <= text.length; i++) {
+          const g = text.slice(i, i + len)
+          hit = db.prepare(`SELECT id, title, story FROM hot_events
+            WHERE agent_id=? AND active=1 AND (state IS NULL OR state<>'台面')
+              AND (title LIKE ? OR story LIKE ? OR cues LIKE ?)
+            ORDER BY want DESC, mentions ASC LIMIT 1`).get(aid, `%${g}%`, `%${g}%`, `%${g}%`)
+          if (hit) break outer
+        }
+      }
+      if (hit) {
+        const line = webSelfRecallLine(db, aid, hit)
+        if (line) return line
+      }
+    } catch { /* 事件表读不到就走下一路 */ }
+  }
+  // 2) 浮现候选：默认只排不消费；开关开着才拿来占这一行
+  let direct = 'off'
+  try { direct = String(getFlag(db, 'surface.direct') || 'off') } catch { /* 读不到当关着 */ }
+  if (direct === 'on') {
+    try {
+      const sq = db.prepare(`SELECT q.id, q.memory_id, m.text FROM surface_queue q
+        JOIN memory_items m ON m.id=q.memory_id
+        WHERE q.agent_id=? AND q.state='pending' ORDER BY q.created_at ASC LIMIT 1`).get(aid)
+      if (sq && String(sq.text || '').trim()) {
+        return `忽然想起：${String(sq.text).trim().slice(0, 60)}。`
+      }
+    } catch { /* 没有队列表就走下一路 */ }
+  }
+  // 3) 到期开放环：出一次就转 half_said、计入 fire_count（同一 state 不再连提）
+  try {
+    const loop = db.prepare(`SELECT * FROM open_loops
+      WHERE agent_id=? AND state='open' AND due_at IS NOT NULL AND due_at<=?
+      ORDER BY due_at ASC LIMIT 1`).get(aid, new Date().toISOString())
+    if (loop && String(loop.text || '').trim()) {
+      const at = new Date().toISOString()
+      try {
+        db.prepare("UPDATE open_loops SET state='half_said', fire_count=COALESCE(fire_count,0)+1, fired_at=? WHERE id=?")
+          .run(at, loop.id)
+      } catch {
+        try { db.prepare("UPDATE open_loops SET state='half_said' WHERE id=?").run(loop.id) } catch { /* 改不了就不改 */ }
+      }
+      return `答应过的事：${String(loop.text).trim().slice(0, 60)}。`
+    }
+  } catch { /* 没有开放环表就返回空 */ }
+  return ''
 }
 
 export { getFlag, setFlag, clearFlag }

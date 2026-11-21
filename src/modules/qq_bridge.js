@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import { moodLabelOf } from './affect.js'
 import { recordReplyResidue } from './self_residue.js'
-import { latestFeel, feelLineOf, FEEL_TRIGGER } from './feel.js'
+import { latestFeel, feelLineOf, feelNowLine, FEEL_TRIGGER } from './feel.js'
 import { getParam } from '../kernel.js'
 import { now } from '../db.js'
 import { writeChatTurnRow } from './turn_write.js'
@@ -203,18 +203,20 @@ export const QQ_FEEL_SECTION_ORDER = 14
 export const QQ_PERSONA_SECTION_NAME = 'dsh-consciousness-qq-persona'
 export const QQ_PERSONA_SECTION_ORDER = 12
 
-export function buildQQFeelText(db, aid, { isOwner = false, at = Date.now(), hours = null } = {}) {
+export function buildQQFeelText(db, aid, { isOwner = false, at = Date.now(), hours = null, conversationId = null } = {}) {
   if (!isOwner || !db || !aid) return ''
   let maxAgeMin = 120
   try {
     const h = Number(hours == null ? getParam(db, aid, 'affect.feel.hours') : hours)
     if (Number.isFinite(h) && h > 0) maxAgeMin = Math.max(1, h) * 60
   } catch { /* 参数读不到就用 2 小时 */ }
-  const parts = [FEEL_TRIGGER]
+  const parts = []
   try {
-    const row = latestFeel(db, aid, { at, maxAgeMin })
-    if (row) parts.push(feelLineOf(row))
-  } catch { /* 没有 feel 就只给指引，让它下一句开始写 */ }
+    // 2026-11-15 23:46 统一：和网页一样只认「这一轮写的」——这一轮没写就只给指引，不带旧的。
+    // 2026-11-16 00:00：写了就顶掉指引（一行只有一处讲 feel）。
+    const row = latestFeel(db, aid, { at, maxAgeMin, thisTurn: true, conversationId })
+    parts.push(row ? feelNowLine(row) : FEEL_TRIGGER)
+  } catch { parts.push(FEEL_TRIGGER) }
   return parts.join('\n')
 }
 

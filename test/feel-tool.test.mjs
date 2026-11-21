@@ -161,7 +161,7 @@ check('注入行不出现「快 +」/「慢 +」', !/快\s*[+\-−]|慢\s*[+\-�
 // consciousnessBlock：以「当前时间」为准，所以把这条挪到刚才
 db.prepare('UPDATE affect_feel SET at=? WHERE agent_id=? AND text=?').run(new Date().toISOString(), aid, fresh.text)
 const block = consciousnessBlock(db, aid)
-check('提示词里有 feel 这条通路', block.includes('就调 feel 记一句'), block.slice(0, 200))
+check('写了的 feel 顶掉那条指引（一行只讲一处）', block.includes('我现在心里的感受：') && block.includes('刚跑完步，心还热着') && !block.includes('就调 feel 记一句'), block.slice(0, 300))
 check('提示词里有自己那句话', block.includes('刚跑完步，心还热着'), block.slice(-600))
 const guestBlock = consciousnessBlock(db, aid, { snap: 'off' })
 check('客人会话看不到这条', !guestBlock.includes('刚跑完步，心还热着'), guestBlock.slice(-300))

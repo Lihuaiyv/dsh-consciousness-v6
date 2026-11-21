@@ -12,7 +12,7 @@ import path from 'node:path'
 import { openDb, now } from '../src/db.js'
 import {
   VOICE_BANNED, validateVoice, isRepeat, parseVoice, buildVoicePrompt, generateVoice,
-  recordVoice, recentVoices, latestVoice,
+  recordVoice, recentVoices, latestVoice, voiceStale,
 } from '../src/modules/speech_words.js'
 import { feltLine, expressionState } from '../src/modules/expression_state.js'
 
@@ -27,9 +27,11 @@ function check(name, ok, detail) {
 {
   const good = validateVoice('刚才那句我看了两遍')
   check('像人话的一句能进', good.ok, good)
-  check('「有点」直接拦（老模板就是这么来的）', validateVoice('有点想追问才怪呢').reason === 'banned:有点', validateVoice('有点想追问才怪呢'))
+  // 2026-11-15：这一行改成写「心情」以后，「有点」放开了——「心里有点堵」是正常说法；
+  // 拦的正事变成三个报告腔词（感觉/情绪/情感）。
   check('「感觉」拦', validateVoice('感觉心里松下来了').reason === 'banned:感觉', validateVoice('感觉心里松下来了'))
-  check('「情绪」拦', validateVoice('情绪有点低').ok === false)
+  check('「情绪」拦', validateVoice('情绪有点低').reason === 'banned:情绪', validateVoice('情绪有点低'))
+  check('「有点」不再拦（写心情要用）', validateVoice('心里有点堵，说不上是多大事').ok === true, validateVoice('心里有点堵，说不上是多大事'))
   check('太短拦', validateVoice('嗯').reason === 'short')
   check('太长拦', validateVoice('这句话特别特别长'.repeat(8)).reason === 'long', validateVoice('这句话特别特别长'.repeat(8)))
   check('多行拦', validateVoice('第一行\n第二行').reason === 'multiline')
@@ -39,10 +41,10 @@ function check(name, ok, detail) {
   check('英文不许进（线上踩过）', validateVoice('How can I help you?').reason === 'not-chinese', validateVoice('How can I help you?'))
   check('问句不许进', validateVoice('刚才那句要重说吗？').reason === 'question', validateVoice('刚才那句要重说吗？'))
   check('中英夹着但主体是中文，可以', validateVoice('把 commit 又翻出来看了一遍').ok === true, validateVoice('把 commit 又翻出来看了一遍'))
-  check('禁词表就是这四个', VOICE_BANNED.join(',') === '感觉,情绪,情感,有点', VOICE_BANNED)
-  // 老模板：带「有点」的被禁词挡下；不带禁词的能过闸，但会被「不重样」挡——两条闸各管一件事
-  const oldAI = ['有点想追问', '脑子有点绕，会先停一下']
-  check('老模板里带「有点」的被禁词挡下', oldAI.every((t) => validateVoice(t).reason && validateVoice(t).reason.startsWith('banned:')), oldAI.map((t) => validateVoice(t).reason))
+  check('禁词表就是这三个', VOICE_BANNED.join(',') === '感觉,情绪,情感', VOICE_BANNED)
+  // 老模板：现在都能过禁词闸（「有点」放开了），但会被「不重样」挡——两条闸各管一件事
+  const oldAI = ['有点想追问，会多问一句', '脑子有点绕，会先停一下']
+  check('老模板现在能过禁词闸（但会被不重样挡）', oldAI.every((t) => validateVoice(t).ok === true), oldAI.map((t) => validateVoice(t).reason))
   check('老模板里不带禁词的靠「不重样」挡', validateVoice('心里是松的，话容易自己往外走').ok === true
     && isRepeat('心里是松的，话容易自己往外走', ['心里是松的，话容易自己往外走']) === true)
 }
@@ -65,9 +67,13 @@ function check(name, ok, detail) {
 
 // ================================================================ 问模型：重了要换一句
 {
-  const prompt = buildVoicePrompt({ label: 'joy', intensity: 0.8, slow: 0.3, recent: ['话到嘴边没多说'] })
+  const prompt = buildVoicePrompt({ label: 'joy', intensity: 0.8, slow: 0.3, dialogue: [{ you: '他在问输入是什么', me: '我说了那几句话' }] })
   check('提示里带情绪与强度', prompt[1].content.includes('joy') && prompt[1].content.includes('强度'), prompt[1].content)
-  check('提示里带「最近用过」', prompt[1].content.includes('话到嘴边没多说') && prompt[1].content.includes('不要再给'), prompt[1].content)
+  check('上下文是对话的样子（对方：/我：）', prompt[1].content.includes('对方：他在问输入是什么') && prompt[1].content.includes('我：我说了那几句话'), prompt[1].content)
+  check('提示里不再列「最近用过」那八句', !prompt[1].content.includes('不要再给'), prompt[1].content)
+  check('system 里点明写心情（主人 22:38 定的措辞，照抄）', prompt[0].content.includes('写你此刻大概的心情') && prompt[0].content.includes('只写心情'), prompt[0].content)
+  const many = buildVoicePrompt({ dialogue: Array.from({ length: 9 }, (_, i) => ({ you: '对方第' + i, me: '我第' + i })) })
+  check('最多只带六轮（十二行）', (many[1].content.match(/对方：/g) || []).length === 6, many[1].content)
 
   let n = 0
   const queue = ['刚才那句我看了两遍', '话到嘴边没多说一句']
@@ -77,8 +83,9 @@ function check(name, ok, detail) {
   const same = await generateVoice({ complete: async () => '刚才那句我看了两遍', recent: ['刚才那句我看了两遍'] })
   check('两次都重 → 不收（调用方留模板）', !same.ok && same.reason === 'repeat', same)
 
-  const banned = await generateVoice({ complete: async () => '有点想追问' })
-  check('一上来就违规 → 直接不收，不浪费第二次', !banned.ok && banned.reason === 'banned:有点', banned)
+  // 2026-11-15：提示词里不再列禁词了，违规也当「再来一次」——两次都不行才不收
+  const banned = await generateVoice({ complete: async () => '感觉有点想追问' })
+  check('一上来就违规 → 再要一次，两次都违规才不收', !banned.ok && banned.tried.length === 2, banned)
 
   const noModel = await generateVoice({})
   check('没有模型就退回模板', !noModel.ok && noModel.reason === 'no-model')
@@ -137,7 +144,39 @@ function check(name, ok, detail) {
     phrase: '刚才那句我看了两遍',
   })
   check('合成后的感受行用的是生成句', st.felt.includes('刚才那句我看了两遍'), st.felt)
-  check('心情那截还照旧拼在後面', st.felt.includes('整体心情'), st.felt)
+  check('心情那截还照旧拼在後面', st.felt.includes('整体'), st.felt)
+}
+
+// ================================================================ 换不换：心情变了才重写（2026-11-15）
+{
+  const base = { label: 'frustrated', intensity: 0.5, slow: 0.0 }
+  const snap = { label: 'frustrated', intensity: 0.5, slow: 0.0, mood: 0.5 }
+  const at = Date.now()
+  const old = new Date(at - 3600000).toISOString()
+
+  check('没有句子 → 要写', voiceStale(null, { ...base, at, lastAt: null }).stale === true)
+  check('心情没变 → 沿用', voiceStale(snap, { ...base, at, lastAt: old }).stale === false, voiceStale(snap, { ...base, at, lastAt: old }))
+  check('标签变了 → 重写', voiceStale(snap, { ...base, label: 'joy', at, lastAt: old }).why === 'label')
+  check('强度跨档 → 重写', voiceStale(snap, { ...base, intensity: 0.8, at, lastAt: old }).why === 'band')
+  check('慢情绪走 0.2 以上 → 重写', voiceStale(snap, { ...base, slow: 0.25, at, lastAt: old }).why === 'slow')
+  check('慢情绪只动 0.1 → 沿用', voiceStale(snap, { ...base, slow: 0.1, at, lastAt: old }).stale === false)
+  check('老数据没记当时的数 → 当变了', voiceStale({ label: null, intensity: null, slow: null }, { ...base, at, lastAt: old }).why === 'unrecorded')
+  check('三十秒内刚写过 → 不写（冷却）', voiceStale(snap, { ...base, label: 'joy', at, lastAt: new Date(at - 30000).toISOString() }).why === 'gap')
+  check('冷却可以调成 0', voiceStale(snap, { ...base, label: 'joy', at, lastAt: new Date(at - 30000).toISOString(), gapMin: 0 }).why === 'label')
+}
+
+// ================================================================ 写进去的四个数要能读回来（下一轮靠它判断）
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dshc-voice3-'))
+  const db = openDb(path.join(dir, 'app.db'))
+  const aid = 'agt_voice3'
+  db.prepare('INSERT INTO agents(id,name,mode,status,created_at,schema_version) VALUES(?,?,?,?,?,?)')
+    .run(aid, '词表3', 'daily', 'active', now(), 13)
+  recordVoice(db, aid, { text: '心里有点堵，还没到发火那一步', label: 'frustrated', intensity: 0.7, slow: 0.1, mood: 0.48 })
+  const v = latestVoice(db, aid)
+  check('写进去的数读得回来', v && v.snap && v.snap.label === 'frustrated' && v.snap.intensity === 0.7 && v.snap.slow === 0.1, v)
+  const v2 = voiceStale(v.snap, { label: 'frustrated', intensity: 0.7, slow: 0.15, at: Date.now() + 3600000, lastAt: v.at })
+  check('拿读回来的数判「要不要换」', v2.stale === false, v2)
 }
 
 console.log('\n通过 ' + pass + ' / ' + (pass + fail))

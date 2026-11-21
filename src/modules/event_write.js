@@ -12,7 +12,7 @@
  *   - 热库初版：op=born、来源=一条冷库 id、想头按 w 给起点（与旧导入器一致）
  */
 import crypto from 'node:crypto'
-import { now, localDay } from '../db.js'
+import { now, localDay, localDayBounds } from '../db.js'
 import { nid, getFlag, setFlag } from '../kernel.js'
 import { splitDay, splitDayBatch } from './event_split.js'
 
@@ -28,8 +28,16 @@ export function cueGate(cues) {
   )]
   const reasons = []
   if (list.length < CUE_MIN) reasons.push('cues<2')
-  const nameLike = list.some((c) => Array.from(c).length >= 3 || /[A-Za-z0-9]/.test(c))
-  if (list.length && !nameLike) reasons.push('no-name-like')
+  const nameLike = (c) => Array.from(c).length >= 3 || /[A-Za-z0-9]/.test(c)
+  const nameIdx = list.findIndex(nameLike)
+  if (list.length && nameIdx < 0) reasons.push('no-name-like')
+  // 2026-11-15（D52）：第一个抓手必须像专名。
+  // 实测 120 件自撞：第一个抓手是「纪要/存在/重启/补充/高音」这类 2 字泛词时，13.3% 的事件完全捞不回来。
+  // 不拒收整件（它可能还有别的专名），只把最像专名的一个提到最前。
+  if (nameIdx > 0) {
+    const [first] = list.splice(nameIdx, 1)
+    list.unshift(first)
+  }
   return { ok: reasons.length === 0, cues: list.slice(0, CUE_MAX), reasons }
 }
 
@@ -39,21 +47,43 @@ function stableId(aid, ev, turns) {
     .digest('hex').slice(0, 20)
 }
 
-/** 某天某 agent 最新一条碎片的时间（没有则空串）。 */
+/** 某天（本地日）最新一条碎片的时间（没有则空串）。
+ * 2026-11-17：按 created_at 的本地日窗口取，不再看 fragments.day 列——那一列历史上是 UTC 日，
+ * 一跨零点就多看 8 小时，「章比进度晚 8 小时」就是这么来的。 */
 export function latestFragmentAt(db, aid, day) {
   try {
-    const r = db.prepare('SELECT MAX(created_at) mx FROM fragments WHERE agent_id=? AND day=?').get(aid, day)
+    const { start, end } = localDayBounds(day)
+    const r = db.prepare('SELECT MAX(created_at) mx FROM fragments WHERE agent_id=? AND created_at>=? AND created_at<?').get(aid, start, end)
     return r && r.mx ? String(r.mx) : ''
   } catch { return '' }
 }
 
+/** 某一轮（turn）的真实时间：取这一轮最后一句的时间。
+ * 2026-11-17：以前取 MIN——但一轮常有两句（我说一句、接一句），切事切到这一轮时，
+ * 块的结尾是这轮最后一句；用 MIN 当指纹会永远比 latest 早几秒，判闸就永远判「又来新碎片」，自己打转。 */
+export function turnTimeAt(db, turnId) {
+  try {
+    const r = db.prepare('SELECT MAX(created_at) t FROM fragments WHERE turn_id=?').get(String(turnId || ''))
+    return r && r.t ? String(r.t) : ''
+  } catch { return '' }
+}
+
 /**
- * 给一天盖章。2026-11-14（D39）：done 必须带指纹（doneAt = 盖章时切到的最晚碎片时间），
- * 否则「当天还没结束就先切一次」会把后面的话永久判成已切。
- * 同时写三处键：`<day>.state`、`<day>.<aid>.state`、`<day>.<aid>`——worker 与旧闸各读各的，别再打架。
+ * 给一天盖章。2026-11-14（D39）：done 必须带指纹（doneAt），否则「当天还没结束就先切一次」会把后面的话永久判成已切。
+ * 2026-11-16（D70）：指纹取「实际切到的那一轮」（传进来的 marker），不再取「这天碎片最新到哪」——
+ * 后者会把章盖在进度前面，尾巴没切也显示 done。
  */
-export function stampDayCut(db, aid, day, state) {
-  const stamp = latestFragmentAt(db, aid, day)
+export function stampDayCut(db, aid, day, state, marker = '') {
+  // 2026-11-17：marker 的优先序 = 调用方给的 → 断点那一轮的真实时间 → 这天最后一条碎片。
+  // 断点才是「实际切到哪」；最后一条碎片可能是明天凌晨的（日界错位那次的教训）。
+  let stamp = String(marker || '')
+  if (!stamp) {
+    try {
+      const pos = String(getFlag(db, `events.cut.${day}.pos`) || '')
+      if (pos) stamp = turnTimeAt(db, pos)
+    } catch { stamp = '' }
+  }
+  if (!stamp) stamp = latestFragmentAt(db, aid, day)
   try { setFlag(db, `events.cut.${day}.state`, state) } catch { /* 记账失败不挡这一轮 */ }
   try { setFlag(db, `events.cut.${day}.${aid}.state`, state) } catch { /* 同上 */ }
   if (state === 'done') {
@@ -63,11 +93,13 @@ export function stampDayCut(db, aid, day, state) {
   return stamp
 }
 
-/** 某天冷库事件已经覆盖到的最晚结束时间（用来判断「回填其实已经切到尾了」）。 */
+/** 某天（本地日）冷库事件已经覆盖到的最晚结束时间（用来判断「回填其实已经切到尾了」）。
+ * 2026-11-17：同样按本地日窗口，不然次日凌晨的事件会被算进今天，把缺口盖住。 */
 export function coldCoveredUntil(db, aid, day) {
   try {
-    const r = db.prepare("SELECT MAX(end_at) mx FROM cold_events WHERE agent_id=? AND start_at >= ? AND start_at < ?")
-      .get(aid, day + 'T00:00:00', day + 'T23:59:59.999Z')
+    const { start, end } = localDayBounds(day)
+    const r = db.prepare('SELECT MAX(end_at) mx FROM cold_events WHERE agent_id=? AND start_at>=? AND start_at<?')
+      .get(aid, start, end)
     return r && r.mx ? String(r.mx) : ''
   } catch { return '' }
 }
@@ -87,6 +119,9 @@ export function dayCutGate(db, aid, day) {
   if (!latest) return { cut: false, reason: 'no-fragments', latest, doneAt }
   if (state === 'done') {
     if (!doneAt) return { cut: false, reason: 'legacy-done', latest, doneAt, backfillGap: true }
+    // 2026-11-17：章盖到了这天窗口之外（日界错位的老账：章按 UTC 桶取到次日凌晨）。
+    // 判回来重盖一次：幂等重扫不会写重复，但没有断点的话可能要把这天重跑，所以只对有 pos 的用。
+    if (doneAt > latest) return { cut: true, reason: 'stamp-ahead', latest, doneAt, pos }
     if (latest > doneAt) return { cut: true, reason: 'new-fragments', latest, doneAt }
     return { cut: false, reason: 'up-to-date', latest, doneAt }
   }
@@ -107,6 +142,11 @@ export function dayCutGate(db, aid, day) {
  */
 export function writeColdEvents(db, aid, events, { dry = false } = {}) {
   const out = { added: 0, skipped: 0, rejected: 0, hotAdded: 0, rejects: [], ids: [] }
+  // 2026-11-17：老表已冻结（flags.events.cut.enabled=off）。冻结期间任何调用都直接返回，一条都不写。
+  // 解冻前请先读 docs/功能/2-记忆-写与切事/切事件-基石/基石-切事件-2026-11-17.md。
+  try {
+    if (String(getFlag(db, 'events.cut.enabled') || 'on') === 'off') return { ...out, frozen: true }
+  } catch { /* 读不到开关就当没冻结 */ }
   const allText = db.prepare('SELECT text FROM fragments WHERE agent_id=?').all(aid)
     .map((r) => String(r.text || '')).join('\n')
   const turnStmt = db.prepare('SELECT 1 ok FROM fragments WHERE turn_id=? LIMIT 1')
@@ -203,7 +243,7 @@ export async function cutAndIngest(db, aid, day, { complete = null, dry = false 
  *   - 次数硬顶：flags `events.cut.<day>.calls` 累加，到 maxCalls 就停（默认 15）。
  *   - 状态：flags `events.cut.<day>.state` = done / pending / capped。
  */
-export async function cutDayBatch(db, aid, day, { complete = null, dry = false, lockTtlMs = 10 * 60000 } = {}) {
+export async function cutDayBatch(db, aid, day, { complete = null, dry = false, lockTtlMs = 10 * 60000, canContinue = null } = {}) {
   // 2026-11-13：同一天只能有一个切事在跑。
   // 教训：worker 启动跳和手动 API 同时切 10-27，冷库多出一条重复（「抽 dsh.js 宿主适配层」×2）。
   // 锁用 flags 存时间戳；进程死了 10 分钟后自动过期，不锁死。
@@ -221,6 +261,7 @@ export async function cutDayBatch(db, aid, day, { complete = null, dry = false, 
     const write = { added: 0, skipped: 0, rejected: 0, hotAdded: 0, rejects: [] }
     const res = await splitDayBatch(db, aid, day, {
       complete,
+      canContinue,
       onEvents: (events) => {
         if (dry) return
         const w = writeColdEvents(db, aid, events)
@@ -234,8 +275,14 @@ export async function cutDayBatch(db, aid, day, { complete = null, dry = false, 
     const total = used + Number(res.calls || 0)
     try { setFlag(db, capFlag, String(total)) } catch { /* 记账失败不挡这一轮 */ }
     // 2026-11-14（D39）：done 带指纹；指纹之后有新碎片会被 dayCutGate 判回「要续切」
+    // 2026-11-16（D70）：指纹取断点那一轮的真实时间——断点就是「实际切到哪」。
     const state = res.ok ? (res.finished ? 'done' : 'pending') : 'pending'
-    stampDayCut(db, aid, day, state)
+    let marker = ''
+    try {
+      const posTurn = String(getFlag(db, `events.cut.${day}.pos`) || '')
+      if (posTurn) marker = turnTimeAt(db, posTurn)
+    } catch { marker = '' }
+    stampDayCut(db, aid, day, state, marker)
     return { ...res, write, usedCalls: total, state }
   } finally {
     try { setFlag(db, lockFlag, '0') } catch { /* 锁没释放会 10 分钟后过期 */ }

@@ -214,6 +214,9 @@ export function feltSnapshot(db, aid, { at = Date.now(), maxAgeMin = MAX_AGE_MIN
 
   return {
     line,
+    // 2026-11-16（B 项）：合并用——只拿「读出的是什么」那半句和原话，不带整句模板
+    short: bits.join('，'),
+    cause: cause || null,
     paired,
     ageMin: Math.max(0, Math.round((at - anchor) / 60000)),
     at: anchorText,

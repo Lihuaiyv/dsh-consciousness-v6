@@ -71,13 +71,17 @@ export function feltLine({ label, intensity, slow, mood, weight = 0.35, phrase =
   const gen = String(phrase || '').trim().replace(/[。！？!?，,；;：:]+$/u, '').trim()
   const bits = [gen || arr[intensityBand(intensity)]]
   const s = clamp(num(slow, 0), -1, 1)
-  if (s <= -0.2) bits.push('不太想多说')
-  else if (s >= 0.25) bits.push('愿意多说两句')
+  /* 生成句自己已经说了会不会多说，就别再补一遍（线上真撞过「…愿意多走两步，愿意多说两句」）。 */
+  const saidMore = bits[0].includes('愿意') || bits[0].includes('多说')
+  const saidLess = bits[0].includes('不想说') || bits[0].includes('少说')
+  if (s <= -0.2) { if (!saidLess) bits.push('不太想多说') } else if (s >= 0.25) { if (!saidMore) bits.push('愿意多说两句') }
   const mw = moodWord(mood)
-  /* 抬头也去 AI 味：「感觉现在大概：」里的「感觉」本身就是模板腔，还正好是词表闸禁的词。
-     换成「这会儿大概：」——同样是推测口吻，但不像在写情绪报告。 */
-  const head = Number(weight) >= 0.5 ? '现在：' : '这会儿大概：'
-  return head + bits.join('，') + (mw ? '；整体心情' + mw : '') + '。'
+  /* 抬头（2026-11-15 改）：原来叫「这会儿大概：」，容易读成「这会儿在做什么」；
+     主人明说这一行该写**心情**，不是动作借代。所以抬头点明是心情。
+     权重 ≥0.5 时仍是陈述口吻（有人把注入权重调高了），措辞跟着换。 */
+  const head = Number(weight) >= 0.5 ? '现在心情大概是：' : '这会儿心情大概：'
+  const tail = mw ? (mw === '中性' ? '；整体说不上偏哪边' : '；整体' + mw) : ''
+  return head + bits.join('，') + tail + '。'
 }
 
 /**
@@ -179,7 +183,8 @@ export function shadowLevel(baseLevel, { fast = 0, slow = 0 } = {}) {
  */
 export function expressionState({ affect = null, relation = null, ei = 0.6, weight = 0.35, prev = null, phrase = '', weightAffect = AFFECT_WEIGHT_DEFAULT } = {}) {
   const slow = clamp(num(affect && affect.v3 ? affect.v3.slow : 0, 0), -1, 1)
-  const fast = clamp(num(affect && affect.v3 ? affect.v3.fast : 0, 0), -1, 1)
+  // 「当场」这一份：v4 投影优先（affect.v4 由 getAffect 带出），没有才退回旧 v3.fast。
+  const fast = clamp(num(affect && affect.v4 && Number.isFinite(Number(affect.v4.v)) ? affect.v4.v : (affect && affect.v3 ? affect.v3.fast : 0), 0), -1, 1)
   const intensity = clamp01(num(affect ? affect.intensity : 0.4, 0.4))
   // 总情绪：优先 v3（-1~1）；老库退回 affect.mood（0~1），换算到同一口径
   const total = affect && affect.v3 && affect.v3.total != null

@@ -12,6 +12,10 @@
 import { nid } from '../kernel.js'
 import { now } from '../db.js'
 import { isWorkMode } from './work_mode.js'
+// 2026-11-15（D59）：白天自己点名要留的句子（〔留〕）。
+import { extractPins, recordPins } from './quote_pin.js'
+// 2026-11-15：留一句的来源里要带上「我自己写的那句 feel」——没有就空着，不拿标签顶。
+import { latestFeel } from './feel.js'
 // 帧：只加一条原始帧（不含向量），开关 frame.write，默认 off。
 import { appendTurnFrame } from './frame_store.js'
 // 帧写完立刻补算向量/偏离（python 子进程，后台，不占开口时间），开关 frame.compute。
@@ -35,13 +39,26 @@ export function writeChatTurns(db, aid, {
   mode = null,
 } = {}) {
   const m = resolveMode(db, aid, mode)
+  // 2026-11-15（D59）：先把〔留〕的句子摘出来，正文里不留标记；留下来的单独记一条（带来源）。
+  const { clean: agentText, pins } = extractPins(agent)
   db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id,turn_id,mode) VALUES(?,?,?,?,?,?,?,?,?,?)')
     .run(nid('cht_'), aid, 'user', String(user ?? ''), packUser, mood, at, conversationId, turnId || null, m)
   db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id,turn_id,mode) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, 'agent', String(agent ?? ''), packAgent, mood, now(), conversationId, turnId || null, m)
+    .run(nid('cht_'), aid, 'agent', String(agentText ?? ''), packAgent, mood, now(), conversationId, turnId || null, m)
+  if (pins.length) {
+    try {
+      // 有 feel 就带上（我写的那句）；没有就不写这个字段——不拿系统判的情绪标签顶替。
+      let feel = null
+      try {
+        const f = latestFeel(db, aid, { at: Date.parse(at) || Date.now(), maxAgeMin: 30, sessionId: conversationId })
+        feel = f && f.text ? String(f.text) : null
+      } catch { feel = null }
+      recordPins(db, aid, { pins, turnId: turnId || null, session: conversationId, feel, at: Date.parse(at) })
+    } catch { /* 留不下来不连累这轮 */ }
+  }
   // 帧：一轮 = 一帧，按会话分链。失败不影响这轮账（记账坏了不能连累回话）。
   try {
-    if (agent && appendTurnFrame(db, aid, { user, agent, conv: conversationId })) {
+    if (agentText && appendTurnFrame(db, aid, { user, agent: agentText, conv: conversationId, turnId })) {
       // 写完就把它算掉：否则要等 5 分钟心跳，那时“力”早就失效了。
       kickFrameCompute(db)
     }
@@ -64,13 +81,27 @@ export function writeChatTurnRow(db, aid, {
   mode = null,
 } = {}) {
   const m = resolveMode(db, aid, mode)
+  // 2026-11-15（D59）：单行写口也认〔留〕——主动开口、桥接入站也能留一句。
+  const { clean: rowText, pins: rowPins } = String(role || 'agent') === 'agent'
+    ? extractPins(text)
+    : { clean: text, pins: [] }
   db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,pack,mood,created_at,conversation_id,turn_id,mode) VALUES(?,?,?,?,?,?,?,?,?,?)')
-    .run(nid('cht_'), aid, String(role || 'agent'), String(text ?? ''), pack, mood, at, conversationId, turnId || null, m)
+    .run(nid('cht_'), aid, String(role || 'agent'), String(rowText ?? ''), pack, mood, at, conversationId, turnId || null, m)
+  if (rowPins.length) {
+    try {
+      let feel = null
+      try {
+        const f = latestFeel(db, aid, { at: Date.parse(at) || Date.now(), maxAgeMin: 30, sessionId: conversationId })
+        feel = f && f.text ? String(f.text) : null
+      } catch { feel = null }
+      recordPins(db, aid, { pins: rowPins, turnId: turnId || null, session: conversationId, feel, at: Date.parse(at) })
+    } catch { /* 留不下来不连累这行 */ }
+  }
   // 单行写口也落帧（主动开口、桥接入站这些没有成对两行）。
   // 只有 agent 行算「我说了一句」；user 行不该单独成帧。
   try {
-    if (String(role || 'agent') === 'agent' && text) {
-      if (appendTurnFrame(db, aid, { user: '（单行）', agent: String(text), conv: conversationId })) {
+    if (String(role || 'agent') === 'agent' && rowText) {
+      if (appendTurnFrame(db, aid, { user: '（单行）', agent: String(rowText), conv: conversationId, turnId })) {
         kickFrameCompute(db)
       }
     }

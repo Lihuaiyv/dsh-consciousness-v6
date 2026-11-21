@@ -52,9 +52,9 @@ feel(3, '刚被夸了一句，心里有点亮')
   const text = textOf(res)
   check('主人私聊有且只有一段', (res.sections || []).length === 1, res)
   check('段名固定（可追踪）', (res.sections || [])[0]?.name === QQ_FEEL_SECTION_NAME, res.sections)
-  check('带「先停半秒」那句指引', text.includes('先停半秒'), text)
+  check('写了 feel 就顶掉指引（不再留那行提示）', !text.includes('就调 feel 记一句') && text.includes('我现在心里的感受：'), text)
   check('带我上一句写下的 feel', text.includes('刚被夸了一句'), text)
-  check('标明是我自己的话、不是对方说的', text.includes('这是我自己的话'), text)
+  check('不再加「这是我自己的话」那种尾巴', !text.includes('这是我自己的话'), text)
 }
 
 // 2) 客人私聊：一点不给
@@ -69,7 +69,7 @@ db.prepare("UPDATE affect_feel SET at=? WHERE agent_id=? AND text LIKE '%刚被�
 {
   const text = textOf(run(owner))
   check('超 2 小时的旧 feel 不出现', !text.includes('刚被夸了一句'), text)
-  check('指引仍留着', text.includes('先停半秒'), text)
+  check('旧 feel 过期 → 回到指引', text.includes('就调 feel 记一句') && !text.includes('刚被夸了一句'), text)
 }
 
 // 5) 一次 feel 都没有：只有指引，不编一句

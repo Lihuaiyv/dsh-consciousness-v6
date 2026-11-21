@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ensureSangguanSchema } from './modules/sangguan/schema.js'
+import { RECOVERED_TABLES, RECOVERED_REST } from './schema_recovered.js'
 
 const SCHEMA = `
 PRAGMA journal_mode=WAL;
@@ -685,6 +686,9 @@ export function openDb(file) {
   db.exec(EXT)
   db.exec(REL)
   db.exec(ACTION)
+// 2026-11-22：db.js 旧版丢了新表，靠真库导出的补丁 schema 补回来；表先建，其余逐条试。
+for (const s of RECOVERED_TABLES) { try { db.exec(s) } catch { /* 单表失败不拖死开库 */ } }
+for (const s of RECOVERED_REST) { try { db.exec(s) } catch { /* 缺列的索引/触发器跳过 */ } }
   // 老库改名后补三列；新库建表时已有，这里是空操作。
   try { db.exec("ALTER TABLE fragments ADD COLUMN form TEXT NOT NULL DEFAULT 'text'") } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE fragments ADD COLUMN snapshot TEXT') } catch { /* 已存在 */ }

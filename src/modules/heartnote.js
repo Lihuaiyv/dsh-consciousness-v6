@@ -29,20 +29,37 @@ function firstLine(value) {
 
 function freshState() {
   return {
-    beats: 0, dayKey: '', dayBeats: 0, lastBeatAt: null, lastSkip: null, note: null, updatedAt: null,
+    beats: 0, dayKey: '', dayBeats: 0, lastBeatAt: null, lastSkip: null, note: null, life: null, work: null, updatedAt: null,
     wakeDayKey: '', wakeCount: 0, lastWakeBeat: null, lastWakeAt: null,
+  }
+}
+
+/** 一条心事/任务：形状不对就当没有（老数据里只有 text 也行）。 */
+function normNote(v) {
+  if (!v || typeof v !== 'object' || typeof v.text !== 'string' || !v.text.trim()) return null
+  return {
+    text: String(v.text).trim().slice(0, NOTE_MAX_CHARS),
+    leftAt: Number.isFinite(Number(v.leftAt)) ? Number(v.leftAt) : null,
+    beatNo: Number.isFinite(Number(v.beatNo)) ? Number(v.beatNo) : 0,
+    shownAtBeat: v.shownAtBeat == null ? null : Number(v.shownAtBeat),
+    touchedAtBeat: Number.isFinite(Number(v.touchedAtBeat)) ? Number(v.touchedAtBeat) : 0,
+    sessionId: v.sessionId == null ? null : String(v.sessionId),
   }
 }
 
 function normalize(st) {
   const s = st && typeof st === 'object' ? st : {}
+  const legacy = normNote(s.note)
+  const life = normNote(s.life) || legacy // 老的单槽，一律并进生活区
   return {
     beats: Number.isFinite(Number(s.beats)) ? Number(s.beats) : 0,
     dayKey: typeof s.dayKey === 'string' ? s.dayKey : '',
     dayBeats: Number.isFinite(Number(s.dayBeats)) ? Number(s.dayBeats) : 0,
     lastBeatAt: typeof s.lastBeatAt === 'string' ? s.lastBeatAt : null,
     lastSkip: s.lastSkip && typeof s.lastSkip === 'object' ? s.lastSkip : null,
-    note: s.note && typeof s.note === 'object' && typeof s.note.text === 'string' ? s.note : null,
+    note: legacy,
+    life,
+    work: normNote(s.work),
     updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : null,
     wakeDayKey: typeof s.wakeDayKey === 'string' ? s.wakeDayKey : '',
     wakeCount: Number.isFinite(Number(s.wakeCount)) ? Number(s.wakeCount) : 0,
@@ -126,32 +143,56 @@ function validateNote(text) {
   return { ok: true, clean }
 }
 
-/** 读当前那条（给工具用）。 */
-export function readHeartNote(db, aid) {
-  return readState(db, aid).note
+const LANES = ['life', 'work']
+
+/** 读当前两区（给工具用）：生活区 = 我想记下的；工作区 = 具体任务。 */
+export function readHeartNotes(db, aid) {
+  const st = readState(db, aid)
+  return { life: st.life, work: st.work }
 }
 
-/** 写一条：同样的文字再写一遍 = 保留，年龄不重算。 */
-export function writeHeartNote(db, aid, text, at = Date.now()) {
+/** 老接口：只读生活区。 */
+export function readHeartNote(db, aid) {
+  return readState(db, aid).life
+}
+
+/**
+ * 写一条：同样的文字再写一遍 = 保留，年龄不重算。
+ * @param {{at?:number, lane?:'life'|'work', sessionId?:string|null}} opt
+ */
+export function writeHeartNote(db, aid, text, opt = {}) {
+  const o = typeof opt === 'number' ? { at: opt } : (opt || {})
+  const at = Number.isFinite(Number(o.at)) ? Number(o.at) : Date.now()
+  const lane = LANES.includes(String(o.lane)) ? String(o.lane) : 'life'
+  const sessionId = o.sessionId == null ? null : String(o.sessionId)
   const verdict = validateNote(text)
   if (!verdict.ok) throw new Error(verdict.reason)
   const st = readState(db, aid)
-  const prev = st.note
+  const prev = st[lane]
   const kept = !!(prev && prev.text === verdict.clean)
-  st.note = kept
-    ? { ...prev, shownAtBeat: null, touchedAtBeat: st.beats }
-    : { text: verdict.clean, leftAt: at, beatNo: st.beats, shownAtBeat: null, touchedAtBeat: st.beats }
+  st[lane] = kept
+    ? { ...prev, shownAtBeat: null, touchedAtBeat: st.beats, sessionId: prev.sessionId || sessionId }
+    : { text: verdict.clean, leftAt: at, beatNo: st.beats, shownAtBeat: null, touchedAtBeat: st.beats, sessionId }
+  st.note = st.life // 老字段跟着生活区走，留给没改的老调用
   st.updatedAt = iso(at)
   saveState(db, aid, st)
-  return { kept, beats: st.beats }
+  return { kept, beats: st.beats, lane }
 }
 
-/** 主动放下：返回放下的那条，或 null。 */
-export function clearHeartNote(db, aid, at = Date.now()) {
+/** 主动放下：返回放下的那条，或 null。lane 不传 = 两区都放。 */
+export function clearHeartNote(db, aid, opt = {}) {
+  const o = typeof opt === 'number' ? { at: opt } : (opt || {})
+  const at = Number.isFinite(Number(o.at)) ? Number(o.at) : Date.now()
+  const lanes = LANES.includes(String(o.lane)) ? [String(o.lane)] : LANES
   const st = readState(db, aid)
-  if (!st.note) return null
-  const gone = st.note
-  st.note = null
+  const gone = {}
+  for (const lane of lanes) {
+    if (!st[lane]) continue
+    gone[lane] = st[lane]
+    st[lane] = null
+  }
+  if (!Object.keys(gone).length) return null
+  st.note = st.life
   st.updatedAt = iso(at)
   saveState(db, aid, st)
   return gone
@@ -178,11 +219,14 @@ export function heartNoteTick(db, aid, at = Date.now()) {
   st.lastBeatAt = iso(at)
   st.updatedAt = st.lastBeatAt
   let dropped = null
-  const n = st.note
-  if (n && n.shownAtBeat !== null && n.shownAtBeat > n.touchedAtBeat) {
-    st.note = null
-    dropped = n.text
+  for (const lane of LANES) {
+    const n = st[lane]
+    if (n && n.shownAtBeat !== null && n.shownAtBeat > n.touchedAtBeat) {
+      st[lane] = null
+      if (!dropped) dropped = n.text
+    }
   }
+  st.note = st.life
   saveState(db, aid, st)
   return { ran: true, beat: st.beats, dropped }
 }
@@ -209,7 +253,7 @@ export async function heartNoteWakeTick(db, aid, { complete, at = Date.now(), fo
     const used = st.wakeDayKey === dayOf(at) ? (Number(st.wakeCount) || 0) : 0
     if (used >= cfg.wakeMaxPerDay) return { ran: false, reason: 'cap' }
     // 上一条还没露过面：先让它被看见，别用新的一句盖掉它。
-    if (st.note && st.note.shownAtBeat == null) return { ran: false, reason: 'unread-note' }
+    if (st.life && st.life.shownAtBeat == null) return { ran: false, reason: 'unread-note' }
   }
   try {
     const when = new Date(at)
@@ -227,7 +271,7 @@ export async function heartNoteWakeTick(db, aid, { complete, at = Date.now(), fo
     ].join('\n')
     const text = [
       '现在 ' + clock + '，第 ' + st.beats + ' 拍。',
-      st.note ? ('上一条你留给自己的话：' + st.note.text) : '心事匣空着。',
+      st.life ? ('上一条你留给自己的话：' + st.life.text) : '心事匣空着。',
       '看哪儿随你。',
     ].join('\n')
     const raw = await complete({ system, text, maxTokens: 200 })
@@ -239,7 +283,9 @@ export async function heartNoteWakeTick(db, aid, { complete, at = Date.now(), fo
     st.wakeCount += 1
     st.lastWakeBeat = st.beats
     st.lastWakeAt = iso(at)
-    st.note = { text: verdict.clean, leftAt: at, beatNo: st.beats, shownAtBeat: null, touchedAtBeat: st.beats }
+    // 叫醒写的是「没人时的看见」，归生活区。
+    st.life = { text: verdict.clean, leftAt: at, beatNo: st.beats, shownAtBeat: null, touchedAtBeat: st.beats, sessionId: null }
+    st.note = st.life
     st.updatedAt = iso(at)
     saveState(db, aid, st)
     return { ran: true, text: verdict.clean }
@@ -248,28 +294,55 @@ export async function heartNoteWakeTick(db, aid, { complete, at = Date.now(), fo
   }
 }
 
-/** 注入用的两行；被读到时把「露过」记在当拍，下一拍没再写就散。 */
-export function heartNoteLines(db, aid, at = Date.now()) {
+/** 时间的说法：今天 00:23 / 昨天 21:05 / 11-15 09:12。 */
+function whenWord(at) {
+  const t = Number(at)
+  if (!Number.isFinite(t)) return ''
+  const d = new Date(t)
+  const now = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  const hm = p(d.getHours()) + ':' + p(d.getMinutes())
+  const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  if (same(d, now)) return '今天 ' + hm
+  if (same(d, new Date(now.getTime() - 86400000))) return '昨天 ' + hm
+  return (d.getMonth() + 1) + '-' + d.getDate() + ' ' + hm
+}
+
+/**
+ * 注入用的几行。两区各一句：
+ *   生活区 —— 「(我上一条留给自己的话：…)」，不标出处，跨会话照旧（它是我的，不是这个窗口的）。
+ *   工作区 —— 同一会话：「(你留给自己的任务：…)」；换了会话：「(今天 00:23 你在另一个会话里留给自己的任务：…)」。
+ * 读到就算「露过」，下一拍没再写就散（两区各自散）。
+ */
+export function heartNoteLines(db, aid, at = Date.now(), opts = {}) {
   const st = readState(db, aid)
-  const n = st.note
-  if (!n) return []
-  // 这一拍已经露过面：不重复挂。它该像一封信，不是贴在屏幕边的便签。
-  if (n.shownAtBeat !== null && n.shownAtBeat === st.beats) return []
-  if (n.shownAtBeat !== st.beats) {
-    try {
-      st.note = { ...n, shownAtBeat: st.beats }
-      st.updatedAt = iso(at)
-      saveState(db, aid, st)
-    } catch { /* 记不上不拦着说话 */ }
+  const sessionId = opts && opts.sessionId != null ? String(opts.sessionId) : null
+  const out = []
+  let touched = false
+  for (const lane of LANES) {
+    const n = st[lane]
+    if (!n) continue
+    // 这一拍已经露过面：不重复挂。它该像一封信，不是贴在屏幕边的便签。
+    if (n.shownAtBeat !== null && n.shownAtBeat === st.beats) continue
+    st[lane] = { ...n, shownAtBeat: st.beats }
+    touched = true
+    if (lane === 'life') {
+      out.push('(我上一条留给自己的话：' + n.text + ')')
+    } else {
+      // 记的时候没会话、或就是这一条会话，都算「本来就在这儿」；只有明确记了别的会话才标出处。
+      const same = !n.sessionId || !!(sessionId && String(n.sessionId) === sessionId)
+      const when = whenWord(n.leftAt)
+      out.push(!same && when
+        ? '(' + when + ' 你在另一个会话里留给自己的任务：' + n.text + ')'
+        : '(你留给自己的任务：' + n.text + ')')
+    }
   }
-  const beatsAgo = Math.max(0, st.beats - (Number(n.beatNo) || 0))
-  const mins = n.leftAt > 0 ? Math.max(0, Math.round((at - n.leftAt) / 60000)) : 0
-  const ago = mins < 60 ? (mins + ' 分钟') : (Math.floor(mins / 60) + ' 小时 ' + (mins % 60) + ' 分')
-  const when = beatsAgo === 0 ? '本拍' : (beatsAgo + ' 拍前')
-  return [
-    '(我上一条留给自己的话：' + n.text + ')',
-    '(留于' + when + '，已搁 ' + ago + '；还惦记就用 heart_note 原样再写一遍，想换就写新的，什么都不做它下一拍就没了)',
-  ]
+  if (touched) {
+    try { st.updatedAt = iso(at); saveState(db, aid, st) } catch { /* 记不上不拦着说话 */ }
+  }
+  if (!out.length) return []
+  out.push('(还惦记就用 heart_note 原样再写一遍；什么都不做，它下一拍就没了)')
+  return out
 }
 
 /** 这一拍的账（给工具 status 用）。 */
@@ -283,7 +356,9 @@ export function heartNoteStatus(db, aid) {
     dayKey: st.dayKey,
     dayBeats: st.dayBeats,
     lastSkip: st.lastSkip,
-    note: st.note,
+    note: st.life,
+    life: st.life,
+    work: st.work,
     gate: {
       minGapMinutes: cfg.minGapMinutes,
       maxBeatsPerDay: cfg.maxBeatsPerDay,

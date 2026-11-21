@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 情绪评价编排：关系边偏置 → 评价 → 咽回半句落库。
  * 从 features.js 整段搬出，行为不变；features 只 re-export。
  */
@@ -12,6 +12,7 @@ import { listRelations } from './persona.js'
 import { resolveStructureEdges, affectLabels } from './artifacts.js'
 import { getCondition } from './ops.js'
 import { recordMetric } from './metrics.js'
+import { summarizeAffairs } from './affect_v4_shadow.js'
 
 /** 最近两句用户话（不含当前这句）：短句要靠上下文才判得准（「我真是服了」）
  *  给 conversationId 时只取这一段：别段的上一句不是这一段的上下文。 */
@@ -94,7 +95,11 @@ export async function appraiseWithEdges(db, aid, text, opt = {}) {
     ownerCloseness: ownerClose, ownerTrust, load, arousal, edges,
     conditionCoef: Number(getParam(db, aid, 'condition.coef')) || 2.5,
   })
-  const res = await appraise(db, aid, text, { edgeBias, labels: affectLabels(db, aid), hint, closeness: ownerClose, formula: appraiseFormula })
+  /* 先建事帧（影子）：头必须是事帧，不是旧评价的尾巴。
+     只写影子表，不参与这次旧评价；失败静默，不拖对话。 */
+  const conv = opt && opt.conversationId ? String(opt.conversationId) : null
+  const shadowTurnId = (opt && opt.turnId) || (conv ? `${conv}|${String(text || '').slice(0, 40)}|${Math.floor(Date.now() / 10000)}` : null)
+  const res = await appraise(db, aid, text, { edgeBias, labels: affectLabels(db, aid), hint, closeness: ownerClose, formula: appraiseFormula, conversationId: opt.conversationId || null })
   // 影子期：把「本来会是多少」采样一次，不生效；切 on 之后不再采样
   try {
     if (mode === 'shadow' && edgeBias.shadowIntensityMul !== 1) {
@@ -117,5 +122,14 @@ export async function appraiseWithEdges(db, aid, text, opt = {}) {
       at: Date.now(),
     })
   } catch { /* 落库失败不影响对话 */ }
+  // 回复结束之后（异步、不挡回复）：把最近十轮的摘要收拢成一句「事」，留给下一轮拼事帧。
+  // 这一轮的事帧和判断在回复前由 appraiseTurnNow 做（见 index.js preStep）。
+  setImmediate(() => {
+    try {
+      db.prepare("INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)")
+        .run('affect.v4.summary.kick', JSON.stringify({ at: new Date().toISOString(), turnId: shadowTurnId }))
+    } catch { /* 诊断失败不影响 */ }
+    summarizeAffairs(db, aid, { conversationId: conv, waitTurnId: shadowTurnId }).catch(() => {})
+  })
   return res
 }

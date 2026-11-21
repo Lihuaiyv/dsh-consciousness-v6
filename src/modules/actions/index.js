@@ -19,7 +19,7 @@ import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
-import { readHeartNote, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
+import { readHeartNote, readHeartNotes, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
 
 export const PORT_LABELS = {
   send_message: '发消息（微信 / QQ）',
@@ -308,7 +308,7 @@ function toolGate(name) {
 /**
  * 建四个模型工具。web/model 延迟取：工具注册时宿主服务可能还没挂好。
  */
-export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getSpeech, getModel, gateSearch, log } = {}) {
+export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getSpeech, getModel, gateSearch, getLocalStatus, log } = {}) {
   const db = () => getDb()
   const aid = () => getAgentId()
   // 按这条会话自己找意识体：QQ 会话里「当前发起人」是空的，只靠 aid() 会拿到 no_db。
@@ -575,7 +575,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
     },
     {
       /* 说话那一刻的感觉。不是「你这句话把我推到哪」（那是评价层的事），
-         是「我开口之前心里是什么样」。写下来，下一轮注入才不再慢半拍。 */
+         是「我开口之前心里是什么样」。写下来，下一次模型调用重拼提示词就带得进来。 */
       name: 'feel',
       /* 写法只在调这个工具时看到——每轮注入的那句（FEEL_TRIGGER）只说什么时候调。
          这样两件事分开：条件在外面，写法在里面。 */
@@ -657,16 +657,23 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
     {
       name: 'heart_note',
       description:
-        '心事匣（只有一个槽）。留给下一次醒来的自己一句话，而不是记一整段：'
+        '心事匣（两个区，各一格）。留给下一次醒来的自己一句话，而不是记一整段：'
+        + 'lane=life 生活区——我想记下的心情或念头；lane=work 工作区——具体的任务，换个会话读到会注明是哪时在别处留的。'
         + 'action=write 写一句（同样的文字再写一遍 = 保留，年龄不重算）；'
-        + 'action=read 看当前那条；action=clear 主动放下；action=status 看这一拍的账；'
+        + 'action=read 看两区现在有什么；action=clear 放下（带 lane 只放那一区）；action=status 看这一拍的账；'
         + 'action=wake 手动叫醒一次（没有别人在场，也让模型写一句，跳过开关与拍数闸）。'
-        + '被读到之后如果下一拍之前没有再做 write，它就会自己消失——这是设计，不是丢了。',
+        + '被读到之后如果下一拍之前没有再做 write，它就会自己消失——这是设计，不是丢了。'
+        + '没话就别写，空着是正常的。',
       parameters: schema({
         action: {
           type: 'string',
           enum: ['read', 'write', 'clear', 'status', 'wake'],
           description: 'read=看，write=留一句，clear=放下，status=看这一拍的账，wake=叫醒自己一次',
+        },
+        lane: {
+          type: 'string',
+          enum: ['life', 'work'],
+          description: 'write/clear 用：life=生活区（想记下的心情念头，跨会话、不标出处），work=工作区（具体任务，换会话会注明出处）。不填默认 life',
         },
         text: str('action=write 时必填：一句话，最多 120 字'),
       }, ['action']),
@@ -683,19 +690,25 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         render: (_args, value) => TEXT(String((value && value.message) || '')),
       },
       timeoutMs: 5000,
-      async execute(args) {
+      async execute(args, exec) {
         const d = db()
-        const a = aid()
+        const a = aidOfSession(exec) || aid()
         if (!d || !a) return { ok: false, message: '现在没有激活的意识体' }
         const act = String((args && args.action) || '')
+        const lane = args && (args.lane === 'work' || args.lane === 'life') ? String(args.lane) : ''
+        // 这一轮的会话（和 feel 用同一套认法：宿主给的 exec.agent.id 就是会话 id）
+        const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : null
         try {
           if (act === 'write') {
-            const r = writeHeartNote(d, a, args && args.text)
-            return { ok: true, message: r.kept ? '保留了原来那条，年龄没重算' : '留下了，下一拍见' }
+            const r = writeHeartNote(d, a, args && args.text, { lane: lane || 'life', sessionId: sid })
+            if (r.kept) return { ok: true, message: '保留了原来那条，年龄没重算' }
+            return { ok: true, message: (r.lane === 'work' ? '任务记下了' : '留下了') + '，下一拍见' }
           }
           if (act === 'clear') {
-            const gone = clearHeartNote(d, a)
-            return { ok: true, message: gone ? ('放下了：' + gone.text) : '槽是空的，不用放' }
+            const gone = clearHeartNote(d, a, { lane: lane || undefined })
+            if (!gone) return { ok: true, message: '两区都是空的，不用放' }
+            const parts = Object.keys(gone).map((k) => (k === 'work' ? '任务' : '心事') + '：' + gone[k].text)
+            return { ok: true, message: '放下了。' + parts.join('；') }
           }
           if (act === 'wake') {
             const m = model()
@@ -716,19 +729,69 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
               '叫醒 ' + (st.wake.on ? ('每 ' + st.wake.everyBeats + ' 拍一次') : '关着')
                 + '，今日已醒 ' + st.wake.count + '/' + st.wake.maxPerDay,
               st.lastSkip ? ('上次被挡：' + st.lastSkip.reason) : '上次没被挡',
-              st.note ? ('心事：' + st.note.text) : '心事匣空着',
+              '生活区：' + (st.life ? st.life.text : '空着'),
+              '工作区：' + (st.work ? st.work.text : '空着'),
             ]
             return { ok: true, message: parts.join('\n') }
           }
-          const n = readHeartNote(d, a)
-          if (!n) return { ok: true, message: '心事匣是空的' }
-          return { ok: true, message: '「' + n.text + '」' }
+          const both = readHeartNotes(d, a)
+          if (!both.life && !both.work) return { ok: true, message: '两区都空着' }
+          const list = []
+          if (both.life) list.push('生活区：「' + both.life.text + '」')
+          if (both.work) list.push('工作区：「' + both.work.text + '」')
+          return { ok: true, message: list.join('\n') }
         } catch (e) {
           return { ok: false, message: String(e && e.message ? e.message : e).slice(0, 200) }
         }
       },
     },
+    {
+      name: 'local_llm_status',
+      description:
+        '看本机 Ollama 的调用队列：谁在跑、谁在排、各自优先级、最近几条等了多久跑了多久。只读，不改任何东西。'
+        + '本地模型「卡住」的时候先看这里：在排>0 说明有调用在等；最近有 error 说明超时或连不上。',
+      parameters: schema({}),
+      output: {
+        schema: { type: 'object', properties: {} },
+        render: (_a, v) => TEXT(renderLocalStatus(v)),
+      },
+      timeoutMs: 5000,
+      async execute() {
+        try {
+          const st = typeof getLocalStatus === 'function' ? getLocalStatus() : null
+          return st || { error: '取不到本地队列状态' }
+        } catch (e) {
+          return { error: String((e && e.message) || e).slice(0, 200) }
+        }
+      },
+    },
   ]
+}
+
+/** local_llm_status 的文字渲染：一块小面板，别让它变成 JSON 墙。 */
+function renderLocalStatus(v) {
+  if (!v || v.error) return '取不到本地队列：' + String((v && v.error) || '空').slice(0, 120)
+  const lines = ['并发 ' + (v.concurrency || 1) + ' · 在跑 ' + (v.running || 0) + ' · 在排 ' + (v.queued || 0)]
+  if (Array.isArray(v.runningItems) && v.runningItems.length) {
+    lines.push('在跑：' + v.runningItems.map((x) => `${x.label || '未命名'}（p${x.priority}，${Math.round((x.runningMs || 0) / 1000)}s）`).join(' / '))
+  }
+  if (Array.isArray(v.queue) && v.queue.length) {
+    lines.push('在排：' + v.queue.map((x) => `${x.label || '未命名'}（p${x.priority}，等${Math.round((x.waitedMs || 0) / 1000)}s）`).join(' / '))
+  }
+  if (Array.isArray(v.recent) && v.recent.length) {
+    for (const r of v.recent.slice(-5)) {
+      lines.push(`- ${r.label || '未命名'} p${r.priority} 等${Math.round((r.waitedMs || 0) / 1000)}s 跑${Math.round((r.ms || 0) / 1000)}s ${r.ok ? 'ok' : '✗ ' + (r.error || '')}`)
+    }
+  }
+  if (v.host) {
+    lines.push('宿主后台 并发 ' + (v.host.concurrency || 2) + ' · 在跑 ' + (v.host.running || 0) + ' · 在排 ' + (v.host.queued || 0))
+    if (Array.isArray(v.host.recent) && v.host.recent.length) {
+      for (const r of v.host.recent.slice(-3)) {
+        lines.push(`· ${r.label || '未命名'} 等${Math.round((r.waitedMs || 0) / 1000)}s 跑${Math.round((r.ms || 0) / 1000)}s ${r.ok ? 'ok' : '✗ ' + (r.error || '')}`)
+      }
+    }
+  }
+  return lines.join('\n')
 }
 
 // ---------------- 界面入口 ----------------

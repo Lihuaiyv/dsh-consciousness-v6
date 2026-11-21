@@ -2,9 +2,10 @@
  * 「说话那一刻的感觉」——第一人称，自己写的一句话。
  *
  * 为什么要单独一张表：affect_events 记的是「你这句话把我推到哪」，那是事后评的；
- * 注入在回复之前拼，所以永远只能拿到上一轮的读数，差半拍。
- * 这条通路让模型在开口之前先调一次 feel，把「这会儿是什么样」写下来，
- * 再带着当时算出来的快/慢一起落库。下一轮注入时，就能给到「我上一句说完时是什么样」。
+ * 注入不是每轮拼一次：宿主每次模型调用前都重拼提示词。所以模型在开口前调完 feel、
+ * 把「这会儿是什么样」写进表，同一条链里的下一次调用就能读到（用户消息刚到的那一次拼，
+ * 只能拿到上一条）；跨轮的话，下一轮第一次拼也带得到。
+ * 这条通路让模型把「我开口之前是什么样」留下来，再带着当时算出来的快/慢一起落库。
  *
  * 三条纪律：
  *   1. 只读情绪，不改情绪——写库不动 affect_v3，一个新写入点就是一个新 bug 面。
@@ -13,6 +14,7 @@
  */
 import { event, getParam, nid } from '../kernel.js'
 import { localDay } from '../db.js'
+import { v4ValenceOf } from './affect_live.js'
 import { vectorize, cosine } from './fingerprint.js'
 
 const MAX_LEN = 80
@@ -261,9 +263,12 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
     const st = db.prepare('SELECT primary_label FROM affect_state WHERE agent_id=?').get(aid)
     label = st && st.primary_label ? String(st.primary_label) : null
   } catch { label = null }
-  const fast = v3 ? r3(v3.fast) : null
+  // 「说这句话时的当场」：v4 投影优先，没有才记旧 fast。fast 列从此装的是当场值。
+  const v4 = v4ValenceOf(db, aid)
+  const fast = v4 ? r3(v4.v) : (v3 ? r3(v3.fast) : null)
   const slow = v3 ? r3(v3.slow) : null
-  const total = v3 ? r3(v3.total) : null
+  // 总情绪也跟当场走：慢 + 0.35×v4 投影；没有 v4 用旧 total。
+  const total = v4 && v3 ? r3(Math.max(-1, Math.min(1, (Number(v3.slow) || 0) + 0.35 * v4.v))) : (v3 ? r3(v3.total) : null)
   const id = nid('afe_')
   try {
     db.prepare('INSERT INTO affect_feel(id,agent_id,at,text,label,fast,slow,total,session_id,source,turn_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
@@ -286,7 +291,29 @@ export function recordFeel(db, aid, { text, sessionId = null, at = Date.now(), s
 
 /** 最近一条「我说话时的感觉」，给注入行用。超出窗口就当没有——宁可少一行，不拿旧感受冒充刚说完。
  *  给 sessionId 时只取这一段自己写的：feel 是「我上一句之前」，跨会话那条不是这一段的上一句。 */
-export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480, sessionId = null } = {}) {
+/**
+ * 这个会话「上一轮落轮」的时刻（最后一条 agent 行的 created_at）。
+ * feel 的「本轮」门槛就靠它：比这个时刻更早写的感觉，是上一轮甚至更早的，不许挂成「我上一句之前」。
+ * 统一口径（2026-11-15 23:46 主人定）：网页 / QQ / chat / 微信都按这个算，不再各用各的时间窗。
+ */
+export function lastTurnEndAt(db, aid, { conversationId = null } = {}) {
+  try {
+    const row = conversationId
+      ? db.prepare("SELECT created_at FROM chat_turns WHERE agent_id=? AND role='agent' AND conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(aid, String(conversationId))
+      : db.prepare("SELECT created_at FROM chat_turns WHERE agent_id=? AND role='agent' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(aid)
+    const t = row && Date.parse(row.created_at)
+    return Number.isFinite(t) ? t : null
+  } catch { return null }
+}
+
+/**
+ * 最近一条 feel。
+ * 2026-11-15 23:42：加 `since`——只认这一轮开始之后写的。
+ * 理由：原来只看「两小时内」，于是一小时前写的那句会被挂成「我上一句说出来之前」，成了骗时间。
+ * 这一轮没写就不给（调用方那一行整段不出），不再拿旧的顶上。
+ * `thisTurn: true` 时，`since` 没给就自己从「上一轮落轮时刻」算（QQ / 别处也能统一）。
+ */
+export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480, sessionId = null, since = null, thisTurn = false, conversationId = null } = {}) {
   try {
     const sid = sessionId == null || String(sessionId).trim() === '' ? null : String(sessionId)
     const row = sid
@@ -295,6 +322,10 @@ export function latestFeel(db, aid, { at = Date.now(), maxAgeMin = 480, sessionI
     if (!row || !row.at) return null
     const age = (Number(at) - Date.parse(row.at)) / 60000
     if (!Number.isFinite(age) || age < 0 || age > maxAgeMin) return null
+    // 本轮门槛：比这一轮的起点还早，就不算「这一句之前」的感觉。
+    let from = since
+    if (from == null && thisTurn) from = lastTurnEndAt(db, aid, { conversationId })
+    if (from != null && Number.isFinite(Number(from)) && Date.parse(row.at) <= Number(from)) return null
     return {
       at: row.at, text: String(row.text || ''), label: row.label || null,
       fast: Number.isFinite(Number(row.fast)) ? Number(row.fast) : null,
@@ -584,6 +615,17 @@ export function feelTextForInject(text, max = FEEL_INJECT_MAX) {
  * 数字不进这一行（2026-11-07）：快 / 慢是账本上的东西，不该在开口前念给我听。
  * 想看数，用 feel_search 按区间找——过去时的入口，不是现在时的通知。
  */
+/**
+ * 2026-11-16 00:00 主人定：feel 写完之后**替换掉第 9 行那条指引**，不另起一行。
+ * 写了 → 这一行变成「我心里的感受：…」（不再写「我上一句说出来之前」那种时间谎话，也不加尾巴）；
+ * 下一轮还没写 → 又换回 FEEL_TRIGGER 那条指引。整段永远只有一处讲 feel，不占两行。
+ */
+export function feelNowLine(row) {
+  const text = String((row && row.text) || '').trim()
+  if (!text) return ''
+  return '我现在心里的感受：' + text
+}
+
 export function feelLineOf(row) {
   if (!row || !row.text) return ''
   // 句子自带的句末标点先摘掉，免得和后面的尾巴拼成「。，」

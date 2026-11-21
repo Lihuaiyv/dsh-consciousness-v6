@@ -12,7 +12,7 @@
  * 纯函数部分可单测；generateVoice 要注入 complete，失败一律返回 ok:false（调用方回退模板）。
  */
 
-export const VOICE_BANNED = ['感觉', '情绪', '情感', '有点']
+export const VOICE_BANNED = ['感觉', '情绪', '情感']
 export const VOICE_MIN = 8
 export const VOICE_MAX = 24
 
@@ -74,21 +74,42 @@ export function parseVoice(out) {
   return t
 }
 
-/* 用 JSON 格式问（影子那边验证过：这个模型对「只输出 JSON」比对「只输出一行」听话得多）。 */
+/* 用 JSON 格式问（影子那边验证过：这个模型对「只输出 JSON」比对「只输出一行」听话得多）。
+   2026-11-15 改：这一行从「动作借代」改成「说心情」；主人 22:38 亲手定了这段措辞，照抄，别自己加约束。
+   要点：用「你」不用「她」；只写心情；摘要当上下文。 */
 const VOICE_SYS = '只输出 JSON，不要解释、不要代码围栏，格式：{"line":"一行中文"}。'
-  + 'line 写她此刻的状态，或刚才那句话在她那儿的样子，8~24 字，第一人称或省略主语都行。'
-  + '能对上真实情形的一句话、一个判断、一个念头，都可以。'
-  + '不要用「感觉 / 情绪 / 情感 / 有点」，不要写「她」，不要重复给过的句子。'
+  + '\nline 写你此刻大概的心情：说自己当下心情什么样，8~24 字，第一人称或省主语都行。'
+  + '\n只写心情。不要重复以前写过的句子。'
+  + '\n如果下面还给了「刚才他那句落下来时我的反应」，就把这一阵的心情和那一下揉成一句，别用分号断成两截、别写成两件事。'
+  + '\n下面是最近六轮对话（「对方：」是他，「我：」是你，各一句短的），心情贴着这些事，不要凭空造一件不存在的事。'
 
-/** 给模型：这一刻的数 + 最近用过的句子（免得又给同一句）。 */
-export function buildVoicePrompt({ label = 'calm', intensity = 0.4, slow = 0, mood = null, recent = [] } = {}) {
-  const state = '情绪标签：' + String(label) + '；强度 ' + (Math.round(num(intensity, 0.4) * 100) / 100)
+/**
+ * 给模型：这一刻的数 + 最近几轮对话（你/我，各一句压好的短话）。
+ * 2026-11-15：原来给的是「最近用过的八句原句」——本意防重复，结果把「手/笔/纸」这套意象也锁死了。
+ * 现在改成给**最近六轮压好的对话**（主人 22:42 定：两边都压过，写成对话的样子，六轮十二行）。
+ * @param {{label?:string, intensity?:number, slow?:number, mood?:number, dialogue?:Array<{you?:string, me?:string}>}} opt
+ */
+export function buildVoicePrompt({ label = 'calm', intensity = 0.4, slow = 0, mood = null, dialogue = [], snap = null } = {}) {
+  const state = '这一刻：情绪标签 ' + String(label) + '；强度 ' + (Math.round(num(intensity, 0.4) * 100) / 100)
     + '；慢情绪 ' + (Math.round(num(slow, 0) * 100) / 100)
-    + (mood == null ? '' : '；整体心情 ' + (Math.round(num(mood, 0) * 100) / 100))
-  const used = (recent || []).slice(0, 8)
+    + (mood == null ? '' : '；整体心情 ' + (Math.round(num(mood, 0) * 100) / 100) + '（-1 到 1，0 是平）')
+  const pairs = (dialogue || []).filter((p) => p && (p.you || p.me)).slice(-6)
+  /* 老数据只有「我」那一半（没压过对方的话），就只出我这一行——别塞「（没压出来）」这种占位，
+     模型会把它当发生过的事。新的一轮开始两边都有。
+     2026-11-15 22:49 主人提醒：那一栏不一定是他——也可能是别人、或者客套话，所以写「对方」，不写「你」。 */
+  const log = pairs
+    .map((p) => [(p.you ? '对方：' + p.you : ''), (p.me ? '我：' + p.me : '')].filter(Boolean).join('\n'))
+    .filter(Boolean)
+    .join('\n')
+  const snapText = snap && snap.short
+    ? '\n刚才他那句落下来时：' + (snap.cause ? '他说「' + String(snap.cause).slice(0, 40) + '」；' : '') + '我的反应是 ' + snap.short
+    : ''
   return [
     { role: 'system', content: VOICE_SYS },
-    { role: 'user', content: state + (used.length ? '\n最近用过（不要再给这些）：\n' + used.map((x) => '- ' + x).join('\n') : '') },
+    {
+      role: 'user',
+      content: state + (pairs.length ? '\n最近六轮（旧→新）：\n' + log : '') + snapText,
+    },
   ]
 }
 
@@ -116,21 +137,29 @@ export async function generateVoice(opt = {}) {
     }
     const text = parseVoice(raw)
     const v = validateVoice(text)
+    /* 2026-11-15：提示词已经不列禁词了（主人定了短版），所以违规也当「再来一次」，
+       而不是一句就把这一轮判死——否则模型偶尔写个「情绪」就整天退回模板。 */
     if (v.ok && !isRepeat(text, [...recent, ...tried])) {
       return { ok: true, text, reason: 'ok', tried, ms: Date.now() - t0 }
     }
     tried.push(text || '(' + v.reason + ')')
-    if (!v.ok) return { ok: false, reason: v.reason, tried, ms: Date.now() - t0 }
   }
   return { ok: false, reason: 'repeat', tried, ms: Date.now() - t0 }
 }
 
-/** 落一条「用过」：进事件表，和影子同一个屋，不另开表。 */
-export function recordVoice(db, aid, { text, at = Date.now() } = {}) {
+/** 落一条「用过」：进事件表，和影子同一个屋，不另开表。
+ *  2026-11-15：顺手记下写这句时的四个数——下一轮靠它们判断「心情变了没有、要不要重写」。 */
+export function recordVoice(db, aid, { text, at = Date.now(), label = null, intensity = null, slow = null, mood = null } = {}) {
   if (!text) return null
   try {
     const id = 'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 10)
-    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(id, aid, 'expr.phrase', JSON.stringify({ text: String(text) }), new Date(at).toISOString())
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(id, aid, 'expr.phrase', JSON.stringify({
+      text: String(text),
+      label: label == null ? null : String(label),
+      intensity: Number.isFinite(Number(intensity)) ? Number(intensity) : null,
+      slow: Number.isFinite(Number(slow)) ? Number(slow) : null,
+      mood: Number.isFinite(Number(mood)) ? Number(mood) : null,
+    }), new Date(at).toISOString())
     return id
   } catch { return null }
 }
@@ -152,10 +181,50 @@ export function latestVoice(db, aid, { hours = 12, at = Date.now() } = {}) {
     const since = new Date(num(at, Date.now()) - Math.max(1, num(hours, 12)) * 3600000).toISOString()
     const rows = db.prepare("SELECT payload, created_at FROM events WHERE agent_id=? AND type='expr.phrase' AND created_at>=? ORDER BY created_at DESC LIMIT 8").all(aid, since)
     for (const row of rows) {
-      let text = ''
-      try { text = String(JSON.parse(row.payload).text || '') } catch { continue }
-      if (text && validateVoice(text).ok) return { text, at: row.created_at }
+      let p = null
+      try { p = JSON.parse(row.payload) } catch { continue }
+      const text = String((p && p.text) || '')
+      if (!text || !validateVoice(text).ok) continue
+      return {
+        text,
+        at: row.created_at,
+        snap: { label: p.label || null, intensity: Number.isFinite(Number(p.intensity)) ? Number(p.intensity) : null, slow: Number.isFinite(Number(p.slow)) ? Number(p.slow) : null, mood: Number.isFinite(Number(p.mood)) ? Number(p.mood) : null },
+      }
     }
     return null
   } catch { return null }
+}
+
+/** 强度分档（和 expression_state 一致：0 弱 / 1 中 / 2 强）。 */
+function bandOf(v) {
+  const i = Math.max(0, Math.min(1, num(v, 0.4)))
+  if (i < 0.4) return 0
+  if (i < 0.7) return 1
+  return 2
+}
+
+/**
+ * 这一句还够用吗（2026-11-15）：心情变了才重写，不是到点就换。
+ *
+ * 判据（任何一条成立就重写）：
+ *   - 没有新鲜句；
+ *   - 情绪标签变了；
+ *   - 强度跨档（弱/中/强互换）；
+ *   - 慢情绪走了 0.2 以上；
+ *   - 旧的没记下当时的数（老数据），只能当「变了」处理。
+ * 冷却：两条之间至少隔 gapMin 分钟，免得一轮一句烧调用。
+ * @returns {{stale:boolean, why:string}}
+ */
+export function voiceStale(snap, { label = 'calm', intensity = 0.4, slow = 0, at = Date.now(), lastAt = null, gapMin = 30 } = {}) {
+  const gap = Math.max(0, num(gapMin, 30)) * 60000
+  if (lastAt) {
+    const t = Date.parse(lastAt)
+    if (Number.isFinite(t) && at - t < gap) return { stale: false, why: 'gap' }
+  }
+  if (!snap) return { stale: true, why: 'new' }
+  if (snap.label == null || snap.intensity == null || snap.slow == null) return { stale: true, why: 'unrecorded' }
+  if (String(snap.label) !== String(label || 'calm')) return { stale: true, why: 'label' }
+  if (bandOf(snap.intensity) !== bandOf(intensity)) return { stale: true, why: 'band' }
+  if (Math.abs(num(snap.slow, 0) - num(slow, 0)) >= 0.2) return { stale: true, why: 'slow' }
+  return { stale: false, why: 'same' }
 }

@@ -11,6 +11,9 @@
  *   - 措辞按真实间隔给，宁可粗一点，不要编精确数字（「三天前」比「71 小时前」像人话）。
  */
 
+import { lastSentenceOf } from './last_sentence.js'
+import { getParam } from '../kernel.js'
+
 /** 本地自然日（YYYY-MM-DD），用于「今天 / 昨天」判断。不用 UTC，否则早上八点前会被算成昨天。 */
 function localDay(d) {
   const t = d instanceof Date ? d : new Date(d)
@@ -82,14 +85,14 @@ export function lastTurnOf(db, aid, opt = {}) {
   try {
     const conv = opt.conversationId == null ? null : String(opt.conversationId)
     const row = conv
-      ? db.prepare(`SELECT role, text, created_at, conversation_id FROM chat_turns
+      ? db.prepare(`SELECT role, text, created_at, conversation_id, turn_id FROM chat_turns
         WHERE agent_id=? AND conversation_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(aid, conv)
-      : db.prepare(`SELECT role, text, created_at, conversation_id FROM chat_turns
+      : db.prepare(`SELECT role, text, created_at, conversation_id, turn_id FROM chat_turns
         WHERE agent_id=? ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(aid)
     if (!row || !row.created_at) return null
     const at = Date.parse(row.created_at)
     if (!Number.isFinite(at)) return null
-    return { at, role: row.role, text: String(row.text || ''), raw: row.created_at, conversationId: row.conversation_id || null }
+    return { at, role: row.role, text: String(row.text || ''), raw: row.created_at, conversationId: row.conversation_id || null, turnId: row.turn_id || null }
   } catch { return null }
 }
 
@@ -100,7 +103,11 @@ const clip = (s, n) => {
 
 /**
  * 拼出注入里那一段「现在」。
- * @returns {{line:string, gapMs:number|null, phrase:string, last:object|null}}
+ *
+ * 2026-11-15（C 项）：上一句优先读「轮末压好的短话」（events.presence.last_sentence，按 turn_id 认）。
+ * 读不到就退回原来的 36 字截断——兜底永远在，模型挂了也不会留空。
+ *
+ * @returns {{line:string, gapMs:number|null, phrase:string, last:object|null, source:'summary'|'clip'|'none'}}
  */
 export function presenceLine(db, aid, opt = {}) {
   const at = opt.at != null ? new Date(opt.at) : new Date()
@@ -108,12 +115,29 @@ export function presenceLine(db, aid, opt = {}) {
   const clock = clockOf(at)
   const conv = opt.conversationId == null ? null : String(opt.conversationId)
   const last = opt.last !== undefined ? opt.last : lastTurnOf(db, aid)
-  if (!last) return { line: '现在：' + part + ' ' + clock + '。还没跟他说过话。', gapMs: null, phrase: '', last: null, here: null }
+  if (!last) return { line: '现在：' + part + ' ' + clock + '。还没跟他说过话。', gapMs: null, phrase: '', last: null, here: null, source: 'none' }
   const gapMs = Math.max(0, at.getTime() - last.at)
   const phrase = describeGap(gapMs, at)
   // 引用只认这一段：本段没有上一句就只留时间距离，不拿别段的话冒充。
   const here = conv ? lastTurnOf(db, aid, { conversationId: conv }) : last
   const mine = here && here.role === 'agent'
-  const tail = here && here.text ? '；' + (mine ? '我' : '你') + '上一句说的是「' + clip(here.text, 36) + '」' : ''
-  return { line: '现在：' + part + ' ' + clock + '；' + phrase + tail + '。', gapMs, phrase, last, here: here || null }
+  const said = here && here.text ? String(here.text) : ''
+  // 只用到「我说的话」的摘要：你的话没经过这一步，不能拿我的短话替你说。
+  // 开关关掉时连读都不用：同一次拼装必须和改动前逐字一样。
+  let short = null
+  if (mine && here && here.turnId) {
+    let on = true
+    try { on = String(getParam(db, aid, 'presence.summary') || 'on') !== 'off' } catch { on = true }
+    if (on) { try { short = lastSentenceOf(db, aid, { turnId: here.turnId }) } catch { short = null } }
+  }
+  const body = short ? short.text : clip(said, 36)
+  const tail = said ? '；' + (mine ? '我' : '你') + '上一句说的是「' + body + '」' : ''
+  return {
+    line: '现在：' + part + ' ' + clock + '；' + phrase + tail + '。',
+    gapMs,
+    phrase,
+    last,
+    here: here || null,
+    source: short ? 'summary' : (tail ? 'clip' : 'none'),
+  }
 }

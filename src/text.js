@@ -14,6 +14,12 @@ const NOISE_LINE = [
   // 结果被当成用户原话存下来，还混进「上次你们聊到」里，开场就说一句英文。
   /^The approval policy changed/i,
   /^Approval policy changed/i,
+  // 2026-11-18：同一类通报的另一种句式。之前只认 "The approval policy changed"，
+  // 漏了 "The user changed the approval policy from ... to ..."，结果 44 条进库，
+  // 还在 v4 四天产物里各当了一件「事」的起句（检索锚直接变英文噪音）。
+  /^The user changed the approval policy/i,
+  // 宿主对重复工具调用的通报，也不是主人开口
+  /^You are repeating the (?:exact )?same tool call/i,
   /^Current DeepSeek Harness implementation checkout:/i,
   /^Current DeepSeek Harness Web GUI URL:/i,
   /^Browser time zone for this request:/i,
@@ -33,6 +39,9 @@ const NOISE_LINE = [
   /^Use list_agents\(\{\}\) to find your teammates/i,
   /^To message another teammate, use send_message/i,
   /^Agent Teams is available in this session/i,
+  // 宿主派子代理时的委派深度通报 / 重复工具调用通报（切事读口早就在剔，写口一直漏）
+  /^Delegation depth for /i,
+  /^Repeated tool call detected/i,
   // 定时任务唤醒：整条都是宿主写的，不是主人开口
   /^\[SCHEDULE REMINDER\]/i,
   /^This is a scheduled message from the user/i,
@@ -45,6 +54,11 @@ const NOISE_LINE = [
 export function looksLikeRuntimeNoise(text) {
   const s = String(text || '')
   if (!s.trim()) return true
+  // 整条机器消息（checkpoint / 子代理委派通报 / 子代理任务书）：一句人话都没有。
+  // 以前这里只认 SUBAGENT_TASK，漏了「Delegation depth for …」这种多行委派说明，
+  // 它被当成用户原话拼进纪要，整条 644 字。MACHINE_MESSAGE 已经收全了，直接用。
+  if (MACHINE_MESSAGE.test(s)) return true
+  if (SUBAGENT_TASK.test(s.trim())) return true
   const lines = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
   if (!lines.length) return true
   return lines.every((l) => NOISE_LINE.some((re) => re.test(l)))
@@ -58,7 +72,14 @@ export function looksLikeRuntimeNoise(text) {
  * 真正的原话早就在更早的 fragments 里躺着，摘要只是二手复述。
  * 以前剥不干净，摘要就被当成「用户亲口说过的事实」存进原话层，再被抽成记忆。
  */
-const MACHINE_MESSAGE = /^\s*(?:This is an automatically generated checkpoint|Background (?:subagent|job)\b|<compacted-summary>|<goal_(?:round|complete)>)/i
+/**
+ * 宿主派子代理时写的任务书：整条都是「你是一个「切事」子代理。工作目录…」这种，
+ * 一句人话都没有，却被当成 user 原话写进了 fragments（2026-11-18 查到 28 条，
+ * 11-14 那天有 4 个 <5 句的「碎件」就是它们）。只认已经实证过的开头，不做「你是…」全军覆没。
+ */
+const SUBAGENT_TASK = /^(?:你是一个「[^」]{1,12}」子代理|你是本会话的团队成员|你是编码助手，工作目录|你是研究助理。任务：|你是实验执行员|你是情绪标注员[。，,]|你是(?:一个)?判定器[，。：]|你是只读审阅员[。，]|你是(?:严格的)?(?:文档审稿人|反方辩护人|实现核查员))/
+
+const MACHINE_MESSAGE = /^\s*(?:This is an automatically generated checkpoint|Background (?:subagent|job)\b|<compacted-summary>|<goal_(?:round|complete)>|Delegation depth for |You are a delegated subagent\b|你是一个「[^」]{1,12}」子代理|你是本会话的团队成员|你是编码助手，工作目录|你是研究助理。任务：|你是实验执行员|你是情绪标注员[。，,]|你是(?:一个)?判定器[，。：]|你是只读审阅员[。，]|你是(?:严格的)?(?:文档审稿人|反方辩护人|实现核查员))/i
 
 /**
  * 只接受一句话：去引号、取首行、压长度、拦技术噪音和框架词。

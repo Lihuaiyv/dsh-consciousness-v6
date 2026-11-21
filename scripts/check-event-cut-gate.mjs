@@ -46,8 +46,27 @@ try {
 
   ok('切完了、没有新碎片：跳过', (() => { const g = dayCutGate(db, aid, day); return g.cut === false && g.reason === 'up-to-date' })(), dayCutGate(db, aid, day))
 
+  // 2026-11-16（D70）：指纹要取「实际切到的那一轮」，不是「碎片最新到哪」；给一个比最新碎片早的 marker
+  {
+    const db7 = openDb(P + '7')
+    const day7 = '2026-11-09'
+    db7.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('m1', aid, 's1', 'tm1', 1, 'user', '句', '2026-11-09T03:00:00Z', day7)
+    db7.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('m2', aid, 's1', 'tm2', 2, 'user', '句', '2026-11-09T05:00:00Z', day7)
+    db7.prepare('INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,created_at,day) VALUES(?,?,?,?,?,?,?,?,?)')
+      .run('m3', aid, 's1', 'tm3', 3, 'user', '句', '2026-11-09T05:00:00Z', day7)
+    const stampMarker = stampDayCut(db7, aid, day7, 'done', '2026-11-09T03:00:00Z')
+    ok('指纹取实际切到的那一轮（marker），不取碎片最新', stampMarker === '2026-11-09T03:00:00Z', { stampMarker })
+    const g7 = dayCutGate(db7, aid, day7)
+    ok('章盖在进度前面时：判回要续切', g7.cut === true && g7.reason === 'new-fragments', g7)
+    db7.close()
+  }
+
   // 盖章之后又聊了 → 必须判成「需要续切」
-  frag('g3', '2026-11-12T23:30:00Z')
+  // 2026-11-17：这条原来用 23:30Z，按本地日（UTC+8）那已经是次日凌晨 07:30，不该算 11-12 的尾巴；
+  // 日界统一后改用本地 18:00 的碎片，测的仍然是「章之后又来新碎片」。
+  frag('g3', '2026-11-12T10:00:00Z')
   ok('章之后又来新碎片：要续切', (() => { const g = dayCutGate(db, aid, day); return g.cut === true && g.reason === 'new-fragments' })(), dayCutGate(db, aid, day))
 
   // 老闸：只有 agt=done，没有 state / doneAt

@@ -357,7 +357,11 @@ function judgeDayKey(d = new Date()) {
 }
 
 function judgeMode(db, aid) {
+  /* 事实库旧路径，已经停了（2026-11-22 主人定）：
+     总闸不是 on 时这条旧门一律不判，连影子事件也不写。
+     要恢复：把 memory.legacy.fact 改成 on。 */
   try {
+    if (String(getParam(db, aid, 'memory.legacy.fact') || 'off') !== 'on') return 'off'
     if (String(getParam(db, aid, 'memory.judge.enable') || 'off') !== 'on') return 'off'
     const mode = String(getParam(db, aid, 'memory.judge.gate') || 'shadow')
     return mode === 'on' ? 'on' : mode === 'shadow' ? 'shadow' : 'off'

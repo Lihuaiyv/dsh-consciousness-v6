@@ -1,4 +1,4 @@
-    /* ============================================================== atoms */
+﻿    /* ============================================================== atoms */
 
     const Style = () => h('style', { dangerouslySetInnerHTML: { __html: CSS } })
 
@@ -211,8 +211,10 @@
       for (let i = pts.length - 1; i >= 0; i--) if (Number.isFinite(Number(pts[i].f))) { last = pts[i]; break }
       if (!last) return h('span', { style: { opacity: 0.55 } }, '此刻还没有记录')
       const v3 = (cur && cur.v3) || null
-      const live = !!v3 && Number.isFinite(Number(v3.total)) && Number.isFinite(Number(v3.fast))
-      const fV = live ? Number(v3.fast) : Number(last.f) || 0
+      const v4 = (cur && cur.v4) || null
+      const live = !!v3 && Number.isFinite(Number(v3.total))
+      const hasV4 = !!v4 && Number.isFinite(Number(v4.v))
+      const fV = hasV4 ? Number(v4.v) : (Number.isFinite(Number(v3 && v3.fast)) ? Number(v3.fast) : Number(last.f) || 0)
       const tV = live ? Number(v3.total)
         : (Number.isFinite(Number(last.t)) ? Number(last.t) : (Number(last.s) || 0) + 0.35 * fV)
       const pos = tV >= 0
@@ -220,12 +222,12 @@
       const fsV = last.fs === null || last.fs === undefined ? null : Number(last.fs)
       const feV = last.fe === null || last.fe === undefined ? null : Number(last.fe)
       /* 鎷嗛」瑕佽兘鍔犲緱鍥炲幓鎵嶅啓锛氭棫閲囨牱閲岀殑銆岃嚜宸?+ 鍏辨儏銆嶅彲鑳藉凡缁忓涓嶄笂鍥炶惤鍚庣殑蹇儏缁?*/
-      const decomp = fsV !== null && feV !== null && Math.abs(fsV + feV - fV) <= 0.02
+      const decomp = !hasV4 && fsV !== null && feV !== null && Math.abs(fsV + feV - fV) <= 0.02
       const rawName = raw && raw !== last.lb ? (AFFECT_KEY[raw] || raw) : ''
       return h('span', { style: { display: 'inline-flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 9px' } },
         h('b', { style: { fontWeight: 600, color: pos ? '#7fd8ff' : '#ff9b9b' } }, (pos ? '积极' : '消极') + ' ' + sg(tV)),
         h('span', { style: { opacity: 0.72 } },
-          '快情绪 ' + sg(fV) + (decomp ? ' = 自己 ' + sg(fsV) + ' + 共情 ' + sg(feV) : '')),
+          (hasV4 ? '当场 ' : '快情绪 ') + sg(fV) + (decomp ? ' = 自己 ' + sg(fsV) + ' + 共情 ' + sg(feV) : '')),
         rawName ? h('span', { style: { opacity: 0.55 } }, '· 这一句被判断成「' + rawName + '」') : null)
     }
 
@@ -603,7 +605,7 @@
             h('div', { style: { opacity: 0.72 } },
               '水位 ' + sg(Number(last.b) || 0)
               + (last.bo === null || last.bo === undefined ? '' : '（负荷 ' + sg(Number(last.bo)) + '）')),
-            h('div', null, '快情绪 ' + sg(fV)),
+            h('div', null, '当场 ' + sg(fV)),
             fsV === null ? null : h('div', { style: { opacity: 0.72 } }, '· 自己 ' + sg(fsV)),
             feV === null ? null : h('div', { style: { opacity: 0.72 } }, '· 共情 ' + sg(feV))) : null)),
         /* 横轴时间刻度 */
@@ -621,7 +623,7 @@
           h('span', { className: 'dshc-sub', style: { display: 'flex', alignItems: 'center', gap: 6 } },
             h('span', { style: { width: 16, height: 2, background: '#fff', borderRadius: 2, display: 'inline-block' } }), '慢情绪'),
           h('span', { className: 'dshc-sub', style: { display: 'flex', alignItems: 'center', gap: 6 } },
-            h('span', { style: { width: 16, height: 2, background: '#5ec8ff', borderRadius: 2, display: 'inline-block' } }), '快情绪'),
+            h('span', { style: { width: 16, height: 2, background: '#5ec8ff', borderRadius: 2, display: 'inline-block' } }), '当场（历史样本是旧快情绪）'),
           h('span', { className: 'dshc-sub', style: { display: 'flex', alignItems: 'center', gap: 6 } },
             h('span', {
               style: {
@@ -876,3 +878,4 @@
     }
 
     /** 鍏竟褰㈤浄杈撅細labels 涓?{ joy:n, ... } */
+

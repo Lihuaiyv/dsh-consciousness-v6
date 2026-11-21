@@ -79,6 +79,97 @@ export const PARAMS = {
   'memory.recall.formula': ['C3', 'v2'],
   // 空窗兜底（D10）：episode 停写后，检索不够 k 条时从 fragments 补原话（默认 off）。
   'memory.fragment.fallback': ['C4', 'off'],
+  // 自己想起那行的额度（P3 预算表；之前只读不注册，writeParam 写不进去）。
+  'event.inject.budget': ['C4', 400],
+  // 处理层兜底（D46）：episode/manual 里有一半不是原话，是「事」的讲述；让事件也参选（默认 off）。
+  'memory.event.fallback': ['C4', 'off'],
+  // 夜里切事让路：最近 N 分钟有真人说话就不切（0 = 不让路）。默认 1 分钟。
+  'memory.cut.pause.minutes': ['C4', 1],
+  // v4 影子精修：on = 回复后用本地模型再算一版事帧（异步、不阻塞，source=model）；默认 off 先攒规则数据。
+  'affect.engine.shadow.model': ['C4', 'off'],
+  // 判断层走谁：host = 宿主模型（准，慢一点，默认）；local = 本地 14b（快，偏钝）。
+  'affect.engine.shadow.judge': ['C4', 'host'],
+  // 精修用哪个本地模型。质量优先用 14b（异步、不阻塞，慢一点没关系；8b 在「冲谁」上会飘）。
+  'affect.engine.shadow.model.name': ['C4', 'qwen2.5:14b-instruct'],
+  // 事层走谁（2026-11-17）：host = 宿主模型（快、准，按 token 计小钱，默认）；local = 本地 14B。
+  'affect.engine.shadow.topic': ['C4', 'host'],
+  // v4 三递质的基线/斜率：改数字不改逻辑（S/N/D 都是 0~1）。
+  'affect.v4.s.base': ['C4', 0.5],
+  'affect.v4.s.k': ['C4', 0.5],
+  'affect.v4.n.base': ['C4', 0.15],
+  'affect.v4.n.k': ['C4', 0.85],
+  'affect.v4.d.base': ['C4', 0.5],
+  'affect.v4.d.k': ['C4', 0.5],
+  // 角层软分配宽度 / 词层原型距离宽度。
+  'affect.v4.angle.sigma': ['C4', 0.55],
+  'affect.v4.word.sigma': ['C4', 0.6],
+  // 一级标签并列门槛：第一角与第二角权重差小于它 → label 写「说不清」（0.03 = 3 个百分点）。
+  'affect.v4.label.tie': ['C4', 0.03],
+  // 情绪增量模式（2026-11-18）：delta = 判断层给增量、先回落再加（默认）；off = 旧逻辑，位置直落。
+  'affect.v4.dyn': ['C4', 'delta'],
+  // 二级词查表几何：cube=方块欧氏距离（默认）；sphere=球面角距离+半径差（2026-11-18，先并行）
+  'affect.v4.geo': ['C4', 'sphere'],
+  // 每轮吸收系数 k：一句事只推一小步。k 是 S 的兜底，ks/kn/kdu/kdd 按轴分开。
+  'affect.v4.dyn.k': ['C4', 0.35],
+  // 三条轴的增量三套算法（2026-11-18 主人定）：S 累积但越靠边越推不动；N 尖峰包络不叠；D 慢涨快跌。
+  // 2026-11-21：ks 0.35→0.45。判断层给的增量实测在 0.3~0.6 之间；按 0.35 算一句只推 0.10~0.21，
+  // 所有情绪挤在 0.45~0.55 分不开（「被夸」和「被嫌」落同一个位置）。0.45 让一句推 0.14~0.27，能拉开，
+  // 又不会两句就顶到 1（试过 0.55，两句就夹到顶了）。
+  'affect.v4.dyn.ks': ['C4', 0.45],
+  // N 用 0.85：包络不叠，但单次冲击要能顶到 1（0.15+0.85×1），否则「惊」这个角永远出不来。
+  'affect.v4.dyn.kn': ['C4', 0.85],
+  'affect.v4.dyn.kdu': ['C4', 0.25],
+  'affect.v4.dyn.kdu.rebound': ['C4', 0.5],
+  'affect.v4.dyn.kdd': ['C4', 0.3],
+  // 情绪惯性（2026-11-21）：一轮里 S 最多挪多少。负性偏差——坏消息砸得深（0.35），
+  // 好消息回暖慢（0.18）。一步通天的存在级事件不受这两条限制。
+  'affect.v4.dyn.step.up': ['C4', 0.18],
+  'affect.v4.dyn.step.down': ['C4', 0.35],
+  // 三条轴各有各的回落速度（2026-11-18 主人定）。全局 hold/tau 只作兜底，按轴的优先。
+  // 2026-11-21 修正：hold 0.5（小时）是 30 分钟维持窗。对话里一句接一句，间隔往往只有几十秒，
+  // settle() 每轮都判定「还在维持窗内」直接 return cur——**安和欲在一个会话里一次都不回落**，只往上叠。
+  // 这就是「三四句话把 s 推到 0.22 就再也回不来、后面中性的话全落低安区」的唯一根因。
+  // 一句话的效应不用 hold 保：tau 本身就是慢的，一秒散不掉。所以 hold 一律归 0，回落交给 tau。
+  'affect.v4.dyn.hold': ['C4', 0],
+  'affect.v4.dyn.tau': ['C4', 0.6],
+  // S（心情 / 现状）：不设维持窗；36 分钟常数回落。
+  // 2026-11-21：从 1.2h 收到 0.6h——会话里一句接一句时，1.2h 等于「这一整段都回不来」，
+  // 连着一串负面之后聊闲天，s 会一直钉在低处。36 分钟能在一段闲聊里缓回来一半。
+  'affect.v4.dyn.s.hold': ['C4', 0],
+  'affect.v4.dyn.s.tau': ['C4', 0.6],
+  // N（意外 / 警觉）：快。NE 半衰期一两分钟；原来 0.5 小时，一句「被惊到」要半小时才淡，拖累后面所有句。
+  'affect.v4.dyn.n.hold': ['C4', 0],
+  'affect.v4.dyn.n.tau': ['C4', 0.05],
+  // D（奔头 / 想要）：多巴胺报一下就过去，6 分钟常数。原来 2 小时太久——
+  // 一段对话里「想要的没了」累积下来，d 会一路掉到 0.1，挑出来的全是轻视 / 愣神 / 无所事事。
+  'affect.v4.dyn.d.hold': ['C4', 0],
+  'affect.v4.dyn.d.tau': ['C4', 0.1],
+  // 饱和疲劳（分钟）：S/D 连续贴顶/贴底超过这么久才触发回落；不做每轮微漏（0 = 关）。
+  'affect.v4.dyn.fatigue': ['C4', 45],
+  // 戏剧性：靠边打折力度（0.35 = 大事件推得动一点；越大越磨圆）。
+  // 靠边打折：0.35→1.0。0.9 时 s 仍然能被连续 14 句暖话从 0.29 推到 0.95，
+  // 而真实的人陪着一整天，安最多到 0.7~0.75；0.9 以上那种「爆满」在现实里几乎不出现。
+  // 1.0 让「离中点 0.5」处彻底推不动，配合软顶 0.95。
+  'affect.v4.dyn.edge': ['C4', 1.0],
+  // 极端事件「一步通天」：on = 判断层标 existence 且 |Δ| ≥ 阈值时一步到顶/到底；off = 只走增量。
+  'affect.v4.dyn.shock': ['C4', 'on'],
+  'affect.v4.dyn.shock.threshold': ['C4', 0.9],
+  // 通天之后维持多久（小时）/ 疲劳窗拉多长（分钟）：重击要在谷底待一会儿。
+  'affect.v4.dyn.shock.hold': ['C4', 1],
+  'affect.v4.dyn.shock.fatigue': ['C4', 90],
+  // 底色跨会话（2026-11-18）：底色 = 现有慢情绪 affect_v3.slow，只给起点和余温。
+  'affect.v4.cross': ['C4', 'on'],
+  // slow(-1~1) → 起点 S / D 的比例（S0=0.5+s×slow，D0=0.5+d×slow）；N 固定 0.15 不跨会话。
+  'affect.v4.cross.s': ['C4', 0.55],
+  'affect.v4.cross.d': ['C4', 0.45],
+  // 会话结束（静默 idleMin 分钟）时，余温渗回慢情绪：权重、单次上限、单日累计上限、存在级会话额外上限。
+  'affect.v4.cross.w': ['C4', 0.2],
+  'affect.v4.cross.max': ['C4', 0.10],
+  'affect.v4.cross.day': ['C4', 0.20],
+  'affect.v4.cross.shock': ['C4', 0.05],
+  'affect.v4.cross.idleMin': ['C4', 90],
+  // 超过这么多小时的旧会话不再补渗余温（防止一次把历史倒进来）。
+  'affect.v4.cross.maxAgeH': ['C4', 24],
   'memory.retrieve.formula': ['C3', 'v2'],
   // 召回增强：off = 纯词法；low = 只在低置信时叫模型（默认）；always = 每轮都叫。
   'memory.retrieve.expand': ['C4', 'low'],
@@ -235,6 +326,10 @@ export const PARAMS = {
   'memory.write.stale_supersede': ['C4', 'off'],
   // 模型窄门（记忆时态）：只在「结构指得出候选、规则判不了」时问模型一次。
   // 总开关默认关；off 时判定逻辑一行都不执行，行为与改造前完全一致。
+  // 事实库旧路径，已经停了（2026-11-22 主人定）：
+  // off = 抽取（ingest）不跑、每轮原话不进 memory_items、judge/gate 连影子也不判。
+  // 要恢复旧行为：改成 on（或在实例参数里覆盖）。
+  'memory.legacy.fact': ['C4', 'off'],
   'memory.judge.enable': ['C4', 'off'],
   // 判定形态：pair = v1 四档配对；pick = v3 有界指认（从候选里选被否定的）。
   'memory.judge.mode': ['C4', 'pair'],
@@ -289,6 +384,10 @@ export const PARAMS = {
   // 「浮上来」三条通道（配额制）：相关度照旧，额外给重要度锚点 / 24h 新近 / 开环固定名额。
   // 没有这几条，重要但跟这句话无关的东西永远过不了相关度门。
   'memory.float.enable': ['C4', 'on'],
+  // 2026-11-15：锚点名额冷却（小时）。同一条记忆在窗口内被名额拉过一次，就不再参与挑选；
+  // 0 = 关掉（回到旧行为：钉住的那条每轮都占第一个名额）。
+  // 必须在目录里登记，否则 getParam 读不到实例覆盖值。见 docs/功能/1-记忆-读与联想/计划-锚点名额冷却-2026-11-15.md
+  'memory.float.anchor.cooldown': ['C4', 24],
   'memory.float.anchor': ['C4', 1],
   'memory.float.fresh': ['C4', 1],
   'memory.float.fresh_hours': ['C4', 24],
@@ -381,9 +480,23 @@ export const PARAMS = {
   'affect.slow.band': ['C4', 0.2],
   // 说话分寸的模型判断（影子）：off = 完全不问模型，逐字回到只有规则档的时候。
   'affect.speech.shadow': ['C4', 'on'],
+  // 2026-11-22 主人：关系评价（appraiseWithEdges）先停——它每轮调一次宿主。
+  // off 时 v4 情绪链照跑；但它的收尾也是「近十轮收拢」唯一的入口，所以「事」会停更。要用改 on。
+  'affect.appraise.edges': ['C4', 'off'],
   // 感受行的词表生成：off = 用回那 24 句模板；voice_hours = 一句生成的话保鲜多久（小时内不重复生成）。
   'affect.speech.voice': ['C4', 'on'],
   'affect.speech.voice_hours': ['C4', 12],
+  // 两句之间至少隔几分钟（心情变了也要等一等）：防止一轮一句、白白烧调用。
+  'affect.speech.voice_gap_min': ['C4', 30],
+  // 上一句摘要（C，2026-11-15）：off = 不压也不读，逐字回到「36 字截断」那版。
+  // chars = 压到多少字以内（是上限，不是指标）；只有超过这个字数的回复才调模型。
+  'presence.summary': ['C4', 'on'],
+  'presence.summary.chars': ['C4', 24],
+  // 宿主模型压不出来时换哪个本地模型（走本机 ollama；默认 qwen3:14b，和切事那套一致）。
+  'presence.summary.local_model': ['C4', 'qwen2.5:14b-instruct'],
+  // 「这会儿心情」和「上一句落在我身上的样子」并成一句（B 项，2026-11-16）。
+  // off = 回到两条各说各的（旧样子）。
+  'affect.inject.merge': ['C4', 'on'],
   // 两版分寸的盲评（规则 vs 模型）：auto = 走 DSH 的模型服务（默认）；same = 用回话那个模型自评（标独立=false，只当参考）；off = 不评。
   'affect.speech.judge': ['C4', 'auto'],
   // 评委用 DSH 的哪个模型。留空 = 跟当前默认模型一样（等于自评）；写另一个模型 id 才是真独立。
@@ -398,6 +511,11 @@ export const PARAMS = {
   'relation.dynamics.formula': ['C3', 'v1'],
   // 评价口径：v1=旧（任务相关性）；concern=关切（P1，任务顺不顺不算）
   'affect.appraise.formula': ['C3', 'concern'],
+  // 三递质引擎 v4（2026-11-16）：off = 旧路（默认）；on = 切生效（影子期还不做，先留着）。
+  'affect.engine': ['C3', 'off'],
+  // v4 影子账开关：on = 每轮往 affect_v4_shadow 记一条（只记不生效）；off = 完全不写。
+  // 影子默认开：它不读回、不进提示词，开着的风险只是多一行账。
+  'affect.engine.shadow': ['C4', 'on'],
   // 事件闸门：on = 事件才改主情绪（默认）；shadow = 只记录不接管
   'affect.gate.mode': ['C4', 'on'],
   // 过闸线。0.10 比影子期松一档：句子还是任务话就过不去，语气一变就能进
@@ -614,6 +732,9 @@ export function setParam(db, aid, key, body) {
   if (key === 'affect.gate.mode' && !['shadow', 'on'].includes(String(val))) {
     err(400, 'INVALID_ARGUMENT', 'affect.gate.mode 只能是 shadow / on')
   }
+  if (key === 'affect.engine.shadow.topic' && !['host', 'local'].includes(String(val))) {
+    err(400, 'INVALID_ARGUMENT', 'affect.engine.shadow.topic 只能是 host / local')
+  }
   if (level === 'C0') err(409, 'GUARDRAIL', 'C0 参数只能由人离线修改', { level })
   if (level === 'C3' || level === 'C1' || level === 'C2') {
     err(409, 'PROPOSAL_REQUIRED', level + ' 参数不能直改，请发起提案', {
@@ -695,4 +816,5 @@ export function setFlag(db, key, value) {
 export function clearFlag(db, key) {
   db.prepare('DELETE FROM flags WHERE key=?').run(key)
 }
+
 

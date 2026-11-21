@@ -34,6 +34,13 @@ try {
 
   ck('抓手门：空数组拒收', !cueGate([]).ok, cueGate([]))
   ck('抓手门：好抓手放行', cueGate(['切事写入器', '冷库']).ok, cueGate(['切事写入器', '冷库']))
+  // 2026-11-15（D52）：第一个抓手必须像专名，泛词（2 字）不能排第一——否则这件事永远浮不出来
+  {
+    const g = cueGate(['纪要', '花.md', '回滚'])
+    ck('抓手门：第一个泛词会被专名顶到后面', g.ok && g.cues[0] === '花.md', g)
+    const g2 = cueGate(['纪要', '补充', '存在'])
+    ck('抓手门：全是泛词就拒收', !g2.ok && g2.reasons.includes('no-name-like'), g2)
+  }
 
   const ev = {
     title: '测试的一天', who: '主人', started_at: '2026-11-10T10:00:00+08:00', ended_at: '2026-11-10T12:00:00+08:00',

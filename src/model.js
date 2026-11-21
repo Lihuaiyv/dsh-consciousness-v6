@@ -419,7 +419,7 @@ async function judgeSelfByChat(chat, items, ctx) {
 const CAPABILITIES = ['appraise', 'extract', 'summarize', 'reply', 'complete', 'chat', 'embed']
 
 export class ModelPort {
-  constructor(primary, fallback) { this.primary = primary; this.fallback = fallback; this.failures = 0; this.openUntil = 0 }
+  constructor(primary, fallback) { this.primary = primary; this.fallback = fallback; this.failures = 0; this.openUntil = 0; this.fallbackWhy = null }
   /** INV9：能力声明，业务只问能不能做，不问是谁 */
   capabilities() {
     const src = this.primary?.available() && Date.now() > this.openUntil ? this.primary : this.fallback
@@ -432,21 +432,28 @@ export class ModelPort {
   }
   async _run(method, ...args) {
     const now = Date.now()
-    if (this.primary?.available() && now > this.openUntil) {
+    const avail = !!this.primary?.available()
+    let skip = avail ? (now > this.openUntil ? 'circuit-open' : null) : 'primary-unavailable'
+    if (avail && now > this.openUntil) {
       try {
         const out = await this.primary[method](...args)
         this.failures = 0
         this.servedBy = 'primary'
+        this.fallbackWhy = null
         return out
       } catch (e) {
         this.lastError = String((e && e.message) || e)
         this.failures++
+        skip = 'primary-error'
         if (process.env.DSHC_MODEL_DEBUG) console.error('[model]', String(e.message || e))
         if (this.failures >= 3) this.openUntil = Date.now() + 30000
       }
     }
     // 落到规则兜底：记下来，别让调用方以为这句话是模型说的
+    // 2026-11-20 补：以前只记了 servedBy，**为什么**兜底（没模型 / 熔断 / 真报错）全丢了，
+    // 情绪判分那边只剩一句 sanitize-null——等于没线索。这里把原因留住，供 diag 读。
     this.servedBy = 'fallback'
+    this.fallbackWhy = skip || 'unknown'
     return this.fallback[method](...args)
   }
   appraise(text, formula, context) { return this._run('appraise', text, formula, context) }
@@ -461,20 +468,25 @@ export class ModelPort {
    */
   async chat(messages, maxTokens, json, temperature) {
     const now = Date.now()
-    if (this.primary?.available() && now > this.openUntil && typeof this.primary.chat === 'function') {
+    const avail = !!this.primary?.available() && typeof this.primary.chat === 'function'
+    let skip = avail ? (now > this.openUntil ? 'circuit-open' : null) : 'primary-unavailable'
+    if (avail && now > this.openUntil) {
       try {
         const out = await this.primary.chat(messages, maxTokens, json, temperature)
         this.failures = 0
         this.servedBy = 'primary'
+        this.fallbackWhy = null
         return out
       } catch (e) {
         this.lastError = String((e && e.message) || e)
         this.failures++
+        skip = 'primary-error'
         if (process.env.DSHC_MODEL_DEBUG) console.error('[model]', this.lastError)
         if (this.failures >= 3) this.openUntil = Date.now() + 30000
       }
     }
     this.servedBy = 'fallback'
+    this.fallbackWhy = skip || 'unknown'
     if (typeof this.fallback?.chat === 'function') return this.fallback.chat(messages, maxTokens, json, temperature)
     throw new Error('模型 chat 不可用')
   }
@@ -506,6 +518,8 @@ export class ModelPort {
       adapter: this.primary?.available() && Date.now() > this.openUntil ? (this.primary.name || 'primary') : 'rules',
       // 上一次调用到底是谁答的：primary=真模型，fallback=规则兜底（评测/面板要靠它分辨）
       served: this.servedBy || null,
+      // 兜底的具体原因：primary-unavailable / circuit-open / primary-error。没兜底就是 null。
+      fallbackWhy: this.fallbackWhy || null,
     }
   }
 }

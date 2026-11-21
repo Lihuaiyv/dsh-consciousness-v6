@@ -21,6 +21,8 @@ import { classifyGap, decayCurve, wakeReset, localHour } from '../../algo/sleep.
 import { stepWalk } from '../../algo/walk.js'
 import { significanceOf, gateOf, labelMargin, socialFloorOf, GATE } from '../../algo/gate.js'
 import { secLabel } from '../../algo/appraise_sec.js'
+import { v4ValenceOf, liveTriadOf } from '../../modules/affect_live.js'
+export { v4ValenceOf }
 
 /**
  * 只写快情绪一列，给「自我回读」用：fast / total / fast_at，慢情绪与 slow_at 一概不碰。
@@ -491,7 +493,7 @@ function avgOver(fn, t0, t1, n = 8) {
 }
 
 /** 算一次：底色 → 慢情绪按真实时长积分（快情绪按余温）→ 快情绪（含共情）→ 总情绪 */
-export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 0, closeness = 0.5, at = Date.now(), fresh = true, kind = null, receive = 'auto' } = {}) {
+export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 0, closeness = 0.5, at = Date.now(), fresh = true, kind = null, receive = 'auto', conversationId = null } = {}) {
   const cur = db.prepare('SELECT * FROM affect_v3 WHERE agent_id=?').get(aid)
   if (!cur) return null
   const ePrev = lastUserEmotion(db, aid)
@@ -737,7 +739,12 @@ export function applyEmotionV3(db, aid, { pleasure = 0, label = 'calm', eUser = 
       }
     }
   }
-  const total = totalOf(s, f)
+  // 总情绪 = 慢情绪 + 0.35×当场；「当场」优先用 v4 三轴投影，没有或过时才退回旧 fast。
+  // 写 total 只认本段会话的当场（appraise 会传 conversationId）；没有才退全局。
+  const v4Now = v4ValenceOf(db, aid, { conv: conversationId || '' })
+  const total = v4Now
+    ? Math.round(Math.max(-1, Math.min(1, s + 0.35 * v4Now.v)) * 1000) / 1000
+    : totalOf(s, f)
   const stamp = new Date(at).toISOString()
   /* 这一段情绪是哪种起的：刚进来一句有分量的，就换标签；否则保留原来那段 */
   const recLabelNow = fresh && Math.abs(Number(pleasure) || 0) >= 0.05 ? label : (cur.rec_label || label)
@@ -839,12 +846,15 @@ export function spontaneousTick(db, aid, at = Date.now(), { rnd = Math.random } 
       s_after: v3.slow,
     })
   } catch { /* 日志失败不影响情绪 */ }
+  let v4Now = null
+  try { v4Now = v4ValenceOf(db, aid) } catch { v4Now = null }
   try {
+    // 样本里的「当场」也跟 v4：不然数字行说 0.8、曲线画 0.1。
     sampleAffect(db, aid, label, Math.abs(pleasure), {
-      pleasure: v3.fast, arousal: 0, dominance: 0,
+      pleasure: v4Now ? v4Now.v : v3.fast, arousal: 0, dominance: 0,
     }, {
       slow: v3.slow,
-      fast: v3.fast,
+      fast: v4Now ? v4Now.v : v3.fast,
       total: v3.total,
       baseline: v3.baseline,
       base_off: v3.baseOff,
@@ -1061,8 +1071,13 @@ export function getAffect(db, aid) {
       if (Number.isFinite(last)) {
         const dtMin = Math.max(0, (Date.now() - last) / 60000)
         v3.fast = Math.round((Number(v3.fast) || 0) * fastDecayOf(db, aid, dtMin) * 1000) / 1000
-        v3.total = Math.round(((Number(v3.slow) || 0) + 0.35 * v3.fast) * 1000) / 1000
       }
+      // 「当场」这一份优先用 v4 三轴投影；没有/过时才退回旧 fast。
+      const v4 = v4ValenceOf(db, aid)
+      v3.total = v4
+        ? Math.round(Math.max(-1, Math.min(1, (Number(v3.slow) || 0) + 0.35 * v4.v)) * 1000) / 1000
+        : Math.round(((Number(v3.slow) || 0) + 0.35 * v3.fast) * 1000) / 1000
+      if (v4) r.v4 = v4
       r.v3 = v3
     }
   } catch { /* 老库没有 v3 表 */ }
@@ -1295,6 +1310,8 @@ export function selfStateLine(db, aid) {
     const r = db.prepare('SELECT slow, fast FROM affect_v3 WHERE agent_id=?').get(aid)
     if (!r) return ''
     const f = (x) => (Number(x) || 0).toFixed(2)
+    const v4 = liveTriadOf(db, aid)
+    if (v4) return `（它现在的状态：当场 S ${f(v4.s)} / N ${f(v4.n)} / D ${f(v4.d)}（${v4.label || '…'}，正负 ${f(v4.v)}）；慢情绪 ${f(r.slow)}；范围 -1~1，越低越沉。）\n`
     return `（它现在的状态：慢情绪 ${f(r.slow)}，快情绪 ${f(r.fast)}；范围 -1~1，越低越沉。）\n`
   } catch { return '' }
 }
@@ -1904,6 +1921,7 @@ export async function appraise(db, aid, text, opts = {}) {
       kind: appraisal.kind || null,
       /* 这一次该怎么接，是模型自己判断的（follow/hold/dampen）；没给就 auto */
       receive: appraisal.receive || 'auto',
+      conversationId: opts.conversationId || null,
     })
   } catch { v3 = null }
   /* 单一心情：把 mood 写成 v3 总情绪的展示别名，别让「两套心情」再分叉。
@@ -2248,3 +2266,4 @@ export function affectGateEvents(db, aid, { days = 3, limit = 40 } = {}) {
     })),
   }
 }
+

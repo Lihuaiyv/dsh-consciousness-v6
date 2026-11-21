@@ -247,6 +247,8 @@ try {
   const l2 = sceneView(db, aid, { at: '2026-11-05 10:20', level: 'L2', sessionId: 'session-confluence-l2' })
   check('整段重放：L2 走整段而不是重建', l2.ok === true && String(l2.system).includes('整段重放'), l2.ok && l2.budget)
   check('整段重放：预算单开（cap 8000）', l2.ok === true && l2.budget.cap === 8000)
+  // 2026-11-18：L2 也要有「时间感」，不能只给日期
+  check('整段重放：带时间感（几点 + 时段）', l2.ok === true && /时间感：那是 \d\d:\d\d/.test(String(l2.system)), String(l2.system).slice(0, 160))
   appendTurn(db, aid, { sessionId: 'sess_l2miss', role: 'user', text: '这条会话没有留底', at: T(16, 6), turnId: 'l2m1' })
   const l2miss = sceneView(db, aid, { at: '2026-11-05 16:06', level: 'L2', sessionId: 'sess_l2miss' })
   check('整段重放：没留底就退回 16 轮并明说', l2miss.ok === true && l2miss.note === 'no-archive', l2miss && { ok: l2miss.ok, note: l2miss.note, reason: l2miss.reason })

@@ -528,6 +528,19 @@ export function sessionBridge(db, aid, opt = {}) {
   const at = opt.at || Date.now()
   const today = opt.today || dayOf(new Date(at).toISOString())
   const gapMin = Math.max(10, Number(opt.gapMin) || 120)
+  /* 2026-11-22：开场先读事行表（每轮追加的「事」），没有才退回纪要。 */
+  try {
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='affair_rows'").get()
+    if (has) {
+      const a = db.prepare('SELECT at, day, text FROM affair_rows WHERE agent_id=? ORDER BY at DESC LIMIT 1').get(aid)
+      const txt = String((a && a.text) || '').replace(/^·\s*/gm, '').replace(/\s+/g, ' ').trim()
+      if (txt) {
+        const t = Date.parse(a.at)
+        const same = Number.isFinite(t) ? dayOf(new Date(t).toISOString()) === today : false
+        return (same ? '今天早些时候' : '上次') + (a.day ? '（' + a.day + '）' : '') + clipSentence(txt, 70)
+      }
+    }
+  } catch { /* 新表没建成就退回纪要 */ }
   try {
     let sameDay = false
     let r = null

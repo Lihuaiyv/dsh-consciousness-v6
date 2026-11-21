@@ -23,7 +23,10 @@ import { getFlag, setFlag, model } from '../kernel.js'
 import { localDay } from '../db.js'
 import * as R from '../modules/relations.js'
 import { tickRelationRead } from '../modules/relations_extract.js'
-import { cutAndIngest, cutDayBatch, dayCutGate } from '../modules/event_write.js'
+import { cutAndIngest, cutDayBatch, dayCutGate, latestFragmentAt } from '../modules/event_write.js'
+import { localBusy, localComplete, LOCAL_PRIORITY } from '../modules/local_llm.js'
+import { cutDayV4 } from '../modules/event_cut_v4.js'
+import { writeEventsV2 } from '../modules/event_split_v2.js'
 
 const WECHAT_WIN_SCRIPT = fileURLToPath(new URL('../../scripts/wechat_win.py', import.meta.url))
 
@@ -402,6 +405,29 @@ export function createWorkers(deps) {
   let eventCutBusy = false
 
   /**
+   * 最近有没有真人在说话。只看 role='user' 的行——assistant 自己的话不算「有人在聊」。
+   * 返回 true = 安静，切事可以跑；false = 刚有人说话，让路。
+   * 窗口参数 memory.cut.pause.minutes（默认 1 分钟；0 = 不让路）。
+   */
+  function humanQuiet(db, aid) {
+    try {
+      // 本地模型正被别的活占着（摘要 / v4 产帧 / 另一轮切事）→ 让路，别叠上去。
+      if (localBusy() > 0) return false
+      const m = Number(getParam(db, aid, 'memory.cut.pause.minutes'))
+      const win = Number.isFinite(m) && m >= 0 ? m : 1
+      if (win <= 0) return true
+      const row = db.prepare("SELECT created_at FROM chat_turns WHERE agent_id=? AND role='user' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(aid)
+      if (!row || !row.created_at) return true
+      const last = Date.parse(row.created_at)
+      if (!Number.isFinite(last)) return true
+      const gap = Date.now() - last
+      // 时钟异常（最后一条是未来时间）别把切事永远卡住：当安静处理。
+      if (gap < 0) return true
+      return gap >= win * 60000
+    } catch { return true }
+  }
+
+  /**
    * 把「前一天」和「所有没切完的天」逐天切 → 冷库 → 热库 born。
    *
    * 2026-11-13 B2：改用 cutDayBatch——
@@ -415,12 +441,74 @@ export function createWorkers(deps) {
     if (eventCutBusy) return
     let d
     try { d = ensureDb() } catch { return }
+    // 2026-11-18：切事件 v2 影子——只写 events_v2，不碰冷/热库；开关 flags.events.cut.v2.mode=shadow。
+    // 旧的冻结照旧（events.cut.enabled=off），所以影子期间只有新表在被写；要回滚就把模式改回 off。
+    try {
+      const v2Mode = String(getFlag(d, 'events.cut.v2.mode') || 'off')
+      if (v2Mode === 'shadow' || v2Mode === 'on') {
+        const aidsV2 = enabledAgentIds(d)
+        if (aidsV2.length) {
+          eventCutBusy = true
+          try {
+            for (const aid of aidsV2) {
+              if (!humanQuiet(d, aid)) continue
+              // 影子只切「前一天」。历史天不补：旧链 cold_events 已经覆盖，影子补 20 天要跑好几小时，
+              // 而且会挤本地队列。要补某天就手动跑 `scratch/run-shadow-real.mjs <day>`。
+              const daysV2 = new Set([localDay(new Date(Date.now() - 86400000))])
+              for (const dDay of [...daysV2].sort()) {
+                if (!humanQuiet(d, aid)) break
+                const last = latestFragmentAt(d, aid, dDay)
+                if (!last) continue
+                const doneKey = 'events.cut.v2.' + dDay + '.doneAt'
+                if (String(getFlag(d, doneKey) || '') === last) continue
+                try {
+                  // 2026-11-18：可选把事帧的「事」当判缝的第二份参考（flag 默认 off，先离线对比再翻）
+                  const withFrame = String(getFlag(d, 'events.cut.v2.with_frame') || 'off') === 'on'
+                  // 机器量的那几项边界数据：默认 on；off 时判缝只看原文+记叙（对照用）
+                  const withFeat = String(getFlag(d, 'events.cut.v2.with_feat') || 'on') !== 'off'
+                  // 2026-11-19：判缝上下文加宽（前/后各 4 句，默认 on；off 回退 2 句）
+                  const wideCtx = String(getFlag(d, 'events.cut.v2.wide_ctx') || 'on') !== 'off'
+                  // 2026-11-19：件标题后置综合（默认 on；off 回退「第一段标题 + 专名」）
+                  const titleSynth = String(getFlag(d, 'events.cut.v2.title.synth') || 'on') !== 'off'
+                  const out = await cutDayV4(d, aid, dDay, {
+                    withFrame, withFeat, wideCtx, titleSynth,
+                    // localComplete 返回 { text, ms, ... }；cutDayV4 要字符串
+                    complete: async (req) => {
+                      const r = await localComplete(d, { ...req, priority: LOCAL_PRIORITY.split, label: 'cut-v4', timeoutMs: 120000 })
+                      return typeof r === 'string' ? r : String((r && r.text) || '')
+                    },
+                    embed: (list) => model.embed(list),
+                  })
+                  // 2026-11-19：重切 = 那天旧件清掉重写（默认 on；off 退回「只追加、幂等跳过」）
+                  const replace = String(getFlag(d, 'events.cut.v2.replace') || 'on') !== 'off'
+                  const w = writeEventsV2(d, aid, { day: dDay, events: out.events, replace })
+                  setFlag(d, doneKey, last)
+                  __probe('event-cut-v2(' + reason + ') aid=' + aid.slice(0, 8) + ' day=' + dDay
+                    + ' seg=' + out.stats.segments + ' events=' + out.stats.events + ' calls=' + out.stats.calls
+                    + ' added=' + w.added + ' skipped=' + w.skipped + ' failed=' + w.failed)
+                } catch (e) {
+                  __probe('event-cut-v2-err(' + reason + ') day=' + dDay + ':' + (e && e.message))
+                }
+              }
+            }
+          } finally { eventCutBusy = false }
+        }
+        return
+      }
+    } catch { /* 读不到开关就照旧走旧链 */ }
+    // 2026-11-17：切事件整体冻结。新基石（docs/功能/2-记忆-写与切事/切事件-基石/）落地前一律不切，
+    // 等新写入器接上再回填。开关：flags.events.cut.enabled = off。
+    try { if (String(getFlag(d, 'events.cut.enabled') || 'on') === 'off') return } catch { /* 读不到就当没冻结 */ }
     const aids = enabledAgentIds(d)
     if (!aids.length) return
     eventCutBusy = true
     try {
       const day = localDay(new Date(Date.now() - 86400000))
       for (const aid of aids) {
+        if (!humanQuiet(d, aid)) {
+          __probe('event-cut-pause(' + reason + ') aid=' + aid.slice(0, 8) + ' 有人刚在说话')
+          continue
+        }
         // 1) 前一天 + 所有挂着没切完的天
         const days = new Set([day])
         try {
@@ -441,6 +529,11 @@ export function createWorkers(deps) {
         } catch { /* 读不到碎片就只切已知的 */ }
         for (const dDay of [...days].sort()) {
           if (dDay > day) continue
+          // 切一天可能要几分钟，中间主人来消息就让开，等下一轮再续（进度已落库）。
+          if (!humanQuiet(d, aid)) {
+            __probe('event-cut-pause-mid(' + reason + ') aid=' + aid.slice(0, 8))
+            break
+          }
           // 2026-11-14（D39）：闸改了——done 必须带指纹，指纹之后又来了新碎片就要续切。
           // 老闸（只有 agt=done、没有指纹）不批量重切，只补指纹并留一条记录。
           let gate
@@ -454,7 +547,8 @@ export function createWorkers(deps) {
           }
           try {
             // 不设次数上限：切不完下一跳接着切，断点续保证不会重付。
-            const out = await cutDayBatch(d, aid, dDay)
+            // 每块之间都问一次 humanQuiet：主人一说话就停在这一块之前，下一拍接着切。
+            const out = await cutDayBatch(d, aid, dDay, { canContinue: () => humanQuiet(d, aid) })
             if (!out.ok) {
               __probe('event-cut-skip(' + reason + ') aid=' + aid.slice(0, 8) + ' day=' + dDay + ' reason=' + out.reason)
               continue
@@ -483,6 +577,84 @@ export function createWorkers(deps) {
     if (eventCutTimer.unref) eventCutTimer.unref()
   }
 
+  // ---------------- 判边 worker（2026-11-17） ----------------
+  // 切事哪天 done 了，就判那天；跟切事同一个 30 分钟 tick，不靠 23:30 的定时消息、也不等 DSH 会话。
+  // 半夜关机也没事：下次开机 tick 看到「哪天 done 了但没判」，自己补上。
+
+  let causalJudgeTimer = null
+  let causalJudgeBusy = false
+  const CAUSAL_JUDGE_LOOKBACK_DAYS = 3
+
+  async function causalJudgeTick(reason) {
+    if (causalJudgeBusy) return
+    let d
+    try { d = ensureDb() } catch { return }
+    causalJudgeBusy = true
+    try {
+      // 从最近往前找「切完了但还没判」的那一天；一轮只判一天，防卡
+      let target = ''
+      for (let i = 0; i < CAUSAL_JUDGE_LOOKBACK_DAYS; i++) {
+        const day = localDay(new Date(Date.now() - i * 86400000))
+        let cut = ''
+        try { cut = String(getFlag(d, 'events.cut.' + day + '.state') || '') } catch { cut = '' }
+        if (cut !== 'done') continue
+        let judged = ''
+        try { judged = String(getFlag(d, 'event.causal.judged.' + day) || '') } catch { judged = '' }
+        if (judged) continue
+        target = day
+        break
+      }
+      if (!target) return
+      const aid = (enabledAgentIds(d) || [])[0]
+      if (!aid) return
+      __probe('causal-judge-start(' + reason + ') day=' + target)
+      // 在插件进程内直接判（2026-11-17）：宿主主模型只有这里调得到——独立脚本里没有宿主上下文，
+      // 会报 `chain: no adapter for chat`。所以不再 spawn 脚本。
+      const E = await import('../modules/event_causal.js')
+      const out = await E.judgeDay(d, aid, target, { via: 'main', limit: 400, canContinue: () => humanQuiet(d, aid) })
+      // 让路了（主人刚说话 / 本地模型被占着）：判过的已经记进 events，这天不写"判完"标记，下一轮接着判
+      if (out.stopped) {
+        __probe('causal-judge-yield(' + target + ') calls=' + out.calls + ' pairs=' + out.pairs)
+        // 别等半小时：让路之后 1 分钟就再试一次（让路窗口本身就是 1 分钟，主人一安静就能接上）
+        const retry = setTimeout(() => { causalJudgeTick('retry').catch(() => {}) }, 60 * 1000)
+        if (retry.unref) retry.unref()
+        return
+      }
+      // 一件都没判成：分两种——
+      //   待判本来就是 0（这天早判过了）：记标记收工，别每 5 分钟空转；
+      //   还有待判但一条没成（模型没通/全失败）：不记标记，下一轮重来。
+      if (out.calls === 0 && out.total > 0) {
+        if (!out.pending) {
+          try { setFlag(d, 'event.causal.judged.' + target, new Date().toISOString()) } catch { /* 记不上也无害 */ }
+          __probe('causal-judge-done(' + target + ') 早判过了，没有待判的')
+          return
+        }
+        __probe('causal-judge-nothing(' + target + ') total=' + out.total + ' pending=' + out.pending)
+        return
+      }
+      let wrote = 0
+      if (String(getFlag(d, 'event.causal.write') || 'off') === 'on') {
+        for (const item of out.judged) {
+          try { wrote += E.writeJudgedEdges(d, aid, [item], { nowMs: Date.now() }).written } catch { /* 单条失败不连累 */ }
+        }
+      }
+      try { setFlag(d, 'event.causal.judged.' + target, new Date().toISOString()) } catch { /* 记不上下次会重判，无害 */ }
+      __probe('causal-judge(' + target + ') calls=' + out.calls + ' pairs=' + out.pairs + ' usable=' + out.usable + ' wrote=' + wrote + ' judges=' + JSON.stringify(out.judges || {}))
+    } catch (e) {
+      __probe('causal-judge-err(' + reason + '):' + (e && e.message))
+    } finally {
+      causalJudgeBusy = false
+    }
+  }
+
+  function startCausalJudgeWorker() {
+    // 启动后等 90 秒（让切事和迁移先跑），之后每 30 分钟看一眼
+    const boot = setTimeout(() => { causalJudgeTick('boot').catch(() => {}) }, 90 * 1000)
+    if (boot.unref) boot.unref()
+    causalJudgeTimer = setInterval(() => { causalJudgeTick('tick').catch(() => {}) }, 30 * 60 * 1000)
+    if (causalJudgeTimer.unref) causalJudgeTimer.unref()
+  }
+
   return {
     startExtractionWorker,
     startRelationWorker,
@@ -491,11 +663,13 @@ export function createWorkers(deps) {
     startGrowPrefsWorker,
     startWeChatInboxWorker,
     startEventCutWorker,
+    startCausalJudgeWorker,
     /** 对话刚入队后立刻踢一脚，不等 30 秒轮询。 */
     kickExtractionTick: () => { runExtractionTick() },
     kickRelationReadTick: () => { runRelationReadTick() },
     // 测试 / 诊断用：脚本路径可核对
     _wechatWinScript: () => WECHAT_WIN_SCRIPT,
     _wechatWinScriptExists: () => fs.existsSync(WECHAT_WIN_SCRIPT),
+    _humanQuiet: (db, aid) => humanQuiet(db, aid),
   }
 }

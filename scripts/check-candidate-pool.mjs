@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { openDb } from '../src/db.js'
+import { setFlag } from '../src/kernel.js'
 import { collectCandidates, rankCandidates, pickOne } from '../src/modules/candidate_pool.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -27,11 +28,17 @@ try {
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('h1', aid, '一件旧事', '经过', '["抓手甲","专名乙"]', '["c1"]', 'born', '', 1, 1, '待联想', 0.9, 1, 0, stamp, stamp)
   db.prepare(`INSERT INTO surface_queue(id,agent_id,memory_id,reason,state,created_at,expires_at)
     VALUES(?,?,?,?,?,?,?)`).run('sq1', aid, 'm_pulse', 'pulse', 'pending', stamp, null)
-  db.prepare(`INSERT INTO open_loops(id,agent_id,kind,text,state,created_at,updated_at)
-    VALUES(?,?,?,?,?,?,?)`).run('ol1', aid, 'task', '还挂着的一件事', 'open', stamp, stamp)
+  db.prepare(`INSERT INTO open_loops(id,agent_id,kind,text,due_at,state,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?)`).run('ol1', aid, 'task', '还挂着的一件事', stamp, 'open', stamp, stamp)
 
   const pool = collectCandidates(db, aid, { query: '今天抓手甲出现了', memories: [{ id: 'm1', text: '一条记忆', score: 0.9, type: 'fact' }] })
-  const sources = new Set(pool.map((c) => c.source))
+  // pulse 只有直塞开着才进池（关着时「只排不消费」，不该来争这一行）
+  setFlag(db, 'surface.direct', 'on')
+  const poolWithPulse = collectCandidates(db, aid, { query: '今天抓手甲出现了', memories: [{ id: 'm1', text: '一条记忆', score: 0.9, type: 'fact' }] })
+  setFlag(db, 'surface.direct', 'off')
+  const srcsNoPulse = new Set(pool.map((c) => c.source))
+  ck('直塞关着：pulse 不进池（不拿旧念头争这一行）', !srcsNoPulse.has('pulse'), [...srcsNoPulse])
+  const sources = new Set(poolWithPulse.map((c) => c.source))
   ck('四路都进池：event/memory/pulse/loop', ['event', 'memory', 'pulse', 'loop'].every((s) => sources.has(s)), [...sources])
   ck('形状统一：source/id/text/score', pool.every((c) => c.source && c.id && c.score != null), pool.slice(0, 2))
 

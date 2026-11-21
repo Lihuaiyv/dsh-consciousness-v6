@@ -20,7 +20,7 @@ import { isWorkMode } from './work_mode.js'
 import { writeNote } from './selfnote.js'
 import { growWorldview } from './worldview.js'
 import { growLifeview } from './lifeview.js'
-import { buildEpisode, buildDiary } from './archive.js'
+import { buildDiary } from './archive.js'
 import { repairPending, repairOldDiaries } from './diary.js'
 import { writeSelfDay, writeSelfInsight } from './self_memory.js'
 import { writeSelfPattern } from './self_pattern.js'
@@ -114,49 +114,9 @@ export async function runNightly(db, aid, opt = {}) {
   const steps = []
   const push = (name, extra = {}) => steps.push({ step: name, ...extra })
 
-  // ① 当天各会话补纪要（重压，不再「有就跳过」）
-  //    以前是「这条已经建过就 continue」，结果一条在会话中途压过的纪要会被永远冻在那儿：
-  //    库里 256 条有 124 条盖不满，最狠一条记着 4 轮、实际聊了 142 轮。
-  //    纪要是原文的投影，重压是幂等的，所以当天每个会话都重算一遍。
-  let episodes = 0
-  try {
-    const sessions = db.prepare('SELECT DISTINCT session_id FROM fragments WHERE agent_id=? AND day=?').all(aid, day)
-    for (const s of sessions) {
-      /* 一组多行是历史分段遗留（老版本按时间切过段），它们的 turns 是按段记的、合起来才对得上原文。
-         把几段合并成一条等于把一团历史揉成一句，所以这种组不碰。 */
-      let n = 0
-      try { n = Number(db.prepare('SELECT COUNT(*) n FROM episodes WHERE agent_id=? AND day=? AND session_id IS ?').get(aid, day, s.session_id).n) || 0 } catch { n = 0 }
-      if (n > 1) continue
-      try {
-        const ep = buildEpisode(db, aid, { session: s.session_id, day })
-        if (ep) episodes++
-      } catch { /* 单会话失败不影响别的 */ }
-    }
-    push('episodes', { ok: true, count: episodes })
-  } catch (e) {
-    push('episodes', { ok: false, error: String(e && e.message) })
-  }
-
-  // ①b 近一周的补缝
-  //     夜巡跑完那天还在继续聊的段，纪要记的轮数会少于原文；而那一天以后不会再被夜巡碰到。
-  //     这里只补真正缺的（actual > claimed），已经齐的不动。
-  let patched = 0
-  try {
-    const since = new Date(Date.parse(day + 'T00:00:00Z') - 7 * 86400000).toISOString().slice(0, 10)
-    const rows = db.prepare(`SELECT e.agent_id, e.session_id, e.day, e.turns,
-        (SELECT COUNT(*) FROM episodes x WHERE x.agent_id=e.agent_id
-           AND x.session_id IS e.session_id AND x.day=e.day) AS rows_in_group,
-        (SELECT COUNT(*) FROM fragments r WHERE r.agent_id=e.agent_id
-           AND r.session_id IS e.session_id AND r.day=e.day
-           AND r.text IS NOT NULL AND r.text <> '') AS actual
-      FROM episodes e WHERE e.agent_id=? AND e.day>=?`).all(aid, since)
-    for (const r of rows) {
-      if (Number(r.rows_in_group || 0) > 1) continue   // 历史分段，别合并（同上）
-      if (!r.actual || Number(r.actual) <= Number(r.turns || 0)) continue
-      try { if (buildEpisode(db, aid, { session: r.session_id, day: r.day })) patched++ } catch { /* 单条失败跳过 */ }
-    }
-  } catch { /* 补缝失败不影响主流程 */ }
-  if (patched) push('episodes.patch', { ok: true, count: patched })
+  // ① / ①b 六轮一收的纪要（buildEpisode）2026-11-22 已删：
+  //     不再由对话或夜巡生成；日记和开场改读事行表（affair_rows）。
+  //     老纪要还在库里，读不到事行时仍能退回。
 
   // ② 写这一天的日记（补写时 late=1：写的时候已经不是那一天了）
   // 顺序：先补历史待补（昨天没写成的），再写今天，最后看有没有旧 rules/stub 篇可自愈。

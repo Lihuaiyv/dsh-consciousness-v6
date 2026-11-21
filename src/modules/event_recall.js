@@ -31,13 +31,14 @@ export function buildEventLine(hit, budget = 400) {
   // 那个 settle 只管一句话的情绪，碰不到事（2026-11-12 承认过：那是空话）。
   const tail = '\n（可以不提它。）'
   const head = `（忽然想起：${hit.title}——`
-  const room = Math.max(40, b - head.length - tail.length)
+  const room = Math.max(40, b - head.length - tail.length - 1)
   const full = String(hit.story || '')
   const cut = full.length > room
   const body = cut ? full.slice(0, room).replace(/[，、；\s]+$/, '') + '…' : full
+  const mid = `${head}${body}）`
   return {
-    text: `${head}${body}）${tail}`,
-    chars: head.length + body.length + tail.length + 1,
+    text: `${mid}${tail}`,
+    chars: mid.length + tail.length,
     budget: b,
     cut,
   }
@@ -192,5 +193,7 @@ export function recallEvents(db, aid, text, { limit = 3, minScore = MIN_SCORE, n
 
   // 排序：分数优先；分数接近的，重的事先、想头高的先
   items.sort((a, b) => (b.score - a.score) || (b.weight - a.weight) || (b.want - a.want))
+  // 种子照旧（设计文档 §6.2 第 1 步：这一步不改，保证不破坏现在的联想）。
+  // 因果/底图那一层由 event_causal.js 在种子之后单独接，不在这里改排序。
   return { ok: true, at: now(), text: q, mood, items: items.slice(0, limit), candidates: items.length }
 }

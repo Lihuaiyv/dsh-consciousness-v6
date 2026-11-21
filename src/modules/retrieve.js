@@ -568,15 +568,26 @@ export function importanceAnchors(db, aid, opt = {}) {
   // 候选池：名额的 3 倍（至少 4 条），够轮、又不至于把冷门货翻上来
   const pool = Math.max(limit, Math.min(12, limit * 3, limit + 6))
   try {
+    const cooldownHours = Math.max(0, Math.min(24 * 30, Number(opt.cooldownHours) || 0))
     const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_hit_at,heat,last_decay_at,stability,valence,importance,source,confidence
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
         AND importance>=? AND (mark='locked' OR type IN ('fact','conflict'))
       ORDER BY (mark='locked') DESC, importance DESC, heat DESC, created_at DESC LIMIT ?`)
       .all(aid, floor, pool)
       .map((r) => ({ partition: 'T1', via: 'anchor', e: 0, ...r, text: String(r.text || '') }))
-    if (rows.length <= limit) return rows
+    // 2026-11-15 名额冷却：窗口内已经被拉过名额的，这一轮不再占；全在冷却里就返回空。
+    let pool2 = rows
+    if (cooldownHours > 0) {
+      try {
+        const since = new Date(Date.now() - cooldownHours * 3600000).toISOString()
+        const seen = new Set(db.prepare("SELECT memory_id FROM surfaced_items WHERE agent_id=? AND kind='anchor' AND at>=?").all(aid, since).map((r) => r.memory_id))
+        pool2 = rows.filter((r) => !seen.has(r.id))
+      } catch { /* 没有 surfaced_items 就当没冷却 */ }
+    }
+    if (!pool2.length) return []
+    if (pool2.length <= limit) return pool2
     const stamp = (r) => Date.parse(r.last_hit_at || r.created_at || '') || 0
-    const [head, ...rest] = rows
+    const [head, ...rest] = pool2
     rest.sort((a, b) => (stamp(a) - stamp(b)) || String(a.id).localeCompare(String(b.id)))
     return [head, ...rest].slice(0, limit)
   } catch { return [] }

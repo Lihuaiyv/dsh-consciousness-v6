@@ -1,7 +1,6 @@
 import { dataDir } from './paths.js'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import * as c from './core.js'
 import * as f from './features.js'
@@ -53,6 +52,7 @@ import * as res from './modules/self_residue.js'
 import { lifeTick, lifeLine } from './modules/life.js'
 import { model as kernelModel } from './kernel.js'
 import { unzipStore } from './zip.js'
+import { defaultFileSeam } from './host/fs.js'
 
 function roleOf(token) {
   if (token === 'user') return ['user', null]
@@ -77,46 +77,46 @@ function liveBound(db, aid) {
   try { return bd.liveBindingCounts(db).get(aid) || 0 } catch { return 0 }
 }
 
-/** DSH 的家目录（插件库也在它下面）；DSH_HOME 没设就是 ~/.dsh。 */
-function dshHome() { return process.env.DSH_HOME || (os.homedir() + '/.dsh') }
-
 /**
  * 侧边栏的分支（workspace）目录：顺序、标题、每段会话归哪个分支。
  * 顺序照 global.workspaceIds——和侧边栏里从上到下一致；不在任何分支里的算「未分组」。
+ *
+ * 读文件这一下走 host/fs.js（唯一读口）：读不到、结构不对，那边有 level + reason，
+ * 这里只拿 fallback（全算未分组），不再自己吞异常。
  */
 function readWorkspaceIndex() {
   const out = { groups: [], order: new Map(), bySession: new Map(), archived: new Set() }
-  try {
-    const ws = JSON.parse(fs.readFileSync(dshHome() + '/storages/workspace.json', 'utf8'))
-    for (const id of ((ws.global && ws.global.archivedSessionIds) || [])) out.archived.add(String(id))
-    const tabs = (ws.tables && ws.tables.workspaces) || {}
-    const ids = Array.isArray(ws.global && ws.global.workspaceIds)
-      ? ws.global.workspaceIds.map(String)
-      : Object.keys(tabs)
-    let seq = 0
-    for (const id of ids) {
-      const w = tabs[id]
-      if (!w) continue
-      const title = String(w.title || '').trim() || '未命名分支'
-      out.groups.push({ key: id, title, path: String(w.path || '') })
-      out.order.set(id, seq++)
-      for (const sid of (w.sessionIds || [])) out.bySession.set(String(sid), id)
-    }
-    // workspaceIds 里没列、但表里有的分支，接在最后，别丢
-    for (const id of Object.keys(tabs)) {
-      if (out.order.has(id)) continue
-      const w = tabs[id] || {}
-      const title = String(w.title || '').trim() || '未命名分支'
-      out.groups.push({ key: id, title, path: String(w.path || '') })
-      out.order.set(id, seq++)
-      for (const sid of (w.sessionIds || [])) out.bySession.set(String(sid), id)
-    }
-  } catch { /* 没有 workspace.json：全算未分组 */ }
+  const ws = defaultFileSeam().readOr('workspace', null)
+  if (!ws) return out
+  for (const id of ((ws.global && ws.global.archivedSessionIds) || [])) out.archived.add(String(id))
+  const tabs = (ws.tables && ws.tables.workspaces) || {}
+  const ids = Array.isArray(ws.global && ws.global.workspaceIds)
+    ? ws.global.workspaceIds.map(String)
+    : Object.keys(tabs)
+  let seq = 0
+  for (const id of ids) {
+    const w = tabs[id]
+    if (!w) continue
+    const title = String(w.title || '').trim() || '未命名分支'
+    out.groups.push({ key: id, title, path: String(w.path || '') })
+    out.order.set(id, seq++)
+    for (const sid of (w.sessionIds || [])) out.bySession.set(String(sid), id)
+  }
+  // workspaceIds 里没列、但表里有的分支，接在最后，别丢
+  for (const id of Object.keys(tabs)) {
+    if (out.order.has(id)) continue
+    const w = tabs[id] || {}
+    const title = String(w.title || '').trim() || '未命名分支'
+    out.groups.push({ key: id, title, path: String(w.path || '') })
+    out.order.set(id, seq++)
+    for (const sid of (w.sessionIds || [])) out.bySession.set(String(sid), id)
+  }
   return out
 }
 
-// 会话标题放在 session_projcache 里，读盘按 mtime 记缓存——20 秒轮询不必反复解析同一个文件。
+// 会话标题走 host/fs.js（唯一读口）。20 秒 TTL 缓存：页面 20 秒轮一次，不必每次真读盘。
 const _titleCache = new Map()
+const TITLE_TTL_MS = 20 * 1000
 /**
  * 会话标题：用 DSH 侧边栏显示的那一个（projcache 的 rows.title），
  * 拿不到就退回空串，让调用方用第一句原文兜底。
@@ -124,17 +124,13 @@ const _titleCache = new Map()
 function sidebarTitle(sid) {
   const id = String(sid || '')
   if (!id) return ''
-  const file = dshHome() + '/storages/session_projcache/sessions/' + id + '.json'
-  try {
-    const st = fs.statSync(file)
-    const hit = _titleCache.get(id)
-    if (hit && hit.mtime === st.mtimeMs) return hit.title
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const raw = j && j.record && j.record.rows && j.record.rows.title && j.record.rows.title.val
-    const title = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : ''
-    _titleCache.set(id, { mtime: st.mtimeMs, title })
-    return title
-  } catch { return '' }
+  const t = Date.now()
+  const hit = _titleCache.get(id)
+  if (hit && t - hit.at < TITLE_TTL_MS) return hit.title
+  const raw = defaultFileSeam().readOr('session.title', '', id)
+  const title = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : ''
+  _titleCache.set(id, { at: t, title })
+  return title
 }
 
 // 按资源 id 反查归属：绑定到某个 agent 的调用方不能碰别人的资源
@@ -376,11 +372,10 @@ async function routes(db, method, path, body, role, bound) {
     }
     // QQ 不走 DSH 侧边栏，也没有归档名单。只列桥接当前接管的会话，
     // 以及最近 24 小时还有消息的；旧通道停用后的残影不再占地方。
+    // 映射表走 host/fs.js（唯一读口）——以前这里自己读盘，桥接没装也看不出原因。
     const qqLive = new Set()
-    try {
-      const map = JSON.parse(fs.readFileSync(dshHome() + '/qq-bridge/qq-sessions.json', 'utf8'))
-      for (const k of Object.keys(map)) qqLive.add(String(map[k]))
-    } catch { /* 桥接没装就当没有 */ }
+    const qqMap = defaultFileSeam().readOr('qq.sessions', null)
+    if (qqMap) for (const k of Object.keys(qqMap)) qqLive.add(String(qqMap[k]))
     const qqCutoff = new Date(Date.now() - 86400000).toISOString()
     for (const [sid, r] of raw) {
       if (!sid.startsWith('qq') || groupBy.has(sid)) continue

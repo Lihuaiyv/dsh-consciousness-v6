@@ -8,30 +8,22 @@
  * 页面渲染在 client.js（设置 → QQ 通道 → 接线），HTTP 口是 GET /v1/qq/watch。
  */
 import fs from 'node:fs'
-import os from 'node:os'
+import { defaultFileSeam, dshHome as homeOfDsh } from '../host/fs.js'
 import { bindingOf } from './binding.js'
 import { parseChatKey, chatKeyOfSessionId, conversationIdOf, loadSessionMap } from './qq_bridge.js'
 
-/** DSH 的家目录（和 api.js 同一口径）。 */
+/** DSH 的家目录：口径统一在 host/fs.js，这里只转出去，不再本地算一遍。 */
 export function dshHome() {
-  return process.env.DSH_HOME || (os.homedir() + '/.dsh')
+  return homeOfDsh()
 }
 
 /**
  * 找桥接插件的会话映射表（qq-sessions.json）。
- * 桥接默认把它写在自己的工作目录（~/.dsh/qq-bridge/），也兼容当前目录和库目录。
- * 找不到返回空串，调用方退化成「只认映射表为空」。
+ * 路径候选、以及「一个都没找到」的记账，都在 host/fs.js 里；这里只问它。
+ * 桥接默认写在 ~/.dsh/qq-bridge/，也兼容当前目录和库目录（历史位置）。
  */
 export function findQQSessionsFile() {
-  const home = dshHome()
-  const candidates = []
-  try { candidates.push(process.cwd() + '/qq-sessions.json') } catch { /* ignore */ }
-  try { candidates.push(home + '/consciousness/qq-sessions.json') } catch { /* ignore */ }
-  try { candidates.push(home + '/qq-bridge/qq-sessions.json') } catch { /* ignore */ }
-  for (const f of candidates) {
-    try { if (fs.existsSync(f)) return f } catch { /* ignore */ }
-  }
-  return ''
+  return defaultFileSeam().pathOf('qq.sessions')
 }
 
 /** 运行快照多久算「还活着」。桥大约一分钟写一次，给 3 分钟够宽松。 */

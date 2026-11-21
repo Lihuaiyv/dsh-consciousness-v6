@@ -8,8 +8,16 @@
  *
  * 注意：这是**未接线**的底座——现在没有任何注入路径调用它；
  * 接线放 P3，等真库重启、事件链验过之后再做。
+ *
+ * TODO（2026-11-16 主人定）：**先只用一个口**——自动浮上来的只放一条。
+ * 以后优化（不在本周）：
+ *   1) 同分时允许「主一条 + 副一句」，副的只带出处、不展开；
+ *   2) 预算分开：写链一份、读口一份；读口内部检索/事件/情绪/开环各给一个小配额，再留总上限兜底，别再抢同一个 800。
+ * 验收：注入 token 中位不涨 >10%，命中率不掉。见问题登记 D30。
  */
 import { recallEvents } from './event_recall.js'
+import { pendingLoops } from '../parts/loops/index.js'
+import { getFlag } from '../kernel.js'
 
 /**
  * 收集候选。
@@ -48,21 +56,24 @@ export function collectCandidates(db, aid, opt = {}) {
     })
   }
 
-  // 3) pulse：队列里的候选（直塞关着时只排不消费）
+  // 3) pulse：队列里的候选。**只有 surface.direct 开着才参与**——关着时「只排不消费」，
+  //    拿它来争这一行等于每轮都提同一条旧念头（2026-11-15 实测 29/30 轮被它赢）。
   try {
-    const rows = db.prepare(`SELECT id, memory_id, reason, created_at FROM surface_queue
-      WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT ?`).all(aid, limit)
-    for (const r of rows) {
-      out.push({ source: 'pulse', id: r.memory_id || r.id, text: '', score: 0.45, confidence: 0.4, meta: { reason: r.reason } })
+    const direct = String(getFlag(db, 'surface.direct') || 'off') === 'on'
+    if (direct) {
+      const rows = db.prepare(`SELECT id, memory_id, reason, created_at FROM surface_queue
+        WHERE agent_id=? AND state='pending' ORDER BY created_at DESC LIMIT ?`).all(aid, limit)
+      for (const r of rows) {
+        out.push({ source: 'pulse', id: r.memory_id || r.id, text: '', score: 0.45, confidence: 0.4, meta: { reason: r.reason } })
+      }
     }
   } catch { /* 老库没有队列 */ }
 
-  // 4) 开环：答应过 / 到点的事
+  // 4) 开环：答应过 / 到点的事。只取「到点或该提了」的，并且沿用 loops 自己的节流（6h、提满 5 次自动收）。
   try {
-    const rows = db.prepare(`SELECT id, text, memory_id, due_at FROM open_loops
-      WHERE agent_id=? AND state='open' ORDER BY COALESCE(due_at,'9999') LIMIT ?`).all(aid, Math.min(2, limit))
+    const rows = pendingLoops(db, aid, { limit: Math.min(2, limit) })
     for (const r of rows) {
-      out.push({ source: 'loop', id: r.memory_id || r.id, text: String(r.text || ''), score: 0.5, confidence: 0.5, meta: { due_at: r.due_at } })
+      out.push({ source: 'loop', id: r.id, text: String(r.text || ''), score: 0.5, confidence: 0.5, meta: { due_at: r.due_at, state: r.state } })
     }
   } catch { /* 老库没有开环 */ }
 

@@ -349,6 +349,21 @@ export function collectCandidates(db, aid, day) {
       }
     }
   } catch { /* 老库没有 episodes */ }
+  /* 2026-11-22：日记也读事行表（每轮追加的一句「事」），按天取；没有不影响老路。 */
+  try {
+    const affairs = db.prepare(`SELECT id, conversation_id, at, text FROM affair_rows
+      WHERE agent_id=? AND day=? ORDER BY at ASC`).all(aid, d)
+    for (const a of affairs) {
+      const txt = String(a.text || '').trim()
+      if (!txt) continue
+      out.push({
+        kind: 'affair', id: a.id, session_id: a.conversation_id || null,
+        day: d, title: clip(txt.replace(/^·\s*/gm, ''), 24), summary: txt,
+        start_at: a.at, end_at: a.at, turns: 1, importance: 0.5, poignancy: null,
+        open_loops: [], created_at: a.at,
+      })
+    }
+  } catch { /* 新表还没有就不影响 */ }
   try {
     const facts = db.prepare(`SELECT id,text,type,importance,created_at FROM memory_items
       WHERE agent_id=? AND status='active' AND invalid_at IS NULL AND substr(created_at,1,10)=?

@@ -84,14 +84,20 @@ const frozen = scan(db, scanAid, { since: '2026-11-01T00:00:00.000Z', until: '20
 check('学习关掉就不扫', frozen.skipped === 'frozen' && frozen.evidence === 0, frozen)
 setLearningPrefs(db, scanAid, { personaLearn: true })
 
-const since = '2026-11-08T00:00:00.000Z'
-const until = '2026-11-08T12:00:00.000Z'
+// 2026-11-15（D50）：这里原来写死 2026-11-08，而 scan() 有「最多回看 7 天」的钳制
+// （self_scan.js:142-145）——过了 11-15 07:0x 之后，since 被抬到 now-7d，测试数据被挤出窗口，
+// 两天前还是绿的考卷就自己变红了。改成相对现在的时间，别再当定时炸弹。
+const H = 3600000
+const nowMs = Date.now()
+const at = (h) => new Date(nowMs - h * H).toISOString()
+const since = at(72)
+const until = at(1)
 db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,created_at) VALUES(?,?,?,?,?)')
-  .run('su', scanAid, 'user', '嗯', '2026-11-08T01:00:00.000Z')
+  .run('su', scanAid, 'user', '嗯', at(50))
 db.prepare('INSERT INTO chat_turns(id,agent_id,role,text,created_at) VALUES(?,?,?,?,?)')
-  .run('sa', scanAid, 'agent', '为什么会这样，本质是这个', '2026-11-08T02:00:00.000Z')
+  .run('sa', scanAid, 'agent', '为什么会这样，本质是这个', at(49))
 db.prepare(`INSERT INTO memory_items(id,agent_id,type,text,source,last_decay_at,created_at)
-  VALUES(?,?,?,?,?,?,?)`).run('sm', scanAid, 'fact', '这是一条原则', 'chat', '2026-11-08T03:00:00.000Z', '2026-11-08T03:00:00.000Z')
+  VALUES(?,?,?,?,?,?,?)`).run('sm', scanAid, 'fact', '这是一条原则', 'chat', at(48), at(48))
 const swept = scan(db, scanAid, { since, until, flush: false })
 const replySn = (swept.items || []).find((x) => x.axis === 'sn' && x.dir === 1 && x.source === 'reply' && x.why === '打比方/讲机制')
 const memSn = (swept.items || []).find((x) => x.axis === 'sn' && x.dir === 1 && x.source === 'mem' && x.why === '存的是结论')

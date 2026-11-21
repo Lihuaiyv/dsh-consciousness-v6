@@ -798,11 +798,21 @@ try {
   const mv = await api('GET', `/v1/agents/${aid}/metrics`)
   check('指标有值', Object.values(mv).some((x) => x.value != null), mv['memory.core_token'])
 
+  // 事实库旧路径 2026-11-22 默认停；这条考卷测的是旧路径打开时的行为，先显式打开。
+  await api('PUT', `/v1/agents/${aid}/params/memory.legacy.fact`, { value: 'on' }, { key: key() })
   const ing = await api('POST', `/v1/agents/${aid}/ingest`, { turns: [{ role: 'user', text: '我喜欢猫。我讨厌吵闹。' }] }, { key: key() })
   check('自动抽取记忆', ing.extracted >= 1 && ing.written >= 1, ing)
 
+  // 总闸默认 off：新实例 ingest 必须一眼跳过，一个条目不写。
+  const lgA = await api('POST', '/v1/agents', { name: '旧路径默认停' }, { key: key() })
+  const lgBefore = db.prepare('SELECT COUNT(*) n FROM memory_items WHERE agent_id=?').get(lgA.id).n
+  const lgOut = await api('POST', `/v1/agents/${lgA.id}/ingest`, { turns: [{ role: 'user', text: '我喜欢猫。' }] }, { key: key() })
+  const lgAfter = db.prepare('SELECT COUNT(*) n FROM memory_items WHERE agent_id=?').get(lgA.id).n
+  check('事实库旧路径：默认停，ingest 不写条', lgOut.skipped === 'legacy-fact-off' && lgAfter === lgBefore, { out: lgOut, before: lgBefore, after: lgAfter })
+
   // 关系抽取：对话里提到的师傅 / 妹妹，让模型抽成关系表的人（按名字合并，root 不动）
   const ra = await api('POST', '/v1/agents', { name: '关系抽取测' }, { key: key() })
+  await api('PUT', `/v1/agents/${ra.id}/params/memory.legacy.fact`, { value: 'on' }, { key: key() })
   const rootBefore = db.prepare('SELECT closeness FROM relations WHERE agent_id=? AND root=1').get(ra.id)
   relationsModelHook.complete = async () => JSON.stringify({
     relations: [
@@ -1217,6 +1227,7 @@ try {
   // 否认 / 纠正
   const na = await api('POST', '/v1/agents', { name: '纠正' }, { key: key() })
   const nm = await api('POST', `/v1/agents/${na.id}/memory`, { text: '用户养了猫' }, { key: key() })
+  await api('PUT', `/v1/agents/${na.id}/params/memory.legacy.fact`, { value: 'on' }, { key: key() })
   const ni = await api('POST', `/v1/agents/${na.id}/ingest`, { turns: [{ role: 'user', text: '我没养猫' }] }, { key: key() })
   const oldRow = db.prepare('SELECT invalid_at FROM memory_items WHERE id=?').get(nm.id)
   const negRow = db.prepare("SELECT text FROM memory_items WHERE agent_id=? AND text LIKE '%没有养猫%'").get(na.id)
@@ -1226,6 +1237,7 @@ try {
   // 时间状语：以前养过、现在没了
   const ta = await api('POST', '/v1/agents', { name: '时间线' }, { key: key() })
   await api('POST', `/v1/agents/${ta.id}/memory`, { text: '用户养了猫' }, { key: key() })
+  await api('PUT', `/v1/agents/${ta.id}/params/memory.legacy.fact`, { value: 'on' }, { key: key() })
   const ti = await api('POST', `/v1/agents/${ta.id}/ingest`, { turns: [{ role: 'user', text: '我以前养过猫，现在没了' }] }, { key: key() })
   const cur = db.prepare("SELECT text,invalid_at FROM memory_items WHERE agent_id=? AND text LIKE '%现在没有养猫%'").get(ta.id)
   const past = db.prepare("SELECT text,invalid_at FROM memory_items WHERE agent_id=? AND text LIKE '%以前养过猫%'").get(ta.id)
@@ -2377,13 +2389,13 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('表达：心情好愿意多说', high.level === 'warm' && high.sentences >= 3 && high.proactive >= 1, high)
 
   const felt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3 })
-  // 抬头从「感觉现在大概：」换成「这会儿大概：」——同样推测口吻，但去掉「感觉」这个模板腔
-  check('感受是推测口吻', felt.startsWith('这会儿大概'), felt)
-  check('感受不写命令、不带生硬免责', felt.startsWith('这会儿大概') && !/只说|语气|句数|必须|不许|不用照着演|底子/.test(felt), felt)
-  check('感受行不带 AI 味词', !/感觉|情绪|有点/.test(felt), felt)
-  check('感受只说整体心情、不说底色', felt.includes('整体心情偏负面') && !felt.includes('底色'), felt)
+  // 抬头 2026-11-15 从「这会儿大概：」改成「这会儿心情大概：」——这一行写的是心情，不是动作
+  check('感受是推测口吻', felt.startsWith('这会儿心情大概'), felt)
+  check('感受不写命令、不带生硬免责', felt.startsWith('这会儿心情大概') && !/只说|语气|句数|必须|不许|不用照着演|底子/.test(felt), felt)
+  check('感受行不带 AI 味词', !/感觉|情绪/.test(felt), felt)
+  check('感受只说整体偏向、不说底色', felt.includes('整体偏负面') && !felt.includes('底色'), felt)
   const strongFelt = feltLine({ label: 'frustrated', intensity: 0.5, slow: -0.4, mood: -0.3, weight: 0.7 })
-  check('权重大时改成陈述口吻', strongFelt.startsWith('现在：'), strongFelt)
+  check('权重大时改成陈述口吻', strongFelt.startsWith('现在心情大概是'), strongFelt)
 
   const wish = wishLine({ level: 'brief' })
   check('愿望是「我想」不是命令', wish.includes('我想') && !/只说|必须|不许/.test(wish), wish)
@@ -2533,6 +2545,30 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-cut-gate.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('切事闸：done 带指纹 / 章后新碎片续切 / 老闸不重切', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
+// D59：留一句——〔留〕的句子落库带来源、正文不留标记、切事能当证据
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-quote-pin.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('留一句：落库带来源 / 正文去标记 / 切事可查', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 2026-11-18：事件库 v2 写库——整批验 / 成员权威 / 时间自取 / 幂等 / 回滚 / 不碰冻结表
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-events-v2.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('事件库 v2：整批验 / 成员权威 / 幂等 / 回滚 / 不碰冻结表', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 2026-11-18：切事件 v4 影子路径——cutDayV4 出件 → 写库，假模型不花钱
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-cut-v2.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('切事 v4 影子：粗切→记叙→判缝→写库、覆盖全碎片', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 大因果体底图（按设计文档）：只加边不合并、四条判据、覆盖≥95%、意图、线是一句话
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-causal.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('大因果体：底图只加边、覆盖≥95%、线是一句话', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
 // P1c：写链锁——一轮两行、pack/mood/会话/turn_id 都对，不传不编
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -2558,11 +2594,73 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   check('目录卫生：根目录没有多余的草稿', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
 
-// B1：work 段走本地（开关 off 时行为不变；这里验注入路径与回退）
+// B1：work 段本地摘要——2026-11-17 起工作段改成真切事件，这条路径已停用，
+// 测试不进闸（脚本保留在 scripts/check-work-local.mjs 作历史）。
+// 本地模型排队（2026-11-17）：所有本地调用一条队列、单并发、优先级插队、排队超时提前失败
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-work-local.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
-  check('work 段本地：走 localCut、daily 仍主模型、失败回退', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-local-queue.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('本地模型排队：单并发/优先级插队/排队超时/快照', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 后台宿主调用排队（2026-11-17）：全局并发、同一 agent 保序、不同 agent 不阻塞、排队超时
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-host-queue.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('宿主后台排队：并发上限/同 agent 保序/排队超时/快照', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 精修排队（2026-11-17）：同一 agent 两轮同时来，排队不丢、顺序不乱
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-refine-queue.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('精修排队：并发两轮都跑、顺序不乱、不算 already', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 影子帧进提示词（2026-11-17）：shadowFrameLine 取最近帧、优先 model 行、格式对、空表不炸
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-frame-line.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('影子帧进提示词：取最近帧/优先 model/格式/空表不炸', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 按定稿重排的链（2026-11-17）：上一轮总结近十轮 → 本轮拼事帧 → 判断 → 情绪
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-appraise-turn.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('定稿链：总结≤50字/事不是这一句/两行落表/同轮不重复', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 情绪链端到端（2026-11-17）：真库副本跑「压句→总结→判断→落表」全链
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-affect-chain-e2e.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 })
+  check('情绪链端到端：料是每句摘要/会话隔离/压句先于总结/两行/失败回退/急事先跑', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 400))
+}
+// 情绪增量（2026-11-18）：判断出增量→先回落再加→半小时维持→2.5h 回落；off 一行退回旧逻辑
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-affect-delta.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('情绪增量：两轮累积/维持窗/回落/边界/开关退回/会话隔离', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 400))
+}
+// 底色跨会话（2026-11-18）：起点由慢情绪算、静默 90 分钟结算余温、单次/单日封顶、开关能退
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-affect-cross.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('底色跨会话：起点跟慢情绪/余温结算/封顶/开关', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 400))
+}
+// 旧 fast 的读者接上 v4（2026-11-18）：表达档/自读/feel/自状态行；过时退回旧 fast
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-affect-live.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('旧 fast 读者接 v4：表达档/自读/feel/回退', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 400))
+}
+// 球面骨架（2026-11-18）：几何换算 + 球面查表 + secondaryDistribution 走球面（开关 affect.v4.geo）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-affect-sphere.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('球面骨架：坐标/查表/球面口径', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 400))
+}
+// v4 投影进总情绪（2026-11-18）：投影排序、总情绪用 v4、过时退回旧 fast、前端能拿到
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-affect-total.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('v4 投影进总情绪：投影/合成/过时回退', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 400))
 }
 // B1b：daily 主模型失败 → 本地逐件兜底（低信心、不丢天）
 {
@@ -2575,6 +2673,30 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-fragment-fallback.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('碎片兜底：开关 on 补原话、off 不补', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P3：一个「自己想起」通道（候选池收事件/浮现，一轮只挑一条）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-self-recall.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('自己想起：候选池一轮一条、浮现不消费', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P3 第三刀：注入预算表（一处读额度、值不变）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-inject-budget.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('注入预算表：默认/覆盖/乱值回落', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// P3 第四刀：planner v0（按源分额度、不切半、超出的记 dropped）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-planner.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('planner v0：分额度/不切半/去重/记 dropped', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 忘口 v0：只识别「明确要忘」，不误判问句/提醒/技术讨论
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-forget-intent.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('忘口识别：要忘的认出、问句/提醒/技术不误判', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -2593,6 +2715,62 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'heat-on-use.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('热度：注入不加热，说出口才加热', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 锚点名额冷却（2026-11-15）：同一条记忆在窗口内不再霸占名额；cooldown=0 回到旧行为
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'anchor-cooldown.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('名额冷却：同一条 24h 内不重复占位', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 读口统一（2026-11-16）：开关默认 off；开了只挑一条、≤60 字、可回旧路
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'read-port.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('读口统一：默认关、一条、≤60 字', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 上一句摘要（2026-11-15，C 项）：长回复不再切成半句；短回复不调模型；失败退回截断；开关能逐字切回
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'presence-summary.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('上一句摘要：整句读回 / 不冒领别轮 / 失败退回截断 / 开关逐字切回', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// feel 只认这一轮写的（2026-11-15）：更早的那条不许挂成「我上一句说出来之前」
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'feel-turn-scope.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('feel 只看本轮：旧的不挂 / 本轮没写就不出', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 心事匣两区（2026-11-16）：生活区不标出处、工作区换会话标出处；露过没续就散
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'heartnote-lanes.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('心事匣两区：生活区不标出处 / 工作区标出处 / 露过没续就散', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 事件库 v2 判边（2026-11-19）：同会话相邻才判、九类词表、证据抄不出降级、不写库
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-causal-v2.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('事件库 v2 判边：同会话相邻 / 九类 / 证据校验 / 不写库', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// DSH 私有文件读口（2026-11-19，D95）：断了要说出来——冷启动不算断 / 结构变降级 / 删了要报 / 冷却不刷屏
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'host-files.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('DSH 文件读口：冷启动不算断 / 结构变降级 / 删了要报 / 冷却不刷屏', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 候选边生成（2026-11-19）：同会话相邻出、跨会话不出、同专名跨天出、接续挂着的最优先、泛词挡
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-candidate-v2.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('候选边：同会话相邻 / 跨会话不连 / 同专名跨天 / 接续挂着 / 泛词挡', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
 
 console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)

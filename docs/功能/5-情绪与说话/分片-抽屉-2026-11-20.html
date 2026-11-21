@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>情绪球 · 196 词</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0e14;color:#cfd6e4;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;overflow:hidden;
+    user-select:none;-webkit-user-select:none}
+  canvas{display:block}
+  #legend{position:fixed;left:16px;bottom:14px;font-size:12px;line-height:1.9;max-height:36vh;overflow:auto;pointer-events:none}
+  .k{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+  #hint{position:fixed;right:14px;bottom:12px;font-size:12px;color:#5b6577;text-align:right;line-height:1.8;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="legend"></div>
+<div id="hint">左键拖动 = 平移<br>右键拖动 = 旋转<br>滚轮 = 缩放</div>
+<script>
+const RAW = [{"w":"烦","an":30,"yu":30,"jue":53,"oct":"","piece":0},{"w":"担忧","an":25,"yu":25,"jue":53,"oct":"","piece":0},{"w":"怨望","an":25,"yu":25,"jue":53,"oct":"","piece":0},{"w":"烦恼","an":25,"yu":28,"jue":57,"oct":"","piece":0},{"w":"尴尬","an":25,"yu":25,"jue":66,"oct":"","piece":0},{"w":"憎恶","an":30,"yu":15,"jue":62,"oct":"","piece":0},{"w":"糊涂","an":40,"yu":35,"jue":41,"oct":"","piece":1},{"w":"犹豫","an":35,"yu":40,"jue":41,"oct":"","piece":1},{"w":"燥","an":35,"yu":40,"jue":41,"oct":"","piece":1},{"w":"不舍","an":40,"yu":45,"jue":41,"oct":"","piece":1},{"w":"同病相怜","an":45,"yu":45,"jue":41,"oct":"","piece":1},{"w":"不满","an":40,"yu":40,"jue":49,"oct":"","piece":1},{"w":"嫉妒","an":25,"yu":60,"jue":62,"oct":"","piece":2},{"w":"愤世嫉俗","an":20,"yu":55,"jue":57,"oct":"","piece":2},{"w":"患得患失","an":25,"yu":55,"jue":49,"oct":"","piece":2},{"w":"怨气","an":30,"yu":45,"jue":49,"oct":"","piece":2},{"w":"惦念","an":40,"yu":55,"jue":49,"oct":"","piece":2},{"w":"热泪盈眶","an":40,"yu":50,"jue":62,"oct":"","piece":2},{"w":"坦荡","an":88,"yu":50,"jue":24,"oct":"","piece":3},{"w":"安慰","an":85,"yu":50,"jue":28,"oct":"","piece":3},{"w":"轻松","an":85,"yu":50,"jue":28,"oct":"","piece":3},{"w":"放松","an":85,"yu":45,"jue":25,"oct":"","piece":3},{"w":"安逸","an":88,"yu":40,"jue":25,"oct":"","piece":3},{"w":"与世无争","an":85,"yu":30,"jue":19,"oct":"","piece":3},{"w":"体贴","an":80,"yu":55,"jue":30,"oct":"","piece":4},{"w":"敬意","an":75,"yu":55,"jue":32,"oct":"","piece":4},{"w":"不厌其烦","an":72,"yu":62,"jue":32,"oct":"","piece":4},{"w":"自傲","an":75,"yu":60,"jue":36,"oct":"","piece":4},{"w":"坚韧","an":75,"yu":65,"jue":36,"oct":"","piece":4},{"w":"深情","an":72,"yu":60,"jue":41,"oct":"","piece":4},{"w":"无奈","an":40,"yu":15,"jue":41,"oct":"","piece":5},{"w":"厌烦","an":40,"yu":20,"jue":36,"oct":"","piece":5},{"w":"空","an":40,"yu":28,"jue":30,"oct":"","piece":5},{"w":"伤感","an":35,"yu":25,"jue":32,"oct":"","piece":5},{"w":"惆怅","an":35,"yu":30,"jue":36,"oct":"","piece":5},{"w":"思念","an":35,"yu":60,"jue":41,"oct":"","piece":6},{"w":"暧昧","an":35,"yu":55,"jue":41,"oct":"","piece":6},{"w":"乡愁","an":30,"yu":60,"jue":30,"oct":"","piece":6},{"w":"挂牵","an":30,"yu":60,"jue":36,"oct":"","piece":6},{"w":"挂记","an":45,"yu":55,"jue":36,"oct":"","piece":6},{"w":"愧疚","an":22,"yu":28,"jue":51,"oct":"","piece":7},{"w":"冤枉","an":20,"yu":30,"jue":53,"oct":"","piece":7},{"w":"心里堵得慌","an":20,"yu":28,"jue":53,"oct":"","piece":7},{"w":"敢怒不敢言","an":15,"yu":30,"jue":53,"oct":"","piece":7},{"w":"心神不宁","an":20,"yu":40,"jue":53,"oct":"","piece":7},{"w":"感动","an":65,"yu":60,"jue":57,"oct":"","piece":8},{"w":"赞叹","an":70,"yu":60,"jue":53,"oct":"","piece":8},{"w":"机灵","an":65,"yu":65,"jue":53,"oct":"","piece":8},{"w":"暖流","an":80,"yu":60,"jue":49,"oct":"","piece":8},{"w":"佩服","an":75,"yu":60,"jue":49,"oct":"","piece":8},{"w":"烦躁","an":22,"yu":40,"jue":70,"oct":"","piece":9},{"w":"紧张","an":20,"yu":40,"jue":70,"oct":"","piece":9},{"w":"心浮气躁","an":22,"yu":45,"jue":68,"oct":"","piece":9},{"w":"恨入骨髓","an":15,"yu":38,"jue":70,"oct":"","piece":9},{"w":"心急火燎","an":12,"yu":45,"jue":83,"oct":"","piece":9},{"w":"喜欢","an":72,"yu":75,"jue":49,"oct":"","piece":10},{"w":"崇奉","an":70,"yu":70,"jue":49,"oct":"","piece":10},{"w":"得意扬扬","an":70,"yu":72,"jue":49,"oct":"","piece":10},{"w":"痛快","an":75,"yu":75,"jue":62,"oct":"","piece":10},{"w":"庆幸","an":80,"yu":65,"jue":62,"oct":"","piece":10},{"w":"颓废","an":25,"yu":12,"jue":28,"oct":"","piece":11},{"w":"无力","an":30,"yu":12,"jue":25,"oct":"","piece":11},{"w":"泄气","an":30,"yu":15,"jue":41,"oct":"","piece":11},{"w":"絮烦","an":30,"yu":15,"jue":41,"oct":"","piece":11},{"w":"沮丧","an":25,"yu":15,"jue":41,"oct":"","piece":11},{"w":"轻视","an":55,"yu":25,"jue":41,"oct":"","piece":12},{"w":"心不在焉","an":50,"yu":30,"jue":32,"oct":"","piece":12},{"w":"无所事事","an":45,"yu":15,"jue":30,"oct":"","piece":12},{"w":"困","an":50,"yu":20,"jue":28,"oct":"","piece":12},{"w":"厌倦","an":45,"yu":25,"jue":28,"oct":"","piece":12},{"w":"悲哀","an":18,"yu":15,"jue":41,"oct":"","piece":13},{"w":"苦闷","an":20,"yu":15,"jue":36,"oct":"","piece":13},{"w":"愁眉苦脸","an":20,"yu":20,"jue":36,"oct":"","piece":13},{"w":"自卑","an":20,"yu":20,"jue":41,"oct":"","piece":13},{"w":"愧怍","an":20,"yu":18,"jue":45,"oct":"","piece":13},{"w":"尊敬","an":70,"yu":50,"jue":41,"oct":"","piece":14},{"w":"自尊","an":70,"yu":55,"jue":36,"oct":"","piece":14},{"w":"想开","an":78,"yu":45,"jue":41,"oct":"","piece":14},{"w":"单纯","an":70,"yu":45,"jue":28,"oct":"","piece":14},{"w":"孤芳自赏","an":60,"yu":45,"jue":36,"oct":"","piece":14},{"w":"自信","an":80,"yu":65,"jue":41,"oct":"","piece":15},{"w":"亲切","an":80,"yu":65,"jue":36,"oct":"","piece":15},{"w":"自鸣得意","an":78,"yu":60,"jue":41,"oct":"","piece":15},{"w":"温情","an":82,"yu":70,"jue":32,"oct":"","piece":15},{"w":"温柔","an":80,"yu":70,"jue":32,"oct":"","piece":15},{"w":"恐慌","an":8,"yu":22,"jue":85,"oct":"","piece":16},{"w":"慌乱","an":12,"yu":20,"jue":83,"oct":"","piece":16},{"w":"可怕","an":15,"yu":20,"jue":76,"oct":"","piece":16},{"w":"愤不欲生","an":8,"yu":30,"jue":75,"oct":"","piece":16},{"w":"怒气冲冲","an":12,"yu":35,"jue":81,"oct":"","piece":16},{"w":"冲动","an":40,"yu":80,"jue":66,"oct":"","piece":17},{"w":"眼巴巴","an":35,"yu":78,"jue":57,"oct":"","piece":17},{"w":"激动","an":35,"yu":75,"jue":75,"oct":"","piece":17},{"w":"迫切","an":30,"yu":85,"jue":70,"oct":"","piece":17},{"w":"激昂","an":45,"yu":85,"jue":75,"oct":"","piece":17},{"w":"暖","an":80,"yu":55,"jue":36,"oct":"","piece":18},{"w":"欣慰","an":85,"yu":55,"jue":41,"oct":"","piece":18},{"w":"信任","an":85,"yu":55,"jue":36,"oct":"","piece":18},{"w":"温暖","an":88,"yu":60,"jue":41,"oct":"","piece":18},{"w":"遗憾","an":30,"yu":25,"jue":32,"oct":"","piece":19},{"w":"空虚","an":30,"yu":20,"jue":32,"oct":"","piece":19},{"w":"沉郁","an":30,"yu":20,"jue":32,"oct":"","piece":19},{"w":"悲观","an":30,"yu":20,"jue":32,"oct":"","piece":19},{"w":"迷茫","an":20,"yu":30,"jue":45,"oct":"","piece":20},{"w":"惘然若失","an":25,"yu":30,"jue":45,"oct":"","piece":20},{"w":"混乱","an":22,"yu":35,"jue":49,"oct":"","piece":20},{"w":"怨恨","an":20,"yu":35,"jue":41,"oct":"","piece":20},{"w":"委屈","an":18,"yu":22,"jue":49,"oct":"","piece":21},{"w":"愧对","an":18,"yu":22,"jue":49,"oct":"","piece":21},{"w":"愧恨","an":20,"yu":25,"jue":49,"oct":"","piece":21},{"w":"恶劣","an":25,"yu":15,"jue":51,"oct":"","piece":21},{"w":"无可如何","an":22,"yu":18,"jue":30,"oct":"","piece":22},{"w":"忧郁","an":25,"yu":18,"jue":28,"oct":"","piece":22},{"w":"忧伤","an":25,"yu":22,"jue":30,"oct":"","piece":22},{"w":"颓丧","an":25,"yu":15,"jue":32,"oct":"","piece":22},{"w":"忧愤","an":20,"yu":50,"jue":62,"oct":"","piece":23},{"w":"坐立不安","an":20,"yu":45,"jue":62,"oct":"","piece":23},{"w":"冤屈","an":20,"yu":45,"jue":62,"oct":"","piece":23},{"w":"恼怒","an":25,"yu":50,"jue":70,"oct":"","piece":23},{"w":"亲热","an":75,"yu":70,"jue":45,"oct":"","piece":24},{"w":"无畏","an":75,"yu":70,"jue":45,"oct":"","piece":24},{"w":"得意","an":75,"yu":70,"jue":49,"oct":"","piece":24},{"w":"中意","an":70,"yu":68,"jue":41,"oct":"","piece":24},{"w":"闻宠若惊","an":45,"yu":60,"jue":79,"oct":"","piece":25},{"w":"心潮澎湃","an":50,"yu":70,"jue":70,"oct":"","piece":25},{"w":"惊奇","an":58,"yu":60,"jue":75,"oct":"","piece":25},{"w":"如梦初醒","an":55,"yu":55,"jue":66,"oct":"","piece":25},{"w":"执着","an":60,"yu":78,"jue":42,"oct":"","piece":26},{"w":"向往","an":55,"yu":85,"jue":41,"oct":"","piece":26},{"w":"羡慕","an":50,"yu":70,"jue":41,"oct":"","piece":26},{"w":"依恋","an":68,"yu":78,"jue":32,"oct":"","piece":26},{"w":"气冲冲","an":15,"yu":68,"jue":81,"oct":"","piece":27},{"w":"暴怒","an":15,"yu":65,"jue":92,"oct":"","piece":27},{"w":"怒不可遏","an":8,"yu":72,"jue":90,"oct":"","piece":27},{"w":"狂乱","an":8,"yu":60,"jue":83,"oct":"","piece":27},{"w":"惊异","an":40,"yu":50,"jue":83,"oct":"","piece":28},{"w":"吃惊","an":40,"yu":45,"jue":75,"oct":"","piece":28},{"w":"愕然","an":40,"yu":35,"jue":76,"oct":"","piece":28},{"w":"讶然","an":50,"yu":45,"jue":70,"oct":"","piece":28},{"w":"失望","an":30,"yu":25,"jue":41,"oct":"","piece":29},{"w":"不适","an":35,"yu":30,"jue":45,"oct":"","piece":29},{"w":"不爽","an":35,"yu":25,"jue":45,"oct":"","piece":29},{"w":"冷漠","an":50,"yu":15,"jue":24,"oct":"","piece":30},{"w":"懒","an":55,"yu":15,"jue":24,"oct":"","piece":30},{"w":"懒惰","an":55,"yu":12,"jue":25,"oct":"","piece":30},{"w":"落魄","an":15,"yu":20,"jue":32,"oct":"","piece":31},{"w":"抑郁","an":15,"yu":12,"jue":28,"oct":"","piece":31},{"w":"厌世","an":10,"yu":10,"jue":41,"oct":"","piece":31},{"w":"麻木","an":40,"yu":8,"jue":22,"oct":"","piece":32},{"w":"累","an":45,"yu":10,"jue":24,"oct":"","piece":32},{"w":"麻木不仁","an":40,"yu":15,"jue":24,"oct":"","piece":32},{"w":"无助","an":12,"yu":18,"jue":49,"oct":"","piece":33},{"w":"寒心","an":15,"yu":15,"jue":53,"oct":"","piece":33},{"w":"悲恸","an":10,"yu":12,"jue":57,"oct":"","piece":33},{"w":"绝望","an":5,"yu":10,"jue":83,"oct":"","piece":34},{"w":"恐怖","an":8,"yu":8,"jue":87,"oct":"","piece":34},{"w":"惊慌失措","an":5,"yu":15,"jue":92,"oct":"","piece":34},{"w":"温情脉脉","an":85,"yu":65,"jue":24,"oct":"","piece":35},{"w":"温馨","an":85,"yu":60,"jue":28,"oct":"","piece":35},{"w":"豁达","an":85,"yu":60,"jue":28,"oct":"","piece":35},{"w":"自豪","an":85,"yu":72,"jue":51,"oct":"","piece":36},{"w":"亲昵","an":85,"yu":75,"jue":45,"oct":"","piece":36},{"w":"热爱","an":80,"yu":85,"jue":49,"oct":"","piece":36},{"w":"惊喜交集","an":50,"yu":75,"jue":87,"oct":"","piece":37},{"w":"惊喜交加","an":50,"yu":75,"jue":87,"oct":"","piece":37},{"w":"惊叹","an":55,"yu":65,"jue":83,"oct":"","piece":37},{"w":"期盼","an":58,"yu":85,"jue":53,"oct":"","piece":38},{"w":"热切","an":55,"yu":85,"jue":62,"oct":"","piece":38},{"w":"昂扬","an":65,"yu":80,"jue":62,"oct":"","piece":38},{"w":"愣神","an":45,"yu":25,"jue":62,"oct":"","piece":39},{"w":"精神溜号","an":40,"yu":30,"jue":57,"oct":"","piece":39},{"w":"困惑","an":35,"yu":35,"jue":57,"oct":"","piece":39},{"w":"雀跃","an":75,"yu":85,"jue":66,"oct":"","piece":40},{"w":"喜出望外","an":75,"yu":80,"jue":75,"oct":"","piece":40},{"w":"兴奋","an":60,"yu":80,"jue":75,"oct":"","piece":40},{"w":"平淡","an":70,"yu":30,"jue":28,"oct":"","piece":41},{"w":"懒散","an":70,"yu":15,"jue":25,"oct":"","piece":41},{"w":"害怕","an":12,"yu":12,"jue":70,"oct":"","piece":42},{"w":"畏惧","an":12,"yu":12,"jue":66,"oct":"","piece":42},{"w":"心疼","an":55,"yu":55,"jue":45,"oct":"","piece":43},{"w":"悔悟","an":55,"yu":45,"jue":53,"oct":"","piece":43},{"w":"惊喜","an":70,"yu":80,"jue":87,"oct":"","piece":44},{"w":"豁然开朗","an":85,"yu":72,"jue":81,"oct":"","piece":44},{"w":"震撼人心","an":30,"yu":45,"jue":87,"oct":"","piece":45},{"w":"震惊","an":20,"yu":35,"jue":96,"oct":"","piece":45},{"w":"义愤填膺","an":25,"yu":70,"jue":75,"oct":"","piece":46},{"w":"心急","an":20,"yu":60,"jue":75,"oct":"","piece":46},{"w":"沉迷","an":45,"yu":88,"jue":36,"oct":"","piece":47},{"w":"渴盼","an":40,"yu":85,"jue":49,"oct":"","piece":47},{"w":"清心寡欲","an":88,"yu":10,"jue":22,"oct":"","piece":48},{"w":"彻悟","an":80,"yu":45,"jue":62,"oct":"","piece":49}];
+const COLOR = {敞亮:'#ffd166',安住:'#8be9a0',警醒:'#5ec8f0',疏淡:'#8f9bb3',
+               渴慕:'#ff8fa3',郁结:'#9b7bd4',惊惧:'#ff6b6b',沉沦:'#4a6fa8'};
+const PIECE = ["hsl(0,72%,58%)","hsl(138,78%,66%)","hsl(275,84%,58%)","hsl(53,72%,66%)","hsl(190,78%,58%)","hsl(328,84%,66%)","hsl(105,72%,58%)","hsl(243,78%,66%)","hsl(20,84%,58%)","hsl(158,72%,66%)","hsl(295,78%,58%)","hsl(73,84%,66%)","hsl(210,72%,58%)","hsl(348,78%,66%)","hsl(125,84%,58%)","hsl(263,72%,66%)","hsl(40,78%,58%)","hsl(178,84%,66%)","hsl(315,72%,58%)","hsl(93,78%,66%)","hsl(230,84%,58%)","hsl(8,72%,66%)","hsl(145,78%,58%)","hsl(283,84%,66%)","hsl(60,72%,58%)","hsl(198,78%,66%)","hsl(335,84%,58%)","hsl(113,72%,66%)","hsl(250,78%,58%)","hsl(28,84%,66%)","hsl(165,72%,58%)","hsl(303,78%,66%)","hsl(80,84%,58%)","hsl(218,72%,66%)","hsl(355,78%,58%)","hsl(133,84%,66%)","hsl(270,72%,58%)","hsl(48,78%,66%)","hsl(185,84%,58%)","hsl(323,72%,66%)","hsl(100,78%,58%)","hsl(238,84%,66%)","hsl(15,72%,58%)","hsl(153,78%,66%)","hsl(290,84%,58%)","hsl(68,72%,66%)","hsl(205,78%,58%)","hsl(343,84%,66%)","hsl(120,72%,58%)","hsl(258,78%,66%)"];
+const LEG = [{"c":"hsl(0,72%,58%)","t":"烦 担忧 怨望 烦恼 尴尬 憎恶","cx":-0.3276,"cy":-0.3557,"cz":0.1053,"q":[0,1,0]},{"c":"hsl(138,78%,66%)","t":"糊涂 犹豫 燥 不舍 同病相怜 不满","cx":-0.2304,"cy":-0.195,"cz":-0.1719,"q":[0,0,0]},{"c":"hsl(275,84%,58%)","t":"嫉妒 愤世嫉俗 患得患失 怨气 惦念 热泪盈眶","cx":-0.3675,"cy":0.0612,"cz":0.0857,"q":[0,1,1]},{"c":"hsl(53,72%,66%)","t":"坦荡 安慰 轻松 放松 安逸 与世无争","cx":0.4594,"cy":-0.0744,"cz":-0.3219,"q":[1,0,0]},{"c":"hsl(190,78%,58%)","t":"体贴 敬意 不厌其烦 自傲 坚韧 深情","cx":0.3714,"cy":0.1421,"cz":-0.231,"q":[1,0,1]},{"c":"hsl(328,84%,66%)","t":"无奈 厌烦 空 伤感 惆怅","cx":-0.1745,"cy":-0.384,"cz":-0.2173,"q":[0,0,0]},{"c":"hsl(105,72%,58%)","t":"思念 暧昧 乡愁 挂牵 挂记","cx":-0.2701,"cy":0.1441,"cz":-0.2385,"q":[0,0,1]},{"c":"hsl(243,78%,66%)","t":"愧疚 冤枉 心里堵得慌 敢怒不敢言 心神不宁","cx":-0.4256,"cy":-0.2615,"cz":0.0381,"q":[0,1,0]},{"c":"hsl(20,84%,58%)","t":"感动 赞叹 机灵 暖流 佩服","cx":0.3577,"cy":0.1874,"cz":0.0409,"q":[1,1,1]},{"c":"hsl(158,72%,66%)","t":"烦躁 紧张 心浮气躁 恨入骨髓 心急火燎","cx":-0.4241,"cy":-0.112,"cz":0.2973,"q":[0,1,0]},{"c":"hsl(295,78%,58%)","t":"喜欢 崇奉 得意扬扬 痛快 庆幸","cx":0.3435,"cy":0.3142,"cz":0.0602,"q":[1,1,1]},{"c":"hsl(73,84%,66%)","t":"颓废 无力 泄气 絮烦 沮丧","cx":-0.2792,"cy":-0.4594,"cz":-0.1918,"q":[0,0,0]},{"c":"hsl(210,72%,58%)","t":"轻视 心不在焉 无所事事 困 厌倦","cx":-0.0145,"cy":-0.3925,"cz":-0.2666,"q":[0,0,0]},{"c":"hsl(348,78%,66%)","t":"悲哀 苦闷 愁眉苦脸 自卑 愧怍","cx":-0.3837,"cy":-0.409,"cz":-0.1306,"q":[0,0,0]},{"c":"hsl(125,84%,58%)","t":"尊敬 自尊 想开 单纯 孤芳自赏","cx":0.3324,"cy":-0.0339,"cz":-0.2332,"q":[1,0,0]},{"c":"hsl(263,72%,66%)","t":"自信 亲切 自鸣得意 温情 温柔","cx":0.414,"cy":0.2208,"cz":-0.1897,"q":[1,0,1]},{"c":"hsl(40,78%,58%)","t":"恐慌 慌乱 可怕 愤不欲生 怒气冲冲","cx":-0.4603,"cy":-0.2903,"cz":0.3533,"q":[0,1,0]},{"c":"hsl(178,84%,66%)","t":"冲动 眼巴巴 激动 迫切 激昂","cx":-0.1765,"cy":0.4155,"cz":0.2519,"q":[0,1,1]},{"c":"hsl(315,72%,58%)","t":"暖 欣慰 信任 温暖","cx":0.4746,"cy":0.086,"cz":-0.1599,"q":[1,0,1]},{"c":"hsl(93,78%,66%)","t":"遗憾 空虚 沉郁 悲观","cx":-0.2677,"cy":-0.3849,"cz":-0.241,"q":[0,0,0]},{"c":"hsl(230,84%,58%)","t":"迷茫 惘然若失 混乱 怨恨","cx":-0.4051,"cy":-0.2509,"cz":-0.0753,"q":[0,0,0]},{"c":"hsl(8,72%,66%)","t":"委屈 愧对 愧恨 恶劣","cx":-0.3896,"cy":-0.3798,"cz":-0.0075,"q":[0,0,0]},{"c":"hsl(145,78%,58%)","t":"无可如何 忧郁 忧伤 颓丧","cx":-0.3254,"cy":-0.4013,"cz":-0.2517,"q":[0,0,0]},{"c":"hsl(283,84%,66%)","t":"忧愤 坐立不安 冤屈 恼怒","cx":-0.4218,"cy":-0.0367,"cz":0.2036,"q":[0,1,0]},{"c":"hsl(60,72%,58%)","t":"亲热 无畏 得意 中意","cx":0.3529,"cy":0.2897,"cz":-0.078,"q":[1,0,1]},{"c":"hsl(198,78%,66%)","t":"闻宠若惊 心潮澎湃 惊奇 如梦初醒","cx":0.0331,"cy":0.1863,"cz":0.3705,"q":[1,1,1]},{"c":"hsl(335,84%,58%)","t":"执着 向往 羡慕 依恋","cx":0.1228,"cy":0.4131,"cz":-0.1667,"q":[1,0,1]},{"c":"hsl(113,72%,66%)","t":"气冲冲 暴怒 怒不可遏 狂乱","cx":-0.4531,"cy":0.1913,"cz":0.4284,"q":[0,1,1]},{"c":"hsl(250,78%,58%)","t":"惊异 吃惊 愕然 讶然","cx":-0.1179,"cy":-0.0983,"cz":0.4086,"q":[0,1,0]},{"c":"hsl(28,84%,66%)","t":"失望 不适 不爽","cx":-0.2546,"cy":-0.3564,"cz":-0.1018,"q":[0,0,0]},{"c":"hsl(165,72%,58%)","t":"冷漠 懒 懒惰","cx":0.0425,"cy":-0.4588,"cz":-0.3305,"q":[1,0,0]},{"c":"hsl(303,78%,66%)","t":"落魄 抑郁 厌世","cx":-0.4354,"cy":-0.4275,"cz":-0.1969,"q":[0,0,0]},{"c":"hsl(80,84%,58%)","t":"麻木 累 麻木不仁","cx":-0.103,"cy":-0.4822,"cz":-0.3347,"q":[0,0,0]},{"c":"hsl(218,72%,66%)","t":"无助 寒心 悲恸","cx":-0.4546,"cy":-0.4225,"cz":0.0392,"q":[0,1,0]},{"c":"hsl(355,78%,58%)","t":"绝望 恐怖 惊慌失措","cx":-0.4823,"cy":-0.4275,"cz":0.4083,"q":[0,1,0]},{"c":"hsl(133,84%,66%)","t":"温情脉脉 温馨 豁达","cx":0.4487,"cy":0.1496,"cz":-0.3034,"q":[1,0,1]},{"c":"hsl(270,72%,58%)","t":"自豪 亲昵 热爱","cx":0.43,"cy":0.3526,"cz":-0.0239,"q":[1,0,1]},{"c":"hsl(48,78%,66%)","t":"惊喜交集 惊喜交加 惊叹","cx":0.0217,"cy":0.2827,"cz":0.4676,"q":[1,1,1]},{"c":"hsl(185,84%,58%)","t":"期盼 热切 昂扬","cx":0.1302,"cy":0.4652,"cz":0.1244,"q":[1,1,1]},{"c":"hsl(323,72%,66%)","t":"愣神 精神溜号 困惑","cx":-0.1694,"cy":-0.3388,"cz":0.151,"q":[0,1,0]},{"c":"hsl(100,78%,58%)","t":"雀跃 喜出望外 兴奋","cx":0.2577,"cy":0.408,"cz":0.2792,"q":[1,1,1]},{"c":"hsl(238,84%,66%)","t":"平淡 懒散","cx":0.2624,"cy":-0.3608,"cz":-0.3087,"q":[1,0,0]},{"c":"hsl(15,72%,58%)","t":"害怕 畏惧","cx":-0.4438,"cy":-0.4438,"cz":0.2117,"q":[0,1,0]},{"c":"hsl(153,78%,66%)","t":"心疼 悔悟","cx":0.2547,"cy":0,"cz":-0.0509,"q":[1,0,0]},{"c":"hsl(290,84%,58%)","t":"惊喜 豁然开朗","cx":0.333,"cy":0.3148,"cz":0.415,"q":[1,1,1]},{"c":"hsl(68,72%,66%)","t":"震撼人心 震惊","cx":-0.3062,"cy":-0.1225,"cz":0.5083,"q":[0,1,0]},{"c":"hsl(205,78%,58%)","t":"义愤填膺 心急","cx":-0.3666,"cy":0.2,"cz":0.3266,"q":[0,1,1]},{"c":"hsl(343,84%,66%)","t":"沉迷 渴盼","cx":-0.1019,"cy":0.4961,"cz":-0.1002,"q":[0,0,1]},{"c":"hsl(120,72%,58%)","t":"清心寡欲","cx":0.4313,"cy":-0.454,"cz":-0.3201,"q":[1,0,0]},{"c":"hsl(258,78%,66%)","t":"彻悟","cx":0.4364,"cy":-0.0727,"cz":0.1709,"q":[1,1,0]}];
+const LONEW = "";
+const VNAME = {'1,1,1':'敞亮','1,1,0':'安住','1,0,1':'警醒','1,0,0':'疏淡',
+               '0,1,1':'渴慕','0,1,0':'郁结','0,0,1':'惊惧','0,0,0':'沉沦'};
+
+const pts = RAW.map(r=>{
+  let x=(r.an-50)/50, y=(r.yu-50)/50, z=(r.jue-50)/50;
+  const len=Math.hypot(x,y,z)||1;
+  const rad=Math.min(len,1);
+  const R=0.22+0.78*rad;
+  return {w:r.w,an:r.an,yu:r.yu,jue:r.jue,oct:r.oct,piece:r.piece,
+          x:(x/len)*R, y:(y/len)*R, z:(z/len)*R};
+});
+
+const cv=document.getElementById('c'), ctx=cv.getContext('2d');
+let W,H;
+function resize(){ W=cv.width=innerWidth; H=cv.height=innerHeight; }
+addEventListener('resize',resize); resize();
+
+let rx=-0.42, ry=0.65, scale=1, ox=0, oy=0;
+let mode=null, last={x:0,y:0};
+
+cv.addEventListener('contextmenu', e=>e.preventDefault());
+cv.addEventListener('pointerdown', e=>{
+  mode = e.button===2 ? 'rot' : 'pan';
+  last={x:e.clientX,y:e.clientY};
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener('pointerup', e=>{ mode=null; });
+cv.addEventListener('pointermove', e=>{
+  if(!mode) return;
+  const dx=e.clientX-last.x, dy=e.clientY-last.y;
+  if(mode==='rot'){ ry+=dx*0.008; rx+=dy*0.008; rx=Math.max(-1.5,Math.min(1.5,rx)); }
+  else { ox+=dx; oy+=dy; }
+  last={x:e.clientX,y:e.clientY};
+});
+cv.addEventListener('wheel', e=>{
+  e.preventDefault();
+  scale *= e.deltaY>0 ? 0.93 : 1.07;
+  scale = Math.max(0.35, Math.min(3.2, scale));
+}, {passive:false});
+
+function rot(p){
+  const cx=Math.cos(rx),sx=Math.sin(rx),cy=Math.cos(ry),sy=Math.sin(ry);
+  const x1=p.x*cy+p.z*sy, z1=-p.x*sy+p.z*cy;
+  const y1=p.y*cx-z1*sx, z2=p.y*sx+z1*cx;
+  return {x:x1,y:y1,z:z2};
+}
+
+document.getElementById('legend').innerHTML =
+  LEG.map((d,i)=>`<div><span class="k" style="background:${d.c}"></span>${String(i+1).padStart(2,'0')} ${d.t}</div>`).join('')+`<div><span class="k" style="background:#5a6472"></span>单着 ${LONEW}</div>`;
+
+function project(p){
+  const q=rot(p);
+  const dist=3.4;
+  const f=dist/(dist - q.z*0.9);
+  return { X: W/2 + ox + q.x*S()*f, Y: H/2 + oy - q.y*S()*f, z:q.z, f };
+}
+function S(){ return Math.min(W,H)*0.30*scale; }
+
+function line3(a,b,color,w){
+  const pa=project(a), pb=project(b);
+  ctx.strokeStyle=color; ctx.lineWidth=w;
+  ctx.beginPath(); ctx.moveTo(pa.X,pa.Y); ctx.lineTo(pb.X,pb.Y); ctx.stroke();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // 球网格
+  ctx.strokeStyle='rgba(110,140,190,0.10)'; ctx.lineWidth=1;
+  for(let lat=-60;lat<=60;lat+=30){
+    ctx.beginPath();
+    for(let lon=0;lon<=360;lon+=5){
+      const a=lat*Math.PI/180,b=lon*Math.PI/180;
+      const p=project({x:Math.cos(a)*Math.cos(b),y:Math.sin(a),z:Math.cos(a)*Math.sin(b)});
+      lon===0?ctx.moveTo(p.X,p.Y):ctx.lineTo(p.X,p.Y);
+    }
+    ctx.stroke();
+  }
+  for(let lon=0;lon<180;lon+=30){
+    ctx.beginPath();
+    for(let lat=-90;lat<=90;lat+=5){
+      const a=lat*Math.PI/180,b=lon*Math.PI/180;
+      const p=project({x:Math.cos(a)*Math.cos(b),y:Math.sin(a),z:Math.cos(a)*Math.sin(b)});
+      lat===-90?ctx.moveTo(p.X,p.Y):ctx.lineTo(p.X,p.Y);
+    }
+    ctx.stroke();
+  }
+
+  // 三根轴
+  const AX = [
+    {n:'安',neg:'危',pos:'在',v:{x:1,y:0,z:0},c:'#8be9a0'},
+    {n:'欲',neg:'拒',pos:'向',v:{x:0,y:1,z:0},c:'#ff8fa3'},
+    {n:'觉',neg:'昧',pos:'明',v:{x:0,y:0,z:1},c:'#5ec8f0'}
+  ];
+  for(const a of AX){
+    const P=a.v, N={x:-a.v.x,y:-a.v.y,z:-a.v.z};
+    line3(N,P,a.c,1.6);
+    const pp=project(P), pn=project(N);
+    ctx.font='bold 15px sans-serif'; ctx.textAlign='center';
+    ctx.fillStyle=a.c;
+    ctx.fillText(a.pos, pp.X, pp.Y-8);
+    ctx.globalAlpha=0.6;
+    ctx.fillText(a.neg, pn.X, pn.Y-8);
+    ctx.globalAlpha=1;
+    ctx.font='11px sans-serif'; ctx.fillStyle='#66708a';
+    const pc=project({x:0,y:0,z:0});
+    ctx.fillText(a.n, pc.X+8, pc.Y+14);
+  }
+  const O=project({x:0,y:0,z:0});
+  ctx.font='11px sans-serif'; ctx.fillStyle='#5a6478';
+  ctx.textAlign='left';
+  ctx.fillText('50/50/50', O.X+10, O.Y+30);
+
+  // 八格顶点
+  for(const [k,v] of Object.entries({'1,1,1':[1,1,1],'1,1,0':[1,1,-1],'1,0,1':[1,-1,1],
+      '1,0,0':[1,-1,-1],'0,1,1':[-1,1,1],'0,1,0':[-1,1,-1],'0,0,1':[-1,-1,1],'0,0,0':[-1,-1,-1]})){
+    const L=Math.hypot(v[0],v[1],v[2]);
+    const p=project({x:v[0]/L,y:v[1]/L,z:v[2]/L});
+    ctx.globalAlpha = p.z>0 ? 0.95 : 0.4;
+    ctx.fillStyle=COLOR[VNAME[k]];
+    ctx.beginPath(); ctx.arc(p.X,p.Y,4,0,7); ctx.fill();
+    ctx.font='bold 12px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(VNAME[k], p.X, p.Y-10);
+    ctx.globalAlpha=1;
+  }
+
+  // 球体内撒点：每片一样大，往外交汇，缝就在两中点正中
+  {
+    const G = 15, N = G + 1;
+    const at = (i,j,k) => (i*N + j)*N + k;
+    const owner = new Int16Array(N*N*N).fill(-1);
+    const cells = [];
+    for(let i=0;i<N;i++) for(let j=0;j<N;j++) for(let k=0;k<N;k++){
+      const x = -1 + 2*i/G, y = -1 + 2*j/G, z = -1 + 2*k/G;
+      const r = Math.sqrt(x*x + y*y + z*z);
+      if (r > 1) continue;
+      const rad = 0.22 + 0.78 * r;
+      const px = (x/r||0)*rad, py = (y/r||0)*rad, pz = (z/r||0)*rad;
+      const qx = px > 0 ? 1 : 0, qy = py > 0 ? 1 : 0, qz = pz > 0 ? 1 : 0;
+      let best = -1, bd = Infinity;
+      for(let m=0;m<LEG.length;m++){
+        const d = LEG[m];
+        // 不跨象限：只跟同象限的片比
+        if (d.q[0] !== qx || d.q[1] !== qz || d.q[2] !== qy) continue;
+        const dd = (px-d.cx)*(px-d.cx) + (py-d.cy)*(py-d.cy) + (pz-d.cz)*(pz-d.cz);
+        if(dd < bd){ bd = dd; best = m; }
+      }
+      owner[at(i,j,k)] = best;
+      if (best < 0) continue;
+      const q = project({x:px, y:py, z:pz});
+      cells.push({ i, j, k, X:q.X, Y:q.Y, z:q.z, c:PIECE[best] });
+    }
+    cells.sort((a,b)=>a.z-b.z);
+    for(const c of cells){
+      const front = Math.max(0, c.z);
+      ctx.globalAlpha = 0.28 + front*0.55;
+      ctx.fillStyle = c.c;
+      ctx.beginPath(); ctx.arc(c.X, c.Y, 1.7 + front*1.4, 0, Math.PI*2); ctx.fill();
+    }
+    // 缝：相邻两格归了不同的片，就在那儿点一下
+    ctx.lineWidth = 1;
+    for(const c of cells){
+      const here = owner[at(c.i,c.j,c.k)];
+      let edge = false;
+      if (!edge && c.i+1 < N){ const o = owner[at(c.i+1,c.j,c.k)]; if (o >= 0 && o !== here) edge = true; }
+      if (!edge && c.j+1 < N){ const o = owner[at(c.i,c.j+1,c.k)]; if (o >= 0 && o !== here) edge = true; }
+      if (!edge && c.k+1 < N){ const o = owner[at(c.i,c.j,c.k+1)]; if (o >= 0 && o !== here) edge = true; }
+      if (!edge) continue;
+      const front = Math.max(0, c.z);
+      if (front < 0.04) continue;
+      ctx.globalAlpha = 0.30 + front*0.55;
+      ctx.strokeStyle = '#e2e9f4';
+      ctx.beginPath(); ctx.arc(c.X, c.Y, 2.2, 0, Math.PI*2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // 点 + 全部词标签
+  const list = pts.map(p=>{
+    const q=rot(p);
+    return {p,q,X:W/2+ox+q.x*S()*(3.4/(3.4-q.z*0.9)),Y:H/2+oy-q.y*S()*(3.4/(3.4-q.z*0.9))};
+  }).sort((a,b)=>a.q.z-b.q.z);
+
+  ctx.textAlign='left';
+  for(const d of list){
+    const a = 0.22 + Math.max(0,d.q.z)*0.78;
+    ctx.globalAlpha=a;
+    ctx.fillStyle = d.p.piece<0 ? '#5a6472' : (PIECE[d.p.piece]||'#888');
+    ctx.beginPath(); ctx.arc(d.X,d.Y, d.q.z>0?2.6:1.8, 0, 7); ctx.fill();
+    if(scale>0.55){
+      ctx.font='11px "PingFang SC","Microsoft YaHei",sans-serif';
+      ctx.fillText(d.p.w, d.X+5, d.Y+3.5);
+    }
+  }
+  ctx.globalAlpha=1;
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>

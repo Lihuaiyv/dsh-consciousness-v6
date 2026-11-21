@@ -34,7 +34,7 @@ function feel(agoMin, text) {
 {
   feel(3, '刚被夸了一句，心里有点亮')
   const block = consciousnessBlock(db, aid, {})
-  check('主人线上带 feel 行', block.includes('我上一句说出来之前，心里是这样') && block.includes('刚被夸了一句'), block.slice(0, 200))
+  check('主人线上带 feel 行', block.includes('我现在心里的感受：') && block.includes('刚被夸了一句'), block.slice(0, 200))
 }
 
 // 2) 非主人 QQ（snap:'off'）：feel 行不出现

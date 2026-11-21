@@ -20,10 +20,12 @@ import { oneLine } from './pack.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { dataDir } from '../paths.js'
-import { now } from '../db.js'
+import { now, localDayBounds } from '../db.js'
 import { model, getFlag, setFlag } from '../kernel.js'
 import { looksLikeRuntimeNoise } from '../text.js'
 import { localCutOn, localDailyFallbackOn, localComplete } from './local_llm.js'
+// 2026-11-15（D59）：白天用〔留〕点名的句子，切事时优先当证据。
+import { pinsBetween, pinsWithTime } from './quote_pin.js'
 
 const GAP_MS = 4 * 3600 * 1000     // 清醒段：≥4 小时没人说话
 const CHUNK_CHARS = 3000           // 单次喂模型的正文上限（2026-11-12 实测后收紧：12000 会 fetch failed）
@@ -42,11 +44,10 @@ const SYSTEM = [
   'weight：0.8 以上 = 关乎我/关乎我们/关乎存在；0.5 左右 = 一次经过；0.3 以下 = 流水账。',
 ].join('\n')
 
-/** 本地日 → UTC 区间（+08:00） */
+/** 本地日 → UTC 区间（半开：本地 00:00 到次日 00:00）。切事、盖章、判闸都用这一套日界。 */
 function dayBounds(day) {
-  const lo = new Date(day + 'T00:00:00+08:00').toISOString()
-  const hi = new Date(day + 'T23:59:59.999+08:00').toISOString()
-  return [lo, hi]
+  const { start, end } = localDayBounds(day)
+  return [start, end]
 }
 
 /** B2 去重：同一天里「同角色 + 同正文」的重复碎片只留第一条；切事按内容走，重复读不产生新信息。 */
@@ -409,14 +410,46 @@ export function splitRunsByMode(seg) {
   return runs
 }
 
-/** 按字数预算切块。块边界只在两行之间，不劈开一句话。 */
+/** 按字数预算切块；边界优先落在「换人说话 / 空行 / 隔了很久」处，找不到才硬切。 */
 export function chunkByChars(rows, limit = BATCH_CHARS) {
   const out = []
   let cur = []
   let len = 0
-  for (const r of rows) {
+  const isNatural = (a, b) => {
+    if (!a || !b) return true
+    // 换人说话：user ↔ assistant 是一个天然的停顿
+    if (String(a.role || '') !== String(b.role || '')) return true
+    // 空行：一段话讲完了
+    if (/\n\s*\n/.test(String(a.text || '')) || /\n\s*\n/.test(String(b.text || ''))) return true
+    // 隔了很久：同一件事不会跨这么久
+    const ta = Date.parse(a.created_at)
+    const tb = Date.parse(b.created_at)
+    if (Number.isFinite(ta) && Number.isFinite(tb) && tb - ta > 10 * 60000) return true
+    return false
+  }
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
     const add = String(r.text || '').length + 16
-    if (cur.length >= 4 && len + add > limit) { out.push(cur); cur = []; len = 0 }
+    if (cur.length >= 4 && len + add > limit) {
+      // 往后看最多 15%：找最近的一个天然边界，让块别切在一句话/一件事中间。
+      let j = i
+      let scan = len
+      while (j < rows.length - 1 && scan < limit * 1.15 && !isNatural(rows[j], rows[j + 1])) {
+        scan += String(rows[j].text || '').length + 16
+        j++
+      }
+      if (j > i && j < rows.length && isNatural(rows[j - 1], rows[j])) {
+        for (let k = i; k < j; k++) { cur.push(rows[k]); len += String(rows[k].text || '').length + 16 }
+        out.push(cur)
+        cur = []
+        len = 0
+        i = j - 1
+        continue
+      }
+      out.push(cur)
+      cur = []
+      len = 0
+    }
     cur.push(r)
     len += add
   }
@@ -506,21 +539,56 @@ function lexicalDigest(rows) {
   return { digest, cues }
 }
 
+/** 从工作段里挑某一方说的原话当引文（D55）。只取逐字前缀，不折叠空白，保证仍是原文子串。 */
+export function pickQuotes(rows, role, limit = 2) {
+  const noise = /^(```|[{[]|\||## |Repeated tool call detected)|Delegation depth|^You are |^Agent [0-9a-f]{8}|^\[(SCHEDULE|turn_|工作)|^Repeated tool call/
+  const score = (t) => {
+    const n = Array.from(t).length
+    if (n < 10) return n
+    if (n <= 120) return 100 + Math.min(n, 80)
+    return 160 - Math.min(n - 120, 60)
+  }
+  const seen = new Set()
+  const mine = []
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    if (r.role !== role) continue
+    const raw = String(r.text || '').trim()
+    if (!raw) continue
+    const flat = raw.replace(/\s+/g, ' ')
+    if (flat.length < 6 || noise.test(flat)) continue
+    if (!/[\u4e00-\u9fa5]/.test(flat)) continue
+    const key = Array.from(flat).slice(0, 20).join('')
+    if (seen.has(key)) continue
+    seen.add(key)
+    mine.push({ i, text: raw.slice(0, 90) })
+  }
+  return mine.sort((a, b) => score(b.text) - score(a.text)).slice(0, limit)
+}
+
 /** 工作段：只产一条「工作段」摘要事件（低信心、可检索，不写细节）。 */
-function makeWorkEvent(parsed, rows, quality = 'local') {
+function makeWorkEvent(parsed, rows, quality = 'local', pinned = []) {
   const digest = String((parsed && parsed.digest) || '').trim().slice(0, 120)
   if (!digest) return null
   const textAll = rows.map((r) => String(r.text || '')).join('\n')
   // 14B 的 digest 有人味，但 cues 常是「A段/三件」这种内部词；
   // 规则从原文补一层文件名/模块/版本，保证以后真能撞上（软联想也要有钩子）。
   const cues = mergeNameCues(parsed?.cues, textAll)
+  // 2026-11-15（D55）：引文要「两边的都留」——我怎么说、主人怎么接。
+  // 之前只取 rows[0]（主人第一句，常常就是「继续」），我自己的话一句没留；
+  // 现在两边各挑最多 2 条有信息量的，按原文顺序排。
+  const picked = [...pickQuotes(rows, 'assistant', 2), ...pickQuotes(rows, 'user', 2)]
+    .sort((a, b) => a.i - b.i)
+    .map((x) => x.text)
+  // 2026-11-15（D59）：白天自己点名要留的句子排最前面（它是「我选的」，优先级最高）。
+  const quotes = [...new Set([...pinned.slice(0, 2), ...picked])].filter(Boolean).slice(0, 4)
   return {
     title: '工作段：' + oneLine(digest, 18),
     who: '主人',
     started_at: rows[0].created_at,
     ended_at: rows[rows.length - 1].created_at,
     turn_ids: rows.map((r) => r.turn_id).filter(Boolean).slice(0, 12),
-    quotes: [String(rows[0].text || '').slice(0, 60)].filter(Boolean),
+    quotes,
     cues,
     status: '过去了',
     weight: quality === 'lexical' ? 0.25 : 0.35,
@@ -571,7 +639,7 @@ async function localDailyEvents(db, rows, localFn) {
  *
  * 空回：不前进、不落库，停下等下一轮重试同一块（别把「没吐字」当「没有」）。
  */
-export async function splitDayBatch(db, aid, day, { complete = null, limit = BATCH_CHARS, maxCalls = Infinity, onEvents = null, localCut = null } = {}) {
+export async function splitDayBatch(db, aid, day, { complete = null, limit = BATCH_CHARS, maxCalls = Infinity, onEvents = null, localCut = null, canContinue = null } = {}) {
   if (!day) return { ok: false, reason: 'no-day', day }
   let usable = false
   try { usable = !!model.capabilities().complete } catch { usable = false }
@@ -593,9 +661,12 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
   const savedPos = String(getFlag(db, posFlag) || '')
   let startIdx = 0
   if (savedPos) {
-    // 进度存的是「最后切完那一块的最后一轮」：找到它所在的块，从下一块续。
     for (let i = 0; i < chunks.length; i++) {
-      if (chunks[i].rows.some((r) => String(r.turn_id || r.id) === savedPos)) { startIdx = i + 1; break }
+      if (!chunks[i].rows.some((r) => String(r.turn_id || r.id) === savedPos)) continue
+      // 2026-11-17（D72）：最后一块可能还在后面长（夜里一直说话）。断点落在这块里时「重切这块」，
+      // 不能跳过——否则 pos 之后新长出来的行永远没人切，盖章时又看不出来。
+      startIdx = i === chunks.length - 1 ? i : i + 1
+      break
     }
   }
 
@@ -608,19 +679,24 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
    * 进度只在「整块切完」时存，避免断了以后从半块中间续（重切一块的代价可以接受，幂等兜得住）。
    * 返回 { stop:true } 表示没切成、别再往后走。
    */
-  async function processChunk(c, i, { savePos = true } = {}) {
-    const body = chunkBody(c.rows)
+  async function processChunk(c, i, { savePos = true, prevRows = [] } = {}) {
+    // 断点续切：把上一块最后几行带上，只当上下文——让模型知道前面讲到哪，不从半件事开始切。
+    const body = (prevRows.length
+      ? '（前文，只作上下文，不要从这里切事件——事件只从下面的「从这里开始」里切）\n'
+        + chunkBody(prevRows) + '\n——\n（从这里开始切）\n'
+      : '') + chunkBody(c.rows)
     const textAll = c.rows.map((r) => String(r.text || '')).join('\n')
     const turnSet = new Set(c.rows.map((r) => r.turn_id).filter(Boolean))
     let raw = ''
     let lastErr = null
     let usedLocal = false
     let localMs = 0
-    // work 段先走本地（开关默认 off；注入 localCut 时按注入走）。失败/空回 → 回退主模型。
-    const wantLocal = c.mode === 'work' && (typeof localCut === 'function' || localCutOn(db))
+    // 2026-11-17：工作段不再单独出摘要（WORK_SYSTEM / makeWorkEvent 停用），
+    // 跟日常段走同一套切事件。理由见 docs/功能/2-记忆-写与切事/切事件-基石/基石-切事件-2026-11-17.md。
+    const wantLocal = false
     if (wantLocal) {
       try {
-        const out = await (typeof localCut === 'function' ? localCut : (req) => localComplete(db, req))({
+        const out = await (typeof localCut === 'function' ? localCut : (req) => localComplete(db, { ...req, priority: 3, label: 'split:work' }))({
           system: WORK_SYSTEM,
           text: body,
           maxTokens: WORK_MAX_TOKENS,
@@ -640,9 +716,9 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
       if (callModel) {
         try {
           raw = String(await callModel({
-            system: c.mode === 'work' ? WORK_SYSTEM : DAILY_BATCH_SYSTEM,
+            system: DAILY_BATCH_SYSTEM,
             text: body,
-            maxTokens: c.mode === 'work' ? WORK_MAX_TOKENS : 5000,
+            maxTokens: 5000,
           }) || '')
         } catch (e) { lastErr = String((e && e.message) || e).slice(0, 200) }
       }
@@ -651,9 +727,9 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
 
     // daily 主模型失败/空回：本地逐件兜底（低信心，但比丢掉一天强）。
     let fallbackEvents = null
-    if (!String(raw).trim() && c.mode !== 'work' && localDailyFallbackOn(db)) {
+    if (!String(raw).trim() && localDailyFallbackOn(db)) {
       try {
-        const evs = await localDailyEvents(db, c.rows, typeof localCut === 'function' ? localCut : (req) => localComplete(db, req))
+        const evs = await localDailyEvents(db, c.rows, typeof localCut === 'function' ? localCut : (req) => localComplete(db, { ...req, priority: 4, label: 'split:daily' }))
         if (evs.length) fallbackEvents = evs
       } catch (e) { lastErr = String((e && e.message) || e).slice(0, 200) }
     }
@@ -666,7 +742,9 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
         if (r1.stop) return r1
         const r2 = await processChunk({ mode: c.mode, rows: c.rows.slice(mid) }, i, { savePos: false })
         if (r2.stop) return r2
-        if (savePos) {
+        // 2026-11-16（D70）：工作段砍半后仍然没切出东西，不推进断点——否则进度会跑到没有事件的空白上，
+        // 章盖在前面、洞留在后面。下次 tick 会重试这一块（本地模型，不花钱）。
+        if (savePos && c.mode !== 'work') {
           const last = c.rows[c.rows.length - 1]
           try { setFlag(db, posFlag, String(last.turn_id || last.id)) } catch { /* 下一轮重切这块 */ }
         }
@@ -680,11 +758,6 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
     if (fallbackEvents) {
       // 本地兜底：低信心，weight 压到 ≤0.35；日期已由时间门兜过
       events = fallbackEvents.map((ev) => ({ ...ev, weight: Math.min(Number(ev.weight) || 0.3, 0.35), quality: 'local_fallback' }))
-    } else if (c.mode === 'work') {
-      const ev = lexicalPack
-        ? makeWorkEvent(lexicalPack, c.rows, 'lexical')
-        : makeWorkEvent(parseJsonObject(raw), c.rows, 'local')
-      if (ev) events = [ev]
     } else {
       const arr = parseJsonArray(raw) || []
       events = arr.slice(0, BATCH_MAX_EVENTS)
@@ -693,6 +766,22 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
           return c2 ? { ...c2, quality: 'model' } : null
         })
         .filter(Boolean)
+      // 2026-11-15（D59）：日常段也吃 pin——哪句落在这一件的时间区间里，就当它的证据补进去。
+      try {
+        const pins = pinsWithTime(db, aid, c.rows[0].created_at, c.rows[c.rows.length - 1].created_at)
+        if (pins.length) {
+          for (const ev of events) {
+            const s = Date.parse(ev.started_at), e = Date.parse(ev.ended_at)
+            if (!Number.isFinite(s) || !Number.isFinite(e)) continue
+            for (const p of pins) {
+              const t = Date.parse(p.at)
+              if (!Number.isFinite(t) || t < s || t > e) continue
+              if (Array.isArray(ev.quotes) && !ev.quotes.includes(p.text)) ev.quotes.push(p.text)
+            }
+            if (Array.isArray(ev.quotes) && ev.quotes.length > 6) ev.quotes = ev.quotes.slice(0, 6)
+          }
+        }
+      } catch { /* pin 接不上不影响这一段 */ }
     }
     if (onEvents && events.length) {
       try {
@@ -702,7 +791,9 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
         return { stop: true }
       }
     }
-    if (savePos) {
+    // 2026-11-16（D70）：工作段这一块一件都没切出来，就不许推进断点——断点是「切到哪」的证据。
+    const workEmpty = c.mode === 'work' && events.length === 0
+    if (savePos && !workEmpty) {
       const last = c.rows[c.rows.length - 1]
       try { setFlag(db, posFlag, String(last.turn_id || last.id)) } catch { /* 进度没存上：下一轮重切这块，靠幂等兜 */ }
     }
@@ -711,12 +802,23 @@ export async function splitDayBatch(db, aid, day, { complete = null, limit = BAT
   }
 
   for (let i = startIdx; i < chunks.length; i++) {
-    const r = await processChunk(chunks[i], i)
+    // 每块之前问一句「现在还能不能跑」：主人来消息 / 本地被占，就停在这块之前，下一拍从断点续。
+    if (typeof canContinue === 'function') {
+      let go = true
+      try { go = await canContinue() } catch { go = true }
+      if (!go) { stopped = 'paused'; break }
+    }
+    // 上一块的尾巴当上下文带进来：续切时接上前一块，像没断过。
+    const prevRows = i > 0 ? chunks[i - 1].rows.slice(-3) : []
+    const r = await processChunk(chunks[i], i, { prevRows })
     if (r.stop) break
   }
 
   const lastOk = results.length && !results[results.length - 1].empty && !results[results.length - 1].writeError
-  const finished = lastOk && results[results.length - 1].chunk === chunks.length - 1
+  // 2026-11-15（D49）：断点已经落在最后一块之后（startIdx >= chunks.length）时，这一轮没有块可切，
+  // 但那不叫「没切完」——否则 finished 永远 false、state 永远 pending，worker 每 30 分钟空转却不出活。
+  const startAtEnd = chunks.length > 0 && startIdx >= chunks.length
+  const finished = startAtEnd || !!(lastOk && results[results.length - 1].chunk === chunks.length - 1)
   return {
     ok: true, at: now(), day,
     rows: rows.length, clean: clean.length, chunks: chunks.length,

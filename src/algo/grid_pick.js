@@ -1,0 +1,330 @@
+// 网格选词：位置 → 片 → 格 → 按典型度 × 浓淡挑一个词
+// 这一步只提供函数，不接主流程；接不接看开关 affect.v4.grid
+import { GRID_CELLS, GRID_ANNOT, GRID_SLOTS, GRID_LEVEL } from './lexicon_grid.js'
+import { LEXICON_V4 } from './lexicon_v4.js'
+// 十四族那层 2026-11-21 整层删了：判断层每轮现判，判偏就拽词，没用。
+
+const BY = ['我', '对方', '外面']
+const TO = ['冲自己', '冲对方', '冲外面', '无']
+
+// 判断层的值域跟网格的字面不一样（2026-11-20 查到）：
+//   judgment.by   → me / self / other / world
+//   frame.target  → me / owner / other / world
+// 不映射的话，每一帧都会落进「无·无」，判据白给。
+const BY_MAP = {
+  我: '我', self: '我', me: '我',
+  对方: '对方', other: '对方', owner: '对方', you: '对方',
+  外面: '外面', world: '外面', thing: '外面', event: '外面'
+}
+const TARGET_MAP = {
+  我: '冲自己', me: '冲自己', self: '冲自己',
+  对方: '冲对方', other: '冲对方', owner: '冲对方', you: '冲对方',
+  外面: '冲外面', world: '冲外面', thing: '冲外面', event: '冲外面',
+  // target=none 不是「没给」，是「不冲谁」——正好是「无」这一格
+  none: '无', 无: '无', null: '无'
+}
+const TO_ALIAS = {
+  冲自己: '冲自己', 自己: '冲自己', self: '冲自己', me: '冲自己',
+  冲对方: '冲对方', 对方: '冲对方', other: '冲对方', you: '冲对方', owner: '冲对方',
+  冲外面: '冲外面', 外面: '冲外面', world: '冲外面', thing: '冲外面',
+  无: '无', none: '无', '': '无'
+}
+
+// 词 → 它属于哪一片（GRID_CELLS 里 284 个词都有片，2026-11-21 核过）
+const WORD_CELL = new Map()
+for (let i = 0; i < GRID_CELLS.length; i++) for (const w of GRID_CELLS[i].words) WORD_CELL.set(w, i)
+
+const dist3 = (a, b) => Math.sqrt((a.s - b.s) ** 2 + (a.n - b.n) ** 2 + (a.d - b.d) ** 2)
+
+/**
+ * 2026-11-21：书面腔的词。它们坐标没问题，但不像「我此刻的感觉」——
+ * 真实的人被道歉时说「愣了一下」「气还没顺」，不会说「如梦初醒」「闻宠若惊」。
+ * 这一批不删（主人 11-19 说过别手删、全放回），只在打分时降一档，
+ * 让同一位置上的口语词（有点慌 / 心里堵 / 缓过来）先被挑走。
+ */
+const LITERARY = new Set([
+  '无可如何', '无所事事', '豁然开朗', '闻宠若惊', '惊喜交集', '惘然若失', '愤世嫉俗',
+  '震撼人心', '惊喜交加', '得意扬扬', '义愤填膺', '愤不欲生', '心浮气躁', '恨入骨髓',
+  '自鸣得意', '惊慌失措', '心不在焉', '喜出望外', '心潮澎湃', '如梦初醒', '与世无争',
+  '清心寡欲', '热泪盈眶', '怒不可遏', '怒气冲冲', '心急火燎', '心有余悸', '敢怒不敢言',
+  '麻木不仁', '愁眉苦脸', '坐立不安', '同病相怜', '孤芳自赏', '患得患失',
+])
+export const LITERARY_PENALTY = 0.18
+export const isLiterary = (name) => LITERARY.has(String(name || ''))
+
+/**
+ * 「缓过来」这一族是**转折词**，不是状态词。
+ * 2026-11-21：平静着点个外卖，挑出「松了口气」——可人没先悬着，就谈不上松一口气。
+ * 这一族要这段里真的先掉下去过（peak.s 为负）才成立；没掉过就降一档，让「如常/踏实/平淡」先被挑走。
+ * 依据是位置帧里本来就有的 peak（这段离起点最远的那一下），不是为某个例子加的开关。
+ */
+const RELIEF = new Set([
+  '松了口气', '释然', '心落下来', '松快', '松快下来了', '缓过来', '缓过神', '消了气', '没那么气了', '放下心',
+])
+export const isRelief = (name) => RELIEF.has(String(name || ''))
+export const RELIEF_PENALTY = 0.18
+
+/**
+ * 概念 / 态度词（2026-11-21）：它们说得通，但不是「此刻的感受」。
+ * 「自尊」是概念，「认真 / 上心」是做事的态度——长场景里被挑出来时，读者会觉得像在总结我，
+ * 不像我当下心里那一下。不删（主人 11-19 说过别手删），只在打分时降一档，让感受词先走。
+ */
+const CONCEPT = new Set(['自尊', '认真', '上心', '用心', '自傲', '孤芳自赏', '自鸣得意', '死磕', '较劲'])
+export const isConcept = (name) => CONCEPT.has(String(name || ''))
+export const CONCEPT_PENALTY = 0.10
+
+/**
+ * 基线附近的「没什么事」词。2026-11-21：引擎的平静点是 (0.5, 0.15, 0.5)，
+ * 可小库里判出来的「如常/寻常/踏实/平淡」都落在 s 0.56~0.70、d 0.42~0.50 一带——
+ * 平静着点个外卖，最近的反而是「松了口气」「起劲」「有成就感」。
+ * 这不是词错，是基线附近缺一层「今天没什么大事」的说法。靠近基线时给这一族一点优先，
+ * 让它先被挑走；离基线远了就不生效，不影响大起大落。
+ */
+const NEUTRAL = new Set([
+  '如常', '寻常', '平淡', '平静', '踏实', '还好', '没事', '安宁', '安稳', '舒坦', '安心', '懒散', '轻松', '放松',
+])
+export const isNeutral = (name) => NEUTRAL.has(String(name || ''))
+export const NEUTRAL_RADIUS = 0.20
+export const NEUTRAL_BONUS = 0.10
+const BASELINE = { s: 0.5, n: 0.15, d: 0.5 }
+
+/**
+ * 心疼/担心这一族（2026-11-21）。
+ * 判断层现在有一条「他在难受，不是无事发生」的通道：goal 往下（我跟着沉）、future 往上（我想接住他）。
+ * 这个签名出现时，词该落在「担心 / 心疼 / 挂心」上，而不是「憋着 / 懊恼 / 乡愁」——
+ * 后者是「我自己被压住」，不是「我在替他难受」。用判据签名做先验，不靠逐词补。
+ */
+const CONCERN = new Set(['担心', '心疼', '挂心', '担忧', '揪心'])
+export const isConcern = (name) => CONCERN.has(String(name || ''))
+export const CONCERN_BONUS = 0.18
+
+/** 词的受力方向：补我的 / 伤我的。用判据 goal 的正负做闸，别让情绪词拿反。 */
+// 十四族那层 2026-11-21 全删，方向闸也建在族上，一起下了。
+
+/** 把判断层和帧的写法统一成一个格子；说不清就给「无·无」。
+ *  2026-11-20 查到两条判据字段名不一样：
+ *    model 判的 → judgment.by     （me / other / world）
+ *    rules 判的 → judgment.agency （self / other）
+ *  两个都认，不然一半的帧读不到。 */
+export function slotOf(judgment, frame) {
+  const j = judgment || {}
+  const f = frame || {}
+  const rawBy = j.by !== undefined ? j.by : (j.agency !== undefined ? j.agency : '')
+  const by = BY_MAP[String(rawBy).trim()] || null
+  // 「冲谁」判断层给（j.to）就用它；没给才退回帧的 target。
+  // 2026-11-21：frame.target 是「这句话冲谁说」，不是「这份情绪冲谁」——日常一句「我看那家不错」
+  // 会被判成 target=other，词就落到「暖心/熨帖」那一格。判断层直接给 to 以后，日常多半是 none。
+  const judgeTo = j.to
+  const hasJudgeTo = judgeTo !== undefined && judgeTo !== null && String(judgeTo).trim() !== ''
+  const rawTo = hasJudgeTo ? judgeTo : (f.target || '')
+  let to = TO_ALIAS[String(rawTo).trim()] || TARGET_MAP[String(rawTo).trim()] || null
+  if (!by || !to) return ['无', '无']
+  // 旧的兜底规则只在「冲谁」还是从 frame.target 猜的时候用：
+  // 事情是我做的（by=我），情绪却冲对方——我惹的错，情绪不会泼给对方。
+  // 判断层明说了 to 就尊重它（「我冲他发火」是有的）。
+  if (!hasJudgeTo && by === '我' && to === '冲对方') to = '无'
+  return [by, to]
+}
+
+/** 词对某格的典型度：标注差几个维度就降几档。永远 > 0。 */
+export function typicalityOf(name, by, to) {
+  const a = GRID_ANNOT[name]
+  if (!a) return 0.1
+  const [bys, tos] = a
+  let best = 0
+  for (const wb of bys) for (const wt of tos) {
+    const gap = (wb === by ? 0 : 1) + (wt === to ? 0 : 1)
+    const s = gap === 0 ? 1 : gap === 1 ? 0.6 : gap === 2 ? 0.3 : 0.1
+    if (s > best) best = s
+  }
+  return best
+}
+
+/** 位置偏离中点有多远，当作当下的情绪强度 0~1
+ *  2026-11-21 修正：n（觉）的静息水平是 0.15，不是 0.5。原来按 |n-0.5| 算，
+ *  平常的 n=0.19 会被算成「偏离 0.31」，强度虚高到 0.49——于是「轻」的字
+ *  （高兴/暖心）在浓淡上吃亏，全被「中」的字（敬意/亲切/安慰）压住。
+ *  「跑通了」挑出「敬意」就是这么来的：距离最近的是「高兴」，但浓淡分被压掉了 0.28。 */
+export function intensityOf(pos) {
+  const p = pos || {}
+  const s = Number(p.s), n = Number(p.n), d = Number(p.d)
+  if (![s, n, d].every(Number.isFinite)) return 0.5
+  const raw = (Math.abs(s - 0.5) + Math.abs(n - 0.15) + Math.abs(d - 0.5)) / 1.5
+  return Math.max(0, Math.min(1, raw))
+}
+
+/** 浓淡对不对得上：词自己的档位 vs 当下强度 */
+export function levelFitOf(name, intensity) {
+  const a = GRID_ANNOT[name]
+  const lv = a ? GRID_LEVEL[a[2]] ?? 0.5 : 0.5
+  return 1 - Math.min(1, Math.abs(lv - intensity))
+}
+
+/** 最近的片（按片心三维距离） */
+export function nearestCell(pos) {
+  const p = { s: Number(pos?.s), n: Number(pos?.n), d: Number(pos?.d) }
+  if (![p.s, p.n, p.d].every(Number.isFinite)) return null
+  let best = 0, bd = Infinity
+  for (let i = 0; i < GRID_CELLS.length; i++) {
+    const dd = dist3(p, GRID_CELLS[i])
+    if (dd < bd) { bd = dd; best = i }
+  }
+  return { index: best, cell: GRID_CELLS[best], dist: bd }
+}
+
+/** 最近的几片（按片心三维距离，升序） */
+export function nearestCells(pos, k = 3) {
+  const p = { s: Number(pos?.s), n: Number(pos?.n), d: Number(pos?.d) }
+  if (![p.s, p.n, p.d].every(Number.isFinite)) return []
+  return GRID_CELLS.map((c, i) => ({ index: i, cell: c, dist: dist3(p, c) }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, Math.max(1, k))
+}
+
+/**
+ * 主函数：给位置和判断，挑词。
+ * 返回 [{ name, score, typical, level, slot, cellIndex }]，按分数从高到低。
+ *
+ * 2026-11-21 改成「先判据后几何」（原来先按片心距离选片、再在片里按格筛）：
+ *   原来那套在位置偏一点的时候会整片选错——「我搞砸了」落进「轻视 / 厌倦」那一片，
+ *   因为在 (0.48, 0.28, 0.30) 附近几何最近的就是那一片，可那一格的词根本不该出现在这里。
+ *   判据（谁做的 × 冲谁）比几何聚类更可靠，所以先按典型度筛出「这一格该有的词」，
+ *   再在这批词里按离当前位置的远近挑。片只在兜底时才用。
+ */
+export function gridDistribution(pos, judgment, opt = {}) {
+  const limit = Math.max(1, Math.min(8, Number(opt.limit) || 5))
+  const near = nearestCell(pos)
+  if (!near) return []
+  const [by, to] = slotOf(judgment, opt.frame)
+  const intensity = intensityOf(pos)
+  const wT = Number.isFinite(Number(opt.typicalWeight)) ? Number(opt.typicalWeight) : 0.27
+  const wC = Number.isFinite(Number(opt.cellWeight)) ? Number(opt.cellWeight) : 0.06
+  const wL = 0.18
+  // 2026-11-21：主人问「位置近是不是我自己发明的」——是。定稿里位置只到「片」，
+  // 格内按典型度+浓淡；但我按定稿试过，A/F/K 立刻退化成「松了口气 / 愧恨 / 死磕」，
+  // 说明现在的典型度表还撑不起「片内只按典型度」。先恢复混合权重，典型度修好再摘掉位置。
+  const wD = Math.max(0, 1 - wT - wC - wL)
+  const cellOf = (name) => WORD_CELL.get(name) === near.index
+  // 这一段里有没有真的先掉下去过：安慰/缓过来这一族只在「先悬着、后来落地」时成立。
+  const peakS = Number(opt.state && opt.state.peak ? opt.state.peak.s : NaN)
+  const canRelief = Number.isFinite(peakS) && peakS <= -0.10
+  const nearBaseline = dist3(pos, BASELINE) < NEUTRAL_RADIUS
+  // 习惯化：同一个词刚用过就降一点。不是不许重复，是别把同一个词钉在十句不相干的话上。
+  // 习惯化反过来：状态几乎没动时，同一个词应该有黏性——人不换着近义词抽签。
+  // 2026-11-21：上一版做成「刚用过就扣分」，结果 70 句换 70 个词（maxRun=1）。
+  // 现在改成：状态没动（<0.06）就加一点黏性；状态大变（>0.12）才轻轻推开上一个词。
+  const recent = Array.isArray(opt.state && opt.state.recent) ? opt.state.recent.slice(-5) : []
+  const prevLabel = recent.length ? recent[recent.length - 1] : ''
+  const last = opt.state && opt.state.last ? opt.state.last : null
+  // 惯性只看慢轴（s 现状、d 奔头）：n 是意外尖峰，几十分钟就落，拿它判「状态动了没」
+  // 会让每一次小惊讶都把上一个词推开——评审说 11 段里 10 段因此每句必换。
+  const moved = last ? Math.abs(pos.s - last.s) + 0.5 * Math.abs(pos.d - last.d) : 9
+  const sticky = (name) => (prevLabel && name === prevLabel && moved < 0.06 ? 1 : 0)
+  const stale = (name) => (prevLabel && name === prevLabel && moved >= 0.12 ? 1 : 0)
+  // 连着同一个词太多次（3 次起）就降一点：人可以一直担心，但不会连着五句都说「挂心」。
+  let trail = 0
+  for (let i = recent.length - 1; i >= 0 && recent[i] === prevLabel; i--) trail++
+  // 最近五轮里用过的次数也压一压：不光是连着重复，隔一句又回来也算「这个词最近被用滥了」。
+  const usedOf = (name) => recent.filter((x) => x === name).length
+  // 「他在难受，我想接住」的判据签名：goal 负 + future 正 + 不是我弄的。
+  const jj = judgment || {}
+  const jg = Number(jj.goal_delta ?? jj.goal_cong)
+  const jf = Number(jj.future_delta ?? jj.future)
+  const concern = Number.isFinite(jg) && Number.isFinite(jf) && jg < -0.03 && jf > 0.05 && String(jj.by || '').toLowerCase() !== 'me'
+  // 判断层圈的感受族：2026-11-21 整层删了（不参与打分）。
+
+  // 一、先按格筛：典型度 ≥ 0.6（标注里差一个值以内）才算「这一格该有的词」
+  const RADIUS = Number.isFinite(Number(opt.radius)) ? Number(opt.radius) : 0.75
+  let pool = LEXICON_V4
+    .map((w) => {
+      // 连着第 4 次同一个词：这一轮别再用它了（人不会连着四句说同一个词）。
+      if (w.name === prevLabel && trail >= 3) return null
+      // 第一层（定稿）：先落进最近的一片。片内权重高，片外的词只在片内凑不够时补位。
+      // 不是硬删——secondaryDistribution 要至少 5 个候选；但片外词要付 0.5 的「换片价」。
+      const inPiece = cellOf(w.name)
+      let typical = typicalityOf(w.name, by, to)
+      const con = concern && isConcern(w.name)
+      // 「他在难受」时，担心/心疼这一族即使判据只差一档，也让它进候选——
+      // 否则会被「憋着 / 懊恼」这些「我自己被压住」的词挤掉。
+      if (typical < 0.6 && !con) return null
+      if (con && typical < 0.6) typical = 0.6
+      // 「被点破 / 被说中」得真有人开口点我；world 弄出来的事（端口冲突）不算。
+      if (/^被(点破|说中|看穿|戳到)/.test(w.name) && String(jj.by || '') !== 'other') return null
+      // 「消了气」得先真有过气；被吓着、被晾着之后没有气可消。
+      if (w.name === '消了气' && !recent.some((x) => /恼|气|怨|烦|火/.test(x))) return null
+      const w2 = w
+      if (Math.abs(pos.s - 0.5) > 0.08 && Math.abs(w2.s - 0.5) > 0.12 && Math.sign(w2.s - 0.5) !== Math.sign(pos.s - 0.5)) return null
+      const dist = Math.sqrt((pos.s - w.s) ** 2 + (pos.n - w.n) ** 2 + (pos.d - w.d) ** 2)
+      const closeness = Math.max(0, 1 - dist / RADIUS)
+      const level = levelFitOf(w.name, intensity)
+      return {
+        name: w.name, typical, level, dist,
+        // 2026-11-21 第三版：格是「哪些词允许出现」，片是「现在离哪一族近」，位置和浓淡在族内定词。
+        // 只按格+位置挑，两个不相干的词只要坐标近就会撞（「你根本不懂」挑出「困惑」，
+        // 它和「委屈」在同一片区域、判据也过）；把最近一片加回来（设计里的第一层「片」本来就没参与打分）。
+        cell: cellOf(w.name) ? 1 : 0,
+        score: Math.round(((wT * typical + wD * closeness + wL * level + wC * (cellOf(w.name) ? 1 : 0))
+          - (isLiterary(w.name) ? LITERARY_PENALTY : 0)
+          - (isConcept(w.name) ? CONCEPT_PENALTY : 0)
+          // 「重」字（悲恸/恐怖/绝望）在强度不到 0.6 时降一档：大事才用重字，别拿重字写小情绪。
+          - (GRID_LEVEL[GRID_ANNOT[w.name]?.[2]] >= 0.9 && intensity < 0.6 ? 0.16 : 0)
+          - (w.name === prevLabel && trail >= 2 ? Math.min(0.40, 0.15 * (trail - 1)) : 0)
+          - Math.min(0.30, 0.10 * usedOf(w.name))
+          - (isRelief(w.name) && !canRelief ? RELIEF_PENALTY : 0)
+          + (nearBaseline && !concern && isNeutral(w.name) ? NEUTRAL_BONUS : 0)
+          + 0.10 * sticky(w.name)
+          - 0.06 * stale(w.name)
+          + (concern && isConcern(w.name) ? CONCERN_BONUS : 0)) * 10000) / 10000,
+        slot: `${by}·${to}`, cellIndex: near.index,
+      }
+    })
+    .filter(Boolean)
+
+  // 状态粗格没变（s/d 各差不到 0.05，忽略 n 的尖峰）就沿用一个词，最多三连。
+  const bin = `${Math.round(pos.s * 10)}-${Math.round(pos.d * 10)}`
+  const sameBin = opt.state && opt.state.bin === bin
+  const prevInPool = pool.find((x) => x.name === prevLabel)
+  if (sameBin && prevInPool && trail < 3) {
+    return [prevInPool, ...pool.filter((x) => x !== prevInPool)].slice(0, limit)
+  }
+
+  // 二、这一片里这一格没词（典型度 0.6 的一个都没有），才去最近几片里按典型度找。
+  if (pool.length < 1) {
+    const seen = new Set()
+    for (const ci of nearestCells(pos, Number(opt.fallbackCells) || 4)) {
+      for (const name of ci.cell.words) {
+        if (seen.has(name)) continue
+        seen.add(name)
+        const typical = typicalityOf(name, by, to)
+        if (typical < 0.6 && !isConcern(name)) continue
+        pool.push({
+          name, typical, level: levelFitOf(name, intensity), dist: 0,
+          score: Math.round((wT * typical + wL * levelFitOf(name, intensity)) * 10000) / 10000,
+          slot: `${by}·${to}`, cellIndex: ci.index,
+        })
+      }
+      if (pool.length) break
+    }
+  }
+  // 三、全是怪词（这一格彻底没词）才退回片内原路
+  if (!pool.length) {
+    pool = near.cell.words.map((name) => {
+      const typical = typicalityOf(name, by, to)
+      const level = levelFitOf(name, intensity)
+      return { name, typical, level, dist: 0, score: Math.round((typical * wT + level * wL) * 10000) / 10000, slot: `${by}·${to}`, cellIndex: near.index }
+    })
+  }
+
+  pool.sort((a, b) => b.score - a.score || b.typical - a.typical || a.dist - b.dist)
+  // 滞回（2026-11-21）：状态没跨过一档，就别每句换一个近义词。
+  // 2026-11-21 晚：窗口放宽到 0.30 / 0.08——评审说 63 行里只有 1 次连续重复，
+  // 「每句都从零想一遍自己是什么心情」，形对气不连。情绪有惯性，没大动就沿用。
+  if (prevLabel && pool.length > 1) {
+    const top = pool[0]
+    const kept = pool.find((x) => x.name === prevLabel)
+    if (kept && kept !== top && moved < 0.30 && kept.score >= top.score - 0.08) {
+      pool = [kept, ...pool.filter((x) => x !== kept)]
+    }
+  }
+  return opt.keepAll ? pool : pool.slice(0, limit)
+}

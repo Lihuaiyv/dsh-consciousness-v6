@@ -16,6 +16,7 @@ import { askAboutConflict } from './conflict_ask.js'
 import { dropPendingByReason } from './proactive.js'
 import { maskPositive } from './negation.js'
 import { feelsByIds } from './feel.js'
+import { recallEvents } from './event_recall.js'
 export { normalizeTerms }
 
 /**
@@ -770,6 +771,21 @@ function withFragmentFallback(db, aid, query, res, k, opt = {}) {
       const decay = 1 / (1 + (Number.isFinite(ageH) ? ageH : 0) / 168)
       const score = 0.35 + 0.45 * Math.max(0, Math.min(1, norm)) * decay
       add.push({ id: 'frag_' + String(r.id).replace(/^frag_/, ''), text: t.slice(0, 160), type: 'fragment', source: 'fragments', score: +score.toFixed(3), created_at: r.created_at })
+    }
+    // 处理层（D46 诊断）：episode/manual 里有一半不是原话，是「事」的讲述。
+    // 事件就是这层沉淀——开了就让它也来参选，补原话补不回的那一半。
+    if (String(getParam(db, aid, 'memory.event.fallback') || '') === 'on') {
+      try {
+        const ev = recallEvents(db, aid, q, { limit: 3 })
+        for (const it of (ev.items || [])) {
+          const text = String(it.title || '') + '：' + String(it.story || '').slice(0, 80)
+          if (!text.trim()) continue
+          const head = text.slice(0, 60)
+          if (seen.has(head)) continue
+          seen.add(head)
+          add.push({ id: 'cev_' + it.id, text: text.slice(0, 180), type: 'event', source: 'events', score: 0.55 })
+        }
+      } catch { /* 事件库没有也不影响 */ }
     }
     if (!add.length) return res
     // 不是「凑数」，是**参选**：原话命中了就有资格挤进前 k；分数给 0.55（高于低分旧记忆，低于强相关）。

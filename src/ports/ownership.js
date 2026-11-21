@@ -20,7 +20,7 @@ export const WRITES = Object.freeze({
   timeline: ['memory_timeline', 'memory_items', 'flags'],
   // 记忆汇流：只读复用上面各域，自己只写「现场留底 + 这次想起」这四张。
   confluence: ['state_scene', 'scene_archive', 'confluence_log', 'revisit'],
-  layers: ['fragments', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor'],
+  layers: ['fragments', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_fts', 'retrieval_log', 'consolidation_log', 'reflect_cursor', 'affair_rows'],
   persona: ['persona', 'relations', 'preferences', 'taboos'],
   // 拔河：拉力池和证据账。性格轴的值仍写在 persona 里，不在这里。
   rope: ['axis_rope', 'axis_evidence'],
@@ -55,7 +55,7 @@ export const WRITES = Object.freeze({
   // 但只许在本名单里——不是「想写哪张写哪张」。真正的进一步拆分要等把导入/导出/清库
   // 的代码抽成独立文件，那之前先按整域例外登记。
   ops: ['memory_items', 'memory_timeline', 'proactive', 'chat_turns', 'fact_fts', 'open_loops', 'raw_fts', 'rule_artifacts', 'condition_state', 'fact_archive', 'memory_links'],
-  host: ['memory_timeline', 'proactive', 'chat_turns', 'diaries', 'metric_samples', 'proposals', 'relations', 'rule_versions', 'browse_items'],
+  host: ['memory_timeline', 'proactive', 'chat_turns', 'diaries', 'metric_samples', 'proposals', 'relations', 'rule_versions', 'browse_items', 'hot_events', 'open_loops'],
 })
 
 export const SHARED = Object.freeze([
@@ -299,7 +299,7 @@ export const OWNERSHIP = {
     // modules/diary.js：日记原来是这层里的散件，立成零件后文件仍在 layers 名下（写 diaries / diary_pending）
     // modules/episode_fields.js：纪要的窄写口（戳心度），日记只调它，episodes 仍只有归档一个写手
     files: ['modules/archive.js', 'modules/tiers.js', 'modules/temps.js', 'modules/buffer.js', 'modules/retrieve.js', 'modules/pack.js', 'modules/retrieval_log.js', 'modules/nightly.js', 'modules/vault.js', 'modules/consolidate.js', 'modules/diary.js', 'modules/episode_fields.js'],
-    tables: ['fragments', 'raw_fts', 'episodes', 'diaries', 'diary_pending', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
+    tables: ['fragments', 'raw_fts', 'episodes', 'affair_rows', 'diaries', 'diary_pending', 'fact_archive', 'fact_fts', 'retrieval_log', 'consolidation_log', 'memory_items', 'memory_fts', 'affect_state', 'flags', 'chat_turns',
       // 累计重要性 → 反思的游标（consolidate.js 读写）
       'reflect_cursor',
       // 只读：写日记时快照状态、仓库统计体量、注入用量
@@ -308,6 +308,9 @@ export const OWNERSHIP = {
       'affect_samples', 'affect_feel', 'affect_episodes',
       // 只读：检索时的实体扩散（entities）与同实体一跳（memory_links）
       'entities', 'memory_links',
+      // 只读：锚点名额冷却要看「近 N 小时谁被名额拉过」。写手仍是 surfacing，这里只读。
+      // 见 docs/功能/1-记忆-读与联想/计划-锚点名额冷却-2026-11-15.md
+      'surfaced_items',
       // 向量通道：检索读已存向量
       'memory_vec'],
   },
@@ -358,6 +361,7 @@ export const OWNERSHIP = {
     tables: [
       'changes', 'rule_versions', 'metric_samples', 'conflicts', 'proposals',
       'events', 'agents', 'flags', 'bindings', 'chat_turns', 'proactive', 'proactive_stats', 'proactive_decisions',
+      'hot_events', 'surface_queue',
       'affect_episodes', 'memory_items', 'memory_fts', 'sqlite_master',
       // 全量导出 / 导入清单
       'fact_archive', 'fact_fts', 'fragments', 'episodes', 'diaries', 'memory_timeline',
