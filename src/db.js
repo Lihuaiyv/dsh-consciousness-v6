@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ensureSangguanSchema } from './modules/sangguan/schema.js'
+import { RECOVERED_TABLES, RECOVERED_REST } from './schema_recovered.js'
 
 const SCHEMA = `
 PRAGMA journal_mode=WAL;
@@ -752,6 +753,11 @@ export function openDb(file) {
   db.exec(EXT)
   db.exec(REL)
   db.exec(ACTION)
+  /* 2026-11-22：真库里有几张表不在主 schema 里（affair_rows / live_events / canvas_doc /
+     change_reasons），新库靠这份从真库导出的补丁建出来；已有的表 CREATE 是空操作，
+     缺列的索引/触发器单条失败就跳，不拖死开库。改主 schema 时两边一起改。 */
+  for (const s of RECOVERED_TABLES) { try { db.exec(s) } catch { /* 单表失败不拖死开库 */ } }
+  for (const s of RECOVERED_REST) { try { db.exec(s) } catch { /* 缺列的索引/触发器跳过 */ } }
   // 老库改名后补三列；新库建表时已有，这里是空操作。
   try { db.exec("ALTER TABLE fragments ADD COLUMN form TEXT NOT NULL DEFAULT 'text'") } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE fragments ADD COLUMN snapshot TEXT') } catch { /* 已存在 */ }
@@ -791,6 +797,10 @@ export function openDb(file) {
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_edges_to ON event_edges(agent_id, to_id, status)') } catch { /* 已存在 */ }
   // 2026-11-19：件带会话列——同一天几条会话并行，读口要能按会话分开（只加列，不动 id）
   try { db.exec('ALTER TABLE events_v2 ADD COLUMN session_id TEXT') } catch { /* 已存在或表还没建 */ }
+  // 2026-11-22：真库那张 events_v2 是老版导出的，这几列它没有——不补上，写入器会静默失败。
+  for (const c of ['thread TEXT', 'kind TEXT', 'edge TEXT', 'edge_why TEXT']) {
+    try { db.exec(`ALTER TABLE events_v2 ADD COLUMN ${c}`) } catch { /* 已存在或表还没建 */ }
+  }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_raw_session ON fragments(session_id, seq)') } catch { /* 老库异常不影响启动 */ }
   try { db.exec('ALTER TABLE affect_events ADD COLUMN formula TEXT') } catch { /* 已存在 */ }
   // 复现：同一段情绪被后续消息重新点亮了几次
