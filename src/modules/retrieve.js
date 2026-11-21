@@ -565,29 +565,33 @@ export function searchArchive(db, aid, query, opt = {}) {
 export function importanceAnchors(db, aid, opt = {}) {
   const limit = Math.max(1, Math.min(5, Number(opt.limit) || 2))
   const floor = Math.max(0, Math.min(1, Number(opt.floor ?? 0.7)))
+  // 2026-11-15：名额冷却。同一条记忆在窗口内被名额拉过一次，就不再参与挑选。
+  // 钉住的（locked）不豁免——钉住的意思是「不打入冷宫」，不是「每轮都坐这儿」。
+  // 0 = 关掉（回到旧行为）。见 docs/功能/1-记忆-读与联想/计划-锚点名额冷却-2026-11-15.md
+  const cooldownH = Math.max(0, Math.min(24 * 30, Number(opt.cooldownHours) || 0))
   // 候选池：名额的 3 倍（至少 4 条），够轮、又不至于把冷门货翻上来
   const pool = Math.max(limit, Math.min(12, limit * 3, limit + 6))
   try {
-    const cooldownHours = Math.max(0, Math.min(24 * 30, Number(opt.cooldownHours) || 0))
-    const rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_hit_at,heat,last_decay_at,stability,valence,importance,source,confidence
+    let rows = db.prepare(`SELECT id,text,type,band,mark,created_at,last_hit_at,heat,last_decay_at,stability,valence,importance,source,confidence
       FROM memory_items WHERE agent_id=? AND status='active' AND invalid_at IS NULL
         AND importance>=? AND (mark='locked' OR type IN ('fact','conflict'))
       ORDER BY (mark='locked') DESC, importance DESC, heat DESC, created_at DESC LIMIT ?`)
       .all(aid, floor, pool)
       .map((r) => ({ partition: 'T1', via: 'anchor', e: 0, ...r, text: String(r.text || '') }))
-    // 2026-11-15 名额冷却：窗口内已经被拉过名额的，这一轮不再占；全在冷却里就返回空。
-    let pool2 = rows
-    if (cooldownHours > 0) {
+    if (cooldownH > 0 && rows.length) {
       try {
-        const since = new Date(Date.now() - cooldownHours * 3600000).toISOString()
-        const seen = new Set(db.prepare("SELECT memory_id FROM surfaced_items WHERE agent_id=? AND kind='anchor' AND at>=?").all(aid, since).map((r) => r.memory_id))
-        pool2 = rows.filter((r) => !seen.has(r.id))
-      } catch { /* 没有 surfaced_items 就当没冷却 */ }
+        const since = new Date(Date.now() - cooldownH * 3600000).toISOString()
+        const seen = new Set(db.prepare(`SELECT DISTINCT memory_id FROM surfaced_items
+          WHERE agent_id=? AND kind='anchor' AND memory_id IS NOT NULL AND at>=?`).all(aid, since)
+          .map((r) => String(r.memory_id)))
+        if (seen.size) rows = rows.filter((r) => !seen.has(String(r.id)))
+      } catch { /* 观测表不在就退回旧行为 */ }
     }
-    if (!pool2.length) return []
-    if (pool2.length <= limit) return pool2
+    // 全在冷却里 → 这一轮不占位子，别退回老几条
+    if (!rows.length) return []
+    if (rows.length <= limit) return rows
     const stamp = (r) => Date.parse(r.last_hit_at || r.created_at || '') || 0
-    const [head, ...rest] = pool2
+    const [head, ...rest] = rows
     rest.sort((a, b) => (stamp(a) - stamp(b)) || String(a.id).localeCompare(String(b.id)))
     return [head, ...rest].slice(0, limit)
   } catch { return [] }
@@ -949,7 +953,7 @@ export function retrieve(db, aid, query, opt = {}) {
     const na = on ? Math.max(0, Math.min(3, Number(opt.anchor == null ? 1 : opt.anchor))) : 0
     const nf = on ? Math.max(0, Math.min(3, Number(opt.fresh == null ? 1 : opt.fresh))) : 0
     const extra = []
-    if (na) extra.push(...importanceAnchors(db, aid, { limit: na + 1, floor: opt.anchorFloor }))
+    if (na) extra.push(...importanceAnchors(db, aid, { limit: na + 1, floor: opt.anchorFloor, cooldownHours: opt.anchorCooldown }))
     if (nf) extra.push(...freshFacts(db, aid, { limit: nf + 1, hours: opt.freshHours }))
     // 她自己的事：空话轮也该有一条「我自己的」，不然「没问你就想不起来」永远是空话。
     const wantSelf0 = on ? Math.max(0, Math.min(2, Number(opt.selfQuota == null ? 1 : opt.selfQuota))) : 0
@@ -1046,7 +1050,7 @@ export function retrieve(db, aid, query, opt = {}) {
   // 补配额位：锚点与今日新近。它们不过证据门，所以放在相对门之后才不会被筛掉。
   if (floatOn && (wantAnchor || wantFresh)) {
     let extra = []
-    if (wantAnchor) extra.push(...importanceAnchors(db, aid, { limit: wantAnchor + 1, floor: opt.anchorFloor }))
+    if (wantAnchor) extra.push(...importanceAnchors(db, aid, { limit: wantAnchor + 1, floor: opt.anchorFloor, cooldownHours: opt.anchorCooldown }))
     if (wantFresh) extra.push(...freshFacts(db, aid, { limit: wantFresh + 1, hours: opt.freshHours }))
     // 遗忘阈值对配额位同样生效。配额是「补漏」，不是「把已经忘掉的重新捞回来」的后门：
     // 阈值调到 0.8 时，一条 R 已经归零的旧记忆不该借 via='fresh' 回来。

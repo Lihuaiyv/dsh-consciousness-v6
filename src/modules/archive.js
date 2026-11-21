@@ -16,7 +16,7 @@ import crypto from 'node:crypto'
 import { now, localDay, localDayBounds } from '../db.js'
 import { feelIdIn, feelIdsOnDay } from './feel.js'
 import { nid } from '../kernel.js'
-import { cleanLine } from '../text.js'
+import { cleanLine, cleanUserText } from '../text.js'
 import { normalizeSource, toDbRole, normalizeForm } from './fragment_vocab.js'
 import { rebuildMemoryFts as rebuildMemoryFtsRows } from './memory_fields.js'
 import {  } from './sangguan/vweights.js'
@@ -38,7 +38,9 @@ const STOP = new Set([
   '还有', '只是', '以及', '对于', '关于', '通过', '等等', '之类', '而已', '好的',
 ])
 
-function dayOf(iso) { return String(iso || now()).slice(0, 10) }
+// 2026-11-17：day 一律按本地日。以前是 String(iso).slice(0,10)，那是 UTC——北京时间凌晨 0~8 点的句子
+// 会被登记到「昨天」，切事又按本地日读，两套日界差 8 小时，章就盖在了进度前面。
+function dayOf(iso) { return localDay(new Date(iso || now())) }
 
 function grams(text, n = 2) {
   const out = new Map()
@@ -93,6 +95,14 @@ export function appendTurn(db, aid, input = {}) {
   const sessionId = String(input.sessionId || input.session_id || 'local')
   const text = String(input.text || '')
   if (!text.trim()) return { id: null, seq: 0, duplicate: false }
+  // 2026-11-19 主人定：子代理会话只做审计——碎片挂到 `<agent>#sub` 名下。
+  // 这样所有按 agent 读的读口（切事 / 检索 / 日记 / 汇流 / feel）天然看不到，
+  // 收口只在写口这一处，不用每个读口各自加条件。审计时按 `<agent>#sub` 查得到。
+  // 2026-11-19：优先用调用方给的会话类型（宿主 subagents 判过）；没给才按纯 uuid 格式兜底。
+  const isSub = input.sessionKind
+    ? String(input.sessionKind) === 'sub'
+    : /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+  const owner = isSub ? String(aid) + '#sub' : aid
   const at = String(input.at || now())
   const turnId = input.turnId || null
   // 2026-11-12：来源和形式按词表走（fragment_vocab）。
@@ -111,7 +121,7 @@ export function appendTurn(db, aid, input = {}) {
   const antecedents = input.antecedents && input.antecedents.length
     ? (typeof input.antecedents === 'string' ? input.antecedents : JSON.stringify(input.antecedents))
     : null
-  const fingerprint = [aid, sessionId, role, turnId || '', text, turnId ? '' : at].join('\u0001')
+  const fingerprint = [owner, sessionId, role, turnId || '', text, turnId ? '' : at].join('\u0001')
   const id = 'raw_' + crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 20)
   if (turnId) {
     // 有轮次号：同一轮同一角色只算一条。重放同一轮时轮次号不变，id 也稳。
@@ -130,10 +140,26 @@ export function appendTurn(db, aid, input = {}) {
   const old = db.prepare('SELECT id,seq FROM fragments WHERE id=?').get(id)
   if (old) return { id, seq: Number(old.seq), duplicate: true }
   const seq = Number(db.prepare('SELECT COALESCE(MAX(seq),0)+1 n FROM fragments WHERE session_id=?').get(sessionId).n)
+  // 2026-11-19 主人定：子代理会话照进碎片库（审计用），标记来源；切事读口按会话来源跳过。
+  const isSubSession = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+  let metaOut = input.meta ? (typeof input.meta === 'string' ? input.meta : JSON.stringify(input.meta)) : null
+  if (isSubSession) {
+    let m = {}
+    try { m = input.meta && typeof input.meta === 'object' ? { ...input.meta } : {} } catch { m = {} }
+    m.sessionKind = 'sub'
+    // 2026-11-19 父链接：子代理碎片记下「它从哪一轮派出去」——主会话当时最近一条用户话。
+    // 有了它，审计/回看能顺着父轮找到子代理，不用猜。
+    try {
+      const p = db.prepare("SELECT turn_id, session_id FROM fragments WHERE agent_id=? AND role='user' AND created_at<=? ORDER BY created_at DESC LIMIT 1").get(aid, at)
+      if (p && p.turn_id) m.parentTurn = String(p.turn_id)
+      if (p && p.session_id) m.parentSession = String(p.session_id)
+    } catch { /* 找不到父轮就空着，不编 */ }
+    metaOut = JSON.stringify(m)
+  }
   db.prepare(`INSERT INTO fragments(id,agent_id,session_id,turn_id,seq,role,text,tool,meta,created_at,day,form,snapshot,antecedents)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    id, aid, sessionId, turnId, seq, role, text,
-    input.tool || null, input.meta ? JSON.stringify(input.meta) : null, at, dayOf(at),
+    id, owner, sessionId, turnId, seq, role, text,
+    input.tool || null, metaOut, at, dayOf(at),
     form, snapshot, antecedents,
   )
   try { db.prepare('INSERT INTO raw_fts(id,text) VALUES(?,?)').run(id, text) } catch { /* 索引失败不挡原文 */ }
@@ -424,23 +450,30 @@ export function buildEpisode(db, aid, opt = {}) {
   const rows = db.prepare(`SELECT * FROM fragments WHERE ${where.join(' AND ')} ORDER BY created_at, seq`).all(...args)
   if (!rows.length) return null
 
-  const users = rows.filter((r) => r.role === 'user').map((r) => r.text)
+  // 2026-11-18（D83）：宿主派子代理的任务书、配置变更通报不是主人说的话。
+  // 写口（text.js 的 cleanUserText）已经堵了新料，但库里还躺着历史行——纪要直接从
+  // 碎片读，一读就把任务书当成「你对我说」的起句。这里用同一个清洗口再过一遍：
+  // 纯任务书整条变空，混着通报行的只留人话；筛完没有用户原话时，标题走「我那句话」兜底。
+  const users = rows
+    .filter((r) => r.role === 'user')
+    .map((r) => cleanUserText(r.text))
+    .filter(Boolean)
   const agents = rows.filter((r) => r.role !== 'user')
   const lastAgent = agents.length ? agents[agents.length - 1].text : ''
   /* 纪要里留我哪一句：挑整段里最长的那条回话，不是收尾那句。
      收尾常常只是「嗯，我在听」——那不是我在这段里说过的话，只是一个句号。 */
   const bestAgent = agents
     .map((r) => String(r.text || '').trim())
-    .filter((t) => t && !/^(Time sampled|Approval prompts|##|<|\{)/.test(t))
+    .filter((t) => t && !/^(Time sampled|Approval prompts|##|<|\{|\[)/.test(t))
     .sort((a, b) => b.length - a.length)[0] || ''
   // 优先挑一句真像「我在跟你说话」的；整段都在报参数时，退回最长那条的开头。
   const myLine = pickMyLine(agents) || (bestAgent ? trim(bestAgent, 180) : '')
   // meaningful 要先算出来：下面挑标题时会拿它兜底（早先写反了顺序，空标题时会直接抛错）
-  const meaningful = users.filter((t) => !/^(Time sampled|Approval prompts|##|<|\{)/.test(String(t).trim()))
+  const meaningful = users.filter((t) => !/^(Time sampled|Approval prompts|##|<|\{|\[)/.test(String(t).trim()))
   // 标题挑一句像人说的话：跳过运行时模板、系统注入和超长粘贴。
   const titleSrc = users.find((t) => {
     const s = String(t).trim()
-    return s.length >= 4 && s.length <= 40 && !/^(Time sampled|Approval prompts|##|\{|<)/.test(s)
+    return s.length >= 4 && s.length <= 40 && !/^(Time sampled|Approval prompts|##|\{|<|\[)/.test(s)
   }) || meaningful[0] || ''
   const title = trim(titleSrc, 24) || topicsOf(meaningful).slice(0, 2).join('·') || trim(lastAgent, 24) || '（无正文）'
   const open = meaningful

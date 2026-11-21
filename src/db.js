@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ensureSangguanSchema } from './modules/sangguan/schema.js'
-import { RECOVERED_TABLES, RECOVERED_REST } from './schema_recovered.js'
 
 const SCHEMA = `
 PRAGMA journal_mode=WAL;
@@ -272,7 +271,10 @@ CREATE TABLE IF NOT EXISTS fragments(
 CREATE VIRTUAL TABLE IF NOT EXISTS raw_fts USING fts5(id UNINDEXED, text, tokenize='trigram');
 
 -- ================= 事件层（2026-11-12 新增） =================
--- 设计见 docs/设计-事件库-最终版-2026-11-12.md
+-- **2026-11-17：已冻结。** 新的切事件走 events_v2（下面紧挨着那张表），
+-- 冻结期间 flags.events.cut.enabled=off，切事 worker 不跑、写入器 writeColdEvents 直接返回。
+-- cold_events / hot_events / event_edges 三张表只读不写，数据保留给读口和想头用。
+-- 设计见 docs/功能/2-记忆-写与切事/切事件-基石/基石-切事件-2026-11-17.md
 -- 冷库：夜里第一刀切出来的事。只追加，永不改；补切就追加新的，旧的一个字不动。
 CREATE TABLE IF NOT EXISTS cold_events(
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
@@ -286,6 +288,49 @@ CREATE TABLE IF NOT EXISTS cold_events(
   cut_rev INTEGER NOT NULL DEFAULT 1,   -- 这一段第几次切（补切递增）
   created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_cold_events_agent ON cold_events(agent_id, start_at);
+
+-- 事件库 v2（2026-11-17，ES-Mem 路线）：**影子表，第一版只写不读**。
+-- 唯一入口 docs/功能/2-记忆-写与切事/切事件-基石/基石-切事件-2026-11-17.md。
+-- 和老表完全隔离：不共用 id、不改 cold_events / hot_events / event_edges 一行；
+-- 旧切法已冻结（flags.events.cut.enabled=off），新写入器接上之前这张表一直是空的。
+-- 列的取舍按读处反推：boundary/boundary_kind 是检索锚（Level 1），title/summary 是 Level 2，
+-- 原文永远留在 fragments（Level 3），这里不存原文。
+CREATE TABLE IF NOT EXISTS events_v2(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  day TEXT NOT NULL,                              -- 本地日 YYYY-MM-DD（不是 UTC 的 day 列）
+  start_at TEXT NOT NULL, end_at TEXT NOT NULL,   -- UTC ISO，首末碎片时间
+  turn_ids TEXT NOT NULL,                         -- JSON 数组，来源碎片
+  session_id TEXT,                                -- 2026-11-19：件属于哪条会话线（一天几条会话并行，读口按它分开看）
+  boundary TEXT,                                  -- Level 1：从什么转到什么，一句话
+  boundary_kind TEXT,                             -- Stage 2 标签：Topic_Shift / Topic_Intro / Detail_Elaborate / Direct_Resp
+  boundary_conf REAL,                             -- 边界那句有多确定
+  thread TEXT,                                    -- 线索：这段里一直没变的那个目标/主题（≤14字）
+  kind TEXT,                                      -- 命运：变 / 成 / 卡 / 破（判定顺序见基石 §3.4）
+  edge TEXT,                                      -- 边界怎么断的：time / causal
+  edge_why TEXT,                                  -- causal 时写一句为什么断；time 时留空
+  title TEXT NOT NULL,                            -- 一句话，≤20 字
+  summary TEXT NOT NULL,                          -- Level 2
+  quotes TEXT,                                    -- JSON 数组，一字不差的原文
+  cues TEXT,                                      -- JSON 数组，抓手词
+  status TEXT,                                    -- 没过去 / 过去了：读口情绪乘子、想头加权都读它
+  mode TEXT,                                      -- work / daily
+  weight REAL NOT NULL DEFAULT 0.5,
+  quality TEXT NOT NULL DEFAULT 'model',          -- model / local / lexical：低质量件要能被过滤
+  confidence REAL NOT NULL DEFAULT 0.5,           -- Stage 2 的 p_eb；低置信不进台面
+  feel_id TEXT,                                   -- 情绪接缝：这件事当时的情绪（同 memory_items.feel_id 待遇，可空不可丢）
+  cut_rev INTEGER NOT NULL DEFAULT 1,
+  extra TEXT,                                     -- JSON：塞不进列的先放这里，别急着加列
+  created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_ev2_agent ON events_v2(agent_id, day, start_at);
+
+-- 事件有哪些碎片：权威索引（events_v2.turn_ids 只是副本，对账以这张为准）。
+-- 成员由代码按「边界之间的连续区间」填，不交给模型挑——这样才保证全覆盖、无重叠。
+CREATE TABLE IF NOT EXISTS event_members(
+  event_id TEXT NOT NULL, fragment_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL, day TEXT NOT NULL,
+  PRIMARY KEY (event_id, fragment_id));
+CREATE INDEX IF NOT EXISTS idx_evm_frag ON event_members(fragment_id);
+CREATE INDEX IF NOT EXISTS idx_evm_ev ON event_members(event_id);
 
 -- 热库：当前在用的那一版。可合并/拆分/改名/沉底，每变一次出新版，旧版 active=0 留档。
 CREATE TABLE IF NOT EXISTS hot_events(
@@ -304,6 +349,27 @@ CREATE TABLE IF NOT EXISTS hot_events(
   last_mention_at TEXT, last_surface_at TEXT, ticked_at TEXT,
   created_at TEXT NOT NULL, changed_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_hot_events_agent ON hot_events(agent_id, active, state);
+
+-- 大因果体 · 事件之间的边（2026-11-16 按 docs/功能/1-记忆-读与联想/思路-大因果体检索-2026-11-14.md §4.3 / §9.1 重做）。
+-- 红线：**只加边，绝不合并事件**。hot_events 一行不改；边只说明「这两件之间有什么」。
+-- 存的时候只有一条关系：pull（−1~+1，符号是方向，绝对值是凝聚度）+ direction + level + 证据 + 状态。
+-- kind 只是解释标签，不参与遍历——判的时候可以细，存的时候不按类型分表，不然越分越乱。
+CREATE TABLE IF NOT EXISTS event_edges(
+  id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+  from_id TEXT NOT NULL,                 -- hot_events.id
+  to_id TEXT NOT NULL,                   -- hot_events.id
+  kind TEXT NOT NULL,                    -- 解释标签：same_as/adjacent/continue/cause/enable/prevent/revise/resolve/contradict/bridge
+  direction TEXT NOT NULL DEFAULT 'forward',   -- forward / backward / both
+  pull REAL NOT NULL DEFAULT 0.5,        -- −1~+1：|pull| 凝聚度，符号是方向（负=否定/转折）
+  level INTEGER NOT NULL DEFAULT 0,      -- 0 事件 / 1 线·体 / 2 项目·阶段 / 3 人生·世界
+  confidence REAL NOT NULL DEFAULT 0.5,  -- 判的置信度；confirmed 要 ≥0.7
+  evidence TEXT,                         -- 一字不差的引文；抄不出就没有 confirmed
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'candidate',   -- candidate / confirmed / weak / rejected
+  resolution TEXT,                       -- 冲突的三种结局：sublated（合成第三件）/ suspended（悬着）/ invalidated（记错了才用）
+  judge TEXT,                            -- rule / local / main
+  valid_from TEXT, valid_to TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 
 -- T2 纪要层（温）：一次会话 / 一天的压缩，日记的原料。
 CREATE TABLE IF NOT EXISTS episodes(
@@ -686,9 +752,6 @@ export function openDb(file) {
   db.exec(EXT)
   db.exec(REL)
   db.exec(ACTION)
-// 2026-11-22：db.js 旧版丢了新表，靠真库导出的补丁 schema 补回来；表先建，其余逐条试。
-for (const s of RECOVERED_TABLES) { try { db.exec(s) } catch { /* 单表失败不拖死开库 */ } }
-for (const s of RECOVERED_REST) { try { db.exec(s) } catch { /* 缺列的索引/触发器跳过 */ } }
   // 老库改名后补三列；新库建表时已有，这里是空操作。
   try { db.exec("ALTER TABLE fragments ADD COLUMN form TEXT NOT NULL DEFAULT 'text'") } catch { /* 已存在 */ }
   try { db.exec('ALTER TABLE fragments ADD COLUMN snapshot TEXT') } catch { /* 已存在 */ }
@@ -701,6 +764,33 @@ for (const s of RECOVERED_REST) { try { db.exec(s) } catch { /* 缺列的索引/
   try { db.exec("ALTER TABLE hot_events ADD COLUMN quality TEXT NOT NULL DEFAULT 'model'") } catch { /* 已存在或表还没建 */ }
   // 想头推进要知道「上次推到哪儿」，不然关机一夜就不知道补多久。
   try { db.exec('ALTER TABLE hot_events ADD COLUMN ticked_at TEXT') } catch { /* 已存在 */ }
+  // 大因果体：老库补列（2026-11-16 按设计文档把「软链」改成一条带符号的关系 pull）。
+  for (const ddl of [
+    "ALTER TABLE event_edges ADD COLUMN direction TEXT NOT NULL DEFAULT 'forward'",
+    'ALTER TABLE event_edges ADD COLUMN pull REAL NOT NULL DEFAULT 0.5',
+    'ALTER TABLE event_edges ADD COLUMN level INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE event_edges ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5',
+    'ALTER TABLE event_edges ADD COLUMN reason TEXT',
+    'ALTER TABLE event_edges ADD COLUMN resolution TEXT',
+    "ALTER TABLE event_edges ADD COLUMN status TEXT NOT NULL DEFAULT 'candidate'",
+    'ALTER TABLE event_edges ADD COLUMN judge TEXT',
+    'ALTER TABLE event_edges ADD COLUMN valid_from TEXT',
+    'ALTER TABLE event_edges ADD COLUMN valid_to TEXT',
+    'ALTER TABLE event_edges ADD COLUMN updated_at TEXT',
+  ]) { try { db.exec(ddl) } catch { /* 已存在或表还没建 */ } }
+  // 上午那版按 kind 分边的实验数据：标 rejected 并且**封口**（valid_to 填上），不参与检索。
+  // 封口很重要：唯一索引只认 valid_to IS NULL 的活边，不封口会占着位置把新边挡掉。
+  // 判据用 judge IS NULL——上午那版没有 judge 列；新版边都写 judge='rule'。
+  try {
+    db.exec("UPDATE event_edges SET status='rejected', valid_to=COALESCE(valid_to, created_at), reason='旧版按 kind 分边的实验数据，2026-11-16 按设计文档重做' WHERE judge IS NULL AND status<>'rejected'")
+  } catch { /* 老表没这些列就跳过 */ }
+  // 老的唯一键换成「同一对同一类，只留一条活边」。
+  try { db.exec('DROP INDEX IF EXISTS idx_event_edges_uniq') } catch { /* 没有就算了 */ }
+  try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_event_edges ON event_edges(agent_id, from_id, to_id, kind) WHERE valid_to IS NULL') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_edges_from ON event_edges(agent_id, from_id, status)') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_edges_to ON event_edges(agent_id, to_id, status)') } catch { /* 已存在 */ }
+  // 2026-11-19：件带会话列——同一天几条会话并行，读口要能按会话分开（只加列，不动 id）
+  try { db.exec('ALTER TABLE events_v2 ADD COLUMN session_id TEXT') } catch { /* 已存在或表还没建 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_raw_session ON fragments(session_id, seq)') } catch { /* 老库异常不影响启动 */ }
   try { db.exec('ALTER TABLE affect_events ADD COLUMN formula TEXT') } catch { /* 已存在 */ }
   // 复现：同一段情绪被后续消息重新点亮了几次
@@ -731,6 +821,34 @@ for (const s of RECOVERED_REST) { try { db.exec(s) } catch { /* 缺列的索引/
     agent_id TEXT PRIMARY KEY, baseline REAL NOT NULL DEFAULT 0,
     slow REAL NOT NULL DEFAULT 0, fast REAL NOT NULL DEFAULT 0,
     total REAL NOT NULL DEFAULT 0, slow_at TEXT, fast_at TEXT);`)
+  /* 三递质引擎 v4 的影子账（2026-11-16）：只追加、只读来对账。
+     不参与任何线上判断——影子期旧路照跑，这张表只是「如果按 v4 算会是什么样」。
+     frame_json 存那一帧「事」；s/n/d 是三个递质；primary/secondary 是两层的分布。 */
+  db.exec(`CREATE TABLE IF NOT EXISTS affect_v4_shadow(
+    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+    turn_id TEXT, conversation_id TEXT,
+    at TEXT NOT NULL, frame_json TEXT NOT NULL,
+    s REAL, n REAL, d REAL,
+    label TEXT, primary_json TEXT, secondary_json TEXT,
+    confidence REAL, source TEXT NOT NULL DEFAULT 'rules',
+    latency_ms INTEGER, freeframe INTEGER NOT NULL DEFAULT 1,
+    rev INTEGER NOT NULL DEFAULT 1,
+    conf_primary REAL, label_tie INTEGER NOT NULL DEFAULT 0);`)
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_av4_agent_at ON affect_v4_shadow(agent_id, at DESC)') } catch { /* 老库异常不影响启动 */ }
+  // 判断层的「为什么」：跟判断一起存，回看能问「凭什么」。
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN judgment_json TEXT') } catch { /* 已存在 */ }
+  // 一级置信度与「并列」标记：label 在并列时给「说不清」，不按数组顺序硬塞一个角。
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN conf_primary REAL') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN label_tie INTEGER NOT NULL DEFAULT 0') } catch { /* 已存在 */ }
+  // 2026-11-19：把判断层的三个数从 judgment_json 里**再拆出一份列**，方便直接统计。
+  // 袋子（judgment_json）原样保留——why / from / meaning / dyn 只有袋子里有，情绪生成要读。
+  // 写法：同一次写两处，列的值从袋子里取，不另外算一遍，保证两边一致。老行留空。
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN goal_delta REAL') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN expect_delta REAL') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN future_delta REAL') } catch { /* 已存在 */ }
+  try { db.exec('ALTER TABLE affect_v4_shadow ADD COLUMN severity TEXT') } catch { /* 已存在 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_av4_agent_at2 ON affect_v4_shadow(agent_id, at DESC, expect_delta)') } catch { /* 老库异常不影响启动 */ }
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_av4_turn ON affect_v4_shadow(agent_id, turn_id)') } catch { /* 老库异常不影响启动 */ }
   /* 说话那一刻的感觉（第一人称，自己写的）。和 affect_events 是两回事：
      事件表是「你这句话把我推到哪」，这张是「我开口的时候是什么样」——
      以前只有前者，所以注入行永远慢半拍。 */

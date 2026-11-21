@@ -39,13 +39,17 @@ import { llmBudgetAllow, llmBudgetBump } from './modules/llm_budget.js'
 // 2026-11-13：工作模式（面板按钮）下的后台降载判断。日常模式读到的永远是 false。
 import { isWorkMode } from './modules/work_mode.js'
 import { writeChatTurns } from './modules/turn_write.js'
-
-// 2026-11-22：episode 记忆写入口已随 memory_switch 删除；这里留一个恒假桩，老调用点直接跳过。
-const episodeWriteEnabled = () => false
-
+import { workDigestEnabled } from './modules/memory_switch.js'
 // D1：非网页通道也要能「自己想起」——和网页共用事件联想与浮现记账。
 import { recallEvents, buildEventLine } from './modules/event_recall.js'
+// 大因果体读路径（2026-11-17）：种子之后看一眼这条线。开关事件 causal.inject 默认 off。
+import { readLine, intentOf } from './modules/event_causal.js'
 import { markSurfaced, markMentioned } from './modules/event_drift.js'
+import { collectCandidates, pickOne } from './modules/candidate_pool.js'
+import { unifiedReadOn, pickReadLine } from './modules/read_port.js'
+import { budgetOf as injectBudgetOf } from './modules/inject_budget.js'
+import { markLoopsFired } from './parts/loops/index.js'
+import { detectForgetIntent } from './modules/forget_intent.js'
 export { DRIVERS, DRIVER_IDS, driverFindings, applyDriverToDrive } from './modules/selfmod_drivers.js'
 export { affectLabels }
 import {
@@ -187,22 +191,106 @@ export function clampContextBlock(s, max) {
  */
 export function eventLineForTurn(db, aid, text, { channel = 'chat' } = {}) {
   try {
+    // P3：读口统一（flags.read.port.unified，默认 off）。开了就只从候选池挑一条；
+    // 旧的事件行原样保留在下面，删掉 flag 即回旧路。
+    if (unifiedReadOn(db, aid)) {
+      const p = pickReadLine(db, aid, { query: String(text || '') })
+      if (!p) return ''
+      try { event(db, aid, 'read.port.pick', { source: p.source, chars: p.line.length, channel }) } catch { /* 只记账 */ }
+      if (p.source === 'event') {
+        try { markSurfaced(db, p.id, { kind: 'cue' }) } catch { /* 记不上不影响 */ }
+        try { markMentioned(db, p.id) } catch { /* 同上 */ }
+      }
+      return p.line
+    }
     const hit = recallEvents(db, aid, String(text || ''), { limit: 1 })
     const one = hit && hit.ok && hit.items && hit.items.length ? hit.items[0] : null
     if (!one) return ''
     const budget = Number(getParam(db, aid, 'event.inject.budget')) || 400
     const built = buildEventLine(one, budget)
     if (!built.text) return ''
+    // 大因果体读路径（2026-11-17，按定稿 §6）：种子照旧，之后顺手看一眼它所在的那条线。
+    // 开关 event.causal.inject 默认 off——关着时这段一行都不跑，行为和以前完全一样。
+    let causalLine = ''
+    try {
+      if (String(getFlag(db, 'event.causal.inject') || 'off') === 'on') {
+        const intent = intentOf(String(text || ''))
+        const r = readLine(db, aid, one.id, { intent, budget: 200 })
+        if (r && r.text) {
+          causalLine = '\n' + r.text
+          try { event(db, aid, 'event.causal.inject', { id: one.id, chars: r.text.length, intent, channel }) } catch { /* 只记账 */ }
+        }
+      }
+    } catch { /* 线读不出来不影响事件行 */ }
     try { markSurfaced(db, one.id, { kind: 'cue' }) } catch { /* 记不上不影响提示词 */ }
     try { markMentioned(db, one.id) } catch { /* 同上 */ }
     try { event(db, aid, 'event.inject', { id: one.id, chars: built.chars, budget: built.budget, cut: built.cut, channel }) } catch { /* 同上 */ }
-    return built.text
+    return built.text + causalLine
+  } catch { return '' }
+}
+
+/**
+ * P3：把「从池里挑中的一条」渲染成一行（chat 和 web 共用这一处裁法/记账）。
+ */
+export function renderSelfRecall(db, aid, one, { channel = 'chat' } = {}) {
+  try {
+    if (!one) return ''
+    if (one.source === 'event') {
+      const hit = {
+        id: one.id, title: one.text, story: one.detail,
+        want: one.meta && one.meta.want, weight: one.meta && one.meta.weight, status: one.meta && one.meta.status,
+      }
+      const budget = injectBudgetOf(db, aid, 'event')
+      const built = buildEventLine(hit, budget)
+      if (!built.text) return ''
+      try { markSurfaced(db, one.id, { kind: 'cue' }) } catch { /* 记不上不影响提示词 */ }
+      try { markMentioned(db, one.id) } catch { /* 同上 */ }
+      try { event(db, aid, 'event.inject', { id: one.id, chars: built.chars, budget: built.budget, cut: built.cut, channel }) } catch { /* 同上 */ }
+      return built.text
+    }
+    if (one.source === 'pulse') {
+      const row = db.prepare('SELECT text FROM memory_items WHERE id=? AND agent_id=?').get(one.id, aid)
+      const t = String((row && row.text) || '').slice(0, 80)
+      return t ? '（忽然想起一个旧念头：' + t + '）' : ''
+    }
+    if (one.source === 'loop') {
+      // 答应过的事：第三个来源。真拼进提示词才算提过——沿用 loops 的节流（6h、提满 5 次自动收）。
+      const t = String((one.text || '') || '').slice(0, 100)
+      if (!t) return ''
+      const due = one.meta && one.meta.due_at ? '（到点了：' + String(one.meta.due_at).slice(0, 10) + '）' : ''
+      try { markLoopsFired(db, [one.id]) } catch { /* 记不上不影响提示词 */ }
+      return '（答应过的事：' + t + due + '）'
+    }
+    return ''
+  } catch { return '' }
+}
+
+/**
+ * P3：chatReply（微信/QQ//chat）的「自己想起」——候选池收，一轮一条。
+ * 开环还归它自己的 todo 通道；这里只让「事件 / 浮现」争这一行。
+ */
+export function selfRecallLineForTurn(db, aid, text, { channel = 'chat' } = {}) {
+  try {
+    // 三个来源一起争这一行：事件 / 浮现 / 答应过的事（开环）。
+    const pool = collectCandidates(db, aid, { query: String(text || ''), limit: 3 })
+    return renderSelfRecall(db, aid, pickOne(pool), { channel })
+  } catch { return '' }
+}
+
+/** P3：网页主路径同一条渲染/记账。preStep 已经把撞到的那条放进 hit。 */
+export function webSelfRecallLine(db, aid, hit) {
+  try {
+    if (!hit) return ''
+    return renderSelfRecall(db, aid, {
+      source: 'event', id: hit.id, text: hit.title, detail: hit.story,
+      score: Number(hit.score) || 0,
+      meta: { want: hit.want, weight: hit.weight, status: hit.status },
+    }, { channel: 'web' })
   } catch { return '' }
 }
 
 /** 测试钩子：可替换自由导入的模型调用（定义在零件里，这里 re-export，测试照旧从 features 注入） */
 export { freeformModelHook }
-/** 测试钩子：可替换「自己长偏好」的模型调用 */
 export const growModelHook = { complete: null }
 
 /* ---------------- 自己长偏好（喜欢 / 讨厌） ---------------- */
@@ -472,7 +560,10 @@ function workDigest(db, aid, turns, opt = {}) {
     }
     if (picks.length >= 3) break
   }
-  if (!picks.length) picks.push(String(users[0].text).replace(/\s+/g, ' ').slice(0, 50))
+  // 2026-11-18（D84）：没挑到关键词就不写。
+  // 以前这里抄第一句原话兜底，产出的全是「工作段：继续？」「工作段：开工」这种流水——
+  // 1,626 条里大半是这么来的，它不是「这段在干什么」，只是把句子换个头再存一遍。
+  if (!picks.length) return null
   const text = '工作段：' + picks.join(' / ').slice(0, 150)
   const tid = opt.batchTurnId || users[users.length - 1].turnId || null
   const seedFn = typeof opt.seed === 'function' ? opt.seed : null
@@ -488,11 +579,15 @@ function workDigest(db, aid, turns, opt = {}) {
 }
 
 export async function ingest(db, aid, body) {
+  /* 事实库旧路径，已经停了（2026-11-22 主人定）。
+     总闸关着时：不抽取、不写 memory_items，后面 judge/gate 也就没得判。
+     要恢复：把 memory.legacy.fact 改成 on。 */
+  try {
+    if (String(getParam(db, aid, 'memory.legacy.fact') || 'off') !== 'on') {
+      return { ok: true, skipped: 'legacy-fact-off', extracted: 0, written: 0 }
+    }
+  } catch { return { ok: true, skipped: 'legacy-fact-off', extracted: 0, written: 0 } }
   active(db, aid)
-  // 2026-11-22：事实库旧路径默认停；没显式打开就一眼跳过，一个条目不写。
-  let legacyFact = 'off'
-  try { legacyFact = String(getParam(db, aid, 'memory.legacy.fact') || 'off') } catch { /* 读不到按停 */ }
-  if (legacyFact !== 'on') return { skipped: 'legacy-fact-off', extracted: 0, written: 0 }
   const turns = Array.isArray(body.turns) ? body.turns : []
   if (!turns.length) err(400, 'INVALID_ARGUMENT', 'turns 不能为空')
   // 这一批记忆出生时的情绪强度：抽取是异步的，但评价在收到消息那一轮就落过
@@ -591,7 +686,7 @@ export async function ingest(db, aid, body) {
   if (coarse) {
     try { event(db, aid, 'memory.work.coarse', { turns: turns.length }) } catch { /* 记账失败不影响 */ }
     // 不精读，但留一条「这段在干什么」的主线；纯规则，不花钱。
-    try { workDigest(db, aid, turns, { seed, batchTurnId }) } catch { /* 摘记失败不影响规则落库 */ }
+    try { if (workDigestEnabled(db)) workDigest(db, aid, turns, { seed, batchTurnId }) } catch { /* 摘记失败不影响规则落库 */ }
   } else if (llmBudgetAllow(db, aid, budgetDay, 1).ok) {
     extracted = await model.extract(turns, { selfMaterial })
     try { llmBudgetBump(db, aid, 'extract', budgetDay, 1) } catch { /* 记账失败不挡这一轮 */ }
@@ -1209,76 +1304,6 @@ export function activateAgent(db, aid, role) {
   }
 }
 
-/** 2026-11-15 P3：网页主路径的「自己想起」——同一行文字、同一处记账。 */
-export function webSelfRecallLine(db, aid, ev) {
-  if (!db || !aid || !ev || !ev.id) return ''
-  const title = String(ev.title || ev.story || '').replace(/\s+/g, ' ').trim()
-  if (!title) return ''
-  const at = new Date().toISOString()
-  try { db.prepare("UPDATE hot_events SET state='台面', changed_at=? WHERE id=? AND agent_id=?").run(at, ev.id, aid) } catch { /* 没有就不改 */ }
-  try {
-    db.prepare('INSERT INTO events(id, agent_id, type, payload, created_at) VALUES(?,?,?,?,?)')
-      .run('evt_' + Math.random().toString(36).slice(2, 10), aid, 'event.inject', JSON.stringify({ event_id: ev.id, title, via: 'web' }), at)
-  } catch { /* 记账失败不影响这一行 */ }
-  return `忽然想起：${title.slice(0, 60)}。`
-}
-
-/** 2026-11-15 P3：一轮里最多给一条「自己想起」：事件命中 > 浮现（直塞开关）> 到期开放环。 */
-export function selfRecallLineForTurn(db, aid, userText, opt = {}) {
-  if (!db || !aid) return ''
-  const text = String(userText || '').trim()
-  // 1) 事件命中：拿用户这句话去撞台面上的热事件（按 3–6 字的片段撞，别整句 LIKE）
-  if (text) {
-    try {
-      let hit = null
-      outer: for (let len = Math.min(6, text.length); len >= 3; len--) {
-        for (let i = 0; i + len <= text.length; i++) {
-          const g = text.slice(i, i + len)
-          hit = db.prepare(`SELECT id, title, story FROM hot_events
-            WHERE agent_id=? AND active=1 AND (state IS NULL OR state<>'台面')
-              AND (title LIKE ? OR story LIKE ? OR cues LIKE ?)
-            ORDER BY want DESC, mentions ASC LIMIT 1`).get(aid, `%${g}%`, `%${g}%`, `%${g}%`)
-          if (hit) break outer
-        }
-      }
-      if (hit) {
-        const line = webSelfRecallLine(db, aid, hit)
-        if (line) return line
-      }
-    } catch { /* 事件表读不到就走下一路 */ }
-  }
-  // 2) 浮现候选：默认只排不消费；开关开着才拿来占这一行
-  let direct = 'off'
-  try { direct = String(getFlag(db, 'surface.direct') || 'off') } catch { /* 读不到当关着 */ }
-  if (direct === 'on') {
-    try {
-      const sq = db.prepare(`SELECT q.id, q.memory_id, m.text FROM surface_queue q
-        JOIN memory_items m ON m.id=q.memory_id
-        WHERE q.agent_id=? AND q.state='pending' ORDER BY q.created_at ASC LIMIT 1`).get(aid)
-      if (sq && String(sq.text || '').trim()) {
-        return `忽然想起：${String(sq.text).trim().slice(0, 60)}。`
-      }
-    } catch { /* 没有队列表就走下一路 */ }
-  }
-  // 3) 到期开放环：出一次就转 half_said、计入 fire_count（同一 state 不再连提）
-  try {
-    const loop = db.prepare(`SELECT * FROM open_loops
-      WHERE agent_id=? AND state='open' AND due_at IS NOT NULL AND due_at<=?
-      ORDER BY due_at ASC LIMIT 1`).get(aid, new Date().toISOString())
-    if (loop && String(loop.text || '').trim()) {
-      const at = new Date().toISOString()
-      try {
-        db.prepare("UPDATE open_loops SET state='half_said', fire_count=COALESCE(fire_count,0)+1, fired_at=? WHERE id=?")
-          .run(at, loop.id)
-      } catch {
-        try { db.prepare("UPDATE open_loops SET state='half_said' WHERE id=?").run(loop.id) } catch { /* 改不了就不改 */ }
-      }
-      return `答应过的事：${String(loop.text).trim().slice(0, 60)}。`
-    }
-  } catch { /* 没有开放环表就返回空 */ }
-  return ''
-}
-
 export { getFlag, setFlag, clearFlag }
 
 // 「特别看重」的标/撤和事由已收进零件：src/parts/speak/trigger.js。这里只 re-export。
@@ -1571,6 +1596,14 @@ export async function chatReply(db, aid, body) {
     : (speakerHandle.trim() ? isOwner(db, speakerHandle) : isLocalChannel(sp.channel))
   const conv = body.conversation_id ? String(body.conversation_id) : ''
 
+  // 忘口 v0（2026-11-15）：只记「我听到的忘」，不执行。
+  // 2026-11-15 18:4x 主人说「我不想要」——默认关掉，连记也不记。模块和测试留着，不接线。
+  try {
+    if (String(getFlag(db, 'forget.intent.log') || 'off') === 'on' && detectForgetIntent(text)) {
+      event(db, aid, 'forget.intent', { text: String(text || '').slice(0, 80) })
+    }
+  } catch { /* 记不上不影响回复 */ }
+
   let pack = recall(db, aid, text, recallItems(db), 512)
   pack.items = pack.items.filter((x) => !/[?？]$/.test(String(x.text).trim()))
   if (!pack.items.length) pack = softRecall(db, aid, text, 5)
@@ -1602,7 +1635,7 @@ export async function chatReply(db, aid, body) {
   let eventLine = ''
   if (canLearn) {
     const ch = /^wechat/i.test(conv) ? 'wechat' : /^qq/i.test(conv) ? 'qq' : 'chat'
-    try { eventLine = eventLineForTurn(db, aid, text, { channel: ch }) } catch { eventLine = '' }
+    try { eventLine = selfRecallLineForTurn(db, aid, text, { channel: ch }) } catch { eventLine = '' }
   }
   const contextBlock = (eventLine ? eventLine + '\n\n' : '') + clampContextBlock(backLine + buildContextBlock(db, aid, {
     recall: canLearn ? pack.items : [],
@@ -1675,10 +1708,8 @@ export async function chatReply(db, aid, body) {
         })
       }
     } catch { /* 留底失败不影响回复 */ }
-    // 汇流要的原话：落记忆时就粘上（speaker + quote + turn_id），别等以后补
-    try {
-      if (episodeWriteEnabled(db) && !/^You are the Team Lead named/.test(String(text))) addMemory(db, aid, { text, type: 'episode', mark: 'normal', speaker: 'user', quote: text.slice(0, 160), turn_id: turnId, ...turnSeed(text, 'episode') })
-    } catch { /* 合并失败不影响回复 */ }
+    /* 事实库旧路径，已经停了（2026-11-22 主人定）：这里原来每轮把用户原话写一条
+       episode 进 memory_items（source=manual）。原话只留碎片，事实库不再收每轮原话。 */
     let userFrag = null
     // 机器消息不是主人说的：落成 world，别冒充 user。
     // 不修的后果是实的——抽取会把定时提醒、领队提示当成「主人亲口说过的事」抽成事实。
