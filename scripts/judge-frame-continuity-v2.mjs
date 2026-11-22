@@ -7,12 +7,16 @@
  * 只读：不写库、不动帧。
  *
  * 用法：node scripts/judge-frame-continuity-v2.mjs [--n 8] [--model qwen3:14b]
+ *
+ * 2026-11-22：判官改成走插件唯一通道（scripts/lib/exp-call.mjs → /local/exp）。
+ * 直连 11434 会绕过队列、挤掉常驻 14B；现在换模型由通道负责卸和热回来。
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 import { FRAMES } from '../src/modules/frame_chain.js'
+import { expCall } from './lib/exp-call.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DB = path.resolve(HERE, '..', '..', 'runtime', 'consciousness', 'app.db')
@@ -76,18 +80,9 @@ const RUBRIC = `你在判断一段对话的「因果连续」。
 不要客套。`
 
 async function judge(p) {
-  const body = {
-    model: MODEL,
-    prompt: `${RUBRIC}\n\nA: ${p.a.agent.slice(0, 400)}\nB: ${p.b.user.slice(0, 300)}\nC: ${p.b.agent.slice(0, 400)}`,
-    stream: false,
-    think: false,
-    options: { temperature: 0, num_predict: 60 },
-  }
-  const r = await fetch('http://127.0.0.1:11434/api/generate', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
-  })
-  const j = await r.json()
-  return String(j.response || '').trim().replace(/\s+/g, ' ')
+  const text = `A: ${p.a.agent.slice(0, 400)}\nB: ${p.b.user.slice(0, 300)}\nC: ${p.b.agent.slice(0, 400)}`
+  const r = await expCall({ system: RUBRIC, text, maxTokens: 60, model: MODEL, format: '', label: 'judge:frame2' })
+  return String(r.text || '').trim().replace(/\s+/g, ' ')
 }
 
 const tally = { 接: 0, 断: 0, 无关: 0, 其他: 0 }

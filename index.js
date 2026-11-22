@@ -58,7 +58,10 @@ import { recordMiss, toModelRequest } from './src/modules/speech_judge.js'
 import { latestVoice, recentVoices, generateVoice, recordVoice, voiceStale } from './src/modules/speech_words.js'
 import { generatePairSummary, recordLastSentence, lastSentenceOf, recentDialoguePairs } from './src/modules/last_sentence.js'
 import { localComplete, localQueueInfo, localAvailable, ensureLocalServer, warmLocalModels } from './src/modules/local_llm.js'
-import { hostQueueInfo } from './src/modules/host_llm.js'
+import { gatewayStatus } from './src/modules/local_gateway.js'
+import { processSnapshot } from './src/modules/proc_watch.js'
+import { start as startLoopWatch, mark as markLoop } from './src/modules/loop_watch.js'
+import { hostQueueInfo, setHostProbe } from './src/modules/host_llm.js'
 import { appraiseTurnNow, summarizeAffairs } from './src/modules/affect_v4_shadow.js'
 // 情绪链去重：同一句用户话只跑一次（工具步会反复进 preStep）。
 const lastAffectTurn = new Map()
@@ -132,6 +135,43 @@ const API_PATH = '/dsh-consciousness/api'
 const PING_PATH = '/dsh-consciousness/ping'
 const DB_PATH = dbPath()
 const LOCK_PATH = path.join(path.dirname(DB_PATH), 'app.lock')
+const API_PORT_PATH = path.join(path.dirname(DB_PATH), 'gateway-api.json')
+const FREEZE_PID_PATH = path.join(path.dirname(DB_PATH), 'freeze-watch.pid')
+
+/**
+ * 卡死看门狗（2026-11-22）：独立进程，DSH 卡死/重启都不影响它。
+ * DSH 每次启动检查一次：pid 还活着就不重复起，死了就 detached 拉起一个。
+ * 为什么不用计划任务：schtasks 在这个账号下被拒绝访问。
+ */
+function ensureFreezeWatch() {
+  try {
+    let alive = 0
+    try { alive = Number(fs.readFileSync(FREEZE_PID_PATH, 'utf8')) || 0 } catch { alive = 0 }
+    if (alive) {
+      try { process.kill(alive, 0); return } catch { /* 旧的死了，往下走 */ }
+    }
+    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), 'scripts', 'watch-freeze.mjs')
+    if (!fs.existsSync(script)) return
+    const child = spawn(process.env.DSHC_NODE || 'node', [script], {
+      detached: true, stdio: 'ignore', windowsHide: true, creationFlags: 0x08000000,
+    })
+    child.unref()
+    __probe('freeze-watch started pid=' + child.pid)
+  } catch (e) { __probe('freeze-watch-fail:' + (e && e.message)) }
+}
+
+/**
+ * 记下当前插件 Web 口开在哪个端口（2026-11-22）。
+ * 为什么：DSH 重启后端口会变（50200 → 64932 …），实验脚本写死端口就永远连不上。
+ * 这里从请求里取本地端口，变了才写一次；exp-call.mjs 读这个文件找口子。
+ */
+let _apiPort = 0
+function rememberApiPort(req) {
+  const port = Number(req && req.socket && req.socket.localPort) || 0
+  if (!port || port === _apiPort) return
+  _apiPort = port
+  try { fs.writeFileSync(API_PORT_PATH, JSON.stringify({ port, api: API_PATH, at: new Date().toISOString() })) } catch { /* 写不进去不影响请求 */ }
+}
 
 // 装配：记忆出生时挂 feel 的取数口。memory 模块不直接读 affect_feel（INV10），
 // 由这里把「最近一条、窗口内才算」的口交出去。
@@ -552,14 +592,16 @@ const KEY = Symbol.for('dsh-consciousness.heartbeat')
   if (prev && prev.scan) { try { clearInterval(prev.scan) } catch { /* 宸茬粡娌′簡 */ } }
   if (prev && prev.boot) { try { clearTimeout(prev.boot) } catch { /* 宸茬粡娌′簡 */ } }
   const scan = setInterval(() => {
-    try {
-      heartbeatTick(ensureDb(), Date.now(), {
-        light: heartbeatLight,
-        deep: heartbeatDeep,
-        log: (m) => __probe(m),
-        maxDeep: 2,
-      }).catch((e) => __probe('heartbeat-err:' + (e && e.message)))
-    } catch (e) { __probe('heartbeat-crash:' + (e && e.message)) }
+    __timed('heartbeat-scan', () => {
+      try {
+        return heartbeatTick(ensureDb(), Date.now(), {
+          light: heartbeatLight,
+          deep: heartbeatDeep,
+          log: (m) => __probe(m),
+          maxDeep: 2,
+        }).catch((e) => __probe('heartbeat-err:' + (e && e.message)))
+      } catch (e) { __probe('heartbeat-crash:' + (e && e.message)) }
+    })
   }, 30 * 1000)
   if (scan.unref) scan.unref()
   // 启动后 12 秒先扫一遍：把重启期间错过的 light 补上（deep 会按 deep_at 自己判，不抢跑）
@@ -2011,6 +2053,30 @@ function rotateProbe(p) {
 }
 
 /**
+ * 2026-11-22：空档卡死时日志停在这一条「enter」上，没有对应的「leave」，
+ * 那就是它把主线程堵住了——不用再猜是哪一段。
+ */
+function __timed(label, fn) {
+  __probe(label + '-enter')
+  const t0 = Date.now()
+  const done = (err) => {
+    const ms = Date.now() - t0
+    __probe(label + '-leave ms=' + ms + (err ? ' err=' + String(err && err.message || err).slice(0, 80) : ''))
+  }
+  try {
+    const r = fn()
+    if (r && typeof r.then === 'function') {
+      return r.then((v) => { done(null); return v }, (e) => { done(e); throw e })
+    }
+    done(null)
+    return r
+  } catch (e) {
+    done(e)
+    throw e
+  }
+}
+
+/**
  * 四个接缝，不碰业务内容。宿主怎么调用它们由 src/host/dsh.js 决定；
  * 这里只说「注入什么」「收到事件做什么」「挂哪些路由」，不碰任何宿主 API。
  * 只要有一个意识体在运行，**所有会话**都是它；暂停之后全部恢复成普通 DSH。
@@ -2211,6 +2277,9 @@ function hostSpec() {
 
     // 2) 每个 step 之前：拿这一轮用户的话去召回，60 秒内有效
     preStep: async (payload, next) => {
+      // 2026-11-22 主人：要能看出「一步一卡」卡在哪一段。这里只记时间，不做任何改变。
+      const __psT0 = Date.now()
+      markLoop('prestep')
       // 2026-11-19 探针：宿主 subagents/agents 服务插件能不能拿到（整进程一次）
       if (!subProbeDone) {
         subProbeDone = true
@@ -2423,7 +2492,8 @@ function hostSpec() {
                 items: (r.items || []).length, tokens: packed.tokens, ms: Date.now() - t0,
               })
               __probe('retrieve scene=' + r.scene + ' hits=' + (r.items || []).length
-                + ' tokens=' + packed.tokens + ' dropped=' + packed.dropped.length)
+                + ' tokens=' + packed.tokens + ' dropped=' + packed.dropped.length
+                + ' retrieve_ms=' + (Date.now() - t0) + ' prestep_ms=' + (Date.now() - __psT0))
             } else {
               const pack = recall(d, aid, q, 6, 512, { mood: moodValenceOf(d, aid) })
               const text = (pack.items || []).map((m) => '- ' + m.text).join('\n')
@@ -2473,11 +2543,15 @@ function hostSpec() {
           __probe('affect-chain-empty q=' + String(qLine).slice(0, 8) + ' aid=' + String(aid2))
         }
       } catch (e) { __probe('affect-chain-outer:' + (e && e.message)) }
+      // 2026-11-22 探针：整段 pre-step 花了多久。宿主模型调用不在这里，这里只量我们自己的活。
+      markLoop('prestep-done')
+      __probe('prestep-done total_ms=' + (Date.now() - __psT0))
       return typeof next === 'function' ? next() : undefined
     },
 
     // 3) 会话事件：用户说了什么、模型回了什么
     sessionEvent: (session, event) => {
+      markLoop('session-event')
       __probe('event:' + (event && event.type))
       try {
         const sid = session && session.id ? String(session.id) : ''
@@ -2520,6 +2594,9 @@ function hostSpec() {
           }
           try {
             const env = await readJson(req)
+            // 2026-11-22：把「插件现在开在哪个端口」记下来。DSH 每次重启端口会变，
+            // 实验脚本（scripts/lib/exp-call.mjs）靠这个文件自己找到口子，不用手改。
+            try { rememberApiPort(req); } catch { /* 记不下来不影响请求 */ }
             const out = await handle(ensureDb(), env)
             sendJson(res, out.status || 200, out.body)
           } catch (e) {
@@ -2606,12 +2683,45 @@ function hostSpec() {
           sendJson(res, 200, lastVoiceFlash())
         },
       })
+      /* 2026-11-22 主人：想看「谁在调用、哪个任务在用哪个模型」，新起的进程也要能看见。
+         两个只读口：/live 是数据（看板每秒拉一次），/board 是页面本体。
+         只读，不碰库、不改队列。 */
+      const d6 = child.webServer.register({
+        kind: 'exact',
+        path: '/dsh-consciousness/live',
+        handler: async (_req, res) => {
+          try {
+            const [gateway, procs] = await Promise.all([
+              gatewayStatus(ensureDb()).catch(() => null),
+              processSnapshot().catch(() => ({ at: Date.now(), items: [], events: [], error: 'snapshot failed' })),
+            ])
+            sendJson(res, 200, { at: new Date().toISOString(), gateway: gateway || localQueueInfo(ensureDb()), procs })
+          } catch (e) {
+            sendJson(res, 500, { error: String((e && e.message) || e).slice(0, 200) })
+          }
+        },
+      })
+      const d7 = child.webServer.register({
+        kind: 'exact',
+        path: '/dsh-consciousness/board',
+        handler: (_req, res) => {
+          try {
+            const html = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'src', 'board.html'), 'utf8')
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+            res.end(html)
+          } catch (e) {
+            sendJson(res, 500, { error: '看板页面读不到：' + String((e && e.message) || e).slice(0, 160) })
+          }
+        },
+      })
       return () => {
         try { d1() } catch { /* ignore */ }
         try { d2() } catch { /* ignore */ }
         try { d3() } catch { /* ignore */ }
         try { d4() } catch { /* ignore */ }
         try { d5() } catch { /* ignore */ }
+        try { d6() } catch { /* ignore */ }
+        try { d7() } catch { /* ignore */ }
       }
     },
 
@@ -2723,23 +2833,27 @@ function startLocalModels(db) {
     } catch { /* 看门狗自身不冒泡 */ }
   }
   tick()
-  localWatchTimer = setInterval(tick, 60 * 1000)
+  localWatchTimer = setInterval(() => { __timed('local-watch', tick) }, 60 * 1000)
   if (localWatchTimer.unref) localWatchTimer.unref()
 }
 
 function startEmbedKeepalive() {
   if (embedWarmTimer) return
   embedWarmTimer = setInterval(() => {
-    try {
-      if (!model.capabilities().embed) return
-      model.embed(['keepalive']).catch(() => { /* 服务没起就下次再来 */ })
-    } catch { /* 没有向量能力时静默 */ }
+    __timed('embed-keepalive', () => {
+      try {
+        if (!model.capabilities().embed) return
+        return model.embed(['keepalive']).catch(() => { /* 服务没起就下次再来 */ })
+      } catch { /* 没有向量能力时静默 */ }
+    })
   }, 4 * 60 * 1000)
   if (embedWarmTimer.unref) embedWarmTimer.unref()
 }
 
 export function apply(ctx) {
   try { attachHostLlm(() => ctx) } catch { /* llm 服务不可用 */ }
+  // 2026-11-22：宿主后台队列的每条耗时也记进 hook.log（看「宿主调用是不是也要排队」）。
+  try { setHostProbe(__probe) } catch { /* 探针不影响启动 */ }
   // QQ 等外部通道的 reply() 也用同一份意识体包，避免网页一个样、QQ 另一个样
   try { attachContextBlock((db, aid, opts) => consciousnessBlock(db, aid, opts)) } catch { /* 包构建失败就退回精简提示 */ }
   try { hostCtx = ctx } catch { /* 宿主上下文不可用 */ }
@@ -2751,6 +2865,10 @@ export function apply(ctx) {
   // 绝不让本插件的初始化异常拖垮 Desktop Host（否则 welcome 鉴权失败，整个 DeepSeek 打不开）。
 try {
     ensureDb()
+    // 2026-11-22：卡死看门狗——DSH 卡死/重启都不影响它；这里只负责「还活着就不重复起」。
+    ensureFreezeWatch()
+    // 2026-11-22：事件循环卡顿探针。卡住超过 1.5 秒就把「当时在做什么」写进 hook.log。
+    startLoopWatch(__probe)
     startMaintenance()
     try { startHeartbeat() } catch { /* 心跳起不来不影响宿主 */ }
     startEmbedKeepalive()

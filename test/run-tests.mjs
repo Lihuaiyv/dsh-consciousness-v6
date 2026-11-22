@@ -2602,6 +2602,18 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-local-queue.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('本地模型排队：单并发/优先级插队/排队超时/快照', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
+// 本地模型唯一通道（2026-11-22）：参数写死、并发写死 1、嵌套调用不死锁、实验也排队
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'local-gateway.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('本地模型唯一通道：参数写死/单槽/嵌套不死锁/排队超时', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 本地通道体检（2026-11-22）：没有绕过通道直连 11434 的代码、参数没被 flag 改回去
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-local-gateway.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('本地通道体检：无绕过直连/参数写死', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
 // 后台宿主调用排队（2026-11-17）：全局并发、同一 agent 保序、不同 agent 不阻塞、排队超时
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')

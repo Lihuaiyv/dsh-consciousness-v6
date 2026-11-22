@@ -1,4 +1,5 @@
 import { dataDir } from './paths.js'
+import { isLocalOllamaUrl, gatewayEmbedAdapter, gatewayExperiment } from './modules/local_gateway.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -879,16 +880,22 @@ export function createModel() {
   }) : null
   // 向量单独配：本机 Ollama / 任意 OpenAI 兼容的 /embeddings。
   // 和聊天模型分开，避免「为了向量把整个插件切到小模型」。
+  // 2026-11-22：如果向量配的是本机 ollama，必须改走唯一通道（排队），
+  // 否则它会在 14B 生成时直连 11434 干等，800ms 就超时 → 向量静默全关。
   const emb = fileCfg.embedding || {}
   const embedUrl = String(process.env.DSHC_EMBED_URL || emb.url || '').replace(/\/$/, '')
-  const embedAdapter = embedUrl ? new OpenAIAdapter({
-    url: embedUrl,
-    key: process.env.DSHC_EMBED_KEY || emb.key || '',
-    model: emb.model || 'bge-m3',
-    embedModel: process.env.DSHC_EMBED_MODEL || emb.model || 'bge-m3',
-    timeout: Number(emb.timeout || 20000),
-    embedOnly: true,
-  }) : null
+  const embedAdapter = embedUrl
+    ? (isLocalOllamaUrl(embedUrl)
+      ? gatewayEmbedAdapter()
+      : new OpenAIAdapter({
+        url: embedUrl,
+        key: process.env.DSHC_EMBED_KEY || emb.key || '',
+        model: emb.model || 'bge-m3',
+        embedModel: process.env.DSHC_EMBED_MODEL || emb.model || 'bge-m3',
+        timeout: Number(emb.timeout || 20000),
+        embedOnly: true,
+      }))
+    : null
   const chain = new ChainAdapter([external, embedAdapter, new HostLlmAdapter()])
   return new ModelPort(chain, rules)
 }
@@ -906,11 +913,26 @@ export function createJudgeModel() {
   if (!url) return null
   const key = process.env.DSHC_JUDGE_KEY || j.key || ''
   const model = process.env.DSHC_JUDGE_NAME || j.model || 'deepseek-chat'
-  const adapter = new OpenAIAdapter({ url, key, model, timeout: Number(j.timeout || 8000) })
-  if (!adapter.available()) return null
   // 评委要的是「想清楚再给结论」，本地推理模型的 reasoning 会先吃掉额度：
   // 实测 gemma4:12b 用 500 会 finish_reason=length、content 空；2000 才吐得出 JSON。
   const maxTokens = Number(j.max_tokens || j.maxTokens || 2000)
+  // 2026-11-22：评委配的是本机 ollama 时，改走实验通道（/local/exp 同一条队）。
+  // 判官模型不在常驻名单里，直连会把常驻 14B 挤掉，下一次聊天整块重载 40 秒。
+  if (isLocalOllamaUrl(url)) {
+    return {
+      name: 'judge:' + model,
+      model,
+      complete: (req) => gatewayExperiment(null, {
+        ...req,
+        model,
+        maxTokens,
+        label: 'judge:' + model,
+        timeoutMs: Number(j.timeout || 120000),
+      }),
+    }
+  }
+  const adapter = new OpenAIAdapter({ url, key, model, timeout: Number(j.timeout || 8000) })
+  if (!adapter.available()) return null
   return {
     name: 'judge:' + model,
     complete: (req) => adapter.complete({ ...req, maxTokens }),

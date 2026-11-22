@@ -110,6 +110,20 @@ export function lastFrameLine({ max = 60, conv = null, agent = null, pull = 'nor
   }
 }
 
+/** 「事帧前置」这一轮的第一条（2026-11-22）。
+ *  摘要行该读它，不读影子帧里那份被事层覆盖过的 summary——出处只有一个。 */
+function affairsFirstLine(db, conversationId) {
+  try {
+    const cid = conversationId ? String(conversationId) : ''
+    const key = cid ? 'affect.v4.affairs|' + cid : 'affect.v4.affairs'
+    let row = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
+    if (!row && cid) row = db.prepare('SELECT value FROM flags WHERE key=?').get('affect.v4.affairs')
+    if (!row) return ''
+    const t = String((JSON.parse(row.value) || {}).text || '')
+    return t.split('\n')[0].trim()
+  } catch { return '' }
+}
+
 /**
  * 加格那三行（2026-11-21）：我在哪 / 手上没完什么 / 下一步做什么。
  * 直接读 flags 里的 `affect.v4.affairs|<conv>`，不跨模块 import（免得循环依赖）。
@@ -183,7 +197,7 @@ export function shadowFrameLine(db, aid, { max = 60, conversationId = null } = {
     if (!pick) return ''
     let fr = {}
     try { fr = JSON.parse(pick.frame_json || '{}') } catch { fr = {} }
-    const summary = clipAtPunct(fr.summary || fr.what, 24)
+    const summary = clipAtPunct(affairsFirstLine(db, conversationId) || fr.summary || fr.what, 24)
     const what = clipAtPunct(fr.what, 40)
     if (!summary && !what) return ''
     const body = [summary ? `停在「${summary}」` : '', what ? `锚是「${what}」` : ''].filter(Boolean).join('，')

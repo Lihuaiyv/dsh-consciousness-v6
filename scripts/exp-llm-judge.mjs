@@ -5,17 +5,19 @@
  * 背景：cosine 在这个语料上分不开（「小小 vs 小绿」0.867）。要回答的是——
  * 这是「相似度不行」，还是「模型也判不了」？
  *
- * 注意：本机 ollama 的 gemma4:12b 是 thinking 模型，走 OpenAI 兼容层
- * （/v1/chat/completions）时会把 token 全花在思考上、content 返回空。
- * 走原生 /api/chat 并 think:false 才拿得到正文，所以这里直连原生端点，
- * 不经过插件的 model.complete。
+ * 2026-11-22 主人钉的规矩：实验**不许自己连 11434、不许自己起模型进程**。
+ * 现在统一走插件的唯一通道 `scripts/lib/exp-call.mjs`（POST /local/exp）：
+ * 排同一条队、一次只跑一个任务；实验模型跑完立刻卸、把常驻 14B 热回来。
+ * 以前这里直连原生 /api/chat，正好绕过队列，跟常驻 14B 抢唯一的生成槽。
  *
  * 用法：
- *   node scripts/exp-llm-judge.mjs [--n 12] [--url http://127.0.0.1:11434] [--model gemma4:12b]
+ *   node scripts/exp-llm-judge.mjs [--n 12] [--model gemma4:12b]
+ *   不传 --model 就用常驻的 qwen2.5:14b-instruct（不换模型，不重载）。
  */
 import { DatabaseSync } from 'node:sqlite'
 import { stampRow, topicOfFactKey, related } from '../src/modules/passport.js'
 import { dbPath as defaultDbPath } from '../src/paths.js'
+import { expCall } from './lib/exp-call.mjs'
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name)
@@ -23,8 +25,7 @@ function arg(name, def) {
 }
 const N = Number(arg('n', '12')) || 12
 const dbPath = arg('db', defaultDbPath())
-const base = String(arg('url', 'http://127.0.0.1:11434')).replace(/\/$/, '')
-const modelName = arg('model', 'gemma4:12b')
+const modelName = arg('model', '')
 
 const SYS = [
   '你在判断两条记忆之间是什么关系。',
@@ -35,21 +36,8 @@ const SYS = [
 ].join('\n')
 
 async function judge(system, text) {
-  const t0 = Date.now()
-  const r = await fetch(base + '/api/chat', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: modelName,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: text }],
-      stream: false,
-      think: false,
-      options: { num_predict: 60, temperature: 0 },
-    }),
-  })
-  const j = await r.json()
-  const content = String((j.message && j.message.content) || '').trim()
-  return { content, ms: Date.now() - t0 }
+  const r = await expCall({ system, text, maxTokens: 60, model: modelName, format: '', label: 'exp-judge' })
+  return { content: String(r.text || '').trim(), ms: r.ms }
 }
 
 function normJudge(raw) {
@@ -104,7 +92,7 @@ const picked = []
 for (let i = 0; i < pairs.length && picked.length < N; i += gap) picked.push(pairs[i])
 
 console.log('== 实验 B：模型判同一件事 ==')
-console.log('候选总数:', pairs.length, '| 抽样:', picked.length, '| 模型:', modelName, '| 端点:', base + '/api/chat')
+console.log('候选总数:', pairs.length, '| 抽样:', picked.length, '| 模型:', modelName || '常驻 14B', '| 端点: 插件唯一通道 /local/exp')
 console.log('')
 
 const results = []

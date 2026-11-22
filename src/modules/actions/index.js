@@ -771,7 +771,25 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
 /** local_llm_status 的文字渲染：一块小面板，别让它变成 JSON 墙。 */
 function renderLocalStatus(v) {
   if (!v || v.error) return '取不到本地队列：' + String((v && v.error) || '空').slice(0, 120)
-  const lines = ['并发 ' + (v.concurrency || 1) + ' · 在跑 ' + (v.running || 0) + ' · 在排 ' + (v.queued || 0)]
+  const f = v.frozen || {}
+  const lines = [
+    '通道：' + (f.chat || '?') + '（ctx ' + (f.chatCtx || '?') + '）＋ ' + (f.embed || '?')
+      + '，参数写死不能改；两个模型各一个槽，各自一次只跑一个'
+      + (v.resident && v.resident.length ? ('；常驻 ' + v.resident.join(' / ')) : ''),
+    '在跑 ' + (v.running || 0) + ' · 在排 ' + (v.queued || 0)
+      + (v.slots
+        ? ('（14B 槽：跑' + (v.slots.chat?.running || 0) + '/排' + (v.slots.chat?.queued || 0)
+          + '；向量槽：跑' + (v.slots.embed?.running || 0) + '/排' + (v.slots.embed?.queued || 0) + '）')
+        : ''),
+    // 2026-11-22：「0 在跑」不等于没跑——跑完就出队了，所以必须带上最近 60 秒的计数。
+    (() => {
+      const s = v.last60s
+      if (!s || !s.by) return '最近 60 秒：没有本地调用记录'
+      const f = (b) => b.n ? (b.n + ' 次，最长 ' + Math.round((b.maxMs || 0)) + 'ms' + (b.fail ? '，失败 ' + b.fail : '')) : '0 次'
+      return '最近 60 秒：14B ' + f(s.by.chat || {}) + ' · 向量 ' + f(s.by.embed || {})
+        + (s.lastAt ? '（最后一条 ' + String(s.lastAt).slice(11, 19) + ' ' + (s.lastLabel || '') + '）' : '')
+    })(),
+  ]
   if (Array.isArray(v.runningItems) && v.runningItems.length) {
     lines.push('在跑：' + v.runningItems.map((x) => `${x.label || '未命名'}（p${x.priority}，${Math.round((x.runningMs || 0) / 1000)}s）`).join(' / '))
   }

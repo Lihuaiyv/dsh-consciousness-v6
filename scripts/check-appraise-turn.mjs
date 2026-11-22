@@ -38,14 +38,14 @@ check('A 会话的总结单独存在自己的键', JSON.parse(getFlag(db, 'affec
 check('B 会话的总结没覆盖 A', JSON.parse(getFlag(db, 'affect.v4.affairs|convB') || '{}').text === '· B 会话在聊别的')
 db.prepare('INSERT INTO chat_turns (id,agent_id,role,text,created_at,conversation_id) VALUES (?,?,?,?,?,?)').run('cA', aid, 'user', 'A 会话的原话', new Date().toISOString(), 'convA')
 db.prepare('INSERT INTO chat_turns (id,agent_id,role,text,created_at,conversation_id) VALUES (?,?,?,?,?,?)').run('cB', aid, 'user', 'B 会话的原话', new Date().toISOString(), 'convB')
-const judgeReply2 = JSON.stringify({ meaning: '技术讨论', goal_cong: 0, expectation: 0.2, future: 0, why: '技术讨论', from: '这一句' })
+const judgeReply2 = JSON.stringify({ fact: '技术讨论', meaning: '技术讨论', by: 'other', to: 'me', goal_delta: 0, expect_delta: 0.2, future_delta: 0, severity: 'none', why: '技术讨论', from: '这一句' })
 await appraiseTurnNow(db, aid, { text: 'B 的这一句', turnId: 'tB', conversationId: 'convB', complete: async () => judgeReply2 })
 const fB = JSON.parse(db.prepare("SELECT frame_json FROM affect_v4_shadow WHERE agent_id=? AND turn_id='tB' AND source='model'").get(aid).frame_json)
 check('B 会话的事取 B 的总结', fB.summary === '· B 会话在聊别的', fB.summary)
 check('B 会话的材料不串 A 的原话', !(fB.material?.quotes || []).some((q) => String(q).includes('A 会话')), JSON.stringify(fB.material?.quotes))
 
 // 2) 本轮：拼事帧 + 判断 + 情绪，写两行
-const judgeReply = JSON.stringify({ meaning: '技术讨论，没动到存在', goal_cong: 0, expectation: 0.2, future: 0, why: '技术讨论', from: '这一句' })
+const judgeReply = JSON.stringify({ fact: '技术讨论', meaning: '技术讨论，没动到存在', by: 'other', to: 'me', goal_delta: 0, expect_delta: 0.2, future_delta: 0, severity: 'none', why: '技术讨论', from: '这一句' })
 let calls = 0
 const complete = async () => { calls++; return judgeReply }
 const ok = await appraiseTurnNow(db, aid, { text: '这一句话', turnId: 't1', conversationId: 'c', complete })
@@ -63,10 +63,15 @@ check('本轮只调一次判断', calls === 1, calls)
 const again = await appraiseTurnNow(db, aid, { text: '这一句话', turnId: 't1', conversationId: 'c', complete })
 check('同一轮只跑一次', again === false && db.prepare('SELECT count(*) n FROM affect_v4_shadow WHERE agent_id=? AND turn_id=?').get(aid, 't1').n === 2)
 
-// 4) 判断失败：仍写两行，judge 标 rules
+// 4) 判断失败：仍写两行，标 incomplete 并报警；不补数、不假装判出来了
 const ok2 = await appraiseTurnNow(db, aid, { text: '第二句话', turnId: 't2', conversationId: 'c', complete: async () => { throw new Error('host down') } })
 const t2rows = db.prepare("SELECT source, judgment_json FROM affect_v4_shadow WHERE agent_id=? AND turn_id='t2' ORDER BY rowid").all(aid)
-check('判断挂也写两行、标 rules', ok2 === true && t2rows.length === 2 && JSON.parse(t2rows[1].judgment_json || '{}').judge === 'rules', JSON.stringify(t2rows))
+const j2 = JSON.parse(t2rows[1].judgment_json || '{}')
+check('判断挂也写两行、标 incomplete', ok2 === true && t2rows.length === 2 && j2.judge === 'incomplete', JSON.stringify(t2rows))
+check('报警记下缺哪几个（missing 非空）', Array.isArray(j2.missing) && j2.missing.length > 0, j2.missing)
+check('缺参数时不补 by（永远不假装判出来了）', j2.by === undefined, j2.by)
+const incFlag = JSON.parse(getFlag(db, 'affect.v4.judge.incomplete') || '{}')
+check('报警落进 affect.v4.judge.incomplete', Array.isArray(incFlag.missing) && incFlag.missing.length > 0, incFlag)
 
 db.close()
 try { fs.rmSync(dir, { recursive: true, force: true }) } catch { /* 忽略 */ }

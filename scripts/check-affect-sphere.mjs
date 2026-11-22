@@ -53,8 +53,10 @@ check('分数都在 0~1', [...sp.values()].every((v) => v.score >= 0 && v.score 
 
 /* 4) 二级分布走球面：同一批词、两种距离，都能出词、概率归一 */
 const frame = { what: '被夸了', target: 'me', agency: 'other', expectation: 0.5 }
-const cube = secondaryDistribution(frame, { position: { s: 0.8, n: 0.5, d: 0.7 }, limit: 5 })
-const sph = secondaryDistribution(frame, { position: { s: 0.8, n: 0.5, d: 0.7 }, limit: 5, geo: 'sphere' })
+// 2026-11-22：落格只认判断层的 to（我冲谁）；没有 to 就不出词。这里补一份判断。
+const judge = { by: 'other', to: 'me' }
+const cube = secondaryDistribution(frame, { position: { s: 0.8, n: 0.5, d: 0.7 }, limit: 5 }, judge)
+const sph = secondaryDistribution(frame, { position: { s: 0.8, n: 0.5, d: 0.7 }, limit: 5, geo: 'sphere' }, judge)
 check('球面口径能出 5 个词', sph.length === 5 && !!sph[0].name, sph.map((x) => x.name))
 check('球面口径 top1 也是小库里的词', SECONDARY_PROTOTYPES.some((p) => p.name === sph[0].name), sph[0])
 check('球面口径 top1 属于某个两字格', GRID.includes((SECONDARY_PROTOTYPES.find((p) => p.name === sph[0].name) || {}).oct), sph[0])

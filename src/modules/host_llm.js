@@ -45,16 +45,30 @@ function release() {
   if (next) { running++; next.resolve() }
 }
 
+let probeFn = null
+/** 2026-11-22：把每条宿主调用的等待/执行耗时接到插件的 hook.log 上，方便看「卡在哪一段」。 */
+export function setHostProbe(fn) {
+  probeFn = typeof fn === 'function' ? fn : null
+}
+
 function record(it, ok, err) {
+  const waitedMs = Math.max(0, (it.startedAt || Date.now()) - it.enqueuedAt)
+  const ms = it.startedAt ? Date.now() - it.startedAt : 0
   qRecent.push({
     at: new Date().toISOString(),
     label: it.label || '',
     agent: String(it.key || '').slice(0, 8),
-    waitedMs: Math.max(0, (it.startedAt || Date.now()) - it.enqueuedAt),
-    ms: it.startedAt ? Date.now() - it.startedAt : 0,
+    waitedMs,
+    ms,
     ok: !!ok,
     error: ok ? '' : String((err && err.message) || err || '').slice(0, 120),
   })
+  try {
+    if (probeFn) {
+      probeFn('host label=' + String(it.label || '-').slice(0, 28) + ' p' + it.priority
+        + ' wait=' + waitedMs + 'ms run=' + ms + 'ms ' + (ok ? 'ok' : '✗ ' + String((err && err.message) || err || '').slice(0, 60)))
+    }
+  } catch { /* 探针不影响调用 */ }
   if (qRecent.length > Q_RECENT_MAX) qRecent.splice(0, qRecent.length - Q_RECENT_MAX)
 }
 
@@ -68,8 +82,9 @@ function fail(it, e) {
 
 async function exec(it, db) {
   if (it.phase === 'timeout') return
+  const unlimited = it.timeoutMs === 0   // 2026-11-22 主人：0 = 不设超时，让它自然跑完
   const waited = Date.now() - it.enqueuedAt
-  if (waited > it.timeoutMs) { fail(it, new Error(`host queue timeout: waited ${waited}ms (${it.label || 'host'})`)); return }
+  if (!unlimited && waited > it.timeoutMs) { fail(it, new Error(`host queue timeout: waited ${waited}ms (${it.label || 'host'})`)); return }
   await acquire(db, it.priority)
   if (it.phase === 'timeout') { release(); return }
   if (it.timer) { clearTimeout(it.timer); it.timer = null }
@@ -79,16 +94,20 @@ async function exec(it, db) {
   // 之前只管排队，判断层实际跑 35 秒也照等；情绪链不吃这个亏，超了直接弃、回退规则。
   // 说明：这里的超时不取消真正的模型请求（kernelModel.complete 不支持取消），
   // 只把结果丢掉；宿主侧那条请求会自己结束。
-  const left = Math.max(0, it.timeoutMs - (Date.now() - it.enqueuedAt))
+  // 2026-11-22：timeoutMs=0 = 不截断。以前 15 秒截断会把「只是慢一点」判成失败，
+  // 再触发重试，叠成分钟级卡顿。现在不设超时，真的报错才走重试。
+  const left = unlimited ? 0 : Math.max(0, it.timeoutMs - (Date.now() - it.enqueuedAt))
   let runTimer = null
   try {
-    const v = await Promise.race([
-      Promise.resolve().then(() => it.run()),
-      new Promise((_, rej) => {
-        runTimer = setTimeout(() => rej(new Error(`host run timeout: ${Date.now() - it.startedAt}ms (${it.label || 'host'})`)), left)
-        if (runTimer.unref) runTimer.unref()
-      }),
-    ])
+    const v = unlimited
+      ? await it.run()
+      : await Promise.race([
+        Promise.resolve().then(() => it.run()),
+        new Promise((_, rej) => {
+          runTimer = setTimeout(() => rej(new Error(`host run timeout: ${Date.now() - it.startedAt}ms (${it.label || 'host'})`)), left)
+          if (runTimer.unref) runTimer.unref()
+        }),
+      ])
     pending.delete(it)
     record(it, true)
     it.resolve(v)
@@ -110,21 +129,25 @@ export function scheduleHostTask(db, { agent = '', label = '', timeoutMs = 30000
   return new Promise((resolve, reject) => {
     if (typeof run !== 'function') { reject(new Error('host task: no run')); return }
     const key = String(agent || '')
+    const raw = Number(timeoutMs)
+    const unlimited = raw === 0   // 2026-11-22：0 = 不设超时（不截断、不假失败）
     const it = {
       seq: ++qSeq,
       key,
       label: String(label || '').slice(0, 40),
       priority: Number.isFinite(Number(priority)) ? Number(priority) : 5,
-      timeoutMs: Math.max(1000, Number(timeoutMs) || 30000),
+      timeoutMs: unlimited ? 0 : Math.max(1000, raw || 30000),
       enqueuedAt: Date.now(), startedAt: 0, phase: 'waiting', timer: null,
       run, resolve, reject,
     }
-    // 排队超时：还没轮到就等超了，直接失败，调用方走兜底
-    it.timer = setTimeout(() => {
-      if (it.phase !== 'waiting') return
-      fail(it, new Error(`host queue timeout: waited ${Date.now() - it.enqueuedAt}ms (${it.label || 'host'})`))
-    }, it.timeoutMs)
-    if (it.timer.unref) it.timer.unref()
+    // 排队超时：还没轮到就等超了，直接失败，调用方走兜底。不设超时时没有这一步。
+    if (!unlimited) {
+      it.timer = setTimeout(() => {
+        if (it.phase !== 'waiting') return
+        fail(it, new Error(`host queue timeout: waited ${Date.now() - it.enqueuedAt}ms (${it.label || 'host'})`))
+      }, it.timeoutMs)
+      if (it.timer.unref) it.timer.unref()
+    }
     pending.add(it)
     // 2026-11-17 优先级：回复前的判断（affect:judge）不能排在上一轮总结后面——
     // 高优先级（<3）不挂同 agent 链，直接进闸门抢槽；全局槽也按 priority 插队。

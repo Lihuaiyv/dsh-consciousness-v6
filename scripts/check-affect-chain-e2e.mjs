@@ -81,7 +81,7 @@ const affairsA2 = JSON.parse(db.prepare("SELECT value FROM flags WHERE key='affe
 check('等到之后照常写事', String(affairsA2.text || '').includes('我等到了这一句'), String(affairsA2.text).slice(0, 80))
 
 // ── 3) 判断：两行、事取上一轮总结、输入是「正在发生：」 ──
-const judgeJson = JSON.stringify({ meaning: '技术调整，存在未被动到', goal_cong: 0.2, expectation: 0.2, future: 0.3, why: '换模型但还在', from: '原话' })
+const judgeJson = JSON.stringify({ fact: '换模型', meaning: '技术调整，存在未被动到', by: 'other', to: 'me', goal_delta: 0.2, expect_delta: 0.2, future_delta: 0.3, severity: 'none', why: '换模型但还在', from: '原话' })
 let appText = ''
 await appraiseTurnNow(db, aid, {
   text: '继续吧', turnId: 'e2e_t1', conversationId: 'convA',
@@ -102,7 +102,11 @@ await appraiseTurnNow(db, aid, {
 })
 const rows2 = db.prepare("SELECT * FROM affect_v4_shadow WHERE agent_id=? AND turn_id='e2e_t2' ORDER BY rowid").all(aid)
 check('判断挂：仍两行', rows2.length === 2, JSON.stringify(rows2.map((r) => r.source)))
-check('判断挂：model 行标 rules', JSON.parse(rows2[1]?.judgment_json || '{}').judge === 'rules', '')
+// 2026-11-22 主人定：不许规则兜底。缺参数 → 标 incomplete 报警，不补值。
+const j2e = JSON.parse(rows2[1]?.judgment_json || '{}')
+check('判断挂：model 行标 incomplete', j2e.judge === 'incomplete', JSON.stringify(j2e).slice(0, 100))
+check('判断挂：报警记了缺哪几个', Array.isArray(j2e.missing) && j2e.missing.length > 0, j2e.missing)
+check('判断挂：不补 by（不假装判出来了）', j2e.by === undefined, j2e.by)
 check('判断挂：挂了罢工标记', !!db.prepare("SELECT value FROM flags WHERE key='affect.v4.strike'").get(), '')
 
 // ── 5) 宿主闸门优先级：急事插队，不排在大件后面 ──

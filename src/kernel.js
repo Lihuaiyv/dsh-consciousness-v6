@@ -93,22 +93,17 @@ export const PARAMS = {
   'affect.engine.shadow.model.name': ['C4', 'qwen2.5:14b-instruct'],
   // 事层走谁（2026-11-17）：host = 宿主模型（快、准，按 token 计小钱，默认）；local = 本地 14B。
   'affect.engine.shadow.topic': ['C4', 'host'],
-  // v4 三递质的基线/斜率：改数字不改逻辑（S/N/D 都是 0~1）。
-  'affect.v4.s.base': ['C4', 0.5],
-  'affect.v4.s.k': ['C4', 0.5],
-  'affect.v4.n.base': ['C4', 0.15],
-  'affect.v4.n.k': ['C4', 0.85],
-  'affect.v4.d.base': ['C4', 0.5],
-  'affect.v4.d.k': ['C4', 0.5],
-  // 角层软分配宽度 / 词层原型距离宽度。
-  'affect.v4.angle.sigma': ['C4', 0.55],
-  'affect.v4.word.sigma': ['C4', 0.6],
+  // 2026-11-22 删了九个死参数：s/n/d 的 base/k（六只，transmitters 旧路从来只吃传进来的 opts，
+  // 没人从参数读）、angle.sigma / word.sigma（实际读的是 affect.v4.sigma）、geo（查表几何已废，
+  // v4Opts 不读）。全仓 grep 只有注册表自己提到它们。
   // 一级标签并列门槛：第一角与第二角权重差小于它 → label 写「说不清」（0.03 = 3 个百分点）。
   'affect.v4.label.tie': ['C4', 0.03],
+  // 事帧上下文三行（2026-11-22）：隔多久 / 这件事第几轮 / 我上一轮什么状态。
+  // 2026-11-22 主人定：有用的默认开。所以判断层现在会读这三行（以及事层缺失提示、带角色的原话）。
+  // 要退回影子期：affect.v4.frame.ctx=off（判断输入与 11-22 之前逐字一致）。
+  'affect.v4.frame.ctx': ['C4', 'on'],
   // 情绪增量模式（2026-11-18）：delta = 判断层给增量、先回落再加（默认）；off = 旧逻辑，位置直落。
   'affect.v4.dyn': ['C4', 'delta'],
-  // 二级词查表几何：cube=方块欧氏距离（默认）；sphere=球面角距离+半径差（2026-11-18，先并行）
-  'affect.v4.geo': ['C4', 'sphere'],
   // 每轮吸收系数 k：一句事只推一小步。k 是 S 的兜底，ks/kn/kdu/kdd 按轴分开。
   'affect.v4.dyn.k': ['C4', 0.35],
   // 三条轴的增量三套算法（2026-11-18 主人定）：S 累积但越靠边越推不动；N 尖峰包络不叠；D 慢涨快跌。

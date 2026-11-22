@@ -1,6 +1,6 @@
 # 功能 · 工程-门禁与文档
 
-> 最后更新：2026-11-19 ｜ 这个目录里**只放这个功能的文档**，按时间排。
+> 最后更新：2026-11-22 ｜ 这个目录里**只放这个功能的文档**，按时间排。
 > 想知道它现在什么样，先看下面这段；想知道它怎么变成这样，往下翻链条。
 
 ## 一句话
@@ -17,6 +17,13 @@
 2026-11-19：碰 DSH 的口子收成两条——**接口**还是 `src/host/dsh.js`（7 个接缝，断一个只丢一项），
 **读 DSH 私有文件**新收进 `src/host/fs.js`（三个读点，冷启动不算断、结构变了报 degraded、删了报 missing），
 断链会记 `host.break.<id>` 并在提示词里说一句，ping 的 `files` 段一眼可见。
+2026-11-22：本地模型收成**唯一通道**（`src/modules/local_gateway.js`）：参数写死；14B 与语义模型
+各一个槽、各自写死 1（不同模型不互相等，向量永不被 14B 的活堵住）；
+聊天/向量/切事/实验都从这一条通道进；`model.json` 里指向本机 ollama 的向量口和判官口都被接进来；
+实验只能用 `POST /local/exp`（命令行 `scripts/lib/exp-call.mjs`），换模型由通道「先卸、跑完卸、热回 14B」，
+实测全程同时最多 1 个模型。
+同一天加了**只读看板** `GET /dsh-consciousness/board`：哪个任务在用哪个模型、谁在排队、
+显卡上挂着什么、模型进程新起/退出都看得见（`/dsh-consciousness/live` 是数据口）。
 
 ## 代码入口
 
@@ -26,11 +33,17 @@ scripts/audit-event-hitrate.mjs
 scripts/audit-memory-slim.mjs
 scripts/check-episode-flip-ready.mjs
 scripts/check-local-queue.mjs        # 本地调用排队（16 项，已进门禁）
+scripts/check-local-gateway.mjs      # 本地唯一通道体检（25 项，已进门禁）
+scripts/lib/exp-call.mjs             # 实验唯一入口（脚本 + 命令行都走这里）
+src/board.html                       # 模型调用看板页面（只读，每秒刷）
+src/modules/proc_watch.js            # 模型进程观察：pid / 启动 / 内存 / 新起与退出事件
 scripts/check-host-queue.mjs         # 宿主后台排队（12 项，已进门禁）
 src/host/dsh.js                      # DSH 接口的唯一适配层（7 个接缝）
 src/host/fs.js                       # DSH 私有文件的唯一读口（workspace / session.title / qq.sessions）
-src/modules/local_llm.js             # 本地队列：scheduleLocalTask / localQueueInfo
+src/modules/local_gateway.js         # 本地模型唯一通道：写死参数 / 单槽队列 / 实验换模型
+src/modules/local_llm.js             # 兼容层：老名字转发到通道
 src/modules/host_llm.js              # 宿主闸门：scheduleHostTask / hostQueueInfo
+test/local-gateway.test.mjs          # 通道 20 项（已进门禁）
 test/run-tests.mjs
 ```
 
@@ -49,12 +62,18 @@ test/run-tests.mjs
 | 2026-11-15 | [改动-工作段标题句读切-2026-11-15.md](改动-工作段标题句读切-2026-11-15.md) | work 段标题按标点断句 |
 | 2026-11-17 | [改动-本地模型调用排队-2026-11-17.md](改动-本地模型调用排队-2026-11-17.md) | 所有本地调用一条队列；单并发 / 优先级插队 / 排队超时提前失败；`local_llm_status` 可看队列 |
 | 2026-11-17 | [改动-精修走宿主与宿主排队-2026-11-17.md](改动-精修走宿主与宿主排队-2026-11-17.md) | 精修事层默认走宿主；后台宿主调用也排队（同 agent 保序、跨 agent 并行） |
+| 2026-11-17 | [改动-宿主闸门优先级-2026-11-17.md](改动-宿主闸门优先级-2026-11-17.md) | 宿主闸门的优先级与顺序：回复前判断插队、同一 agent 串成链 |
 | 2026-11-19 | [改动-宿主读口收口-2026-11-19.md](改动-宿主读口收口-2026-11-19.md) | 读 DSH 私有文件收进 `src/host/fs.js`；断链记 `host.break.<id>` 并在提示词里说出来 |
+| 2026-11-22 | [改动-模型唯一通道与排队-2026-11-22.md](改动-模型唯一通道与排队-2026-11-22.md) | 本地模型收成唯一通道：参数写死、并发写死 1、实验只能走 `/local/exp`；换模型先卸再热回 14B |
+| 2026-11-22 | [工具-模型调用看板-2026-11-22.md](工具-模型调用看板-2026-11-22.md) | 只读看板：哪个任务在用哪个模型、谁在排队、显卡上挂了什么、新起/退出的模型进程 |
 
 ## 还没做 / 留意
 
 - 文档移动后没有自动校验链接的闸，这次是手写脚本
 - 提示词快照是人工导出的，没有定时
-- 本地队列并发默认 1；`memory.cut.local.concurrency` 可调 2~4，但本机 14B 开 2 并发会互相拖慢
+- 本地队列并发写死 1（2026-11-22 起不再有 `memory.cut.local.concurrency` 这个口子）：本机 14B 开 2 并发只会互相拖慢
+- 实验换模型期间聊天会慢一次（卸 14B → 载实验模型 → 跑 → 卸 → 热 14B，实测约 8.7 秒）；实验尽量挑没人说话的时候
+- `model.json` 里判官配的 `gemma4:12b` 本机没拉，走实验通道会以「模型不存在」失败；要么拉下来，要么改成 `qwen3:14b`
+- 进程锁只防「本插件自己拉第二个 ollama」；手动开的 ollama 不在锁里，`check-local-gateway.mjs --live` 只能看常驻模型数 ≤ 2
 - 宿主读口的断链提示只进提示词（让我自己说），没有自动推消息给主人；要不要接主动开口另立题
 

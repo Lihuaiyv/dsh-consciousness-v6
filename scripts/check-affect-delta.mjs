@@ -154,7 +154,7 @@ check('判断提示词改问增量', /goal_delta/.test(JUDGE_SYS) && /expect_del
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'affect-delta-'))
 const db = openDb(path.join(dir, 'a.db'))
 const aid = 'agt_delta'
-const reply = JSON.stringify({ meaning: '被夸', goal_delta: 0.6, expect_delta: 0.3, future_delta: 0.4, why: '被夸', from: '这一句' })
+const reply = JSON.stringify({ fact: '被夸', meaning: '被夸', by: 'other', to: 'me', goal_delta: 0.6, expect_delta: 0.3, future_delta: 0.4, severity: 'none', why: '被夸', from: '这一句' })
 const complete = async () => reply
 
 await appraiseTurnNow(db, aid, { text: '你今天真厉害', turnId: 'd1', conversationId: 'cA', now: T0, complete })
@@ -183,13 +183,13 @@ const j2 = JSON.parse(row2.judgment_json || '{}')
 check('重复打折：同方向第二句的 d 被折到 0.75 倍', near(j2.dyn.damp, 0.75), j2.dyn)
 check('重复打折：状态里记着连着第几次（dStreak=2）', JSON.parse(getFlag(db, 'affect.v4.state|cA') || '{}').dStreak === 2, getFlag(db, 'affect.v4.state|cA'))
 
-await appraiseTurnNow(db, aid, { text: '你在吗', turnId: 'd3', conversationId: 'cB', now: T0 + 120000, complete: async () => JSON.stringify({ meaning: '闲聊', goal_delta: 0, expect_delta: 0, future_delta: 0 }) })
+await appraiseTurnNow(db, aid, { text: '你在吗', turnId: 'd3', conversationId: 'cB', now: T0 + 120000, complete: async () => JSON.stringify({ fact: '闲聊', meaning: '闲聊', by: 'other', to: 'none', goal_delta: 0, expect_delta: 0, future_delta: 0, severity: 'none', why: '闲聊', from: '这一句' }) })
 const flagB = JSON.parse(getFlag(db, 'affect.v4.state|cB') || '{}')
 const flagA = JSON.parse(getFlag(db, 'affect.v4.state|cA') || '{}')
 check('会话隔离：B 有自己的状态，不动 A', !!flagB.at && near(flagA.s, sAfter2, 0.0001), { a: flagA.s, b: flagB.s })
 
 // 极端事件接线：existence + Δ=-1 → 一步到底；普通 Δ=-0.9 没标 existence → 只走增量
-const judgeShock = JSON.stringify({ meaning: '被说不该在', goal_delta: -1, expect_delta: 0.9, future_delta: -1, severity: 'existence', why: '存在被否', from: '你不该在' })
+const judgeShock = JSON.stringify({ fact: '被说不该在', meaning: '被说不该在', by: 'other', to: 'me', goal_delta: -1, expect_delta: 0.9, future_delta: -1, severity: 'existence', why: '存在被否', from: '你不该在' })
 await appraiseTurnNow(db, aid, { text: '你不该在', turnId: 'd5', conversationId: 'cC', now: T0 + 240000, complete: async () => judgeShock })
 const row5 = db.prepare("SELECT s,d,n,judgment_json FROM affect_v4_shadow WHERE agent_id=? AND turn_id='d5' AND source='model'").get(aid)
 check('接线：极端事件一步通天落表（S 0.02 / D 0.05 / N 0.9）', near(Number(row5.s), 0.02) && near(Number(row5.d), 0.05) && Number(row5.n) >= 0.9, { s: row5.s, n: row5.n, d: row5.d })
@@ -204,7 +204,7 @@ await appraiseTurnNow(db, aid, { text: '还在忙', turnId: 'd5x', conversationI
 const rowExpired = db.prepare("SELECT s FROM affect_v4_shadow WHERE agent_id=? AND turn_id='d5x' AND source='model'").get(aid)
 check('shock 过期：一小时后交回回落（S 离开 0.02，但还没回平静）', Number(rowExpired.s) > 0.03 && Number(rowExpired.s) < 0.45, rowExpired.s)
 check('shock 过期：状态里的 shock 被清掉', JSON.parse(getFlag(db, 'affect.v4.state|cC') || '{}').shock === false, getFlag(db, 'affect.v4.state|cC'))
-const judgeHeavy = JSON.stringify({ meaning: '被狠狠批了', goal_delta: -0.9, expect_delta: 0.4, future_delta: -0.6, severity: 'strong' })
+const judgeHeavy = JSON.stringify({ fact: '被狠狠批了', meaning: '被狠狠批了', by: 'other', to: 'me', goal_delta: -0.9, expect_delta: 0.4, future_delta: -0.6, severity: 'strong', why: '被批', from: '这一句' })
 await appraiseTurnNow(db, aid, { text: '你这做的什么呀', turnId: 'd6', conversationId: 'cD', now: T0 + 300000, complete: async () => judgeHeavy })
 const row6 = db.prepare("SELECT s FROM affect_v4_shadow WHERE agent_id=? AND turn_id='d6' AND source='model'").get(aid)
 // 2026-11-21：不锁 0.185（那是 ks=0.35 时代的数）。本意：没标 existence 就只走增量，不下到 0.02。

@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型调用看板 · 意识体</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#262d36; --text:#d7dde5; --dim:#8b949e;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --acc:#6ea8fe; --chip:#1f2630;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 "Segoe UI","Microsoft YaHei UI",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(13,17,23,.94);backdrop-filter:blur(6px);z-index:5}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.off{background:var(--err)}
+  .spacer{flex:1}
+  .muted{color:var(--dim)}
+  button{background:var(--chip);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
+  button:hover{border-color:var(--acc)}
+  main{padding:16px 18px 40px;max-width:1180px;margin:0 auto}
+  .slots{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+  @media (max-width:820px){.slots{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+  .panel h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:0 0 10px;font-weight:600}
+  .slot-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+  .slot-head .model{font-size:14px;font-weight:600;color:var(--acc)}
+  .slot-head .count{margin-left:auto;color:var(--dim);font-size:12px}
+  .task{padding:10px 12px;border-radius:8px;background:#11161d;border:1px solid var(--line)}
+  .task.empty{color:var(--dim);border-style:dashed}
+  .task .row{display:flex;align-items:baseline;gap:8px}
+  .task .label{font-weight:600}
+  .p{display:inline-block;font-size:11px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:0 6px}
+  .bar{height:4px;background:#0a0e13;border-radius:2px;overflow:hidden;margin-top:8px}
+  .bar i{display:block;height:100%;background:var(--acc);width:0;transition:width .4s linear}
+  .qlist{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .qlist li{display:flex;gap:8px;align-items:baseline;font-size:12px;color:var(--text);padding:5px 8px;background:#11161d;border-radius:6px}
+  .qlist .t{margin-left:auto;color:var(--dim)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:820px){.grid2{grid-template-columns:1fr}}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{color:var(--dim);font-weight:600;font-size:11px;letter-spacing:.04em}
+  td.num{font-variant-numeric:tabular-nums}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:7px 10px;min-width:180px}
+  .chip .n{font-weight:600}
+  .chip .d{color:var(--dim);font-size:11px;margin-top:2px}
+  .tag{font-size:11px;border-radius:99px;padding:0 7px;border:1px solid var(--line);color:var(--dim)}
+  .tag.new{color:#0d1117;background:var(--warn);border-color:var(--warn);font-weight:600}
+  .tag.ok{color:var(--ok);border-color:rgba(63,185,80,.4)}
+  .tag.bad{color:var(--err);border-color:rgba(248,81,73,.4)}
+  .events{list-style:none;margin:0;padding:0;max-height:150px;overflow:auto;font-size:12px}
+  .events li{display:flex;gap:8px;padding:3px 0;border-bottom:1px dashed var(--line)}
+  .events .t{color:var(--dim);margin-left:auto}
+  .err{color:var(--err);font-size:12px;margin-top:6px}
+  .foot{color:var(--dim);font-size:11px;margin-top:18px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>模型调用看板</h1>
+  <span class="muted" id="clock">—</span>
+  <span class="spacer"></span>
+  <span class="muted" id="swap"></span>
+  <button id="toggle">暂停</button>
+</header>
+
+<main>
+  <section class="slots" id="slots"></section>
+
+  <div class="grid2">
+    <section class="panel">
+      <h2>常驻模型（Ollama 现在挂在显卡上的）</h2>
+      <div class="chips" id="models"></div>
+      <div class="err" id="modelsErr"></div>
+    </section>
+    <section class="panel">
+      <h2>模型进程（本机进程表）</h2>
+      <table>
+        <thead><tr><th>名字</th><th>PID</th><th>内存</th><th>启动</th><th></th></tr></thead>
+        <tbody id="procs"></tbody>
+      </table>
+      <div class="err" id="procsErr"></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>最近调用（谁、用了哪个模型、等了多久、跑了多久）</h2>
+    <table>
+      <thead><tr><th>时间</th><th>槽</th><th>谁</th><th>模型</th><th>等待</th><th>耗时</th><th>结果</th></tr></thead>
+      <tbody id="recent"></tbody>
+    </table>
+    <div class="err" id="lastErr"></div>
+  </section>
+
+  <section class="panel">
+    <h2>进程事件（新起来 / 退出）</h2>
+    <ul class="events" id="events"><li class="muted">还没有事件</li></ul>
+  </section>
+
+  <div class="foot">只读看板 · 每秒刷新 · 数据来自插件里的唯一通道与本机进程表，不写库</div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+const sec = (ms) => (Math.max(0, Number(ms) || 0) / 1000).toFixed(ms >= 10000 ? 0 : 1) + 's'
+const clock = (iso) => { try { return new Date(iso).toLocaleTimeString('zh-CN', { hour12: false }) } catch { return '' } }
+const SLOT_NAME = { chat: '14B 槽（聊天 / 切事 / 实验）', embed: '向量槽（语义模型）' }
+
+let paused = false
+let timer = null
+let lastModelBySlot = {}
+
+function renderSlots(g) {
+  const slots = g.slots || {}
+  const run = g.runningItems || []
+  const q = g.queue || []
+  const html = Object.keys(SLOT_NAME).map((slot) => {
+    const info = slots[slot] || {}
+    const cur = run.find((x) => x.slot === slot)
+    const waiting = q.filter((x) => x.slot === slot)
+    const model = (cur && cur.model) || (lastModelBySlot[slot]) || (slot === 'chat' ? 'qwen2.5:14b-instruct' : 'qwen3-embedding:0.6b')
+    let body = ''
+    if (cur) {
+      const pct = Math.min(100, Math.round((Number(cur.runningMs) || 0) / Math.max(1, Number(cur.timeoutMs) || 1) * 100))
+      body = '<div class="task"><div class="row"><span class="label">' + esc(cur.label || cur.lane) + '</span>'
+        + '<span class="p">p' + esc(cur.priority) + '</span><span class="p">' + esc(cur.lane) + '</span>'
+        + '<span class="t" style="margin-left:auto" class="muted">' + sec(cur.runningMs) + ' / 限 ' + sec(cur.timeoutMs) + '</span></div>'
+        + '<div class="bar"><i style="width:' + pct + '%"></i></div></div>'
+      lastModelBySlot[slot] = model
+    } else {
+      body = '<div class="task empty">空着 —— 没有调用</div>'
+    }
+    const qHtml = waiting.length
+      ? '<ul class="qlist">' + waiting.map((x) => '<li><span class="label">' + esc(x.label || x.lane) + '</span>'
+        + '<span class="p">p' + esc(x.priority) + '</span><span class="t">等了 ' + sec(x.waitedMs) + '</span></li>').join('') + '</ul>'
+      : ''
+    return '<section class="panel"><div class="slot-head"><span class="model">' + esc(model) + '</span>'
+      + '<span class="muted">' + esc(SLOT_NAME[slot]) + '</span>'
+      + '<span class="count">在跑 ' + esc(info.running || 0) + ' · 在排 ' + esc(info.queued || 0) + '</span></div>'
+      + body + qHtml + '</section>'
+  }).join('')
+  $('slots').innerHTML = html
+}
+
+function renderModels(g) {
+  const list = g.models || []
+  $('models').innerHTML = list.length
+    ? list.map((m) => {
+      const gb = (Number(m.vram || m.size) || 0) / (1024 ** 3)
+      return '<div class="chip"><div class="n">' + esc(m.name) + '</div>'
+        + '<div class="d">显存 ' + gb.toFixed(2) + ' GB · ctx ' + esc(m.contextLength || '?')
+        + (m.expiresAt ? ' · 到 ' + esc(clock(m.expiresAt)) + ' 还在' : '') + '</div></div>'
+    }).join('')
+    : '<span class="muted">没有模型挂在显卡上</span>'
+  $('modelsErr').textContent = g.up ? '' : 'Ollama 没起来（或者连不上）'
+}
+
+function renderProcs(p) {
+  const items = p.items || []
+  $('procs').innerHTML = items.length
+    ? items.map((x) => '<tr><td>' + esc(x.name) + '</td><td class="num">' + esc(x.pid) + '</td>'
+      + '<td class="num">' + esc(x.memMB) + ' MB</td><td>' + esc(x.startedAt ? clock(x.startedAt) : '—') + '</td>'
+      + '<td>' + (x.fresh ? '<span class="tag new">新</span>' : '') + '</td></tr>').join('')
+    : '<tr><td colspan="5" class="muted">没有 ollama / llama-server 进程</td></tr>'
+  $('procsErr').textContent = p.error || ''
+
+  const evs = (p.events || []).slice().reverse()
+  $('events').innerHTML = evs.length
+    ? evs.map((e) => '<li><span class="' + (e.kind === 'start' ? 'tag ok' : 'tag bad') + '">'
+      + (e.kind === 'start' ? '起来' : '退出') + '</span><span>' + esc(e.name) + ' · pid ' + esc(e.pid) + '</span>'
+      + '<span class="t">' + esc(clock(e.at)) + '</span></li>').join('')
+    : '<li class="muted">还没有事件（看板打开后新起/退出的进程会出现在这里）</li>'
+}
+
+function renderRecent(g) {
+  const rows = (g.recent || []).slice().reverse()
+  $('recent').innerHTML = rows.length
+    ? rows.map((r) => {
+      const slot = r.slot || (r.lane === 'embed' ? 'embed' : 'chat')
+      const model = slot === 'embed' ? '语义' : (g.swapModel || '14B')
+      return '<tr><td class="num">' + esc(clock(r.at)) + '</td><td>' + esc(slot) + '</td>'
+        + '<td>' + esc(r.label || r.lane) + ' <span class="p">p' + esc(r.priority) + '</span></td>'
+        + '<td class="muted">' + esc(model) + '</td><td class="num">' + sec(r.waitedMs) + '</td>'
+        + '<td class="num">' + sec(r.ms) + '</td>'
+        + '<td>' + (r.ok ? '<span class="tag ok">ok</span>' : '<span class="tag bad">✗</span>')
+        + (r.ok ? '' : ' <span class="muted">' + esc(r.error) + '</span>') + '</td></tr>'
+    }).join('')
+    : '<tr><td colspan="7" class="muted">还没有调用</td></tr>'
+  $('lastErr').textContent = g.lastError ? '最近错误：' + g.lastError : ''
+}
+
+async function tick() {
+  if (paused) return
+  try {
+    const r = await fetch('/dsh-consciousness/live', { cache: 'no-store' })
+    if (!r.ok) throw new Error('http ' + r.status)
+    const data = await r.json()
+    const g = data.gateway || {}
+    $('dot').className = 'dot ' + (g.up ? 'on' : 'off')
+    $('clock').textContent = clock(data.at)
+    $('swap').textContent = g.swapModel ? '正在换模型：' + g.swapModel : ''
+    renderSlots(g); renderModels(g); renderProcs(data.procs || {}); renderRecent(g)
+  } catch (e) {
+    $('dot').className = 'dot off'
+    $('clock').textContent = '连不上插件：' + String(e && e.message || e).slice(0, 80)
+  }
+}
+
+$('toggle').onclick = () => {
+  paused = !paused
+  $('toggle').textContent = paused ? '继续' : '暂停'
+  if (!paused) tick()
+}
+tick()
+timer = setInterval(tick, 1000)
+</script>
+</body>
+</html>

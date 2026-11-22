@@ -143,6 +143,9 @@ export function rulesJudgment(act) {
   const goal_cong = act === 'threat' ? -0.8 : act === 'criticize' ? -0.6 : act === 'praise' ? 0.6 : act === 'withdraw' ? -0.35 : act === 'request' ? -0.2 : 0
   const expectation = Number.isFinite(expected) ? expected : 0.15
   const future = act === 'threat' ? -0.8 : act === 'criticize' ? -0.4 : act === 'praise' ? 0.4 : act === 'withdraw' ? -0.4 : 0
+  // 2026-11-22 主人定：**不许任何代码 / 规则兜底**。
+  // 这里只给「垫底的临时行」用，不当结论；判断层缺参数就报警、不补。
+  // （当天加过一版「按 target 推 by」，被主人否了：兜底就是骗人。）
   return {
     // 旧路（recordShadow / refineShadow）仍按「位置」读这三个数，原样保留。
     goal_cong,
@@ -169,7 +172,7 @@ const MATERIAL_SUMMARIES = 10
  * 2026-11-17 会话隔离：传了 conversationId 就只看本会话。
  */
 export function buildMaterial(db, aid, text = '', { quotes = MATERIAL_QUOTES, summaries = MATERIAL_SUMMARIES, conversationId = null } = {}) {
-  const out = { quotes: [], summaries: [] }
+  const out = { quotes: [], summaries: [], lines: [] }
   const cid = conversationId ? String(conversationId) : ''
   let oldestQuoteAt = null // 原话覆盖到的最老那句的时间；摘要从这之前取，两段不重叠
   try {
@@ -177,13 +180,19 @@ export function buildMaterial(db, aid, text = '', { quotes = MATERIAL_QUOTES, su
       // 2026-11-19：chat_turns 里「小汐说的话」这个角色叫 agent，不叫 assistant——
       // 碎片库 fragments 才叫 assistant（9,620 条）。两张表命名不一致，原来照 assistant 查，
       // 永远只捞到主人说的，材料里从来没有我上一句。这是情绪判断看不到「我刚说了什么」的根。
-      ? db.prepare("SELECT text, created_at FROM chat_turns WHERE agent_id=? AND conversation_id=? AND role IN ('user','agent') AND text<>'' ORDER BY created_at DESC, rowid DESC LIMIT ?").all(aid, cid, Math.max(1, quotes))
-      : db.prepare("SELECT text, created_at FROM chat_turns WHERE agent_id=? AND role IN ('user','agent') AND text<>'' ORDER BY created_at DESC, rowid DESC LIMIT ?").all(aid, Math.max(1, quotes))
+      ? db.prepare("SELECT text, created_at, role FROM chat_turns WHERE agent_id=? AND conversation_id=? AND role IN ('user','agent') AND text<>'' ORDER BY created_at DESC, rowid DESC LIMIT ?").all(aid, cid, Math.max(1, quotes))
+      : db.prepare("SELECT text, created_at, role FROM chat_turns WHERE agent_id=? AND role IN ('user','agent') AND text<>'' ORDER BY created_at DESC, rowid DESC LIMIT ?").all(aid, Math.max(1, quotes))
     for (const r of rows) {
       const at = String(r.created_at || '')
       if (at && (!oldestQuoteAt || at < oldestQuoteAt)) oldestQuoteAt = at
     }
     out.quotes = rows.map((r) => String(r.text).replace(/\s+/g, ' ').slice(0, 120)).reverse()
+    // 2026-11-22：同一批原话再给一份带角色的（设计-事帧-v2 §二 B 组要求）。
+    // quotes 保持旧字符串数组不动，读侧与旧测试不受影响；判断层改用 lines 拼「主人：/我：」。
+    out.lines = rows.map((r) => ({
+      role: String(r.role) === 'agent' ? 'agent' : 'user',
+      text: String(r.text).replace(/\s+/g, ' ').slice(0, 120),
+    })).reverse()
   } catch { /* 没有表就空 */ }
   try {
     // 2026-11-20：摘要跳过原话已覆盖的那段，再往前取——近处看原话、远处看摘要，越远越模糊。
@@ -195,17 +204,35 @@ export function buildMaterial(db, aid, text = '', { quotes = MATERIAL_QUOTES, su
         ? db.prepare('SELECT frame_json FROM affect_v4_shadow WHERE agent_id=? AND conversation_id=? ORDER BY at DESC, rowid DESC LIMIT ?').all(aid, cid, Math.max(1, summaries))
         : db.prepare('SELECT frame_json FROM affect_v4_shadow WHERE agent_id=? ORDER BY at DESC, rowid DESC LIMIT ?').all(aid, Math.max(1, summaries)))
     const seen = new Set()
-    for (const r of rows) {
-      let f = {}
-      try { f = JSON.parse(r.frame_json || '{}') } catch { f = {} }
-      const s = String(f.summary || '').trim()
-      if (s && !seen.has(s)) { seen.add(s); out.summaries.push(s) }
-      if (out.summaries.length >= summaries) break
+    // 2026-11-22：优先读「事帧前置」的历史行（affair_rows）——每轮收拢的「事」都追加在那儿。
+    // 影子表的 frame_json.summary 是每轮当时存的、会被事层覆盖；历史行才是前置的真出处。
+    let fromRows = []
+    try {
+      fromRows = cid
+        ? db.prepare('SELECT text FROM affair_rows WHERE agent_id=? AND conversation_id=? ORDER BY rowid DESC LIMIT ?').all(aid, cid, Math.max(1, summaries))
+        : db.prepare('SELECT text FROM affair_rows WHERE agent_id=? ORDER BY rowid DESC LIMIT ?').all(aid, Math.max(1, summaries))
+    } catch { fromRows = [] } // 老库/内存库没有这张表
+    if (fromRows.length) {
+      for (const r of fromRows.reverse()) {
+        const s = String(r.text || '').replace(/\n+/g, ' / ').trim()
+        if (s && !seen.has(s)) { seen.add(s); out.summaries.push(s) }
+      }
+    } else {
+      for (const r of rows) {
+        let f = {}
+        try { f = JSON.parse(r.frame_json || '{}') } catch { f = {} }
+        const s = String(f.summary || '').trim()
+        if (s && !seen.has(s)) { seen.add(s); out.summaries.push(s) }
+        if (out.summaries.length >= summaries) break
+      }
     }
     out.summaries.reverse()
   } catch { /* 空 */ }
   const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 120)
-  if (t && !out.quotes.includes(t)) out.quotes.push(t)
+  if (t && !out.quotes.includes(t)) {
+    out.quotes.push(t)
+    out.lines.push({ role: 'user', text: t })
+  }
   return out
 }
 
@@ -257,6 +284,28 @@ export function lastShadowRow(db, aid) {
     try { frame = JSON.parse(row.frame_json || '{}') } catch { frame = {} }
     return { row, frame }
   } catch { return null }
+}
+
+/** 上一轮这一会话的**最终**行（source=model）。没有就 null。
+ *  2026-11-22：事帧要的「距上一句多久 / 我上一轮什么词 / 这件事第几轮」都从它取。
+ *  原来是全 agent 取最近一行（lastShadowRow），两段会话同时开会串——这里按 conversationId 隔开。 */
+function lastModelRow(db, aid, conversationId) {
+  try {
+    const cid = conversationId ? String(conversationId) : ''
+    const row = cid
+      ? db.prepare("SELECT at, label, frame_json FROM affect_v4_shadow WHERE agent_id=? AND conversation_id=? AND source='model' ORDER BY rowid DESC LIMIT 1").get(aid ?? null, cid)
+      : db.prepare("SELECT at, label, frame_json FROM affect_v4_shadow WHERE agent_id=? AND source='model' ORDER BY rowid DESC LIMIT 1").get(aid ?? null)
+    return row || null
+  } catch { return null }
+}
+
+/** 毫秒 → 人话的间隔（判断层读的是「隔了多久」，不是数字）。 */
+function gapText(ms) {
+  const s = Math.max(0, Math.floor(Number(ms) / 1000))
+  if (!Number.isFinite(s)) return ''
+  if (s < 60) return s + ' 秒'
+  if (s < 3600) return Math.round(s / 60) + ' 分钟'
+  return (Math.round(s / 360) / 10) + ' 小时'
 }
 
 /**
@@ -332,15 +381,26 @@ export function recordShadow(db, aid, { text = '', turnId = null, conversationId
 /* ───────── 模型产帧（影子精修）─────────
    规则版先写一行、快；回复完了再让本地模型算一版精帧，异步写第二行（source=model，rev=2）。
    不阻塞对话；开关 affect.engine.shadow.model 默认 off，打开才跑。 */
-/* 第 1 次调用：事层——只说「现在正在发生什么」，不判好坏。 */
+/* 第 1 次调用：事层——只说「现在正在发生什么」，不判好坏。
+   2026-11-22 主人定：事层只留三键。`act`（威胁/骂/夸/求/问/收话/闲聊）删掉——
+   判断层输入不读它、选词不读它、三递质不算它，它只喂一张不算结论的规则垫底行。 */
 const TOPIC_SYS = [
   '你是「事层」判断器。先读上下文（上一帧 + 前几句），用一句话说清「现在正在发生什么」。',
   '只写这件事是什么，不判好坏。只输出 JSON，不要解释，不要 Markdown。',
-  '格式：{"summary":"这件事在干什么（≤20字）","what":"这一句说了什么（≤20字）","target":"me|other|none","act":"threat|criticize|praise|request|ask|withdraw|chat"}',
-  'summary：跟着事走，不是复述这一句。',
-  'what：这一句说了什么。',
-  'target：me 冲接收者 / other 说话人自己或第三方 / none 说不清。',
-  'act：这一句算什么动作——威胁、骂、夸、求、问、收话、闲聊，七选一。',
+  // 2026-11-22 主人定：summary 归「事帧前置」，事层不再产它（以前是事层读前置、又写一份盖回去）。
+  '格式：{"what":"这一句说了什么（≤20字）","target":"me|other|none"}',
+  // 2026-11-22 修 what 错位：真库抓到一例——当前句「那都搞完了呗」，what 却抄了「正在发生」的第二条。
+  // 短收尾句本身没什么可提炼，模型就拿旁边最像的补。所以把边界写死：what 只认「这一句」。
+  'what：这一句说了什么。只从「这一句」提取，不许拿「正在发生」或「我上一句」里的句子顶。',
+  '  这一句很短（「搞完了」「嗯」「好」「行」这种）时，照它本身写，别替它补上下文、别往上安事。',
+  // 2026-11-22 主人定：target 是「这一句的指称落在谁身上」——不是「谁的目标」，不是「小汐说谁」。
+  // 说话人不一定是主人：也可能是别人、或世界/系统本身发生的事。接收者也不一定是小汐（群里可能是别人）。
+  // 以前用角色定义（me 冲接收者）——「接收者」对模型是个空指，它只能退回数「这句话在讲谁」，于是把「说你」判成 other。
+  // 现在改成指称规则：按人称落点判，不按主语判；me 只留给「说给正在对话的这位」。
+  'target 判的是**这一句的指称落在谁身上**——不是这句话的主体，也不是它想要什么。',
+  '  说话人是发出这一句的那一方（不一定是主人：也可能是别人，或者世界 / 系统本身发生的事）；接收者是这一句说给的对方（当前跟它对话的那位，通常是小汐）。',
+  '  第二人称（你 / 您）指接收者 → me；第一人称（我 / 我们）指说话人自己 → other；第三方（他 / 她 / 它 / 别人 / 世界）→ other；没有指称对象（陈述事实、报故障、说外面发生的事）→ none。',
+  '  一句话的主语和它指向的人可以不是同一个：按指向判，不按主语判。',
   '结合上下文判断：同一句话在不同语境里可以相反，不要只看字面。',
 ].join('\n')
 
@@ -349,6 +409,7 @@ const TOPIC_SYS = [
 export const JUDGE_SYS = [
   '你是「判断层」。读「这件事」，按下面的格式把每一项都填完：这件事对我意味着什么、是谁造成的、三个维度各变了多少、这件事有多重。只回答「变化量」，不回答「现在停在哪儿」。只输出 JSON，不要解释，不要 Markdown。',
   '格式：{"fact":"这一句在讲什么（≤20字，只说事）","meaning":"这件事对我意味着什么（≤30字）","by":"me|other|world","to":"me|other|world|none","goal_delta":-1到1,"expect_delta":-1到1,"future_delta":-1到1,"severity":"none|strong|existence","why":"为什么这么判（≤30字）","from":"依据哪条材料"}',
+  '**每一个字段都必须写，一个都不能省。** 这十个是同一份判决的一部分：fact / meaning / by / to / goal_delta / expect_delta / future_delta / severity / why / from。少一个、留空、写 null，这一轮判定就作废——不会有人替你补，也没有规则兜底。拿不准也把你看出来的写出来，不许空着；0 是「没变」，不是「不知道」，不知道就想想再给。',
   '先写 fact：这一句在讲什么，只说事，不评价、不往自己身上安。',
   '再写 meaning：从 fact 往上推——这件事到底动了什么。',
   '**meaning 必须是 fact 推出来的。** fact 里没动到的东西，meaning 就不许往重里说；fact 是一个动作、一句应声、一次核对，meaning 就只能是它本身的分量，不能替它加戏。',
@@ -513,8 +574,20 @@ function sanitizeJudge(s) {
   return Object.keys(out).length ? out : null
 }
 
-/* ───────── 精修（旧路径，保留给测试；业务已改用下面的 summarizeAffairs + appraiseTurnNow）───────── */
-const refining = new Set()
+/** 2026-11-22 主人定：**判断层每个有用的参数都必须写。缺一个就报警，不补、不猜、不兜底。**
+ *  这份清单就是 JUDGE_SYS 要模型填的全部字段；少一个，这一轮情绪就算没算成。 */
+export const REQUIRED_JUDGE = ['fact', 'meaning', 'by', 'to', 'goal_delta', 'expect_delta', 'future_delta', 'severity', 'why', 'from']
+export function judgeMissing(j) {
+  const o = j && typeof j === 'object' ? j : {}
+  const miss = []
+  for (const k of REQUIRED_JUDGE) {
+    const v = o[k]
+    if (v === undefined || v === null || v === '') miss.push(k)
+  }
+  return miss
+}
+
+/* ───────── 精修（旧路径，保留给测试；业务已改用下面的 summarizeAffairs + appraiseTurnNow）───────── */const refining = new Set()
 const refineChains = new Map()
 const refinePending = new Map()
 const REFINE_MAX_PENDING = 5
@@ -587,9 +660,9 @@ async function refineShadowOnce(db, aid, { text = '', turnId = null, conversatio
       for (let attempt = 0; attempt < 2 && !judgment; attempt++) {
         try {
           const raw = await hostComplete(db, {
-            agent: String(aid || ''), label: 'affect:judge', timeoutMs: 15000, priority: 1,
+            agent: String(aid || ''), label: 'affect:judge', timeoutMs: 0, priority: 1,
             complete: (req) => kernelModel.complete(req),
-            system: JUDGE_SYS, text: frameText, maxTokens: 2000,
+            system: JUDGE_SYS, text: frameText, maxTokens: 1200,
           })
           judgment = sanitizeJudge(parseJsonLoose(raw))
           if (!judgment) diag('judge-host-unparsed', { raw: String(raw || '').slice(0, 400), len: String(raw || '').length, attempt })
@@ -1116,8 +1189,11 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     if (db.prepare('SELECT 1 FROM affect_v4_shadow WHERE agent_id=? AND turn_id=? LIMIT 1').get(aid ?? null, tid)) return false
     // 2026-11-21 主人：事帧这块一点关键词规则也不要。act/target/what/summary 全交给本地小模型（TOPIC_SYS）；
     // 模型没回来就留原话和空值。rulesFrameSlot 只留给旧路和测试，主链不再调。
-    const slot = { act: '', what: t.replace(/\s+/g, ' ').slice(0, 60), target: 'none' }
+    const slot = { what: t.replace(/\s+/g, ' ').slice(0, 60), target: 'none' }
     let affairs = readAffairs(db, conversationId)
+    // 2026-11-22：把「事帧前置」这一轮的原文留一份。下面事层会覆盖 frame.summary，
+    // 但判断输入和 turnIndex 要读的是前置那份（出处只有一个），不是事层改写后的。
+    const affairsLine = String(affairs || '')
     // 2026-11-20：四格接进 frame 本体。跟 summary 同源（都是上一轮 writeAffairs 写的），
     // 所以这里拿到的是「上一次」的四格，比这一轮晚一步——第一版接受这个滞后。
     const lastFour = readLastFour(db, conversationId)
@@ -1129,12 +1205,26 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
       next: plusNow.next,
       openLines: plusNow.open,
     } : {}
+    // 2026-11-22：上一轮的最终行——「距上一句多久 / 我上一轮什么词 / 这件事第几轮」都从它取。
+    // 设计-事帧-v2 §二 C 组要的上下文格；全部代码填，零模型成本。
+    const prevFinal = lastModelRow(db, aid, conversationId)
+    const prevAtMs = prevFinal ? Date.parse(prevFinal.at) : NaN
+    const gapMs = Number.isFinite(prevAtMs) && prevAtMs <= now ? Math.max(0, now - prevAtMs) : null
+    const prevLabel = prevFinal && prevFinal.label ? String(prevFinal.label) : null
+    let prevFrame = {}
+    try { prevFrame = JSON.parse(prevFinal ? prevFinal.frame_json || '{}' : '{}') } catch { prevFrame = {} }
+    const prevSummary = String(prevFrame.summary || '')
+    const prevTurnIndex = Number(prevFrame.turnIndex) || 0
     const frame = {
       id: newId(), span: 'turn', startedAt: new Date(now).toISOString(), open: true,
-      act: slot.act, summary: affairs ? String(affairs).slice(0, 120) : '（新事）',
+      summary: affairs ? String(affairs).slice(0, 120) : '（新事）',
       ...lastFour,
       ...plusFrame,
       what: slot.what, who: 'owner', target: slot.target,
+      // 上下文格（2026-11-22）：隔多久、我上一轮什么状态、这一帧第几轮、缺了什么。
+      // turnIndex 要等事层写完 summary 才能算，先占位 0。
+      // `with`（渠道）2026-11-22 当天加、当天删：没有任何读侧，纯账本，不留。
+      gapMs, prevLabel, turnIndex: 0, missing: [],
       material: buildMaterial(db, aid, t, { conversationId }), evidence: [tid],
       prev: lastAgentLine(db, aid, conversationId, tid),
       lastAt: new Date(now).toISOString(),
@@ -1143,13 +1233,16 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     const opt = v4Opts(db, aid)
     // 事层（第 1 次调用，原设计 TOPIC_SYS）：本地小模型读上下文，写这一帧的 summary/what/target。
     // 只在真实链路跑（没传 complete 的测试/仿真不跑，免得每个用例等本地模型）；
-    // 失败/超时就退回规则那版，不阻塞判断层。开关 affect.v4.topic.local 可关。
+    // 失败/超时**不补**（没有「规则那版」了），只记一笔 `missing.topic`，判断输入里会明说事层没回来。
     if (!complete && opt.topicLocal !== 'off') {
+      let topicOk = false
       try {
+        // 2026-11-22：把「这一句」放最前、并标明「只从这一句提取」；「正在发生」退到后面当背景。
+        // 之前顺序是 正在发生 → 我上一句 → 这一句，短句时模型会把背景里的句子抄成 what。
         const topicText = [
-          frame.summary ? `正在发生：${frame.summary}` : '',
-          frame.prev ? `我上一句：${String(frame.prev).slice(0, 200)}` : '',
-          `这一句：${t}`,
+          `这一句（what 和 target 都只判这一句）：${t}`,
+          frame.summary ? `正在发生（背景，别拿它当这一句）：\n${frame.summary}` : '',
+          frame.prev ? `我上一句（背景，别拿它当这一句）：${String(frame.prev).slice(0, 200)}` : '',
         ].filter(Boolean).join('\n')
         const r = await localComplete(db, {
           system: TOPIC_SYS, text: topicText, maxTokens: 120,
@@ -1157,13 +1250,30 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
         })
         const jt = parseJsonLoose(r && r.text != null ? r.text : r)
         if (jt) {
-          if (jt.summary) frame.summary = String(jt.summary).replace(/\s+/g, ' ').slice(0, 40)
+          // 2026-11-22：事层不再产 summary（归前置）。它只写这一句和指称。
           if (jt.what) frame.what = String(jt.what).replace(/\s+/g, ' ').slice(0, 80)
           if (['me', 'other', 'none'].includes(String(jt.target || '').toLowerCase())) frame.target = String(jt.target).toLowerCase()
-          if (['threat', 'criticize', 'praise', 'request', 'ask', 'withdraw', 'chat'].includes(String(jt.act || '').toLowerCase())) frame.act = String(jt.act).toLowerCase()
+          topicOk = true
         }
-      } catch { /* 本地模型没起/超时：用规则那版 */ }
+      } catch { /* 本地模型没起/超时：不补，记 missing.topic */ }
+      // 2026-11-22：事层没跑成要留痕——这是「没算成」，不是「字段为空」。
+      if (!topicOk) {
+        if (!Array.isArray(frame.missing)) frame.missing = []
+        if (!frame.missing.includes('topic')) frame.missing.push('topic')
+      }
     }
+    // 2026-11-22：这一帧内第几轮 + 缺字段留痕（设计-事帧-v2 原则 3：填不满就留空 + 记一笔 missing）。
+    // turnIndex 按「summary 和上一轮一样」续：同一件事第 2、3 轮；换了事就回到 1。
+    frame.turnIndex = (prevSummary && affairsLine === prevSummary)
+      ? Math.max(1, (prevTurnIndex || 1) + 1)
+      : 1
+    const miss = (k) => {
+      if (!Array.isArray(frame.missing)) frame.missing = []
+      if (!frame.missing.includes(k)) frame.missing.push(k)
+    }
+    if (!frame.summary || frame.summary === '（新事）') miss('summary')
+    // act（威胁/骂/夸/求/问/收话/闲聊）2026-11-22 从事层删掉：判断层输入不读、选词不读、三递质不算，
+    // 只喂下面那张不算结论的规则垫底行。事层输出只剩 summary / what / target 三键。
     // 增量模式：两行都从「上一轮的位置」出发（规则行和模型行对账时起点一致），状态只由最终那行写回。
     // 底色跨会话：先看上一轮隔了多久——静默够久就算这段过去了，结算余温、这一段重新起。
     let prev = opt.dyn === 'off' ? null : readState(db, conversationId)
@@ -1177,7 +1287,9 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     // 底色只决定「这一段从哪起」：这一段已经在跑，就继续用它自己记下的 b——
     // 别的会话结束时把慢情绪染了一点，也不该把这段的回落目标拽走。
     const base = prev && prev.b ? prev.b : baseFor(readSlow(db, aid), opt)
-    const jr = rulesJudgment(slot.act)
+    // 规则垫底行：只占位，不写状态（状态只由最终那行写回）。事层不再产 act，
+    // 这里传 null——它给的是「什么都没发生」的中性数，不是对这句的判定。
+    const jr = rulesJudgment(null)
     const posR = nextPosition(prev, jr, now, opt, base)
     const outR = infer(frame, jr, posR ? { ...opt, position: posR.position } : opt)
     insertShadowRow(db, {
@@ -1186,13 +1298,29 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
       judgment: { ...jr, judge: 'rules', ...(posR ? { dyn: posR.dyn } : {}) },
     })
     const mat = frame.material || {}
+    // 2026-11-22：上下文三行（隔多久 / 第几轮 / 我上一轮什么状态）。默认 off = 影子期，
+    // 只写进 frame、不改判断层输入；验过再开。开关 `affect.v4.frame.ctx`。
+    const ctxOn = String(getParam(db, aid, 'affect.v4.frame.ctx') || 'off') !== 'off'
+    const quotesLine = (ctxOn && Array.isArray(mat.lines) && mat.lines.length)
+      ? '最近原话：' + mat.lines.slice(-6).map((x) => (String(x.role) === 'agent' ? '我：' : '主人：') + x.text).join(' / ')
+      : (Array.isArray(mat.quotes) && mat.quotes.length ? '最近原话：' + mat.quotes.slice(-6).join(' / ') : '')
     const frameText = [
-      `正在发生：\n${frame.summary || ''}`,
+      `正在发生：\n${affairsLine || frame.summary || ''}`,
       frame.prev ? `我上一句：${String(frame.prev).slice(0, 200)}` : '',
       `这一句：${frame.what || ''}`,
       `冲谁：${frame.target || 'none'}`,
+      ...(ctxOn ? [
+        gapMs != null ? '距上一句：' + gapText(gapMs) : '',
+        frame.turnIndex ? '这件事第 ' + frame.turnIndex + ' 轮' : '',
+        prevLabel ? '我上一轮的状态：' + prevLabel : '',
+        // 2026-11-22：事层没回来时，别让判断层把空白当完整输入。
+        // 只提示缺什么，不替它编一个 summary/target（主人 11-21 定过：事帧不要关键词规则）。
+        (Array.isArray(frame.missing) && frame.missing.includes('topic'))
+          ? '（事层没回来：这句没有摘要和冲谁，只按原话判，别把空白当完整。）'
+          : '',
+      ] : []),
       Array.isArray(mat.summaries) && mat.summaries.length ? '最近几件事：' + mat.summaries.slice(-6).join(' / ') : '',
-      Array.isArray(mat.quotes) && mat.quotes.length ? '最近原话：' + mat.quotes.slice(-6).join(' / ') : '',
+      quotesLine,
     ].filter(Boolean).join('\n')
     const run = typeof complete === 'function' ? complete : (req) => kernelModel.complete(req)
     let judgment = null
@@ -1200,8 +1328,8 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     for (let attempt = 0; attempt < 2 && !judgment; attempt++) {
       try {
         const raw = await hostComplete(db, {
-          agent: String(aid || ''), label: 'affect:judge', timeoutMs: 15000, priority: 1,
-          complete: run, system: JUDGE_SYS, text: frameText, maxTokens: 2000,
+          agent: String(aid || ''), label: 'affect:judge', timeoutMs: 0, priority: 1,
+          complete: run, system: JUDGE_SYS, text: frameText, maxTokens: 1200,
         })
         const parsed = parseJsonLoose(raw)
         judgment = sanitizeJudge(parsed)
@@ -1227,24 +1355,44 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
         }))
       }
     } catch { /* 诊断失败不影响 */ }
-    const judge = judgment ? 'host' : 'rules'
-    // 规则顶上时，这一行要自己说清楚：「我是兜底，不是模型判的」。
-    // 以前 why 写「规则关键词判为 chat」，看着像一次正常判定，谁都不知道模型掉过。
-    if (!judgment) {
-      judgment = {
-        ...jr,
-        judge: 'rules-fallback',
-        fallbackWhy: judgeStatus?.fallbackWhy ?? (jDiag && jDiag.why) ?? null,
-      }
+    // 2026-11-22 主人定：**不许任何代码 / 规则兜底**。
+    // 判断层每个有用参数都必须写全；缺一个就报警——不补数、不当结论、不推进状态。
+    // （当天上午加过「规则补 by / 规则顶上」，被主人否了：兜底就是骗人。）
+    const missJudge = judgment ? judgeMissing(judgment) : [...REQUIRED_JUDGE]
+    const judgeOk = !!judgment && missJudge.length === 0
+    if (!judgeOk) {
+      // 报警：缺了哪几个、原句、当时的原始输出，都留下来。
+      try {
+        setFlag(db, 'affect.v4.judge.incomplete', JSON.stringify({
+          at: new Date(now).toISOString(),
+          conv: conversationId ? String(conversationId) : '',
+          text: t.slice(0, 60),
+          missing: missJudge,
+          why: (jDiag && jDiag.why) || (judgment ? 'incomplete' : 'no-judgment'),
+          raw: String((jDiag && jDiag.raw) || '').slice(0, 200),
+        }))
+      } catch { /* 报警失败不影响别的 */ }
+      judgment = { ...(judgment || {}), judge: 'incomplete', missing: missJudge }
+    } else {
+      judgment = { ...judgment, judge: 'host' }
     }
-    // 情绪模块罢工：判断没算成、回退规则——记一笔，提示词最顶上会写「情绪模块罢工」。
+    // 情绪模块罢工：这一轮没算成（模型没回来 / 没写全）——提示词顶上会写「情绪模块罢工」。
     try {
-      if (judge === 'host') clearFlag(db, 'affect.v4.strike')
-      else setFlag(db, 'affect.v4.strike', JSON.stringify({ at: new Date().toISOString(), conv: conversationId ? String(conversationId) : '' }))
+      if (judgeOk) clearFlag(db, 'affect.v4.strike')
+      else setFlag(db, 'affect.v4.strike', JSON.stringify({
+        at: new Date().toISOString(),
+        conv: conversationId ? String(conversationId) : '',
+        missing: missJudge,
+      }))
     } catch { /* 标记失败不影响 */ }
     // agency 已删：老路统一读 by，模型判的 by 覆盖规则先垫的那版。
     if (judgment && judgment.by) frame.by = judgment.by
-    const posM = nextPosition(prev, judgment, now, opt, base)
+    if (!frame.by) {
+      if (!Array.isArray(frame.missing)) frame.missing = []
+      if (!frame.missing.includes('by')) frame.missing.push('by')
+    }
+    // 缺参数：这一轮**不推进**（不调用 nextPosition）。宁可停在原处，也不拿默认 0 算个假情绪。
+    const posM = judgeOk ? nextPosition(prev, judgment, now, opt, base) : null
     // 极端事件「一步通天」：只有判断层标 existence 且 |Δ| 过阈值才触发（见 applyShock）。
     let posOut = posM
     let shocked = false
@@ -1287,11 +1435,16 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
       expectation: judgment.expectation ?? judgment.expect_delta,
       future: judgment.future ?? judgment.future_delta,
     }
-    const out = infer(frame, judgeForOut, posOut ? { ...opt, position: posOut.position } : opt)
+    // 没算成（缺参数 / 模型没回来）时，词停在上一次的位置：
+    // 不拿 transmitters 的默认 0 去算一个「中性」的假词。
+    const inferPos = posOut
+      ? { ...opt, position: posOut.position }
+      : (prev ? { ...opt, position: { s: prev.s, n: prev.n, d: prev.d } } : opt)
+    const out = infer(frame, judgeForOut, inferPos)
     insertShadowRow(db, {
       aid, turnId: tid, conversationId, at, frame, out,
       source: 'model', latencyMs: Date.now() - now, freeframe: 0, rev: 2,
-      judgment: { ...judgment, judge, ...(posOut ? { dyn: { ...posOut.dyn, state: posOut.position, shock: shocked } } : {}) },
+      judgment: { ...judgment, ...(posOut ? { dyn: { ...posOut.dyn, state: posOut.position, shock: shocked } } : {}) },
     })
     // 总情绪用：v4 三轴投影成一条正负轴（valenceOf），交给 v3 的总情绪合成（慢 + 0.35×当场）。
     if (posOut) {

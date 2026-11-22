@@ -12,8 +12,9 @@
     "09-fieldHuman.js",
     "10-MetricsPage.js",
     "11-MemorySettingsCard.js",
+    "13-ModelBoard.js",
     "12-VoiceTalk.js"
   ],
-  "sha256": "03676f2232365807",
-  "builtAt": "2026-11-18T06:07:47.464Z"
+  "sha256": "9f0c881de03c4259",
+  "builtAt": "2026-11-22T06:30:07.861Z"
 }

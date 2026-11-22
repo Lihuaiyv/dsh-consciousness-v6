@@ -6,10 +6,14 @@
  * 判官不是我——是本地另一个模型，避免自评。
  * 只回三个词：接 / 断 / 无关，加一句理由。
  *
- * 用法：node scripts/judge-frame-continuity.mjs [--n 8] [--model qwen2.5:14b-instruct]
+ * 用法：node scripts/judge-frame-continuity.mjs [--n 8] [--model '']
+ *
+ * 2026-11-22：判官调用改成走插件唯一通道（scripts/lib/exp-call.mjs → /local/exp），
+ * 不再直连 11434。不传 --model 就用常驻 14B，不换模型、不重载。
  */
 import fs from 'node:fs'
 import { FRAMES } from '../src/modules/frame_chain.js'
+import { expCall } from './lib/exp-call.mjs'
 
 const argv = process.argv
 const num = (k, d) => {
@@ -17,8 +21,7 @@ const num = (k, d) => {
   return i >= 0 ? Number(argv[i + 1]) || d : d
 }
 const N = num('--n', 8)
-const MODEL = argv.includes('--model') ? argv[argv.indexOf('--model') + 1] : 'qwen2.5:14b-instruct'
-const OLLAMA = 'http://127.0.0.1:11434/api/generate'
+const MODEL = argv.includes('--model') ? (argv[argv.indexOf('--model') + 1] || '') : ''
 
 const buf = fs.readFileSync(FRAMES, 'utf8')
 const rows = []
@@ -61,20 +64,13 @@ const RUBRIC = `你在判断一段对话的「因果连续」。
 不要客套，不要解释规则。`
 
 async function judge(p) {
-  const body = {
-    model: MODEL,
-    prompt: `${RUBRIC}\n\nA: ${String(p.prev.anchor || '').slice(0, 120)}\nB: ${String(p.cur.in || p.cur.focus || '').slice(0, 120)}\nC: ${String(p.cur.anchor || '').slice(0, 120)}`,
-    stream: false,
-    think: false,
-    options: { temperature: 0, num_predict: 60 },
-  }
-  const r = await fetch(OLLAMA, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-  const j = await r.json()
-  return String(j.response || '').trim().replace(/\s+/g, ' ')
+  const text = `A: ${String(p.prev.anchor || '').slice(0, 120)}\nB: ${String(p.cur.in || p.cur.focus || '').slice(0, 120)}\nC: ${String(p.cur.anchor || '').slice(0, 120)}`
+  const r = await expCall({ system: RUBRIC, text, maxTokens: 60, model: MODEL, format: '', label: 'judge:frame' })
+  return String(r.text || '').trim().replace(/\s+/g, ' ')
 }
 
 const tally = { 接: 0, 断: 0, 无关: 0, 其他: 0 }
-console.log(`判官：${MODEL} ／ 样本 ${sample.length} 对（最近）`)
+console.log(`判官：${MODEL || '常驻 14B（不换模型）'} ／ 样本 ${sample.length} 对（最近）`)
 for (const [i, p] of sample.entries()) {
   let out = ''
   try { out = await judge(p) } catch (e) { out = '调用失败: ' + e.message }

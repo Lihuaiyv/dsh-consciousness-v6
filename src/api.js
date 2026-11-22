@@ -51,6 +51,8 @@ import * as parts from './modules/parts.js'
 import * as res from './modules/self_residue.js'
 import { lifeTick, lifeLine } from './modules/life.js'
 import { model as kernelModel } from './kernel.js'
+import * as gw from './modules/local_gateway.js'
+import * as procWatch from './modules/proc_watch.js'
 import { unzipStore } from './zip.js'
 import { defaultFileSeam } from './host/fs.js'
 
@@ -179,7 +181,8 @@ async function finishRoutes(db, out) {
 
 async function dispatch(db, method, path, body, role, bound) {
   const write = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
-  const readOnlyPost = path.endsWith('/pack') || path.endsWith('/events/stream')
+  // 只读性质的 POST 不需要幂等键：/pack、事件流，以及本地模型实验口（它只调模型，不写业务表）。
+  const readOnlyPost = path.endsWith('/pack') || path.endsWith('/events/stream') || path === '/local/exp' || path === '/local/status' || path === '/local/live'
   const key = body.__idempotencyKey
   if (write && !readOnlyPost && !key) err(400, 'INVALID_ARGUMENT', '写命令必须带 Idempotency-Key')
   if (write && key) {
@@ -216,6 +219,44 @@ async function routes(db, method, path, body, role, bound) {
     const v = db.prepare('SELECT version FROM schema_meta').get()
     const n = db.prepare('SELECT COUNT(*) n FROM agents').get()
     return { ok: true, schema_version: Number(v?.version || 0), mode: 'ok', agents: Number(n?.n || 0), model: c.modelStatus(), pending_agent: f.getFlag(db, 'pending_agent') }
+  }
+  // ---- 本地模型唯一通道（2026-11-22）----
+  // 实验只能用这个口子：它排同一条队，不会起新进程，也不会同时跑两个小模型。
+  // 用法：POST /dsh-consciousness/api
+  //   { token:'user', method:'POST', path:'/local/exp',
+  //     body:{ system:'', text:'...', maxTokens:200, model:'', label:'bench-x' } }
+  if (path === '/local/status') {
+    return { ok: true, ...(await gw.gatewayStatus(db)) }
+  }
+  // 看板（DSH 界面里那块）用：队列 + 常驻模型 + 本机模型进程，一次拿全。
+  if (path === '/local/live') {
+    const [gateway, procs] = await Promise.all([
+      gw.gatewayStatus(db).catch(() => null),
+      procWatch.processSnapshot().catch(() => ({ at: Date.now(), items: [], events: [], error: 'snapshot failed' })),
+    ])
+    return { ok: true, at: new Date().toISOString(), gateway, procs: { ...procs, calls: procWatch.processStats().sampleCount } }
+  }
+  if (method === 'POST' && path === '/local/exp') {
+    const text = String(body.text || body.prompt || '')
+    if (!text.trim()) err(400, 'INVALID_ARGUMENT', 'text 不能为空')
+    let out
+    try {
+      out = await gw.gatewayExperiment(db, {
+        system: String(body.system || ''),
+        text,
+        maxTokens: Number(body.maxTokens) || 2000,
+        model: String(body.model || ''),
+        temperature: body.temperature == null ? null : Number(body.temperature),
+        format: body.format === undefined ? 'json' : String(body.format || ''),
+        timeoutMs: Number(body.timeoutMs) || 180000,
+        label: String(body.label || 'exp').slice(0, 40),
+      })
+    } catch (e) {
+      // 「这个模型没装」是调用方写错了，不是服务坏了：给它 400，别记成 500。
+      if (/model not installed/.test(String(e && e.message))) err(400, 'INVALID_ARGUMENT', String(e.message).slice(0, 300))
+      throw e
+    }
+    return { ok: true, ...out }
   }
   // 2026-11-13 B2：手动触发「一天批量切事」。
   // 为什么要有：模型调用只在插件进程里通；worker 又是半小时一跳，做一次对照要干等。

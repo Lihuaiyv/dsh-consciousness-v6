@@ -16,18 +16,14 @@ const BY_MAP = {
   对方: '对方', other: '对方', owner: '对方', you: '对方',
   外面: '外面', world: '外面', thing: '外面', event: '外面'
 }
-const TARGET_MAP = {
-  我: '冲自己', me: '冲自己', self: '冲自己',
-  对方: '冲对方', other: '冲对方', owner: '冲对方', you: '冲对方',
-  外面: '冲外面', world: '冲外面', thing: '冲外面', event: '冲外面',
-  // target=none 不是「没给」，是「不冲谁」——正好是「无」这一格
-  none: '无', 无: '无', null: '无'
-}
+// TARGET_MAP（frame.target → 冲谁）2026-11-22 删：那是「这句话冲谁说」，主语是对方；
+// 情绪落格只认判断层的 `to`（我冲谁），不拿它顶。见 slotOf。
 const TO_ALIAS = {
   冲自己: '冲自己', 自己: '冲自己', self: '冲自己', me: '冲自己',
   冲对方: '冲对方', 对方: '冲对方', other: '冲对方', you: '冲对方', owner: '冲对方',
   冲外面: '冲外面', 外面: '冲外面', world: '冲外面', thing: '冲外面',
-  无: '无', none: '无', '': '无'
+  // 注意：**空字符串不映射成「无」**。空 = 没给（不落格）；「无」只认明说的 none / 无。
+  无: '无', none: '无'
 }
 
 // 词 → 它属于哪一片（GRID_CELLS 里 284 个词都有片，2026-11-21 核过）
@@ -106,23 +102,16 @@ export const CONCERN_BONUS = 0.18
  *    model 判的 → judgment.by     （me / other / world）
  *    rules 判的 → judgment.agency （self / other）
  *  两个都认，不然一半的帧读不到。 */
-export function slotOf(judgment, frame) {
+/** 只认判断层给的 `to`（心里这股劲冲谁）。
+ *  2026-11-22 主人定：「to 没生成出来就直接报错」——原来没给时会拿 frame.target 顶，
+ *  可那是「这句话冲谁说」，主语是对方；`to` 是「我的情绪冲谁」，主语是我。两个不能互相顶。
+ *  返回 null = 没有「劲冲谁」，这一轮**不落格**（上层按「没算成」处理），不猜。 */
+export function slotOf(judgment) {
   const j = judgment || {}
-  const f = frame || {}
   const rawBy = j.by !== undefined ? j.by : (j.agency !== undefined ? j.agency : '')
   const by = BY_MAP[String(rawBy).trim()] || null
-  // 「冲谁」判断层给（j.to）就用它；没给才退回帧的 target。
-  // 2026-11-21：frame.target 是「这句话冲谁说」，不是「这份情绪冲谁」——日常一句「我看那家不错」
-  // 会被判成 target=other，词就落到「暖心/熨帖」那一格。判断层直接给 to 以后，日常多半是 none。
-  const judgeTo = j.to
-  const hasJudgeTo = judgeTo !== undefined && judgeTo !== null && String(judgeTo).trim() !== ''
-  const rawTo = hasJudgeTo ? judgeTo : (f.target || '')
-  let to = TO_ALIAS[String(rawTo).trim()] || TARGET_MAP[String(rawTo).trim()] || null
-  if (!by || !to) return ['无', '无']
-  // 旧的兜底规则只在「冲谁」还是从 frame.target 猜的时候用：
-  // 事情是我做的（by=我），情绪却冲对方——我惹的错，情绪不会泼给对方。
-  // 判断层明说了 to 就尊重它（「我冲他发火」是有的）。
-  if (!hasJudgeTo && by === '我' && to === '冲对方') to = '无'
+  const to = TO_ALIAS[String(j.to ?? '').trim()] || null
+  if (!by || !to) return null
   return [by, to]
 }
 
@@ -195,7 +184,10 @@ export function gridDistribution(pos, judgment, opt = {}) {
   const limit = Math.max(1, Math.min(8, Number(opt.limit) || 5))
   const near = nearestCell(pos)
   if (!near) return []
-  const [by, to] = slotOf(judgment, opt.frame)
+  const slot = slotOf(judgment)
+  // 没有「劲冲谁」就不落格：这一轮当没算成，不拿「这句话冲谁」凑一个。
+  if (!slot) return []
+  const [by, to] = slot
   const intensity = intensityOf(pos)
   const wT = Number.isFinite(Number(opt.typicalWeight)) ? Number(opt.typicalWeight) : 0.27
   const wC = Number.isFinite(Number(opt.cellWeight)) ? Number(opt.cellWeight) : 0.06

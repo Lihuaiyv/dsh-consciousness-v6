@@ -22,7 +22,12 @@ const near = (a, b, eps = 1e-6) => Math.abs(Number(a) - Number(b)) <= eps
 const setSlow = (v) => db.prepare(`INSERT INTO affect_v3(agent_id, baseline, slow, slow_at) VALUES(?,?,?,?)
   ON CONFLICT(agent_id) DO UPDATE SET slow=excluded.slow, slow_at=excluded.slow_at`).run(aid, 0, v, new Date(T0).toISOString())
 const slowOf = () => Number(db.prepare('SELECT slow FROM affect_v3 WHERE agent_id=?').get(aid)?.slow)
-const judge = (o) => async () => JSON.stringify({ meaning: '测试', why: '测试', from: o && o.severity === 'existence' ? '你不该在' : '这一句', severity: 'none', ...o })
+const judge = (o) => async () => JSON.stringify({
+  fact: '一句普通的话', meaning: '测试', by: 'other', to: 'none',
+  goal_delta: 0, expect_delta: 0, future_delta: 0, severity: 'none',
+  why: '测试', from: (o && o.severity === 'existence') ? '你不该在' : '这一句',
+  ...o,
+})
 let n = 0
 async function turn(conv, at, j, text = '一句普通的话') {
   const id = 't' + (++n)

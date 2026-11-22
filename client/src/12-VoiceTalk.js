@@ -490,5 +490,15 @@
           order: 40,
           label: '空格说话',
         }, MicBridge)), 'dsh-consciousness: voice bridge')
+        // 2026-11-22：模型调用看板常驻右下角。平时只读 /local/status（纯内存，不碰进程），
+        // 「看进程」点一下才拉一次 /local/live，不自动轮询——主进程不该被一块看板拖住。
+        // 注意顺序：13-ModelBoard.js 必须排在 12 之前，否则本文件末尾的 return 会让它整段不执行。
+        const ModelBoard = (props) => h(ModelBoardPanel, props)
+        ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+          name: 'shell.overlay',
+          id: 'consciousness-model-board',
+          order: 60,
+          label: '模型调用',
+        }, ModelBoard)), 'dsh-consciousness: model board')
       },
     }
