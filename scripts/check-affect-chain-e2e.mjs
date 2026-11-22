@@ -91,7 +91,7 @@ const rows = db.prepare("SELECT * FROM affect_v4_shadow WHERE agent_id=? AND tur
 check('本轮两行（rules+model）', rows.length === 2 && rows[0].source === 'rules' && rows[1].source === 'model', JSON.stringify(rows.map((r) => r.source)))
 const f1 = JSON.parse(rows[1]?.frame_json || '{}')
 check('事取的是上一轮总结', f1.summary === affairsA2.text || String(f1.summary || '').includes('我等到了这一句'), String(f1.summary).slice(0, 80))
-check('判断输入是「正在发生：」', appText.startsWith('正在发生：'), appText.slice(0, 40))
+check('判断输入是「这件事：现在：」', appText.startsWith('这件事：') && appText.includes('现在：'), appText.slice(0, 40))
 check('判断行标 host', JSON.parse(rows[1]?.judgment_json || '{}').judge === 'host', '')
 
 // ── 4) 判断失败：两行、回退规则、挂罢工标记 ──
@@ -109,7 +109,8 @@ check('判断挂：报警记了缺哪几个', Array.isArray(j2e.missing) && j2e.
 check('判断挂：不补 by（不假装判出来了）', j2e.by === undefined, j2e.by)
 check('判断挂：挂了罢工标记', !!db.prepare("SELECT value FROM flags WHERE key='affect.v4.strike'").get(), '')
 
-// ── 5) 宿主闸门优先级：急事插队，不排在大件后面 ──
+// ── 5) 宿主闸门：并发 1，同一时刻只跑一个；排队严格先来后到 ──
+// 2026-11-22 主人定：聊天要按到达顺序，后到的急事也不许插队（能插的只有实验，走网关）。
 const order = []
 await Promise.all([
   hostComplete(db, {
@@ -117,11 +118,15 @@ await Promise.all([
     complete: async () => { await new Promise((r) => setTimeout(r, 700)); order.push('slow'); return 'slow' },
   }),
   new Promise((r) => setTimeout(r, 50)).then(() => hostComplete(db, {
+    agent: String(aid), label: 'e2e-normal', priority: 5, timeoutMs: 10000,
+    complete: async () => { order.push('normal'); return 'normal' },
+  })),
+  new Promise((r) => setTimeout(r, 60)).then(() => hostComplete(db, {
     agent: String(aid), label: 'e2e-fast', priority: 1, timeoutMs: 10000,
     complete: async () => { order.push('fast'); return 'fast' },
   })),
 ])
-check('急事先跑（fast 在 slow 前）', order[0] === 'fast', JSON.stringify(order))
+check('排队严格先来后到：后到的急事也不插队', order[0] === 'slow' && order[1] === 'normal' && order[2] === 'fast', JSON.stringify(order))
 
 db.close()
 console.log(`\n${pass} passed, ${fail} failed`)

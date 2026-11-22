@@ -760,6 +760,7 @@ class HostLlmAdapter {
     const opts = { provider, model, system, messages, maxTokens, temperature }
     let out = ''
     let sawDelta = false
+    let finishKind = ''
     if (typeof llm.prepareCall === 'function') {
       const cfg = { provider, model, temperature, maxTokens }
       const call = await llm.prepareCall(cfg)
@@ -768,13 +769,23 @@ class HostLlmAdapter {
       for await (const ch of call.stream(streamOpts)) {
         if (ch.type === 'text-delta') { out += ch.text; sawDelta = true }
         else if (ch.type === 'block-end' && ch.block?.type === 'text' && !sawDelta) out += ch.block.text || ''
-        else if (ch.type === 'finish' && ch.reason?.kind === 'error') {
-          // 把原因带出来：上层只会记一句 lastError，看不见细节的话没法修
-          throw new Error('llm finish error: ' + JSON.stringify(ch.reason).slice(0, 280))
+        else if (ch.type === 'finish') {
+          finishKind = String(ch.reason?.kind || '')
+          if (ch.reason?.kind === 'error') {
+            // 把原因带出来：上层只会记一句 lastError，看不见细节的话没法修
+            throw new Error('llm finish error: ' + JSON.stringify(ch.reason).slice(0, 280))
+          }
         }
       }
     } else {
       for await (const ch of llm.stream(opts)) if (ch.type === 'text-delta') out += ch.text
+    }
+    // 2026-11-22：额度用光（length）又没吐字，不能再当成「成功但空」。
+    // 以前它返回空串，上层以为是「宿主回了空」去重试一次，白等 8 秒。
+    if (!out.trim() && finishKind === 'length') {
+      const err = new Error('llm truncated: maxTokens=' + maxTokens + ' 用光，正文为空')
+      err.truncated = true
+      throw err
     }
     return out
   }
@@ -788,17 +799,11 @@ class HostLlmAdapter {
     let d = {}
     for (let attempt = 0; attempt < 2; attempt++) {
       raw = await this._chat(AP_PROMPT, String(text).slice(0, 2000), 2000, attempt === 0 ? 0.2 : 0)
-      try { d = parseJson(raw) || {}; break } catch (e) {
-        // 模型有时输出被截断/带噪声：直接从文本里抠八类数字
-        const loose = {}
-        let hit = 0
-        for (const k of AP_LABELS) {
-          const m = String(raw).match(new RegExp('"' + k + '"\\s*:\\s*([0-9.]+)'))
-          if (m) { loose[k] = Number(m[1]); hit++ }
-        }
-        if (hit >= 6) { d = { scores: loose }; break }
-        if (attempt === 1) throw new Error('non-json: ' + String(raw).slice(0, 120))
-      }
+      // 2026-11-22 主人定：不再从乱文本里抠数字凑一个分数表——那是假数据；
+      // 空输出也不再默认「平静」。没解析出东西就当这次没结果，第二次还不行就报错。
+      const parsed = parseJson(raw)
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length) { d = parsed; break }
+      if (attempt === 1) throw new Error('non-json-or-empty: ' + String(raw).slice(0, 120))
     }
     const scores = normalizeScores(d)
     const unknown = d.label === 'unknown' || d.label === 'none' || d.label === 'other'

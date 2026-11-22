@@ -28,14 +28,18 @@ function concurrency(db) {
     const n = Number(v)
     if (Number.isFinite(n) && n >= 1) return Math.min(8, Math.floor(n))
   } catch { /* 读不到就按 2 */ }
-  return 2
+  // 2026-11-22 主人：跨会话要排队——不管开几个对话，同一时刻只让一个调宿主模型。
+  // 以前默认 2，两个会话能同时各调一个，撞在一起。要放开仍可用 llm.host.concurrency 覆盖。
+  return 1
 }
 
 function acquire(db, priority = 5) {
   if (running < concurrency(db)) { running++; return Promise.resolve() }
   return new Promise((resolve) => {
     waiters.push({ resolve, priority: Number(priority) || 5, seq: ++qSeq })
-    waiters.sort((a, b) => a.priority - b.priority || a.seq - b.seq)
+    // 2026-11-22 主人：聊天要先来后到，不许按优先级插队（只有实验那种由网关单独排）。
+    // 以前按 priority 排，后到的判定会插到先到的摘要前面。
+    waiters.sort((a, b) => a.seq - b.seq)
   })
 }
 
@@ -149,10 +153,11 @@ export function scheduleHostTask(db, { agent = '', label = '', timeoutMs = 30000
       if (it.timer.unref) it.timer.unref()
     }
     pending.add(it)
-    // 2026-11-17 优先级：回复前的判断（affect:judge）不能排在上一轮总结后面——
-    // 高优先级（<3）不挂同 agent 链，直接进闸门抢槽；全局槽也按 priority 插队。
-    if (it.priority < 3) { exec(it, db); return }
-    // 同一 agent 串成一条链：前一个落定后才启动下一个（topic -> judge 的顺序靠这个）
+    // 2026-11-22 主人定：聊天的调用要严格先来后到，不许插队。
+    // 以前 2026-11-17 为了「回复别等上一轮总结」，让 priority<3 的判定直接抢槽、
+    // 不挂同 agent 链——结果下一轮判定会插到上一轮摘要前面，摘要还没生成，
+    // 这一轮读到的就是旧的（甚至空的）。现在全部挂链，同会话按发起顺序走。
+    // 同一 agent 串成一条链：前一个落定后才启动下一个（judge -> summary -> 下一轮 judge）
     const prev = chains.get(key) || Promise.resolve()
     const tail = prev.catch(() => {}).then(() => exec(it, db))
     const keep = tail.catch(() => {})

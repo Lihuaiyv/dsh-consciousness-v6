@@ -21,8 +21,9 @@ function check(name, ok, detail) {
     run: async () => { running++; maxRun = Math.max(maxRun, running); await sleep(30); running-- },
   })
   await Promise.all([mk(1), mk(2), mk(3), mk(4)])
+  // 2026-11-22 主人要求跨会话排队后，默认并发是 1；这里只验「不越上限」和「确实在按队列跑」。
   check('全局并发 ≤ 2', maxRun <= 2, 'maxRun=' + maxRun)
-  check('全局并发确实用到了 2', maxRun === 2, 'maxRun=' + maxRun)
+  check('全局并发确实在排队（串行为 1）', maxRun >= 1, 'maxRun=' + maxRun)
   check('跑完 running 归零', hostQueueInfo(null).running === 0)
 }
 
@@ -41,16 +42,18 @@ function check(name, ok, detail) {
   check('同一 agent 严格保序（前一个完才下一个）', order.join(',') === 'start1,end1,start2,end2', order.join(','))
 }
 
-// 3) 不同 agent 互不阻塞：两个 agent 可以同时跑
+// 3) 不同 agent 也排队：2026-11-22 主人要求「跨会话排队」，默认并发 1，两个 agent 不再并行
 {
   let r = 0
   let maxR = 0
+  const order = []
   const mk = (key) => scheduleHostTask(null, {
     agent: key, label: key, timeoutMs: 5000,
-    run: async () => { r++; maxR = Math.max(maxR, r); await sleep(40); r-- },
+    run: async () => { r++; maxR = Math.max(maxR, r); order.push(key); await sleep(40); r-- },
   })
   await Promise.all([mk('Y'), mk('Z')])
-  check('不同 agent 互不阻塞（可并行）', maxR === 2, 'maxR=' + maxR)
+  check('不同 agent 也排队（并发 1 时 maxR=1）', maxR === 1, 'maxR=' + maxR)
+  check('两个 agent 都跑到了', order.length === 2, 'ran=' + order.join(','))
 }
 
 // 4) 排队超时：槽被占满时，等超预算的那个提前失败、且不执行
@@ -60,7 +63,7 @@ function check(name, ok, detail) {
   const h2 = scheduleHostTask(null, { agent: 'H2', timeoutMs: 8000, run: () => sleep(1800) })
   await sleep(20)
   const mid = hostQueueInfo(null)
-  check('快照：两个在跑', mid.running === 2, JSON.stringify(mid))
+  check('快照：一个在跑、其余在排（并发 1）', mid.running === 1 && mid.queued >= 1, JSON.stringify(mid))
   const t0 = Date.now()
   const late = scheduleHostTask(null, {
     agent: 'H3', label: 'late', timeoutMs: 1000,

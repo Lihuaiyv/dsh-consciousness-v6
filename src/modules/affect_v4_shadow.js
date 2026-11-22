@@ -217,15 +217,9 @@ export function buildMaterial(db, aid, text = '', { quotes = MATERIAL_QUOTES, su
         const s = String(r.text || '').replace(/\n+/g, ' / ').trim()
         if (s && !seen.has(s)) { seen.add(s); out.summaries.push(s) }
       }
-    } else {
-      for (const r of rows) {
-        let f = {}
-        try { f = JSON.parse(r.frame_json || '{}') } catch { f = {} }
-        const s = String(f.summary || '').trim()
-        if (s && !seen.has(s)) { seen.add(s); out.summaries.push(s) }
-        if (out.summaries.length >= summaries) break
-      }
     }
+    // 2026-11-22 主人定：「没有 affair_rows 就退回影子表 summary」这条兜底删掉。
+    // 影子表里存的已经是前置原文，退回去还是同一份；没有表就空着，不拿别的表顶。
     out.summaries.reverse()
   } catch { /* 空 */ }
   const t = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 120)
@@ -651,7 +645,7 @@ async function refineShadowOnce(db, aid, { text = '', turnId = null, conversatio
       frame.prev ? `我上一句：${String(frame.prev).slice(0, 200)}` : '',
       `这一句：${frame.what || ''}`,
       `冲谁：${frame.target || 'none'}`,
-      Array.isArray(mat.summaries) && mat.summaries.length ? '最近几件事：' + mat.summaries.slice(-6).join(' / ') : '',
+
       Array.isArray(mat.quotes) && mat.quotes.length ? '最近原话：' + mat.quotes.slice(-6).join(' / ') : '',
     ].filter(Boolean).join('\n')
     const judgeMode = String(getParam(db, aid, 'affect.engine.shadow.judge') || 'host')
@@ -1068,22 +1062,25 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
         try { setFlag(db, 'affect.v4.summary.diag', JSON.stringify({ why: 'inject-err', msg: String((e && e.message) || e).slice(0, 160), at: new Date().toISOString() })) } catch { /* 诊断失败不影响 */ }
       }
     } else {
+      let truncated = false
       // 2026-11-17：总结走宿主普通 chat（非 JSON 模式，model.chat 默认 json=false）——
       // 宿主理解力够，1~2 秒；本地 2.5 会把「事件结构」当字段表罗列。失败再落本地。
       try {
         t = await hostComplete(db, {
-          agent: String(aid || ''), label: 'affect:summary', timeoutMs: 8000,
-          complete: () => kernelModel.chat([{ role: 'system', content: sys }, { role: 'user', content: text }], 800, false),
+          agent: String(aid || ''), label: 'affect:summary', timeoutMs: 15000, priority: 3,
+          complete: () => kernelModel.chat([{ role: 'system', content: sys }, { role: 'user', content: text }], 2000, false),
         })
       } catch (e) {
-        try { setFlag(db, 'affect.v4.summary.diag', JSON.stringify({ why: 'host-err', msg: String((e && e.message) || e).slice(0, 160), at: new Date().toISOString() })) } catch { /* 诊断失败不影响 */ }
+        truncated = !!(e && e.truncated)
+        try { setFlag(db, 'affect.v4.summary.diag', JSON.stringify({ why: truncated ? 'host-truncated' : 'host-err', msg: String((e && e.message) || e).slice(0, 160), at: new Date().toISOString() })) } catch { /* 诊断失败不影响 */ }
       }
       // 2026-11-18：宿主偶尔回空（content 为空，不是报错），空结果再试一次
-      if (!t) {
+      // 2026-11-22：但「额度用光被截断」不算回空——再试一次也是同样下场，直接落本地。
+      if (!t && !truncated) {
         try {
           t = await hostComplete(db, {
-            agent: String(aid || ''), label: 'affect:summary:retry', timeoutMs: 8000,
-            complete: () => kernelModel.chat([{ role: 'system', content: sys }, { role: 'user', content: text }], 800, false),
+            agent: String(aid || ''), label: 'affect:summary:retry', timeoutMs: 15000, priority: 3,
+            complete: () => kernelModel.chat([{ role: 'system', content: sys }, { role: 'user', content: text }], 2000, false),
           })
         } catch { /* 重试也失败就走本地 */ }
       }
@@ -1304,8 +1301,16 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     const quotesLine = (ctxOn && Array.isArray(mat.lines) && mat.lines.length)
       ? '最近原话：' + mat.lines.slice(-6).map((x) => (String(x.role) === 'agent' ? '我：' : '主人：') + x.text).join(' / ')
       : (Array.isArray(mat.quotes) && mat.quotes.length ? '最近原话：' + mat.quotes.slice(-6).join(' / ') : '')
+    // 2026-11-22 主人定：把「正在发生」和「最近几件事」合成一段——同一份前置 text，
+    // 一个现在、一个之前。最新一份就是「现在」那条，不再在「之前」里重复；之前只留最近 3 份。
+    const affairNow = String(affairsLine || frame.summary || '').trim()
+    const affairEarlier = (Array.isArray(mat.summaries) ? mat.summaries : [])
+      .map((x) => String(x || '').trim())
+      .filter((x) => x && x !== affairNow)
+      .slice(-3)
     const frameText = [
-      `正在发生：\n${affairsLine || frame.summary || ''}`,
+      affairNow ? `这件事：\n现在：\n${affairNow}` : '',
+      affairEarlier.length ? `之前：\n${affairEarlier.join('\n')}` : '',
       frame.prev ? `我上一句：${String(frame.prev).slice(0, 200)}` : '',
       `这一句：${frame.what || ''}`,
       `冲谁：${frame.target || 'none'}`,
@@ -1319,7 +1324,7 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
           ? '（事层没回来：这句没有摘要和冲谁，只按原话判，别把空白当完整。）'
           : '',
       ] : []),
-      Array.isArray(mat.summaries) && mat.summaries.length ? '最近几件事：' + mat.summaries.slice(-6).join(' / ') : '',
+
       quotesLine,
     ].filter(Boolean).join('\n')
     const run = typeof complete === 'function' ? complete : (req) => kernelModel.complete(req)
