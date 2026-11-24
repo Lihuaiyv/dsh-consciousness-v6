@@ -70,11 +70,21 @@ import { latestPlan, currentMotivationTurn } from './src/modules/motivation.js'
 
 // 轮头提醒：这一轮还没交计划时，在提示词末尾补一句「先交再干活」；交了就没有这句。
 function withMotivationNudge(d, text) {
+  // 提示词里只放一句「此刻最相关」的提醒，三选一，绝不叠加。状态在库里算，不在文案里猜。
   try {
     const aid = activeAgentId(d) || ''
     const ctx = currentMotivationTurn(aid)
-    if (!ctx || latestPlan(d, aid, ctx.turnId)) return text
-    return text + '\n\n## 本轮还没交动机\n这一轮你还没交 plan_note：第一次思考结束时，先调它写一句动机（这一轮为什么值得做、挂在哪）和台上至多三条待办，再往下干活。'
+    if (!ctx) return text
+    const row = latestPlan(d, aid, ctx.turnId)
+    let items = []
+    if (row) { try { items = JSON.parse(row.items_json || '[]') } catch { items = [] } }
+    const allDone = row ? (items.length === 0 || items.every((it) => it.done)) : false
+    const closing = row && /收口|到这|收尾/.test(String(row.note || ''))
+    let line = ''
+    if (!row) line = '\n\n## 本轮还没交动机\n这一轮你还没交 plan_note：第一次思考结束时，先调它写一句动机（为什么值得做、挂在哪）和台上至多三条待办，再往下干活。'
+    else if (allDone || closing) line = '\n\n## 本轮可以收口\n台上已经清空（或你已声明收口）：按收尾清单去做第一条，再开口。'
+    else line = '\n\n## 计划落后了\n你交过计划之后又动过手：先调 plan_note 更新一版（勾掉做完的，写清为什么），再继续。'
+    return text + line
   } catch { return text }
 }
 import { appraiseTurnNow, summarizeAffairs, rememberTurnContext, startReflex, noteSettleMiss, isTurnSettled } from './src/modules/affect_v4_shadow.js'
