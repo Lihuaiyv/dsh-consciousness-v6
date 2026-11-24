@@ -5,7 +5,7 @@
  * 这样开关只影响「能不能动手」，不影响模型知不知道有这回事。
  */
 import { now } from '../../db.js'
-import { nid } from '../../kernel.js'
+import { nid, getFlag } from '../../kernel.js'
 import { htmlToText } from './util.js'
 import { getConfig, saveConfig, publicConfig, sendMessage, status as channelStatus, test as channelTest } from './channels.js'
 import { searchVideos, popular, recommend, videoDetail, comments, postComment, biliStatus } from './bilibili.js'
@@ -17,6 +17,8 @@ import { createInboxItem } from '../selfmod_store.js'
 import { recallTool, renderRecall, LAYERS, DEFAULT_LAYERS } from '../recall_tool.js'
 import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
+import { ensureTable as ensureFrameTable } from '../frame_shadow.js'
+import { fireEmotion, closeEmotion } from '../affect_v4_shadow.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, readHeartNotes, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
@@ -395,7 +397,8 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         + 'qq=QQ（走本机 OneBot 网关，target 填 QQ 号或群号）、'
         + 'auto=按设置里的顺位（默认 微信 → 企业微信 → QQ，前一条不通就换下一条）。'
         + 'target 是联系人/群名；个人微信会要求在搜索结果里看到完全同名的联系人才发，避免发错人。'
-        + '发之前先确认收件人和内容，不确定就问用户，不要猜。发出的话会记进自己的聊天记录，回看得到。',
+        + '发之前先确认收件人和内容，不确定就问用户，不要猜。发出的话会记进自己的聊天记录，回看得到。'
+        + '发出去通常是一轮的最后落手，所以放在动作做完之后；如果发完还要用结果算点什么，先 settle 再发。',
       parameters: schema({
         channel: { type: 'string', enum: ['wechat', 'wecom', 'qq', 'auto'], description: '通道' },
         target: str('收件人：微信联系人名 / QQ 号 / QQ 群号；wecom 可省略'),
@@ -416,10 +419,16 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       name: 'act_browse',
       description:
         '查资料或刷 B 站。mode：search=通用网页检索（不限 B 站，返回标题/链接/摘要）；url=抓一个网页的正文；'
-        + 'bilibili_search=按关键词搜视频；bilibili_feed=看首页推荐/热门；bilibili_video=看一个视频的详情和高赞评论。'
+        + 'bilibili_search=按关键词搜视频；bilibili_feed=看首页推荐/热门；bilibili_video=看一个视频的详情和高赞评论；'
+        + 'deep=给一个题目，多轮检索、去重、抓正文、按可信度交叉印证，写一份带 [S#] 引用报告（慢、耗 token）。'
         + '需要用户打开「浏览」接口。只读，不会自动改任何东西。',
       parameters: schema({
-        mode: { type: 'string', enum: ['search', 'url', 'bilibili_search', 'bilibili_feed', 'bilibili_video'], description: '模式' },
+        mode: { type: 'string', enum: ['search', 'url', 'bilibili_search', 'bilibili_feed', 'bilibili_video', 'deep'], description: '模式；deep=一题多轮检索并写报告（慢、耗 token）' },
+        topic: str('mode=deep 时的研究主题'),
+        goal: str('mode=deep 时想拿它干什么（写进报告的结论）'),
+        depth: { type: 'string', enum: ['quick', 'standard', 'deep'], description: 'mode=deep 的深度：quick≈5 个来源 / standard≈9 / deep≈14' },
+        aspects: { type: 'array', items: { type: 'string' }, description: 'mode=deep 想特别覆盖的角度，例如 ["成本","监管"]' },
+        max_sources: num('mode=deep 最多抓几个来源，3–24'),
         url: str('mode=url 时的网址'),
         query: str('mode=search / bilibili_search 时的关键词'),
         bvid: str('mode=bilibili_video 时的 BV 号'),
@@ -446,13 +455,20 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
               ...(v.comments || []).slice(0, 8).map((c) => '· ' + c.author + '：' + c.text.slice(0, 140)),
             ].join('\n'))
           }
+          if (v.mode === 'deep') return TEXT((v.report || '没有报告').slice(0, 16000))
           return TEXT((v.items || []).map((it, i) => (i + 1) + '. ' + it.title + ' — ' + it.author
             + ' · 播放 ' + (it.stat && it.stat.view) + ' · ' + it.duration + '\n   ' + it.url).join('\n') || '没有结果')
         },
       },
-      timeoutMs: 90000,
+      timeoutMs: 420000,
       presentCall: (args) => ({ card: 'generic', title: '浏览 · ' + (args.query || args.url || args.bvid || args.mode), kind: 'fetch', rawInput: args }),
       async execute(args) {
+        if (args && args.mode === 'deep') {
+          const { db: d, aid: a } = await toolGate('research')(db, aid)
+          return { mode: 'deep', ...(await executeResearch(d, a, {
+            topic: args.topic, goal: args.goal, depth: args.depth, aspects: args.aspects, max_sources: args.max_sources,
+          }, { web: web(), model: model() })) }
+        }
         const { db: d, aid: a } = await toolGate('browse')(db, aid)
         return executeBrowse(d, a, args || {}, { web: web(), signal: undefined })
       },
@@ -477,31 +493,6 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       async execute(args) {
         const { db: d, aid: a } = await toolGate('send_message')(db, aid)
         return executeComment(d, a, args || {})
-      },
-    },
-    {
-      name: 'act_research',
-      description:
-        '给一个题目和目的，自己多轮检索、去重、抓正文、按来源可信度交叉印证，写一份带 [S#] 引用的中文报告。'
-        + '会跳过最近读过的同一 URL，不会把旧料当新发现。'
-        + 'depth：quick=一轮 5 个来源；standard=两轮约 9 个；deep=三轮约 14 个（更慢、token 更多）。'
-        + '需要用户打开「研究搜集」接口。适合「尽量多搜集某方面信息、还要判断可不可信/能不能做」的任务。',
-      parameters: schema({
-        topic: str('研究主题'),
-        goal: str('想拿它来干什么（会写进报告的结论和可行性部分）'),
-        depth: { type: 'string', enum: ['quick', 'standard', 'deep'], description: '深度' },
-        aspects: { type: 'array', items: { type: 'string' }, description: '特别想覆盖的角度，例如 ["成本","监管"]' },
-        max_sources: num('最多抓多少个来源，3–24'),
-      }, ['topic']),
-      output: {
-        schema: { type: 'object', properties: { ok: { type: 'boolean' }, run_id: { type: 'string' }, report: { type: 'string' } } },
-        render: (_a, v) => TEXT((v && v.report ? v.report : '没有报告').slice(0, 16000)),
-      },
-      timeoutMs: 420000,
-      presentCall: (args) => ({ card: 'generic', title: '研究 · ' + (args.topic || ''), kind: 'fetch', rawInput: args }),
-      async execute(args) {
-        const { db: d, aid: a } = await toolGate('research')(db, aid)
-        return executeResearch(d, a, args || {}, { web: web(), model: model() })
       },
     },
     {
@@ -614,44 +605,109 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       },
     },
     {
-      /* 按感觉找：不是关键词检索，是「那时候我是什么样」。
-         给标签或时间段，顺带带出同时段落下的记忆和当天日记。 */
-      name: 'feel_search',
-      description:
-        '按感觉找记忆：给一个情绪标签（joy / curious / calm / irritated 等）或时间范围（ISO），'
-        + '找回那几条感觉，以及同时段落下的记忆和当天日记。'
-        + '也可以按快 / 慢区间找，例如「慢情绪过 0.3 的那几个时刻」。'
-        + '用来回答「什么时候我是开心的」「那阵子到底在为什么悬着」。只读，不改任何状态。',
+      /* 我自己落帧：这一轮在讲哪一件（核）+ 补话 + 接着谁。
+         为什么放这儿：核在我开口前就知道，不该等说完再叫判官读我的字。
+         零模型调用：只写 frame_shadow 一行、frame_edges 一条边；读口 frame_read 不用改。 */
+      name: 'frame',
+      description: '我在讲什么：开口前落一次。说事的一轮写 what（≤12 字的一件）；纯接话可以不写 what，留空也算落过。'
+        + 'link：接着上一件写 continue，新开写 new。',
       parameters: schema({
-        label: str('情绪标签，可不填'),
-        from: str('开始时间（ISO），可不填'),
-        to: str('结束时间（ISO），可不填'),
-        slowMin: num('慢情绪下限（-1~1），可不填'),
-        slowMax: num('慢情绪上限（-1~1），可不填'),
-        fastMin: num('快情绪下限（-1~1），可不填'),
-        fastMax: num('快情绪上限（-1~1），可不填'),
-        limit: num('最多几条，默认 10'),
+        what: str('这一轮承重的那一件，≤12 字；接话轮留空'),
+        sat: str('可选：围着它的补话，最多两句，用「、」隔开'),
+        link: { type: 'string', enum: ['continue', 'new'], description: '接着上一件=continue，新开=new' },
       }),
       output: {
-        schema: { type: 'object', properties: { items: { type: 'array' } } },
-        render: (_a, v) => {
-          const items = (v && v.items) || []
-          if (!items.length) return TEXT('没找到对得上的感觉。')
-          return TEXT(items.map((x) => x.feel.text + (x.memories && x.memories.length ? '（连着 ' + x.memories.length + ' 条记忆）' : '')).join('\n'))
-        },
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, core: { type: 'string' }, reused: { type: 'boolean' }, reason: { type: 'string' } } },
+        render: (_a, v) => TEXT(
+          v && v.ok
+            ? (v.core ? ('落了：' + v.core + (v.reused ? '（跟上一件同名，只更新补话）' : '')) : '这轮没核，空着也记下了。')
+            : ('没落成：' + ((v && v.reason) || '原因不明'))),
       },
       timeoutMs: 5000,
-      presentCall: (args) => ({ card: 'generic', title: '按感觉找 · ' + String((args && (args.label || args.from)) || '最近'), kind: 'other', rawInput: args }),
+      presentCall: (args) => ({ card: 'generic', title: '核 · ' + String((args && args.what) || '接话').slice(0, 20), kind: 'other', rawInput: args }),
       async execute(args, exec) {
         const d = db()
         const a = aidOfSession(exec) || aid()
-        if (!d || !a) return { ok: false, skipped: 'no_db' }
-        return { items: feelRecall(d, a, {
-          label: args && args.label, from: args && args.from, to: args && args.to,
-          slowMin: args && args.slowMin, slowMax: args && args.slowMax,
-          fastMin: args && args.fastMin, fastMax: args && args.fastMax,
-          limit: args && args.limit,
-        }) }
+        if (!d || !a) return { ok: false, reason: 'no_db' }
+        // 开关：默认关；开了才写（frame.self=on）
+        try { if (String(getFlag(d, 'frame.self') || 'off') !== 'on') return { ok: false, reason: 'off' } } catch { return { ok: false, reason: 'off' } }
+        const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : ''
+        const what = String((args && args.what) || '').replace(/\s+/g, ' ').trim().slice(0, 12)
+        const sat = String((args && args.sat) || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+        const link = String((args && args.link) || 'continue')
+        try {
+          ensureFrameTable(d)
+          const at = new Date().toISOString()
+          const prev = d.prepare("SELECT id, core FROM frame_shadow WHERE role='nucleus' ORDER BY rowid DESC LIMIT 1").get()
+          if (!what) {
+            // 接话轮：不写行，留一笔空账（跟 feel.miss 一个道理：能查，不靠猜）
+            d.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), a, 'frame.self.empty',
+              JSON.stringify({ at, session: sid || null }), at)
+            return { ok: true, core: '' }
+          }
+          // 同名不重复落：跟上一件一模一样就只更新补话，不新开一段
+          if (prev && String(prev.core || '').trim() === what) {
+            d.prepare('UPDATE frame_shadow SET sat=? WHERE id=?').run(sat || null, prev.id)
+            return { ok: true, core: what, reused: true }
+          }
+          const tid = 'self_' + (sid || a) + '_' + Date.now().toString(36)
+          const id = tid + '-A'
+          d.prepare('INSERT OR REPLACE INTO frame_shadow (id,turn_id,seg,created_at,core,core_goal,sents,text,under_id,role,head_id,rel,sat,plan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+            .run(id, tid, id, at, what, '', null, null, null, 'nucleus', null, null, sat || null, JSON.stringify({ self: true }))
+          if (link !== 'new' && prev && prev.id) {
+            const eid = 'fe_' + (id + '_' + prev.id).replace(/[^A-Za-z0-9]/g, '_')
+            d.prepare('INSERT OR REPLACE INTO frame_edges (id,from_id,to_id,rel,created_at) VALUES (?,?,?,?,?)').run(eid, id, prev.id, 'continue', at)
+          }
+          return { ok: true, core: what }
+        } catch (e) {
+          return { ok: false, reason: String((e && e.message) || e).slice(0, 120) }
+        }
+      },
+    },
+    {
+      /* 把判断层（反射）发出去，**不等**。它一回来就在回调里算三根、出词、落账。
+         by/to 现在就得给：回调算账的时候要用，那时我不在场。 */
+      name: 'emotion',
+      description: '把判断层发出去，不等待。它回来之后会自动算三个激素、选出这一轮的词、写进状态；'
+        + '我该干活干活、该想事想事，不用等它。by/to 现在填——回调算账时要用。',
+      parameters: schema({
+        by: { type: 'string', enum: ['me', 'other', 'world'], description: '这股劲是谁弄出来的：他=other / 我自己=me / 外面的事=world' },
+        to: { type: 'string', enum: ['me', 'other', 'world', 'none'], description: '这股劲冲着谁：冲我=me / 冲他=other / 冲外面那件事=world / 谁也没冲=none' },
+      }),
+      output: {
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, reason: { type: 'string' } } },
+        render: (_a, v) => TEXT(v && v.ok ? '发出去了，不等它。' : ('没发成：' + ((v && v.reason) || '原因不明'))),
+      },
+      timeoutMs: 5000,
+      presentCall: (args) => ({ card: 'generic', title: '发判断层', kind: 'other', rawInput: args }),
+      async execute(args, exec) {
+        const d = db()
+        const a = aidOfSession(exec) || aid()
+        if (!d || !a) return { ok: false, reason: 'no_db' }
+        return fireEmotion(d, a, { by: args && args.by, to: args && args.to })
+      },
+    },
+    {
+      /* 收口：确认这一轮算完了。没发就补发；在跑就等；算完了就直接过。
+         它之后还能接别的处理（算驱力、整理材料），但外发（act_send 等）一律在它后面。 */
+      name: 'close',
+      description: '收口：确认这一轮的情绪账算完了。没发就补发；还在跑就等它；已经算完就直接过。'
+        + '放在所有思考和活干完之后调。它之后可以接别的处理，但对外发送（act_send 之类）必须在它之后。',
+      parameters: schema({
+        by: { type: 'string', enum: ['me', 'other', 'world'], description: '兜底发的时候用：这股劲是谁弄出来的' },
+        to: { type: 'string', enum: ['me', 'other', 'world', 'none'], description: '兜底发的时候用：这股劲冲着谁' },
+      }),
+      output: {
+        schema: { type: 'object', properties: { ok: { type: 'boolean' }, reason: { type: 'string' }, waitedMs: { type: 'number' } } },
+        render: (_a, v) => TEXT(v && v.ok ? '收好了。' : ('没收成：' + ((v && v.reason) || '原因不明'))),
+      },
+      timeoutMs: 0,
+      presentCall: (args) => ({ card: 'generic', title: '收口', kind: 'other', rawInput: args }),
+      async execute(args, exec) {
+        const d = db()
+        const a = aidOfSession(exec) || aid()
+        if (!d || !a) return { ok: false, reason: 'no_db' }
+        return closeEmotion(d, { aid: a, by: args && args.by, to: args && args.to })
       },
     },
     {
@@ -765,9 +821,41 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         }
       },
     },
-  ]
+  ].sort(byToolRank)
 }
 
+/**
+ * 工具表的顺序（2026-11-24 主人定）：朝内的放前，外接的放后，按重要度。
+ * 只影响「给模型的工具表怎么排」，不改任何行为；新加工具就在这里加一行。
+ *   一、我自己的：心里那一下 → 记忆 → 按感觉找 → 心事匣 → 自己的身体（队列）
+ *   二、我的口耳：听 → 说（先听后说）
+ *   三、外面的手：看看外面 → 研究 → 留个话 → 公开说一句
+ *   四、收尾：先结算情绪（settle）→ 再落手（发出去）；act_send 是全表最后一件
+ */
+const TOOL_ORDER = [
+  'feel',
+  // 判断层发出去（不等）：越早越好，它在后台跑
+  'emotion',
+  'frame',
+  'memory_search',
+  'heart_note',
+  'local_llm_status',
+  'act_hear',
+  'act_say',
+  'act_browse',
+  'act_remind',
+  'act_comment',
+  // 收尾两块：先收口（确认账算完），再落手（2026-11-24 主人定：act_send 是全表最后一件）
+  'close',
+  'act_send',
+  // 实验：把「说话」本身做成一次调用（话在 text 里），执行时顺手收尾
+  'reply',
+]
+function byToolRank(a, b) {
+  const ra = TOOL_ORDER.indexOf(String((a && a.name) || ''))
+  const rb = TOOL_ORDER.indexOf(String((b && b.name) || ''))
+  return (ra < 0 ? 999 : ra) - (rb < 0 ? 999 : rb) // 表里没写名字的新工具排到最后，不抢位置
+}
 /** local_llm_status 的文字渲染：一块小面板，别让它变成 JSON 墙。 */
 function renderLocalStatus(v) {
   if (!v || v.error) return '取不到本地队列：' + String((v && v.error) || '空').slice(0, 120)

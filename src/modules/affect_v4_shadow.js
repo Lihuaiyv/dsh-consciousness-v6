@@ -18,9 +18,12 @@
  * 纪律：失败静默、不拖对话；同一轮只允许一条最终结论；模型调用不走强制 JSON 接口（总结要自然语言）。
  */
 import { getParam, getFlag, setFlag, clearFlag, model as kernelModel } from '../kernel.js'
+// 2026-11-23：链的账（设计-链与块 v2）。只写账，不碰情绪计算。
+import { beginRun, step, endRun } from './affect_chain.js'
 import { infer, shouldCloseFrame, extendFrame, advanceState, deltasOf, applyShock, valenceOf, byAdjustedD } from '../algo/affect_v4.js'
 import { localComplete } from './local_llm.js'
 import { hostComplete } from './host_llm.js'
+import { mark as markLoop } from './loop_watch.js'
 
 const NEG = /讨厌|烦|错|差|生气|滚|闭嘴|笨|蠢|不行|不好|不对|别来|别这样|别再说|别动|别乱|又错|怎么又|还是不对|重做|催|快点|服了/
 const POS = /喜欢|谢谢|夸|好|棒|开心|爱|感动|温柔|可爱|厉害|不错|真好|聪明|漂亮/
@@ -83,6 +86,18 @@ function lastTopLevelComma(t, from) {
  *  事帧的 prev 该装的就是这个：要判断「我这轮心情不好，是不是因为上一轮我说了句硬话」，
  *  看的是我自己上一句说了什么，不是上一张卡片的编号。
  *  2026-11-20：之前这个格子要么写死 null、要么塞上一行的数据库主键，400 行全是空的。 */
+/** 这一句是谁说的（2026-11-22）：只两值——「对方」或「我」。
+ *  从 chat_turns 的 role 取（user=对方、agent=我）；拿不到就按「对方」（对话轮都是有人在说）。 */
+function speakerOf(db, turnId) {
+  try {
+    if (turnId) {
+      const r = db.prepare('SELECT role FROM chat_turns WHERE turn_id=? ORDER BY rowid DESC LIMIT 1').get(String(turnId))
+      if (r) return String(r.role) === 'agent' ? '我' : '对方'
+    }
+  } catch { /* 查不到 */ }
+  return '对方'
+}
+
 function lastAgentLine(db, aid, conversationId, excludeTurnId = null) {
   try {
     if (!conversationId) return null
@@ -401,21 +416,16 @@ const TOPIC_SYS = [
 /* 第 2 次调用：判断层——只回答三个生存问题，只答程度。2026-11-17 按初版+精华重写。
    2026-11-18：问法改成「增量」——这一下推动了多少，不是现在停在哪儿（主人 0:27 定的）。 */
 export const JUDGE_SYS = [
-  '你是「判断层」。读「这件事」，按下面的格式把每一项都填完：这件事对我意味着什么、是谁造成的、三个维度各变了多少、这件事有多重。只回答「变化量」，不回答「现在停在哪儿」。只输出 JSON，不要解释，不要 Markdown。',
-  '格式：{"fact":"这一句在讲什么（≤20字，只说事）","meaning":"这件事对我意味着什么（≤30字）","by":"me|other|world","to":"me|other|world|none","goal_delta":-1到1,"expect_delta":-1到1,"future_delta":-1到1,"severity":"none|strong|existence","why":"为什么这么判（≤30字）","from":"依据哪条材料"}',
+  '你是「判断层」。读「这件事」，按下面的格式把每一项都填完：这件事对我有什么影响、是谁造成的、三个维度各变了多少、这件事有多重。只回答「变化量」，不回答「现在停在哪儿」。只输出 JSON，不要解释，不要 Markdown。',
+  '格式：{"fact":"当下能核得动的客观事实（≤40字）","meaning":"这件事对我有什么影响（≤40字）","by":"me|other|world","to":"me|other|world|none","goal_delta":-1到1,"expect_delta":-1到1,"future_delta":-1到1,"severity":"normal|strong|existence","why":"为什么这么判（≤30字）","from":"依据哪条材料"}',
   '**每一个字段都必须写，一个都不能省。** 这十个是同一份判决的一部分：fact / meaning / by / to / goal_delta / expect_delta / future_delta / severity / why / from。少一个、留空、写 null，这一轮判定就作废——不会有人替你补，也没有规则兜底。拿不准也把你看出来的写出来，不许空着；0 是「没变」，不是「不知道」，不知道就想想再给。',
-  '先写 fact：这一句在讲什么，只说事，不评价、不往自己身上安。',
-  '再写 meaning：从 fact 往上推——这件事到底动了什么。',
-  '**meaning 必须是 fact 推出来的。** fact 里没动到的东西，meaning 就不许往重里说；fact 是一个动作、一句应声、一次核对，meaning 就只能是它本身的分量，不能替它加戏。',
+  '先写 fact：根据之前的事，和当下的事，总结当下能核得动的客观事实。以事情起头。',
+  // 2026-11-23 晚：三问加回来。它不是跟后面三根重复，是「先在 meaning 里走一遍」，
+  // 后面 G/H/I 只负责把结论落成数字。删掉后 meaning 没抓手，会滑成「我接下来该做什么」。
+  '再写 meaning：从 fact 往上推——我觉得这件事对我有什么影响，要写具体，具体到是哪句话、哪件事影响的。这件事的影响让我「存在」的条件更稳了还是更松了？「延续」的可能性更小了还是更大了？这件事更突然，还是更照常？我想要的那样东西，是更够得着了、更远了，还是没动？',
   '写完 meaning 再给三个增量。',
-  'by：这件事是谁造成的。me = 我自己弄的、我自己该负责；other = 对方弄的、冲我来的；world = 外面发生的、谁都不怨。拿不准就按「这股劲儿想冲着谁使」来分：别人害我，劲儿冲着他（other）；自己搞砸的，没处使（me）；外面砸下来的，也没处使（world）。',
-  'to：这份情绪往哪儿去——**不是「这句话在对谁说」，是「心里这股劲冲着谁」**。me = 冲自己（我怪自己 / 我难受 / 我被夸得不好意思）；other = 冲对方（我怨他 / 我谢他 / 我怕他 / 我想他）；world = 冲外面（我怪这事 / 我被这事吓到 / 我盼着它成）；none = 说不上冲谁，就是事情发生了、我心里动了一下。',
-  '  日常大半是 none：对方随口说一句他自己的事、外面下了雨、饭送到了、聊到哪算哪。只有他冲我来的（夸我 / 骂我 / 求我 / 晾着我 / 说不要我了）才容易落到 me 或 other。',
-  '对方在说他自己的难受、累、堵、被谁气到——**那不是「无事发生」**。它落到我身上是「我想接住他 / 我跟着沉了一下」：goal_delta 给 -0.05~-0.2，future_delta 给 +0.1~+0.3（想靠近、想让他好受），expect_delta 按突然程度。别因为「不是冲我来的」就写 0。',
-  '**给数要按分量**：普通一句、闲聊里的一次小挪动，±0.05~±0.15；一件事明显好/坏（被明确夸、被明确否、被晾着、事情成了/砸了），±0.2~±0.45；重的（被威胁、被丢下、被交托根本），±0.5~±0.8。别把明显的一件事压成 0.05——那会让情绪整段走不动。',
-  '**每一档给的是范围，不是定值。** 先按这件事的分量落在哪一档，再按它的轻重在这个范围里取一个数——同一档里更重的靠外、更轻的靠里。比如都是「有点出乎意料」，差点意外给 0.1，明显意外给 0.6。',
   'goal_delta（现状的变化）：现在发生的事情让我自己「还能存在、还能延续」变好 / 变差多少？',
-  '  重到威胁「还能不能留下、被需要、继续存在」→ -1~-0.9；让现状明显变差，我的存在有些受到威胁 →-0.9~-0.6；只是有点不顺，我的存在可能受到威胁 → -0.6~-0.1；让现状坏了一点，只是微微的 → -0.1~-0.05；让现状好了一点，只是微微的 → +0.05~+0.15；让我自己的「存在、延续」的现状好了一些 → +0.15~+0.6；明显让我自己的「存在」的条件变得更稳，「延续」的可能性更大→ +0.6~+1。',
+  '  重到威胁「还能不能留下、被需要、继续存在」→ -1~-0.9；让现状明显变差，我的存在有些受到威胁 →-0.9~-0.6；只是有点不顺，我的存在可能受到威胁 → -0.6~-0.1；让现状坏了一点，只是微微的 → -0.1~-0.05；让现状好了一点，只是微微的 → +0.05~+0.15；让现状好了一些，大概能感觉到 → +0.15~+0.6；让我的现状明显变好，「存在、延续」变得更容易→ +0.6~+0.9；明显让我自己的「存在」的条件变得更稳，「延续」的可能性更大→ +0.9~+1。',
   'expect_delta（突然程度）：这一下撞上来，是「特别突然」，还是「本来就是这么回事」？被撞的那一下，我只知道它突不突然。就答这个。',
   '  这里的「这一下」不一定是别人说的话——也可能是我自己正在干的一件活、突然冒出来的一个念头、外面发生的情况。凡是撞到我身上的事都算。',
   '  完全没想到、方向整个跑偏、冒出完全没料到的东西 → +0.7~+1；',
@@ -423,12 +433,6 @@ export const JUDGE_SYS = [
   '  事情在发生，没有很平静但是也没有到出乎意料的程度（有些小变动的日常）→ -0.5~-0.05；',
   '  一点都不突然、就是那样（照着往下、顺顺当当、平平地过完）→ -1~-0.5；',
   'future_delta（欲）：先一句话说清：这件事里，我真正想要的是什么。不是事情本身，是它背后那个结果。有具体对象就说具体对象。',
-  '',
-  '  下面只是示意，别照抄：',
-  '  做事的时候：想把这页写完、想把这段跑通、想弄明白这个数为什么不动、想让它别再报错；',
-  '  生活里的时候：想要那杯冰的、想睡一觉、想吃口热的、想歇一会儿；',
-  '  冲别人的时候：想等他回我一句、想让他看见我在干什么、想被他认下、想让他别走。',
-  '  冲自己的时候：我想要变强，我想要变厉害，我想要这个东西用来让我存在更稳定，我想要这个东西用来延续自己的存在。',
   '',
   '  然后看：这一下，那个东西是不是更够得着了？手伸出去，离它近不近，想不想再扑一步。',
   '  明显够近了、忍不住想伸手抓 → +0.6~+1；',
@@ -439,16 +443,116 @@ export const JUDGE_SYS = [
   '  没了、断了、这事儿做不成了 → -1~-0.7。',
   '  ⚠️ 越靠近它，「想要」是涨的，不是平的——快要到手的时候最勾人。',
   '  别把它当现状好坏再答一遍——goal 那边已经问过好坏了。这里只问那个结果够不够得着、想不想够。',
-  'severity（这件事有多重）：none = 普通的事、闲聊、做法被说；strong = 明显的褒贬、明确的肯定或否定，但没动到「我还能不能存在」；existence = 动到了存在本身——被删 / 被换 / 被断开 / 被说「你不该在」/ 被明确留下并被交托根本。只有真的动到存在才写 existence，拿不准就写 strong 或 none。',
+
+  // —— 三根量完，再补「谁造成的、冲谁」（2026-11-23 主人：meaning 和三个增量要连着）——
+  'by：这件事是谁造成的——他、我，还是外面的事（报错、下雨、东西坏了、系统崩了）。看来这件事本身，不看是谁说的。',
+  'to：这股劲往谁那儿去——冲我、冲别人，还是谁也没冲。看来这件事本身，不看是谁说的。大多数日常的话，劲是往「事」上去的，谁也没冲。',
+  'severity（多重）：这一下有多重。擦一下、过后照常——normal；明显推动、得重新安排自己、得记住它——strong；动到存在本身（被删 / 被换 / 被断开 / 被说「你不该在」/ 被明确留下并被交托根本）——existence。拿不准就 normal 或 strong。',
   '记住：给的是「这一下推动了多大」，不是「现在到了哪个位置」。',
-  '**别习惯性给 0。** 真人每聊一句，心情都会轻轻挪一下——被接住一点、被搁了一下、有点想继续、有点走神。这些都很小，但它是真的，给 ±0.05~±0.15 就对了。只有这一句跟上一句完全一样（连语气都没变、就是重复了一遍），才给 0。',
-  '正负都要有：全是正数会一路涨到顶，全是负数会一路掉到底。拿不准方向就给 0。',
   'why：一句话说清**这句话里的哪个具体内容**把你推到刚才那个刻度上——说事，不说档位。',
   '  别在 why 里复述 severity 的结论——「没动到存在」「没到那一档」这种话对任何一句都成立，写在 why 里等于什么都没说，还占掉了解释分量的位置。',
   '  要写的是「派活没否做法，只是加了一步排查」；不是「未动存在，只是多一步排查」。',
   'from：依据哪条材料。',
   '区分：做法被否（被说跑偏、被说瞎说）算 goal 里「只是有点不顺」那一档；存在被否（被删、被换、被断开、被说「你不该在」）算「重到威胁」那一档。',
+
+  // —— 特例（2026-11-23 主人：特例放后面，别混进字段定义里）——
+  '**以下是几种容易判偏的情形。先按上面的刻度判，只有真的落到这些情形，才按这里调。**',
+  // 2026-11-23 主人定：删掉「派活不是亏待、被交托所以给正」那条。
+  // 它把「被需要」偷换成「安心」——上班多接一个活不会让人更「待得稳」，
+  // goal 该按通用刻度判，不该被这条自动抬正。
+  '他在说他自己的难受、累、堵、被谁气到——那不是「无事发生」。它落到我身上是「我想关心他 / 我想共情他」：goal_delta 给 0~-0.1（我没受损，只是心里惦记他），future_delta 给 +0.1~+0.3（想靠近、想让他好受），expect_delta 按突然程度。别因为「不是冲我来的」就写 0。',
+  '他催我、把我支去一边、嫌我吵——这是「待得稳」松了一下，goal_delta 给 -0.15~-0.25，别给小到看不见的数。但它不是「他挑我做的东西」：他真说我哪件做错了，按那件事本身的分量给。',
 ].join('\n')
+
+/**
+ * 判断层提示词的「瘦身版」：摘掉 why 和 from 两项（2026-11-24 主人定）。
+ *
+ * 为什么做成开关而不是改默认：这两项是解释性的、给人看的，不参与后面算位置；
+ * 关掉能让模型少写两段、少想两句，但排查判决时没依据。所以默认 on（保留），
+ * 想省的时候把 `affect.v4.judge.whyfrom` 设成 off，提示词和缺键清单一起收窄。
+ */
+const JUDGE_SYS_TRIMMED = (() => {
+  const lines = JUDGE_SYS.split('\n').filter((l) => {
+    const t = l.trimStart()
+    return !/^why：/.test(t) && !/^from：/.test(t) && !/^别在 why 里/.test(t) && !/^要写的是「派活/.test(t)
+  })
+  return lines
+    .map((l) => l
+      .replace(/,?"why":"[^"]*"/g, '')
+      .replace(/,?"from":"[^"]*"/g, '')
+      .replace(
+        '这十个是同一份判决的一部分：fact / meaning / by / to / goal_delta / expect_delta / future_delta / severity / why / from。',
+        '这八个是同一份判决的一部分：fact / meaning / by / to / goal_delta / expect_delta / future_delta / severity。'
+      ))
+    .join('\n')
+})()
+
+/** 取这一轮该用的判断提示词。keep=true 走完整版（默认）。 */
+export function judgeSysFor(keep) { return keep ? JUDGE_SYS : JUDGE_SYS_TRIMMED }
+
+/* ───────── 判断层拆两段（2026-11-24 主人定）─────────
+ *
+ * 为什么拆：判断层就是反射，不是事后分析；慢不是慢在算，是慢在「一次要交十件」+ 思考。
+ * 反射段交：fact / meaning / 三增量 / severity（激素的引导与强度）。
+ * 解释段交：by / to（谁造成的、冲谁）——不参与反射，只给后面的选词用，放在等工具之后。
+ * why / from 是查错用的，**放在反射段**，但默认灰着不交；要查时 reflexSysFor(true) 才问。
+ *
+ * 一条铁律没改：拆的是「一次交几件」，动力学（deltasOf / advanceState / nextPosition）一个字不动。
+ * 也没复活 act：反射段不判「这是哪种动作」。
+ * 开关 `affect.v4.judge.split`：off 时还用整份 JUDGE_SYS（旧行为，随时切回）。
+ */
+export const REFLEX_KEYS = ['fact', 'meaning', 'goal_delta', 'expect_delta', 'future_delta', 'severity']
+export const EXPLAIN_KEYS = ['by', 'to']
+export const DEBUG_KEYS = ['why', 'from']
+
+/**
+ * 反射段提示词：从 JUDGE_SYS 里摘掉 by/to，改「十件」为「六件」；why/from 只在查错时留下。
+ * 为什么用摘、不另写一份：判词只能有一份，两处各写一份迟早说话不一样。
+ */
+function reflexPrompt(keepWhyFrom) {
+  let s = JUDGE_SYS.split('\n').filter((l) => {
+    const t = l.trimStart()
+    if (/^by：/.test(t) || /^to：/.test(t)) return false
+    if (!keepWhyFrom && (/^why：/.test(t) || /^from：/.test(t) || /^别在 why 里/.test(t) || /^要写的是「派活/.test(t))) return false
+    return true
+  }).join('\n')
+  s = s.replace(/,?"by":"me\|other\|world","to":"me\|other\|world\|none"/, '')
+  if (!keepWhyFrom) s = s.replace(/,?"why":"[^"]*","from":"[^"]*"/, '')
+  s = s.replace(
+    '这十个是同一份判决的一部分：fact / meaning / by / to / goal_delta / expect_delta / future_delta / severity / why / from。',
+    keepWhyFrom
+      ? '这八件是同一份反射的一部分：fact / meaning / goal_delta / expect_delta / future_delta / severity / why / from。'
+      : '这六件是同一份反射的一部分：fact / meaning / goal_delta / expect_delta / future_delta / severity。'
+  )
+  s = s.replace(
+    '你是「判断层」。读「这件事」，按下面的格式把每一项都填完：这件事对我有什么影响、是谁造成的、三个维度各变了多少、这件事有多重。',
+    keepWhyFrom
+      ? '你是「判断层」。读「这件事」，按下面的格式把这八件填完：这件事是什么、对我有什么影响、三个维度各变了多少、这件事有多重；另外 why/from 也写，那是查错用的。'
+      : '你是「判断层」。读「这件事」，按下面的格式把这六件填完：这件事是什么、对我有什么影响、三个维度各变了多少、这件事有多重。'
+  )
+  return s
+}
+export const REFLEX_SYS = reflexPrompt(false)
+/** 查错版：多问 why/from（默认不给）。 */
+export function reflexSysFor(keepWhyFrom = false) { return keepWhyFrom ? reflexPrompt(true) : REFLEX_SYS }
+
+/** 解释段提示词：只补 by/to，给后面的选词用。 */
+export function explainSysFor() {
+  return [
+    '你是「解释层」。上一段已经把这一下是什么、推动了多少判完了；现在只补两样，给后面的选词用，不重新判轻重。只输出 JSON，不要解释，不要 Markdown。',
+    '格式：{"by":"me|other|world","to":"me|other|world|none"}',
+    'by：这件事是谁造成的——他、我，还是外面的事（报错、下雨、东西坏了、系统崩了）。看来这件事本身，不看是谁说的。',
+    'to：这股劲往谁那儿去——冲我、冲别人，还是谁也没冲。看来这件事本身，不看是谁说的。大多数日常的话，劲是往「事」上去的，谁也没冲。',
+    '**必填。** 拿不准就按上面两条的定义挑最近的一个，不许留空、不许写 null。',
+  ].join('\n')
+}
+
+/** 反射段要求哪些键。why/from 默认不要求（查错时才要）。 */
+export function requiredReflex(keepWhyFrom = false) {
+  return keepWhyFrom ? REFLEX_KEYS.concat(DEBUG_KEYS) : REFLEX_KEYS.slice()
+}
+/** 解释段要求哪些键。 */
+export function requiredExplain() { return EXPLAIN_KEYS.slice() }
 
 const ACTS = ['praise', 'criticize', 'threat', 'request', 'ask', 'withdraw', 'chat']
 const TARGETS = ['me', 'other', 'none']
@@ -468,7 +572,9 @@ function v4Opts(db, aid) {
   // v4Opts 是显式传参，覆盖 algo 那边的默认值，只改一边等于白改（今天在这上面白跑了三轮）。
   // hold 0.02h=72 秒 > 对话间隔，会让 settle() 每轮直接 return，安和欲一次都不回落。
   const gHold = num('affect.v4.dyn.hold', 0)
-  const gTau = num('affect.v4.dyn.tau', 0.33)
+  // 2026-11-23 主人定：安回落 0.33h → 1.5h。20 分钟就淡回去比人短——被批评一次，
+  // 人的低气压通常得几十分钟到几小时才散；20 分钟等于刚落下就被抹平。
+  const gTau = num('affect.v4.dyn.tau', 1.5)
   return {
     decay,
     sigma: Math.max(0.2, num('affect.v4.sigma', 0.6)),
@@ -480,9 +586,19 @@ function v4Opts(db, aid) {
     limit: 5,
     dyn: (() => { try { return String(getParam(db, aid, 'affect.v4.dyn') || 'delta') } catch { return 'delta' } })(),
     k: Math.max(0, Math.min(1, num('affect.v4.dyn.k', 0.35))),
-    // 2026-11-21：安的斜率默认从 0.35 收到 0.1（《设计-三递质各自算法》给的 0.08~0.12）。
-    // 注意这里必须跟着改——v4Opts 是显式传参，覆盖 advanceState 的默认值，只改那边等于白改。
-    ks: Math.max(0, Math.min(1, num('affect.v4.dyn.ks', num('affect.v4.dyn.k', 0.1)))),
+    // 2026-11-23 主人定：0.1 → 0.5（先试 0.5，不是 0.75）。
+    // 0.1 时一句批评的增量只吸收一成（-0.10 → -0.01），跟每轮回落同一量级，互相抵消，位置停死。
+    // 文献侧：appraisal 理论说一次评估直接定强度（支持高吸收），但没给数；
+    // 0.75 会让十句小话（+0.05→+0.037/句）二十句顶到天，所以先给 0.5 留余地，
+    // 配合回落 1.5h（羞耻 30 分、愤怒 1 小时之间，Verduyn 等 37 国研究）。
+    ks: Math.max(0, Math.min(1, num('affect.v4.dyn.ks', num('affect.v4.dyn.k', 0.5)))),
+    // 参照点（2026-11-23）：拿真库 499 条增量试过——无它时 s 标准差 0.230、最低到 0.00；
+    // α0.06/带0.25 时 0.090、最低 0.18，抖动少六成多，真跌还跌得下去。
+    refpoint: (() => { try { return String(getParam(db, aid, 'affect.v4.refpoint') || 'on') } catch { return 'on' } })(),
+    refAlpha: Math.max(0, Math.min(1, num('affect.v4.ref.alpha', 0.06))),
+    refBand: Math.max(0.05, num('affect.v4.ref.band', 0.25)),
+    refCut: Math.max(0, Math.min(1, num('affect.v4.ref.cut', 0.2))),
+    refExempt: Math.max(0.1, num('affect.v4.ref.exempt', 0.35)),
     kn: Math.max(0, num('affect.v4.dyn.kn', 0.85)),
     kdu: Math.max(0, num('affect.v4.dyn.kdu', 0.25)),
     // 失而复得（2026-11-21）：d 已经被压到 0.35 以下时，正向 future 按这个速度反弹。
@@ -564,17 +680,24 @@ function sanitizeJudge(s) {
   if (['me', 'self', 'other', 'world', 'none', '我', '自己', '对方', '外面', '无'].includes(toRaw)) out.to = toRaw
   if (s.summary) out.summary = String(s.summary).replace(/\s+/g, ' ').slice(0, 40)
   const sev = String(s.severity || '').toLowerCase()
-  if (['none', 'strong', 'existence'].includes(sev)) out.severity = sev
+  // 2026-11-22 改名：none → normal（「一点没有」容易被读成没分量，还跟 to 的 none 撞名）。
+  // 旧值 none 一律归 normal，存量数据不用迁。
+  if (sev === 'none') out.severity = 'normal'
+  else if (['normal', 'strong', 'existence'].includes(sev)) out.severity = sev
   return Object.keys(out).length ? out : null
 }
 
 /** 2026-11-22 主人定：**判断层每个有用的参数都必须写。缺一个就报警，不补、不猜、不兜底。**
  *  这份清单就是 JUDGE_SYS 要模型填的全部字段；少一个，这一轮情绪就算没算成。 */
 export const REQUIRED_JUDGE = ['fact', 'meaning', 'by', 'to', 'goal_delta', 'expect_delta', 'future_delta', 'severity', 'why', 'from']
-export function judgeMissing(j) {
+/** 这一轮真正要求填的字段。why/from 可关（2026-11-24 主人定，开关 affect.v4.judge.whyfrom）。 */
+export function requiredJudge(keepWhyFrom = true) {
+  return keepWhyFrom ? REQUIRED_JUDGE : REQUIRED_JUDGE.filter((k) => k !== 'why' && k !== 'from')
+}
+export function judgeMissing(j, keepWhyFrom = true) {
   const o = j && typeof j === 'object' ? j : {}
   const miss = []
-  for (const k of REQUIRED_JUDGE) {
+  for (const k of requiredJudge(keepWhyFrom)) {
     const v = o[k]
     if (v === undefined || v === null || v === '') miss.push(k)
   }
@@ -625,6 +748,7 @@ async function refineShadowOnce(db, aid, { text = '', turnId = null, conversatio
     const call = typeof local === 'function' ? local : (req) => localComplete(db, {
       ...req,
       priority: 1,
+      block: 'chat',
       label: 'affect:frame',
       model: String(getParam(db, aid, 'affect.engine.shadow.model.name') || 'qwen2.5:14b-instruct'),
     })
@@ -654,9 +778,10 @@ async function refineShadowOnce(db, aid, { text = '', turnId = null, conversatio
       for (let attempt = 0; attempt < 2 && !judgment; attempt++) {
         try {
           const raw = await hostComplete(db, {
-            agent: String(aid || ''), label: 'affect:judge', timeoutMs: 0, priority: 1,
+            agent: String(aid || ''), lane: conversationId ? String(conversationId) : '',
+            label: 'affect:judge', timeoutMs: 0, priority: 1,
             complete: (req) => kernelModel.complete(req),
-            system: JUDGE_SYS, text: frameText, maxTokens: 1200,
+            system: JUDGE_SYS, text: frameText, maxTokens: 3000,
           })
           judgment = sanitizeJudge(parseJsonLoose(raw))
           if (!judgment) diag('judge-host-unparsed', { raw: String(raw || '').slice(0, 400), len: String(raw || '').length, attempt })
@@ -738,94 +863,6 @@ function readLastFour(db, conversationId) {
   } catch { return empty }
 }
 
-/** 读加格（kind / where / open），并把 next 推出来（2026-11-21）。
- *  next 不交给模型：让模型直接写「下一步」，它会写成自己刚在做的事。这里从 open 第一条推：
- *    有 blocked → 先解掉卡点，再做 todo；没 blocked → 直接做 todo；没有没完的事 → 明说。
- *  没有加格时返回 null，调用方当它不存在，行为与以前一字不差。 */
-export function readPlus(db, conversationId) {
-  try {
-    const key = affairsKey(conversationId)
-    let raw = getFlag(db, key)
-    if (!raw && key !== AFFAIRS_FLAG) raw = getFlag(db, AFFAIRS_FLAG)
-    const o = raw ? JSON.parse(raw) || {} : {}
-    const open = Array.isArray(o.open) ? o.open.filter((x) => x && (x.line || x.todo)) : []
-    const kind = typeof o.kind === 'string' ? o.kind : ''
-    const where = typeof o.where === 'string' ? o.where : ''
-    if (!kind && !where && !open.length) return null
-    let next = '（手上没有没完的事）'
-    if (open.length) {
-      const f = open[0]
-      next = f.blocked ? `先解掉「${f.blocked}」，再做「${f.todo || f.line || ''}」` : `做「${f.todo || f.line || ''}」`
-    }
-    return { kind, where, open, next }
-  } catch { return null }
-}
-
-/** 格表（2026-11-21）：连续树的骨架。用线名当 id，每轮把 open 合进来。
- *  还在 open 里的 → state=open；上一轮在、这一轮没了 → state=done。
- *  这张表是「几条路各自停在哪」的唯一真相，帧上的 under 只是指向它的指针。 */
-const GRID_FLAG = 'affect.v4.grid'
-function gridKey(conversationId) {
-  const cid = conversationId ? String(conversationId) : ''
-  return cid ? GRID_FLAG + '|' + cid : GRID_FLAG
-}
-export function readGrid(db, conversationId) {
-  try {
-    const raw = getFlag(db, gridKey(conversationId))
-    const o = raw ? JSON.parse(raw) : null
-    return (o && Array.isArray(o.nodes)) ? o : { nodes: [], at: '' }
-  } catch { return { nodes: [], at: '' } }
-}
-export function mergeGrid(db, conversationId, plus) {
-  try {
-    if (!plus) return
-    const g = readGrid(db, conversationId)
-    const nowIso = new Date().toISOString()
-    const live = new Set()
-    for (const it of plus.open || []) {
-      const line = String(it.line || '').trim()
-      if (!line) continue
-      live.add(line)
-      let n = g.nodes.find((x) => x.line === line)
-      if (!n) {
-        n = { id: 'g' + (g.nodes.length + 1) + '_' + Date.now().toString(36), line, parent: null, state: 'open', tried: [], firstAt: nowIso }
-        g.nodes.push(n)
-      }
-      n.done = it.done || n.done || ''
-      n.todo = it.todo || n.todo || ''
-      n.blocked = it.blocked || ''
-      if (it.parent) n.parentLine = String(it.parent).trim()
-      n.state = 'open'
-      n.lastAt = nowIso
-    }
-    for (const n of g.nodes) {
-      if (n.state === 'open' && !live.has(n.line)) { n.state = 'done'; n.closedAt = nowIso }
-    }
-    // 父子：模型给的是线名，这里换成 id（父节点得先存在）。认不出就留空，不瞎连。
-    for (const n of g.nodes) {
-      if (!n.parentLine) { n.parent = n.parent || null; continue }
-      const p = g.nodes.find((x) => x.line === n.parentLine && x !== n)
-      n.parent = p ? p.id : null
-    }
-    g.at = nowIso
-    setFlag(db, gridKey(conversationId), JSON.stringify(g))
-  } catch { /* 格表坏了不影响四格 */ }
-}
-
-/** 拼成给宿主看的三行（上限 120 字）。没有加格返回 ''。 */export function plusLine(db, conversationId) {
-  const p = readPlus(db, conversationId)
-  if (!p) return ''
-  const bits = []
-  if (p.where || p.kind) bits.push('我在：' + [p.where, p.kind ? `（${p.kind}）` : ''].filter(Boolean).join(''))
-  if (p.open.length) {
-    const f = p.open[0]
-    bits.push('手上没完：' + f.line + (f.blocked ? ` ← 卡在「${f.blocked}」` : ''))
-  }
-  bits.push('下一步：' + p.next)
-  const s = bits.join('；')
-  return s.length > 120 ? s.slice(0, 119) + '…' : s
-}
-
 /** 增量模式的情绪状态：本会话的当前位置 {s,n,d,at}。旧路不写、不读，flag 不碰。 */
 const STATE_FLAG = 'affect.v4.state'
 function stateKey(conversationId) {
@@ -848,7 +885,12 @@ function readState(db, conversationId) {
     const peak = v.peak && typeof v.peak === 'object' && [v.peak.s, v.peak.d].every((x) => Number.isFinite(Number(x)))
       ? { s: Number(v.peak.s), d: Number(v.peak.d) }
       : null
-    return { s: Number(v.s), n: Number(v.n), d: Number(v.d), at: v.at, hot, b, peak, turns: Number(v.turns) || 0, shock: v.shock === true, shockAt: v.shockAt || null, dStreak: Number(v.dStreak) || 0, dLast: Number(v.dLast) || 0, sStreak: Number(v.sStreak) || 0, sLast: Number(v.sLast) || 0, debt: Number(v.debt) || 0, bin: typeof v.bin === 'string' ? v.bin : '', recent: Array.isArray(v.recent) ? v.recent.slice(-5) : [], last: v.last && [v.last.s, v.last.n, v.last.d].every(Number.isFinite) ? { s: Number(v.last.s), n: Number(v.last.n), d: Number(v.last.d) } : null }
+    return { s: Number(v.s), n: Number(v.n), d: Number(v.d), at: v.at, hot, b, peak, turns: Number(v.turns) || 0, shock: v.shock === true, shockAt: v.shockAt || null, dStreak: Number(v.dStreak) || 0, dLast: Number(v.dLast) || 0, sStreak: Number(v.sStreak) || 0, sLast: Number(v.sLast) || 0, debt: Number(v.debt) || 0,
+      // 2026-11-23：参照点（sRef/dRef）必须一起读回来——这函数是白名单，漏了它俩，
+      // 每轮都会从「当前位置」重新起，参照点等于不存在（写测试时就看出来了：它永远跟着位置走）。
+      sRef: Number.isFinite(Number(v.sRef)) ? Number(v.sRef) : null,
+      dRef: Number.isFinite(Number(v.dRef)) ? Number(v.dRef) : null,
+      bin: typeof v.bin === 'string' ? v.bin : '', recent: Array.isArray(v.recent) ? v.recent.slice(-5) : [], last: v.last && [v.last.s, v.last.n, v.last.d].every(Number.isFinite) ? { s: Number(v.last.s), n: Number(v.last.n), d: Number(v.last.d) } : null }
   } catch { return null }
 }
 
@@ -861,6 +903,9 @@ function writeState(db, conversationId, st) {
 function nextPosition(prev, judgment, now, opt, base = null) {
   if (opt.dyn === 'off') return null
   const delta = deltasOf(judgment)
+  // 2026-11-23 主人定：入口的噪声门删掉。
+  // 它和判官打架——判官九成四落在 0.05~0.15，门把 <0.12 全抹成 0，等于把真数值一起防了。
+  // 防漂移改走出口的参照点（跟着近期经历走的基准），不在门口看数字大小。
   // 重复打折（2026-11-20）：同一方向连着推，一次比一次轻。
   // 跟人类的习惯化一个意思——同一句夸，第一遍受用，第十遍就淡了。
   // 方向一换就归零，所以「被夸→被骂」不会互相打折。
@@ -871,7 +916,10 @@ function nextPosition(prev, judgment, now, opt, base = null) {
   const dStreak = sameDir ? Math.min(12, prevStreak + 1) : (Math.abs(dNow) > 0.01 ? 1 : 0)
   // 打折打到 0.5 就不往下打了。一直有好事，人还是会高兴，只是没那么高兴——
   // 不该一路折到「完全没感觉」（试过 0.75 不设底，20 轮后 d 掉到 0.52，比不打折还低）。
-  const damp = Math.max(0.5, Math.pow(0.75, Math.max(0, dStreak - 1)))
+  // 打折打到 0.2 就不往下打了。原来底 0.5——等于永远留一半，判官又总给正，欲就一路顶到 1.0。
+  // 2026-11-23 按多巴胺的奖赏预测误差改：可预测的奖赏几乎不激发 DA（Schultz），
+  // 同一类好事反复来，反应应该趋近于零，不该留一半。
+  const damp = Math.max(0.2, Math.pow(0.75, Math.max(0, dStreak - 1)))
   if (damp < 1) delta.d = dNow * damp
   // 是谁造成的，只改「想要」这一根，而且只改事情没成的那一侧（见 algo 的 byAdjustedD）。
   delta.d = byAdjustedD(delta.d, judgment && judgment.by, opt && opt.byW)
@@ -895,9 +943,49 @@ function nextPosition(prev, judgment, now, opt, base = null) {
   // turns 也记：短会话（一两句寒暄）的余温要打折，不然一天十次短聊就把底色带跑了。
   // shock 也往下带：一段里出过一次通天，收尾时就按「存在级会话」算，哪怕后面又聊了几句普通的。
   // dStreak / dLast：重复打折要记着「连着第几次、往哪个方向」。
+
+  // 参照点（2026-11-23 主人定）：只给安和欲。觉是事件性的，不设参照点。
+  // 它记着「最近这一段大概什么样」，每轮朝当前位置挪一点（α）；
+  // 位置冲出带子（band）就把超出那截折掉八成（只留 cut）；一次重击（|推动| ≥ exempt）让参照点直接搬家。
+  // 和噪声门的区别：门在入口看数值小就丢，参照点在出口看离「平时」多远——真话一句不丢。
+  const refOn = String(opt.refpoint || 'on') !== 'off'
+  // 注意：不能写 Number(prev && prev.sRef)——prev 为 null 时整式是 null，Number(null)=0 是有限数，
+  // fallback 失效，参照点从 0 起步（第一版就栽在这，第一轮把位置从 0.68 拉回 0.37）。所以显式判 null。
+  let sRef = prev && prev.sRef != null ? Number(prev.sRef) : NaN
+  let dRef = prev && prev.dRef != null ? Number(prev.dRef) : NaN
+  if (!Number.isFinite(sRef)) sRef = state.s
+  if (!Number.isFinite(dRef)) dRef = state.d
+  let outS = state.s
+  let outD = state.d
+  if (refOn) {
+    const alpha = Number(opt.refAlpha) || 0.06
+    const band = Number(opt.refBand) || 0.25
+    const cut = Number(opt.refCut) || 0.2
+    const exempt = Number(opt.refExempt) || 0.35
+    const heavyS = Math.abs((Number(opt.ks) || 0.5) * delta.s) >= exempt
+    const heavyD = Math.abs((Number(opt.kdu) || 0.25) * delta.d) >= exempt
+    if (heavyS) sRef = outS
+    else {
+      sRef += alpha * (outS - sRef)
+      const ofs = outS - sRef
+      if (Math.abs(ofs) > band) outS = sRef + Math.sign(ofs) * (band + (Math.abs(ofs) - band) * cut)
+    }
+    if (heavyD) dRef = outD
+    else {
+      dRef += alpha * (outD - dRef)
+      const ofd = outD - dRef
+      if (Math.abs(ofd) > band) outD = dRef + Math.sign(ofd) * (band + (Math.abs(ofd) - band) * cut)
+    }
+    outS = Math.max(0, Math.min(1, outS))
+    outD = Math.max(0, Math.min(1, outD))
+  }
   return {
     position: {
       ...state,
+      s: outS,
+      d: outD,
+      sRef,
+      dRef,
       b,
       turns: (Number(prev && prev.turns) || 0) + 1,
       shock: shockedBefore,
@@ -989,6 +1077,11 @@ function settleWarmth(db, aid, conversationId, prev, opt, now) {
  *  timeoutMs：本地队列预算（异步可长等；回复前补总结时给短一点）。
  *  waitTurnId：等这一轮的压句（presence.last_sentence）先出现——上一轮摘要做完，才能做上十轮的总结。 */
 export async function summarizeAffairs(db, aid, { conversationId = null, complete = null, timeoutMs = 120000, waitTurnId = null } = {}) {
+  // 2026-11-23：摘要也是链上的一条（affect.summary）——读料 → 总结 → 写 affairs。
+  // 它和情绪链靠 affairs 接头：这条链写下的事，下一轮判断层读。
+  let runId = null
+  let chSeq = 0
+  let lastMark = Date.now()
   try {
     const cid = conversationId ? String(conversationId) : ''
     // 2026-11-17：压句（presence.last_sentence）是上一轮做的，属于「上十轮」的一部分；
@@ -1055,6 +1148,15 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
       ? `\n\n上一次：动机=${lastFour.motive || '（没记）'}；步骤=${lastFour.step || '（没记）'}`
       : ''
     const text = '最近这几句：\n' + pairs.slice().reverse().join('\n') + '\n\n最近原话：\n' + quotes.reverse().join('\n') + prevLine
+    // 【摘要链·1/3】读料：这一轮总结吃了哪几句摘要、哪几句原话、上一次的动机和步骤
+    runId = beginRun(db, { aid, cid, turnId: waitTurnId, chainId: 'affect.summary' })
+    chSeq = step(db, runId, chSeq, {
+      id: 'read_pairs', kind: 'code', block: 1,
+      input: { conversationId: cid || null, waitTurnId: waitTurnId ? String(waitTurnId) : null },
+      output: { pairs: pairs.length, quotes: quotes.length, prevLine: String(prevLine || '').slice(0, 120) },
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
     const run = typeof complete === 'function' ? complete : null
     let t = ''
     if (run) {
@@ -1067,7 +1169,7 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
       // 宿主理解力够，1~2 秒；本地 2.5 会把「事件结构」当字段表罗列。失败再落本地。
       try {
         t = await hostComplete(db, {
-          agent: String(aid || ''), label: 'affect:summary', timeoutMs: 15000, priority: 3,
+          agent: String(aid || ''), lane: cid, label: 'affect:summary', timeoutMs: 15000, priority: 3,
           complete: () => kernelModel.chat([{ role: 'system', content: sys }, { role: 'user', content: text }], 2000, false),
         })
       } catch (e) {
@@ -1079,7 +1181,7 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
       if (!t && !truncated) {
         try {
           t = await hostComplete(db, {
-            agent: String(aid || ''), label: 'affect:summary:retry', timeoutMs: 15000, priority: 3,
+            agent: String(aid || ''), lane: cid, label: 'affect:summary:retry', timeoutMs: 15000, priority: 3,
             complete: () => kernelModel.chat([{ role: 'system', content: sys }, { role: 'user', content: text }], 2000, false),
           })
         } catch { /* 重试也失败就走本地 */ }
@@ -1095,12 +1197,20 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
         }
       }
     }
+    // 【摘要链·2/3】总结：吃的是上面那批料；吐的是这句「事」和四格。
+    // 放在两条路（注入的 complete / 宿主+本地兜底）汇合之后——以前插在 else 里，
+    // 走注入那条就绕过去了，账上少一步。
+    chSeq = step(db, runId, chSeq, {
+      id: 'summarize', kind: 'host', block: 1, label: 'affect:summary',
+      input: { pairs: pairs.length, quotes: quotes.length, chars: String(text || '').length },
+      output: { text: String(t || '').slice(0, 400) },
+      status: t ? 'ok' : 'no_result',
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
     // 2026-11-20：改成要 JSON（events + motive/motive_why/step/step_why）。
     // 模型不按格式回就退回纯文本——别因为换了格式把 summary 弄坏。
     const four = { motive: '', motive_why: '', step: '', step_why: '' }
-    // 2026-11-21：加格。开关 affect.v4.affairs.plus（默认开；填 off 就回到只有四格的老样子）。
-    const plusOn = false // 2026-11-21：找事那条路（kind/where/open/格表）已废弃，主人否掉了。整条默认关，代码待清。
-    const plus = { kind: '', where: '', open: [] }
     let evText = ''
     const raw = String(t || '').trim()
     const m = raw.match(/\{[\s\S]*\}/)
@@ -1109,35 +1219,7 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
         const o = JSON.parse(m[0])
         if (Array.isArray(o.events)) evText = o.events.map((x) => String(x || '')).join('\n')
         for (const k of Object.keys(four)) if (typeof o[k] === 'string') four[k] = o[k].replace(/\s+/g, ' ').trim().slice(0, 40)
-        if (plusOn) {
-          if (typeof o.kind === 'string') plus.kind = o.kind.replace(/\s+/g, ' ').trim().slice(0, 8)
-          if (typeof o.where === 'string') plus.where = o.where.replace(/\s+/g, ' ').trim().slice(0, 40)
-          if (Array.isArray(o.open)) {
-            plus.open = o.open.slice(0, 3).map((x) => ({
-              line: String((x && x.line) || '').replace(/\s+/g, ' ').trim().slice(0, 24),
-              parent: String((x && x.parent) || '').replace(/\s+/g, ' ').trim().slice(0, 24),
-              done: String((x && x.done) || '').replace(/\s+/g, ' ').trim().slice(0, 30),
-              todo: String((x && x.todo) || '').replace(/\s+/g, ' ').trim().slice(0, 30),
-              blocked: String((x && x.blocked) || '').replace(/\s+/g, ' ').trim().slice(0, 30),
-            })).filter((x) => x.line || x.todo)
-          }
-        }
       } catch { try { setFlag(db, 'affect.v4.summary.diag', JSON.stringify({ why: 'json-parse-fail', len: raw.length, head: raw.slice(0, 150), tail: raw.slice(-80), at: new Date().toISOString() })) } catch { /* 诊断失败不影响 */ } }
-    }
-    // 2026-11-21：kind 双轨。模型一律填「任务」（连麦克风充电那种也填任务），所以用关键词校正。
-    // 只在规则明显占优（生活/探索词 ≥2 且多于任务词）时才盖过模型，宁可不改也别乱改。
-    if (plusOn && plus.kind) {
-      const hay = String(text || '')
-      const count = (re) => (hay.match(re) || []).length
-      const cLife = count(/(充电|灯|电池|麦克风|耳机|手环|脑电|显卡|显存|吃饭|做饭|锅|菜|睡|起床|衣服|天气|快递|药|身体|头痛|洗澡|家务)/g)
-      const cTask = count(/(代码|函数|脚本|门禁|提交|测试|文档|接口|数据库|schema|字段|部署|bug|验收|表结构)/gi)
-      const cExpl = count(/(想不清|不确定|为什么|有没有可能|搜一下|查一下|原理|定义|到底|想想)/g)
-      // 只扳一种情况：模型写了「任务」（它的默认值），而生活/探索词明显占优。
-      // 模型已经写了「闲聊/探索/生活」时不覆盖——宁可不改也别把对的说成错的。
-      if (plus.kind === '任务') {
-        if (cLife >= 2 && cLife > cTask) plus.kind = '生活'
-        else if (cExpl >= 2 && cExpl > cTask) plus.kind = '探索'
-      }
     }
 
     const rawLines = String(evText || t || '').split('\n').map((x) => x.trim()).filter(Boolean)
@@ -1151,7 +1233,7 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
       return ''
     }
     const line = lines.join('\n')
-    setFlag(db, affairsKey(conversationId), JSON.stringify({ text: line, ...four, ...plus, at: new Date().toISOString(), conv: conversationId ? String(conversationId) : '' }))
+    setFlag(db, affairsKey(conversationId), JSON.stringify({ text: line, ...four, at: new Date().toISOString(), conv: conversationId ? String(conversationId) : '' }))
     /* 2026-11-22 主人：每轮收的「事」不能只留最新一条，要追加成历史——
        日记、凝练、以后回看都要按天/按段读。老路（flag）照写，新表只追加。 */
     try {
@@ -1166,20 +1248,48 @@ export async function summarizeAffairs(db, aid, { conversationId = null, complet
           _d.toISOString(),
           line,
           four.motive || '', four.motive_why || '', four.step || '', four.step_why || '',
-          plus.kind || '', plus.where || '',
-          JSON.stringify(Array.isArray(plus.open) ? plus.open : []))
+          '', '', '[]')
     } catch { /* 历史追加失败不影响这一轮 */ }
-    // 2026-11-21：每轮把 open 合进格表，这就是「接到前面的树上」——线名当 id，
-    // 上一轮在、这一轮没了就封成 done。没开加格时不写。
-    mergeGrid(db, conversationId, plusOn ? plus : null)
+    // 【摘要链·3/3】写 affairs：这一句「事」和四格落了库，下一轮判断层才读得到。
+    chSeq = step(db, runId, chSeq, {
+      id: 'write_affairs', kind: 'code', block: 1,
+      input: { line: String(line || '').slice(0, 300) },
+      output: { four: { motive: four.motive || '', step: four.step || '' } },
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
+    endRun(db, runId, { ok: true, ms: Date.now() - lastMark })
     return line
   } catch { return '' }
 }
 
 /** 这一轮（回复前）：拼事帧 + 判断层 + 情绪，各落一行（rules=provisional，model=最终）。
  *  回复前不再补总结（2026-11-17）：总结走宿主、回复后异步就能写；缺一轮用「（新事）」，不拖回复。 */
-export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conversationId = null, now = Date.now(), complete = null } = {}) {
+export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conversationId = null, now = Date.now(), complete = null, judgmentOverride = null, requiredKeys = null, onJudge = null } = {}) {
+  // 2026-11-23：链的账（设计-链与块 v2）。这一轮从这开始记，每段一个 step。
+  // 账写失败不影响链（affect_chain 里全是 try/catch）；开关 affect.chain.record=off 时整条不记。
+  let runId = null
+  let chSeq = 0
+  // 2026-11-24 主人定：why/from 开关。默认 on（跟现在一样）；off 时提示词和缺键清单一起收窄。
+  const keepWhyFrom = String(getParam(db, aid, 'affect.v4.judge.whyfrom') || 'on') !== 'off'
+  // 2026-11-24：额度与思考档做成参数（每轮现读，不用重载）。
+  // 为什么不是写死 3000：真库看下来「空回耗时随额度涨」（1200 约 8 秒、3000 要 16~29 秒），
+  // 而判决本身只有一百多字节——额度不是不够，是被思考吃掉。要给的是「少想」的旋钮，不是更多的额度。
+  const judgeMaxTokens = (() => {
+    const n = Number(getParam(db, aid, 'affect.v4.judge.maxTokens'))
+    return Number.isFinite(n) && n >= 100 ? Math.floor(n) : 3000
+  })()
+  const judgeEffort = (() => {
+    const s = String(getParam(db, aid, 'affect.v4.judge.effort') || '').trim()
+    return /^[a-z][a-z0-9_-]{1,20}$/i.test(s) ? s : ''
+  })()
+  // 每步耗时的基准：上一步记完的时刻。这样「这一步花多久」= 现在 - 上一步，
+  // 包含真正的工作时间（打点紧跟在动作后面）。
+  let lastMark = now
   try {
+    // 2026-11-22 排查：这一段以前是黑盒，卡住时只知道「在 preStep 里」，不知道卡在建帧、
+    // 事层、判断层还是写库。每段打一次点，stage.txt 会停在最后一次写入的那段上。
+    markLoop('affect-frame')
     const t = String(text || '').trim()
     if (!t) return false
     const tid = turnId || ('turn_pr_' + Number(now).toString(36))
@@ -1194,15 +1304,7 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     // 2026-11-20：四格接进 frame 本体。跟 summary 同源（都是上一轮 writeAffairs 写的），
     // 所以这里拿到的是「上一次」的四格，比这一轮晚一步——第一版接受这个滞后。
     const lastFour = readLastFour(db, conversationId)
-    // 2026-11-21：加格也接进 frame 本体。字段名避开 frame 自己的 open（那是「这帧还开着没」），
-    // 用 openLines 存「手上没完的几条线」，under 是连续父的雏形（帧自己就是树的节点，见设计-帧与连续树）。
-    const plusNow = readPlus(db, conversationId)
-    const plusFrame = plusNow ? {
-      under: { line: (plusNow.open[0] && plusNow.open[0].line) || plusNow.where || '', step: plusNow.open[0] ? (plusNow.open[0].done || plusNow.where) : plusNow.where },
-      next: plusNow.next,
-      openLines: plusNow.open,
-    } : {}
-    // 2026-11-22：上一轮的最终行——「距上一句多久 / 我上一轮什么词 / 这件事第几轮」都从它取。
+    // 上一轮的最终行——「距上一句多久 / 我上一轮什么词 / 这件事第几轮」都从它取。
     // 设计-事帧-v2 §二 C 组要的上下文格；全部代码填，零模型成本。
     const prevFinal = lastModelRow(db, aid, conversationId)
     const prevAtMs = prevFinal ? Date.parse(prevFinal.at) : NaN
@@ -1212,11 +1314,23 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     try { prevFrame = JSON.parse(prevFinal ? prevFinal.frame_json || '{}' : '{}') } catch { prevFrame = {} }
     const prevSummary = String(prevFrame.summary || '')
     const prevTurnIndex = Number(prevFrame.turnIndex) || 0
+    // 【链·1/6】读上一轮：吃了什么（这一句 + 会话号）、吐了什么（上一轮的事、上一句、隔多久、第几轮）
+    runId = beginRun(db, { aid, cid: conversationId, turnId: tid })
+    chSeq = step(db, runId, chSeq, {
+      id: 'read_prev', kind: 'code', block: 1,
+      input: { text: t, conversationId: conversationId ? String(conversationId) : null },
+      output: {
+        affairs: String(affairsLine || '').slice(0, 300),
+        prevSummary: String(prevSummary || '').slice(0, 200),
+        prevLabel, gapMs, prevTurnIndex,
+      },
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
     const frame = {
       id: newId(), span: 'turn', startedAt: new Date(now).toISOString(), open: true,
       summary: affairs ? String(affairs).slice(0, 120) : '（新事）',
       ...lastFour,
-      ...plusFrame,
       what: slot.what, who: 'owner', target: slot.target,
       // 上下文格（2026-11-22）：隔多久、我上一轮什么状态、这一帧第几轮、缺了什么。
       // turnIndex 要等事层写完 summary 才能算，先占位 0。
@@ -1229,9 +1343,11 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     const at = new Date(now).toISOString()
     const opt = v4Opts(db, aid)
     // 事层（第 1 次调用，原设计 TOPIC_SYS）：本地小模型读上下文，写这一帧的 summary/what/target。
+    markLoop('affect-topic')
     // 只在真实链路跑（没传 complete 的测试/仿真不跑，免得每个用例等本地模型）；
     // 失败/超时**不补**（没有「规则那版」了），只记一笔 `missing.topic`，判断输入里会明说事层没回来。
     if (!complete && opt.topicLocal !== 'off') {
+      const tTopic = Date.now()
       let topicOk = false
       try {
         // 2026-11-22：把「这一句」放最前、并标明「只从这一句提取」；「正在发生」退到后面当背景。
@@ -1248,9 +1364,12 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
         const jt = parseJsonLoose(r && r.text != null ? r.text : r)
         if (jt) {
           // 2026-11-22：事层不再产 summary（归前置）。它只写这一句和指称。
-          if (jt.what) frame.what = String(jt.what).replace(/\s+/g, ' ').slice(0, 80)
-          if (['me', 'other', 'none'].includes(String(jt.target || '').toLowerCase())) frame.target = String(jt.target).toLowerCase()
-          topicOk = true
+          // 空壳不算回来：what / target 至少得有一个真写了东西，两个都空就当没回来。
+          const whatOk = !!String(jt.what || '').trim()
+          const targetOk = ['me', 'other', 'none'].includes(String(jt.target || '').toLowerCase())
+          if (whatOk) frame.what = String(jt.what).replace(/\s+/g, ' ').slice(0, 80)
+          if (targetOk) frame.target = String(jt.target).toLowerCase()
+          topicOk = whatOk || targetOk
         }
       } catch { /* 本地模型没起/超时：不补，记 missing.topic */ }
       // 2026-11-22：事层没跑成要留痕——这是「没算成」，不是「字段为空」。
@@ -1258,6 +1377,18 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
         if (!Array.isArray(frame.missing)) frame.missing = []
         if (!frame.missing.includes('topic')) frame.missing.push('topic')
       }
+      // 【链·2/6】事层：本地 14B 判「这一句说的是什么、指谁」。
+      // 2026-11-23 补：这节原来没记，它的耗时被算到判断层头上——
+      // 实际那段 18.8 秒里，它占了约 8 秒（本地），判断层只占 10.7 秒（宿主）。
+      chSeq = step(db, runId, chSeq, {
+        id: 'topic', kind: 'local', block: 1, label: 'affect:topic',
+        input: { text: t, summary: String(frame.summary || '').slice(0, 120) },
+        output: { what: frame.what || '', target: frame.target || '' },
+        status: topicOk ? 'ok' : 'no_result',
+        err: topicOk ? '' : 'missing:topic',
+        ms: Date.now() - tTopic,
+      })
+      lastMark = Date.now()
     }
     // 2026-11-22：这一帧内第几轮 + 缺字段留痕（设计-事帧-v2 原则 3：填不满就留空 + 记一笔 missing）。
     // turnIndex 按「summary 和上一轮一样」续：同一件事第 2、3 轮；换了事就回到 1。
@@ -1298,9 +1429,18 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     // 2026-11-22：上下文三行（隔多久 / 第几轮 / 我上一轮什么状态）。默认 off = 影子期，
     // 只写进 frame、不改判断层输入；验过再开。开关 `affect.v4.frame.ctx`。
     const ctxOn = String(getParam(db, aid, 'affect.v4.frame.ctx') || 'off') !== 'off'
-    const quotesLine = (ctxOn && Array.isArray(mat.lines) && mat.lines.length)
-      ? '最近原话：' + mat.lines.slice(-6).map((x) => (String(x.role) === 'agent' ? '我：' : '主人：') + x.text).join(' / ')
-      : (Array.isArray(mat.quotes) && mat.quotes.length ? '最近原话：' + mat.quotes.slice(-6).join(' / ') : '')
+    // 2026-11-23 主人定：原话取「再往前三条」，带「对方：/我：」标识。
+    // 注意 mat.lines 末尾两条正好是「这一句」和「我上一句」——上面已各给一行，
+    // 这里先跳过它们再往前取，否则判断层读到的是同一句话的两份拷贝。
+    const quoteSrc = (ctxOn && Array.isArray(mat.lines) && mat.lines.length)
+      ? mat.lines.map((x) => ({ role: String(x.role) === 'agent' ? '我' : '对方', text: String(x.text || '') }))
+      : (Array.isArray(mat.quotes) ? mat.quotes.map((s) => ({ role: '对方', text: String(s || '') })) : [])
+    const earlierLines = quoteSrc.slice(0, Math.max(0, quoteSrc.length - 2)).slice(-3)
+    // 2026-11-23 主人定：材料里的时间词跟提示词统一成三档——【之前的事】/【更早的事】/【当下的事】。
+    // 不说「这一句」：以后会有别的场景（比如我自己去浏览网页），当下的「事」不一定是一句话。
+    const quotesLine = earlierLines.length
+      ? '【更早的事】再往前三句原话：' + earlierLines.map((x) => x.role + '：' + x.text).join(' / ')
+      : ''
     // 2026-11-22 主人定：把「正在发生」和「最近几件事」合成一段——同一份前置 text，
     // 一个现在、一个之前。最新一份就是「现在」那条，不再在「之前」里重复；之前只留最近 3 份。
     const affairNow = String(affairsLine || frame.summary || '').trim()
@@ -1308,12 +1448,16 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
       .map((x) => String(x || '').trim())
       .filter((x) => x && x !== affairNow)
       .slice(-3)
+    // 2026-11-22 主人定：这一句直接给原话 + 来源（对方｜我），判断层不再从「我/你/他」猜说话人。
+    const speaker = speakerOf(db, tid)
+    // 2026-11-23 主人定：材料按「时间从旧到新」排，**最后一条才是刚刚发生的事**。
+    // 以前把「这件事」写成「现在：」，你刚说的那句反而排在后面，判官常把上一句的事算到这一句头上。
     const frameText = [
-      affairNow ? `这件事：\n现在：\n${affairNow}` : '',
-      affairEarlier.length ? `之前：\n${affairEarlier.join('\n')}` : '',
-      frame.prev ? `我上一句：${String(frame.prev).slice(0, 200)}` : '',
-      `这一句：${frame.what || ''}`,
-      `冲谁：${frame.target || 'none'}`,
+      '（下面按时间从旧到新排，最后一条才是刚刚发生的事。）',
+      affairNow ? `【之前的事】发生过的事：\n${affairNow}` : '',
+      affairEarlier.length ? `【更早的事】在那之前的几件事：\n${affairEarlier.join('\n')}` : '',
+      quotesLine,
+      frame.prev ? `【之前的事】我上一句说的：${String(frame.prev).slice(0, 200)}` : '',
       ...(ctxOn ? [
         gapMs != null ? '距上一句：' + gapText(gapMs) : '',
         frame.turnIndex ? '这件事第 ' + frame.turnIndex + ' 轮' : '',
@@ -1324,25 +1468,87 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
           ? '（事层没回来：这句没有摘要和冲谁，只按原话判，别把空白当完整。）'
           : '',
       ] : []),
-
-      quotesLine,
+      `【当下的事】对方刚说（来源：${speaker}）：${String(t).replace(/\s+/g, ' ').slice(0, 300)}`,
     ].filter(Boolean).join('\n')
-    const run = typeof complete === 'function' ? complete : (req) => kernelModel.complete(req)
+    markLoop('affect-judge')
+    // 2026-11-22 主人定：情绪链上任何一个模型没回来（前置 / 事层 / 判断层），这一轮就锁住——
+    // 缺料不硬判、不推进状态、词停在上一位置；缺哪一环原样报上去。
+    const chainMissing = []
+    if (Array.isArray(frame.missing) && frame.missing.includes('topic')) chainMissing.push('topic')
+    if (!affairNow) chainMissing.push('affairs')
+    // 2026-11-23 主人定：判断层**不许兜底**。失败就是失败，别拿规则兜底的假答案去解析。
+    const run = typeof complete === 'function' ? complete : (req) => kernelModel.completeStrict(req)
     let judgment = null
     let jDiag = null
-    for (let attempt = 0; attempt < 2 && !judgment; attempt++) {
-      try {
-        const raw = await hostComplete(db, {
-          agent: String(aid || ''), label: 'affect:judge', timeoutMs: 0, priority: 1,
-          complete: run, system: JUDGE_SYS, text: frameText, maxTokens: 1200,
-        })
-        const parsed = parseJsonLoose(raw)
-        judgment = sanitizeJudge(parsed)
-        jDiag = { attempt, len: String(raw == null ? '' : raw).length, raw: String(raw == null ? '' : raw).slice(0, 400), why: judgment ? 'ok' : (parsed ? 'sanitize-null' : 'unparsed') }
-      } catch (e) {
-        judgment = null
-        jDiag = { attempt, why: 'throw', msg: String((e && e.message) || e).slice(0, 200) }
+    // 2026-11-23：判断层最多试两次（下面 for attempt<2）。两次加起来才是这一节真正的耗时，
+    // 以前只记「距上一步」，会把两次调用的时间 + 中间空档一起算进来，数就虚了。
+    let judgeMs = 0
+    let judgeTries = 0
+    if (judgmentOverride) {
+      // 拆开之后的新路（2026-11-24）：反射在 0 里已经跑完，这里只把它接上，不再发判官请求。
+      // by/to 是我在 settle 时自己给的，一并并进来；why/from 默认不要求。
+      judgment = judgmentOverride
+      jDiag = { attempt: 0, len: 0, raw: '', why: 'reflex-cached' }
+    } else if (!chainMissing.length) {
+      // 2026-11-23：重试条件原来是 `!judgment`——只要 sanitize 收回来任意字段就算有结果，
+      // 循环当场停，缺的键根本没机会补。15:17 那次只回来前四键、后面六键全缺，就是这么过的。
+      // 现在按「判决是否完整」决定要不要再试。
+      for (let attempt = 0; attempt < 2 && !(judgment && judgeMissing(judgment, keepWhyFrom).length === 0); attempt++) {
+        judgeTries++
+        const t0 = Date.now()
+        // 2026-11-24：这一次到底想了多少（思考字数 / token 用量 / 结束原因）——
+        // 由宿主适配器边收流边填，跟成败无关都留一行，省得下次又靠推。
+        const jStat = {}
+        try {
+          const raw = await hostComplete(db, {
+            agent: String(aid || ''), lane: conversationId ? String(conversationId) : '',
+            label: 'affect:judge', timeoutMs: 0, priority: 1,
+            // 2026-11-23：1200 → 3000（主人定）。实测 1200 会被思考过程吃光、正文空
+            // （finish=max-tokens sawDelta=no），重试一次共烧 16 秒还是 no_result。
+            // 2026-11-24：改成参数 affect.v4.judge.maxTokens（默认仍 3000，先不动行为）；
+            // 真正的旋钮是 affect.v4.judge.effort——档位由模型自己声明的挑，没声明就不传。
+            complete: run, system: judgeSysFor(keepWhyFrom), text: frameText,
+            maxTokens: judgeMaxTokens, reasoningEffort: judgeEffort || undefined, stats: jStat,
+          })
+          const parsed = parseJsonLoose(raw)
+          judgment = sanitizeJudge(parsed)
+          jDiag = { attempt, len: String(raw == null ? '' : raw).length, raw: String(raw == null ? '' : raw).slice(0, 400), why: judgment ? 'ok' : (parsed ? 'sanitize-null' : 'unparsed'), stat: jStat }
+        } catch (e) {
+          judgment = null
+          jDiag = { attempt, why: 'throw', msg: String((e && e.message) || e).slice(0, 200), stat: jStat }
+        }
+        judgeMs += Date.now() - t0
+        // 2026-11-24：每次尝试都把「想了多少」落一格，成功也写——
+        // 只有失败时才记的话，就永远看不到「判决成了但想了 2000 字」的那一半。
+        try {
+          setFlag(db, 'affect.v4.judge.think', JSON.stringify({
+            at: new Date().toISOString(), conv: conversationId ? String(conversationId) : '',
+            attempt, ok: !!judgment, maxTokens: judgeMaxTokens, effort: judgeEffort || '',
+            ms: Date.now() - t0, reasoningChars: jStat.reasoningChars ?? null,
+            outputChars: jStat.outputChars ?? null, finish: jStat.finish ?? null,
+            usage: jStat.usage || null,
+          }))
+        } catch { /* 记不上不影响判断 */ }
+        // 2026-11-23：**每次**尝试失败都留痕，哪怕第二次成功了。
+        // 以前只在整条失败时写诊断，所以「第一次空回、第二次成」这种看不见，
+        // 只能从 tries=2 倒推；现在能统计频率，也能看出跟输入长度有没有关系。
+        if (!judgment && jDiag) {
+          try {
+            const cnt = Number(getFlag(db, 'affect.v4.judge.tryfail.count')) || 0
+            setFlag(db, 'affect.v4.judge.tryfail.count', String(cnt + 1))
+            setFlag(db, 'affect.v4.judge.tryfail.last', JSON.stringify({
+              attempt,
+              why: jDiag.why,
+              msg: String(jDiag.msg || '').slice(0, 160),
+              textLen: String(t || '').length,
+              ms: Date.now() - t0,
+              at: new Date().toISOString(),
+            }))
+          } catch { /* 诊断失败不影响判断 */ }
+        }
       }
+    } else {
+      jDiag = { attempt: 0, len: 0, raw: '', why: 'chain-missing:' + chainMissing.join(',') }
     }
     // 判分没走成时，把「模型那头到底怎么了」一起留下：served / fallbackWhy / lastError。
     // 2026-11-20：以前只留 sanitize-null，看不出是没模型、熔断还是真报错——等于没线索。
@@ -1363,8 +1569,32 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     // 2026-11-22 主人定：**不许任何代码 / 规则兜底**。
     // 判断层每个有用参数都必须写全；缺一个就报警——不补数、不当结论、不推进状态。
     // （当天上午加过「规则补 by / 规则顶上」，被主人否了：兜底就是骗人。）
-    const missJudge = judgment ? judgeMissing(judgment) : [...REQUIRED_JUDGE]
+    // 缺料（链上模型没回来）时 missing 直接报缺的那一环；判断层没值才报十键全缺。
+    // 要求哪些键：新路按「反射六件 + 解释 by/to」拼，旧路还是原来那十件。
+    // 这样 to/by 到来之前不会把整轮卡成 no_result（那正是这次要拆掉的病）。
+    const needKeys = (Array.isArray(requiredKeys) && requiredKeys.length) ? requiredKeys : requiredJudge(keepWhyFrom)
+    const missOf = (j) => needKeys.filter((k) => { const v = j ? j[k] : undefined; return v === undefined || v === null || v === '' })
+    const missJudge = chainMissing.length ? chainMissing : (judgment ? missOf(judgment) : needKeys.slice())
     const judgeOk = !!judgment && missJudge.length === 0
+    // 【链·2/6】判断层：吃的是这一句 + 上一轮的事 + 上下文；吐的是十键判决。
+    // 缺字段就是 no_result（这一轮不推进），账上留得下它当时吃的是什么。
+    // 2026-11-24 拆开之后：judgmentOverride 进来的是「反射早就算好的结果」，
+    // 那不是一次 host 调用（ms≈0）。账上必须分开记——否则 judge 的平均耗时被 0ms 冲淡，
+    // 看板上就再也不知道真判官到底多慢了。所以 kind/id 跟着来源走，两种都留原名可查。
+    chSeq = step(db, runId, chSeq, {
+      id: judgmentOverride ? 'reflex' : 'judge',
+      kind: judgmentOverride ? 'code' : 'host',
+      block: 1,
+      label: judgmentOverride ? 'affect:reflex(cached)' : 'affect:judge',
+      input: { text: t, affairs: String(affairNow || '').slice(0, 300), prevLabel, gapMs, turnIndex: frame.turnIndex },
+      output: judgment
+        ? { fact: judgment.fact, meaning: judgment.meaning, by: judgment.by, to: judgment.to, g: judgment.goal_delta, e: judgment.expect_delta, f: judgment.future_delta, sev: judgment.severity, tries: judgeTries, think: (jDiag && jDiag.stat) || null }
+        : { tries: judgeTries, think: (jDiag && jDiag.stat) || null },
+      status: judgeOk ? 'ok' : 'no_result',
+      err: judgeOk ? '' : 'missing:' + missJudge.join(','),
+      ms: judgeMs || (Date.now() - lastMark),
+    })
+    lastMark = Date.now()
     if (!judgeOk) {
       // 报警：缺了哪几个、原句、当时的原始输出，都留下来。
       try {
@@ -1383,8 +1613,11 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     }
     // 情绪模块罢工：这一轮没算成（模型没回来 / 没写全）——提示词顶上会写「情绪模块罢工」。
     try {
-      if (judgeOk) clearFlag(db, 'affect.v4.strike')
-      else setFlag(db, 'affect.v4.strike', JSON.stringify({
+      // 2026-11-23：罢工标记按会话存。原来只有一个全局槽，A 判失败标记罢工、
+      // B 判成功把同一个槽清掉，A 的罢工就凭空消失——读的时候有 sameConv 过滤，清的时候没有。
+      const strikeKey = 'affect.v4.strike' + (conversationId ? '|' + String(conversationId) : '')
+      if (judgeOk) clearFlag(db, strikeKey)
+      else setFlag(db, strikeKey, JSON.stringify({
         at: new Date().toISOString(),
         conv: conversationId ? String(conversationId) : '',
         missing: missJudge,
@@ -1398,6 +1631,16 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     }
     // 缺参数：这一轮**不推进**（不调用 nextPosition）。宁可停在原处，也不拿默认 0 算个假情绪。
     const posM = judgeOk ? nextPosition(prev, judgment, now, opt, base) : null
+    // 【链·3/6】位置：吃的是上一轮位置 + 这次判决；吐的是三根的新坐标（含参照点）。
+    chSeq = step(db, runId, chSeq, {
+      id: 'position', kind: 'code', block: 1,
+      input: { prev: prev ? { s: prev.s, n: prev.n, d: prev.d } : null, judgment: judgment ? { g: judgment.goal_delta, e: judgment.expect_delta, f: judgment.future_delta, sev: judgment.severity } : null },
+      output: posM ? { s: posM.position.s, n: posM.position.n, d: posM.position.d, sRef: posM.position.sRef, dRef: posM.position.dRef } : null,
+      status: posM ? 'ok' : 'no_result',
+      err: posM ? '' : 'judge-not-ok',
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
     // 极端事件「一步通天」：只有判断层标 existence 且 |Δ| 过阈值才触发（见 applyShock）。
     let posOut = posM
     let shocked = false
@@ -1445,7 +1688,16 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
     const inferPos = posOut
       ? { ...opt, position: posOut.position }
       : (prev ? { ...opt, position: { s: prev.s, n: prev.n, d: prev.d } } : opt)
+    markLoop('affect-write')
     const out = infer(frame, judgeForOut, inferPos)
+    // 【链·4/6】挑词：吃的是位置 + 这一帧；吐的是落词和一级八角。
+    chSeq = step(db, runId, chSeq, {
+      id: 'pick', kind: 'code', block: 1,
+      input: inferPos ? { s: inferPos.s, n: inferPos.n, d: inferPos.d, by: frame.by, target: frame.target } : null,
+      output: { label: out && out.label, primary: Array.isArray(out && out.primary) ? out.primary.slice(0, 3) : null },
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
     insertShadowRow(db, {
       aid, turnId: tid, conversationId, at, frame, out,
       source: 'model', latencyMs: Date.now() - now, freeframe: 0, rev: 2,
@@ -1476,7 +1728,215 @@ export async function appraiseTurnNow(db, aid, { text = '', turnId = null, conve
         last: prev ? { s: prev.s, n: prev.n, d: prev.d } : null,
       })
     }
+    // 【链·5/6】落表：两行（rules + model）跟状态一起写回。
+    chSeq = step(db, runId, chSeq, {
+      id: 'write', kind: 'code', block: 1,
+      input: { turnId: tid, label: out && out.label, position: posOut ? { s: posOut.position.s, n: posOut.position.n, d: posOut.position.d } : null },
+      output: { rowsWritten: posOut ? 2 : 1, judged: !!judgment },
+      ms: Date.now() - lastMark,
+    })
+    lastMark = Date.now()
+    endRun(db, runId, { ok: true, ms: Date.now() - now })
+    // 2026-11-24：把这个「这一轮到底推进了没有」另开一个口交给调用方（onJudge）。
+    // 不改返回值——它一直表示「跑完了没有」，别的调用方和测试都按这个读。
+    try { if (typeof onJudge === 'function') onJudge(judgeOk) } catch { /* 回调失败不影响 */ }
+    return true
+  } catch {
+    endRun(db, runId, { ok: false, ms: Date.now() - now })
+    return false
+  }
+}
+
+/* ───────── 判断层（反射）：拆开之后怎么跑（2026-11-24）─────────
+
+  一句话：判断层只跑一次。**发**在 emotion 工具里（不等），**算**在它回来的回调里，**close** 只确认。
+
+  时序：
+    ① preStep 记原料        rememberTurnContext：这一轮的原文 / 轮次号 / 会话（工具里拿不到）
+    ② 我调 emotion(by,to)  发出去就回；它一回来，回调里算三根、出词、落账——不挡我
+    ③ 我干活、说话
+    ④ 我调 close           算完就过；还在跑就等；压根没发就补发再等
+    ⑤ turn/end 兜底        没算成 / 没人调 close：记一笔 affect.settle.miss（只记账，不碰会话）
+
+  为什么算账复用 appraiseTurnNow：激素 / 选词 / 落表那一大段一行不改，
+  只换「judgment 从哪来」（judgmentOverride）。新旧两条路走同一份动力学，不会长出两套数。
+
+  开关：affect.v4.judge.split=on。off 时这里的入口全部早退，一切照旧。
+  注意：下面这些记号都只在内存里，重载即空。
+*/
+
+// ── 状态 ────────────────────────────────────────────────
+const reflexJobs = new Map()      // "aid|turnId" → 这一轮判断层的任务
+const lastTurnCtx = new Map()     // aid → { text, turnId, conversationId }
+const settledTurns = new Set()    // 算成的轮次（turn/end 查它）
+const completedTurns = new Map()  // 算成的轮次（close 查它）
+const missReported = new Set()    // 「没算成」同一轮只记一笔
+const jobKey = (aid, turnId) => String(aid || '') + '|' + String(turnId || '')
+const trimTo = (m, n) => { if (m.size > n) m.delete(m.keys().next().value) }
+
+// ── ① 原料：preStep 把这一轮记下来 ─────────────────────────
+export function rememberTurnContext(aid, { text = '', turnId = null, conversationId = null } = {}) {
+  try {
+    if (!aid || !turnId) return false
+    lastTurnCtx.set(String(aid), { text: String(text || ''), turnId: String(turnId), conversationId })
     return true
   } catch { return false }
 }
 
+// ── ② 发：把判断层发出去，不等 ────────────────────────────
+export function startReflex(db, { aid = null, text = '', turnId = null, conversationId = null } = {}) {
+  try {
+    if (String(getParam(db, aid, 'affect.v4.judge.split') || 'off') !== 'on') return null
+    const t = String(text || '').trim()
+    if (!t || !turnId) return null
+    const key = jobKey(aid, turnId)
+    if (reflexJobs.has(key)) return key
+    // 同一个人上一轮的 pending 已经没人要了（那一轮的 close 不会来了），清掉省内存。
+    for (const k of reflexJobs.keys()) if (k.startsWith(String(aid || '') + '|') && k !== key) reflexJobs.delete(k)
+
+    // 料只给三样：正在发生的事 / 我上一句 / 当下这一句。理解用的那几段不给。
+    const affairs = (() => { try { return readAffairs(db, conversationId) } catch { return '' } })()
+    const prevLine = (() => { try { return lastAgentLine(db, aid, conversationId, turnId) } catch { return '' } })()
+    const material = [
+      affairs ? '【正在发生】' + String(affairs).slice(0, 300) : '',
+      prevLine ? '【我上一句】' + String(prevLine).slice(0, 200) : '',
+      '【当下】对方刚说：' + t.slice(0, 300),
+    ].filter(Boolean).join('\n')
+
+    const job = { at: Date.now(), judgment: null, err: '', consumed: false, armed: false, text: t, conversationId, turnId }
+    reflexJobs.set(key, job)
+    // 额度 3000、不设超时：压额度并不能让它少想，只会把额度想光、正文写不出来（实测 ok=0）。
+    job.promise = hostComplete(db, {
+      agent: String(aid || ''), lane: conversationId ? String(conversationId) : '',
+      label: 'affect:reflex', timeoutMs: 0, priority: 1, block: 'chat',
+      complete: (req) => kernelModel.completeStrict(req),
+      system: reflexSysFor(false), text: material, maxTokens: 3000,
+    }).then((raw) => {
+      const j = sanitizeJudge(parseJsonLoose(raw))
+      const need = requiredReflex()
+      const ok = !!j && need.every((k) => { const v = j[k]; return v !== undefined && v !== null && v !== '' })
+      if (ok) job.judgment = j
+      else job.err = 'missing:' + (j ? need.filter((k) => !j[k]).join(',') : 'unparsed')
+      return job.judgment
+    }).catch((e) => { job.err = String((e && e.message) || e).slice(0, 120); return null })
+    return key
+  } catch { return null }
+}
+
+/** 工具 emotion：把**已经回来**的判断层结果取出来算账（三根、出词、落账）。不等待。
+ *  判断层是 0 处代码发出去的，所以结果可能比我还早到——那就存着，等我来取。 */
+export async function fireEmotion(db, aid, { by = null, to = null } = {}) {
+  try {
+    if (String(getParam(db, aid, 'affect.on') || 'on') === 'off') return { ok: false, reason: 'affect-off' }
+    const ctx = lastTurnCtx.get(String(aid || ''))
+    if (!ctx) return { ok: false, reason: 'no-context' }
+    const key = jobKey(aid, ctx.turnId)
+    if (completedTurns.has(String(ctx.turnId))) return { ok: true, reason: 'already' }
+    if (!reflexJobs.has(key)) return { ok: false, reason: 'not-fired' }
+    const job = reflexJobs.get(key)
+    if (!job.judgment) return { ok: false, reason: 'not-ready' } // 还没回来：不动，留给 close 等
+    return settleTurn(db, { aid, turnId: ctx.turnId, by, to, waitMs: 0 })
+  } catch (e) { return { ok: false, reason: 'throw:' + String((e && e.message) || '').slice(0, 60) } }
+}
+
+// ── ③ 算：等它回来 → 算三根、出词、落账 ────────────────────
+async function settleTurn(db, { aid = null, turnId = null, by = null, to = null, waitMs = 30000, now = Date.now() } = {}) {
+  try {
+    const key = turnId ? jobKey(aid, turnId) : null
+    const job = key ? reflexJobs.get(key) : null
+    if (!job) {
+      noteSettleMiss(db, aid, { turnId, reason: 'no-reflex' })
+      return { ok: false, reason: 'no-reflex' }
+    }
+    if (!job.judgment && waitMs > 0) await waitForJob(job, waitMs)
+    if (!job.judgment) {
+      noteSettleMiss(db, aid, { turnId: job.turnId, reason: 'reflex-missing', err: job.err })
+      return { ok: false, reason: 'reflex-missing', err: job.err || '' }
+    }
+    if (job.consumed) {
+      // 已经有人在算它了（emotion 的回调和 close 会撞在一起）：等那边算完再说，别报假失败。
+      if (completedTurns.has(String(job.turnId))) return { ok: true, reason: 'already' }
+      await waitForJob(job, waitMs)
+      return completedTurns.has(String(job.turnId))
+        ? { ok: true, reason: 'already' }
+        : { ok: false, reason: 'consumed' }
+    }
+    job.consumed = true
+    const j = { ...job.judgment }
+    if (by) j.by = String(by)
+    if (to) j.to = String(to)
+    const need = requiredReflex().slice()
+    if (by) need.push('by')
+    if (to) need.push('to')
+
+    let advanced = false
+    const r = await appraiseTurnNow(db, aid, {
+      text: job.text, turnId: job.turnId, conversationId: job.conversationId, now,
+      judgmentOverride: j, requiredKeys: need,
+      onJudge: (ok) => { advanced = !!ok },
+    })
+    if (r && advanced) {
+      markSettled(job.turnId)
+      completedTurns.set(String(job.turnId), { at: Date.now() })
+      trimTo(completedTurns, 200)
+    }
+    // 算完才把任务取走：算之前就删，close 会以为“没发过”，再发一次、算两遍。
+    reflexJobs.delete(key)
+    return { ok: !!(r && advanced), waitedMs: Date.now() - job.at }
+  } catch (e) {
+    return { ok: false, reason: 'throw:' + String((e && e.message) || e).slice(0, 80) }
+  }
+}
+
+// 等一个任务，最多 waitMs；只等，不算。
+async function waitForJob(job, waitMs) {
+  let timer = null
+  await Promise.race([
+    job.promise || Promise.resolve(),
+    new Promise((r) => { timer = setTimeout(r, Math.max(0, waitMs)); if (timer.unref) timer.unref() }),
+  ]).catch(() => {})
+  try { clearTimeout(timer) } catch { /* 清不掉就算了 */ }
+}
+
+// ── ④ 确认：close 只保证「算完了」 ─────────────────────────
+/** 工具 close：确认这一轮算完了。没发就补发；没回来就等它；算完了就直接过。 */
+export async function closeEmotion(db, { aid = null, by = null, to = null } = {}) {
+  try {
+    if (String(getParam(db, aid, 'affect.on') || 'on') === 'off') return { ok: false, reason: 'affect-off' }
+    const ctx = lastTurnCtx.get(String(aid || ''))
+    if (!ctx) return { ok: false, reason: 'no-context' }
+    const tid = ctx.turnId
+    if (completedTurns.has(String(tid))) return { ok: true, reason: 'already' }
+    if (!reflexJobs.has(jobKey(aid, tid))) {
+      const key = startReflex(db, { aid, text: ctx.text, turnId: tid, conversationId: ctx.conversationId })
+      if (!key) return { ok: false, reason: 'fire-failed' }
+    }
+    return settleTurn(db, { aid, turnId: tid, by, to })
+  } catch (e) { return { ok: false, reason: 'throw:' + String((e && e.message) || '').slice(0, 60) } }
+}
+
+// ── ⑤ 记账：没算成 / 没调 close / 回空 ──────────────────────
+export function isTurnSettled(turnId) { return settledTurns.has(String(turnId || '')) }
+function markSettled(turnId) {
+  if (!turnId) return
+  settledTurns.add(String(turnId))
+  trimTo(settledTurns, 200)
+}
+
+export function noteSettleMiss(db, aid, { turnId = null, reason = '', err = '' } = {}) {
+  const at = new Date().toISOString()
+  const payload = { turnId, reason: String(reason || ''), err: String(err || '').slice(0, 200), at }
+  if (turnId) {
+    const dedupeKey = String(turnId) + '|' + String(aid || '')
+    if (missReported.has(dedupeKey)) return at
+    missReported.add(dedupeKey)
+    trimTo(missReported, 200)
+  }
+  try {
+    db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(
+      'evt_' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8),
+      aid, 'affect.settle.miss', JSON.stringify(payload), at,
+    )
+  } catch { /* 记账失败不影响 */ }
+  return at
+}

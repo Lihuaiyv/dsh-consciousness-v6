@@ -30,7 +30,7 @@ import { nid, event, purgeExpired, evaluateDrive, recall, getParam, settleObserv
 import { recordScene } from './src/modules/confluence.js'
 import { recallEvents, buildEventLine } from './src/modules/event_recall.js'
 import { markSurfaced, markMentioned, tickWant, randomDrift, archiveSunk } from './src/modules/event_drift.js'
-import { buildBaseGraph } from './src/modules/event_causal.js'
+// 2026-11-22 停用：心跳不再建事件底图（见 heartbeatLight 里那行注释）
 import { writeChatTurns, writeChatTurnRow } from './src/modules/turn_write.js'
 import { unifiedReadOn, pickReadLine } from './src/modules/read_port.js'
 import { seedRuleBindings } from './src/modules/artifacts.js'
@@ -52,17 +52,20 @@ import { detectMode, resolveMode, styleInjection, kaomojiLine } from './src/modu
 import { auditStore } from './src/modules/ops.js'
 import { cleanUserText } from './src/text.js'
 import { lastFrameLine, shadowFrameLine } from './src/modules/frame_line.js'
+import { buildReadLineSync } from './src/modules/frame_read.js'
 import { toneOf } from './src/algo/reldyn.js'
 import { expressionState, cardLine, subtextOf, subtextClass } from './src/modules/expression_state.js'
 import { recordMiss, toModelRequest } from './src/modules/speech_judge.js'
 import { latestVoice, recentVoices, generateVoice, recordVoice, voiceStale } from './src/modules/speech_words.js'
 import { generatePairSummary, recordLastSentence, lastSentenceOf, recentDialoguePairs } from './src/modules/last_sentence.js'
 import { localComplete, localQueueInfo, localAvailable, ensureLocalServer, warmLocalModels } from './src/modules/local_llm.js'
+import { onGatewayChange, setLocalDb, setLocalRecent } from './src/modules/local_gateway.js'
 import { gatewayStatus } from './src/modules/local_gateway.js'
 import { processSnapshot } from './src/modules/proc_watch.js'
 import { start as startLoopWatch, mark as markLoop } from './src/modules/loop_watch.js'
-import { hostQueueInfo, setHostProbe } from './src/modules/host_llm.js'
-import { appraiseTurnNow, summarizeAffairs } from './src/modules/affect_v4_shadow.js'
+import { startBreathWatch } from './src/modules/breath_watch.js'
+import { hostQueueInfo, setHostProbe, onHostChange, setHostRecent, setHostDb } from './src/modules/host_llm.js'
+import { appraiseTurnNow, summarizeAffairs, rememberTurnContext, startReflex, noteSettleMiss, isTurnSettled } from './src/modules/affect_v4_shadow.js'
 // 情绪链去重：同一句用户话只跑一次（工具步会反复进 preStep）。
 const lastAffectTurn = new Map()
 import { attachDb } from './src/algo/index.js'
@@ -137,6 +140,26 @@ const DB_PATH = dbPath()
 const LOCK_PATH = path.join(path.dirname(DB_PATH), 'app.lock')
 const API_PORT_PATH = path.join(path.dirname(DB_PATH), 'gateway-api.json')
 const FREEZE_PID_PATH = path.join(path.dirname(DB_PATH), 'freeze-watch.pid')
+
+/**
+ * 2026-11-22：卡死回看用。热重载**不会**重新加载 loop_watch 这类子模块，
+ * 所以把 stage 的追加写放在入口文件里，让它跟着 index.js 一起热更新。
+ * 每秒一行由 loop_watch 写 stage.txt（覆盖）；这里只要「段落变了就追加一行」，
+ * 卡住时最后几行就是卡之前走过的段落顺序。
+ */
+const STAGE_LOG_PATH = path.join(path.dirname(DB_PATH), 'stage.log')
+function markStage(tag) {
+  markLoop(tag)
+  try {
+    fs.appendFileSync(STAGE_LOG_PATH, new Date().toISOString() + ' ' + String(tag || '') + '\n')
+    try {
+      if (fs.statSync(STAGE_LOG_PATH).size > 64 * 1024) {
+        const lines = fs.readFileSync(STAGE_LOG_PATH, 'utf8').split('\n').filter(Boolean)
+        fs.writeFileSync(STAGE_LOG_PATH, lines.slice(-400).join('\n') + '\n')
+      }
+    } catch { /* 裁剪失败不影响记录 */ }
+  } catch { /* 写不进去不影响主流程 */ }
+}
 
 /**
  * 卡死看门狗（2026-11-22）：独立进程，DSH 卡死/重启都不影响它。
@@ -363,6 +386,23 @@ try { hydrateFromRaw(db, aid) } catch { /* 重放失败不影响启动 */ }
     try { workers().startCausalJudgeWorker() } catch { /* 判边 worker 起不来不影响启动 */ }
     // 本地模型服务：2026-11-22 改成跟随 DSH 启动、隐藏窗口、常驻看门狗，并预热 14B 和语义模型。
     try { startLocalModels(db) } catch { /* 本地起不来不影响启动 */ }
+    /* 2026-11-22 主人：宿主最近记录要跨重启——单独一张表，每次调用记一行。
+       内存和浏览器本地存储都不行（DSH 每次重启端口会变，本地存储按地址隔离，等于换了个新地方）。
+       这里建表（幂等）、把 db 交给宿主模块自己记账、再把最近 30 条读回内存给看板。 */
+    try {
+      db.exec('CREATE TABLE IF NOT EXISTS host_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, label TEXT NOT NULL, ms INTEGER NOT NULL DEFAULT 0, ok INTEGER NOT NULL DEFAULT 1)')
+      setHostDb(db)
+      const rows = db.prepare('SELECT at, label, ms, ok FROM host_calls ORDER BY id DESC LIMIT 30').all().reverse()
+      if (rows.length) setHostRecent(rows)
+    } catch { /* 建表/读表失败就当没有 */ }
+    /* 2026-11-22 主人：本地两条槽（14B / 向量）的完成记录也要跨重启。
+       它和宿主一样只存在内存里，进程一重启看板那两行就空。这里同样建表、交给网关记账、读回。 */
+    try {
+      db.exec('CREATE TABLE IF NOT EXISTS local_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, slot TEXT NOT NULL, label TEXT NOT NULL, ms INTEGER NOT NULL DEFAULT 0, ok INTEGER NOT NULL DEFAULT 1)')
+      setLocalDb(db)
+      const rows = db.prepare('SELECT at, slot, label, ms, ok FROM local_calls ORDER BY id DESC LIMIT 40').all().reverse()
+      if (rows.length) setLocalRecent(rows)
+    } catch { /* 建表/读表失败就当没有 */ }
     return db
   } catch (e) {
     dbError = e
@@ -431,7 +471,13 @@ function backupDb() {
 
 function startMaintenance() {
   let lastBackup = 0
+  // 2026-11-22 主人查到的根因：lastPurge 是内存变量，重启归零，于是每个新进程 5 分钟后
+  // 必跑一次 auditStore（原来那条在 fts 上做 43GB 全表扫的查询）。现在落库，重启不再重跑。
   let lastPurge = 0
+  try {
+    const r = ensureDb().prepare("SELECT value FROM flags WHERE key='maintenance.last_purge'").get()
+    lastPurge = Number(r && r.value) || 0
+  } catch { /* 读不到就当没跑过 */ }
   let lastDrill = 0
   // 事件那套的节拍：想头每 5 分钟推一次（纯规则、不调模型），随机联想每小时掷一次，沉底每天收一次。
   const randomCheckAt = new Map()
@@ -462,6 +508,14 @@ function startMaintenance() {
   // 启动 8 秒后先推一次：不然重启后要干等 5 分钟，想头一直不动。
   const bootTick = setTimeout(eventTick, 8000)
   if (bootTick.unref) bootTick.unref()
+  // 2026-11-22 主人查出来：这个定时器的句柄原来只存在函数里，热重载会再挂一个，
+  // 旧的照样响——重载几次就有几个体检在跑。改成挂 globalThis，新的先把旧的收掉。
+  const MKEY = Symbol.for('dsh-consciousness.maintenance')
+  const prevM = globalThis[MKEY]
+  if (prevM) {
+    try { clearInterval(prevM) } catch { /* 旧的已经没了 */ }
+    try { if (prevM.bootTick) clearTimeout(prevM.bootTick) } catch { /* ignore */ }
+  }
   const timer = setInterval(() => {
     try {
       ensureDb().exec('PRAGMA wal_checkpoint(TRUNCATE)')
@@ -470,7 +524,8 @@ function startMaintenance() {
         lastBackup = Date.now()
         backupDb()
       }
-      if (Date.now() - lastPurge > 24 * 3600000) {
+      // 2026-11-22 主人：体检本来就是「偶尔查一次」的东西，三项都是 0，一周一次够了。
+      if (Date.now() - lastPurge > 7 * 86400000) {
         lastPurge = Date.now()
         purgeExpired(ensureDb())
         try { expireProposals(ensureDb()) } catch { /* 过期扫描失败跳过 */ }
@@ -481,6 +536,10 @@ function startMaintenance() {
           const a = auditStore(ensureDb(), { repair: true })
           if (!a.ok) __probe('store-audit repaired=' + (a.repaired || []).join(','))
         } catch { /* 体检失败不影响主流程 */ }
+        // 记到库里：重启后不再因为 lastPurge=0 立刻重跑一遍
+        try {
+          ensureDb().prepare("INSERT OR REPLACE INTO flags(key,value) VALUES('maintenance.last_purge',?)").run(String(lastPurge))
+        } catch { /* 记不上就下次再跑 */ }
       }
       if (Date.now() - lastDrill > 7 * 86400000) {
         lastDrill = Date.now()
@@ -491,6 +550,7 @@ function startMaintenance() {
     } catch { /* 忙时跳过 */ }
   }, 5 * 60 * 1000)
   if (timer.unref) timer.unref()
+  globalThis[MKEY] = { bootTick, timer, stop() { try { clearInterval(timer) } catch { /* ignore */ } } }
 }
 
 // ---------------- 每实例心跳（schema 12） ----------------
@@ -500,41 +560,53 @@ function startMaintenance() {
 /** 轻活：同步、毫秒级、绝不调模型（测试里会断掉 deep=0）。 */
 function heartbeatLight(aid) {
   const d = ensureDb()
+  const t0 = Date.now()
+  // 2026-11-22 排查：这一档正常 8ms，当前这个意识体实测 2449ms（heartbeats.last_ms 里躺着）。
+  // 逐段计时，单段超过 50ms 就打一行——卡死时 hook.log 里能直接看见是哪一段，不用再猜。
+  const step = (name, fn) => {
+    const s = Date.now()
+    try { fn() } catch { /* 单段失败不影响心跳 */ }
+    const ms = Date.now() - s
+    if (ms >= 50) __probe('hb ' + name + ' ms=' + ms + ' total=' + (Date.now() - t0))
+  }
   // 自发的小起伏：很久没人说话，偶尔自己心里动一下（纯规则，不调模型）
-  try { spontaneousTick(d, aid, Date.now()) } catch { /* 撒点失败不影响心跳 */ }
-// 情绪按墙钟衰减：用「上次更新到现在」的真实小时数，不按固定 24h 重复衰减。
-        try {
+  step('spontaneous', () => spontaneousTick(d, aid, Date.now()))
+  // 情绪按墙钟衰减：用「上次更新到现在」的真实小时数，不按固定 24h 重复衰减。
+  step('decay', () => {
     const row = d.prepare('SELECT updated_at FROM affect_state WHERE agent_id=?').get(aid)
     const last = row && row.updated_at ? Date.parse(row.updated_at) : 0
     if (last) {
       const hours = Math.max(0, (Date.now() - last) / 3600000)
       if (hours >= 0.5) decayAffect(d, aid, Math.min(24 * 30, hours))
     }
-} catch { /* 没有情绪数据就跳过 */ }
+  })
   // 事后复查（影子）：判过的过几个钟头换一个身份再看一眼。只记不改。
   // 异步、失败静默——心跳不能被一次模型调用拖住。
   try { Promise.resolve().then(() => reviewTick(d, aid)).catch(() => {}) } catch { /* 复查失败跳过 */ }
   // 空闲心跳：不调模型，只给「自己浮上来」补候选（下一轮注入时最多取一条）
-  try { surfaceQueueTick(d, aid) } catch { /* 心跳失败跳过 */ }
+  step('surface', () => surfaceQueueTick(d, aid))
   // 心事拍：数一拍、把「露过没再碰」的那条散掉。不调模型，闸在 heartnote.js 里（静默/间隔/日上限）
-  try { heartNoteTick(d, aid, Date.now()) } catch { /* 心事拍失败跳过 */ }
+  step('heartnote', () => heartNoteTick(d, aid, Date.now()))
   // 挂着的开环到期的收掉，别一直占着注入名额
-  try { expireLoops(d, aid) } catch { /* 开环失败跳过 */ }
+  step('loops', () => expireLoops(d, aid))
   // 想头推进：跟着心跳走（纯规则、不调模型），和情绪衰减、浮现候选同一拍。
   // 不推进的话想头永远停在起点，一件都浮不上来——2026-11-12 漏过一次，别忘了接线。
-  try { tickWant(d, aid, { nowMs: Date.now() }) } catch { /* 想头推进失败跳过 */ }
+  step('want', () => tickWant(d, aid, { nowMs: Date.now() }))
   // 大因果体底图（2026-11-16 按设计文档重做）：只写底图边（same_as/adjacent/continue），
   // 保证「没有孤立事件」；纯规则、不调模型；主干因果边要模型判，不在这里。
-  try { buildBaseGraph(d, aid, { nowMs: Date.now() }) } catch { /* 建图失败跳过，下一拍再来 */ }
+  // 2026-11-22 主人删：「事件关系表」那套两两比判据不可靠（引文 contains 就会连、标题滑窗靠猜），
+  // 而且每 5 分钟全量重算 30 天，一跳吃掉 2108ms，是卡死的直接原因。
+  // 这里整块停掉，不再新增边；表和历史边都留着，将来重做判据可以直接接回来。
+  // step('graph', () => buildBaseGraph(d, aid, { nowMs: Date.now() }))
   // 驱力：事件脉冲 + 代理推缺口 + 日结（纯规则）
-try { applyDriverToDrive(d, aid) } catch { /* 驱动推缺口失败跳过 */ }
-  try { pulseDriveFromSignals(d, aid) } catch { /* 事件脉冲失败跳过 */ }
+  step('driver', () => applyDriverToDrive(d, aid))
+  step('pulse', () => pulseDriveFromSignals(d, aid))
   try { evaluateDrive(d, aid) } catch { /* 鏆傚仠鎴栨暟鎹己澶?*/ }
-  try { shrinkPersona(d, aid) } catch { /* 人格收缩失败跳过 */ }
-  try { seedRuleBindings(d, aid) } catch { /* 工件种子失败跳过 */ }
-  try { tickOneShadow(d) } catch { /* 影子推进失败跳过 */ }
+  step('shrink', () => shrinkPersona(d, aid))
+  step('seed', () => seedRuleBindings(d, aid))
+  step('shadow', () => tickOneShadow(d))
   // 在场状态：14 天没互动 = 自动休眠（只改 runtime，不改用户意图）
-  try {
+  step('runtime', () => {
     let dormant = false
     try { dormant = !!getDrive(d, aid).dormant } catch { dormant = false }
     if (dormant) {
@@ -545,9 +617,9 @@ try { applyDriverToDrive(d, aid) } catch { /* 驱动推缺口失败跳过 */ }
     } else {
       refreshRuntime(d, aid)
     }
-  } catch { /* 在场状态下次刷新会改 */ }
+  })
   // 「这段对话还在用」的 TTL：太久没动静的会话自动松绑（这次扫描顺带做一遍全部的）
-  try { sweepBindings(d, { idleDays: 30 }) } catch { /* 回收失败下次再来 */ }
+  step('bindings', () => sweepBindings(d, { idleDays: 30 }))
 }
 
 /** 重活：可能叫模型，由心跳的 deep 档节流 + 全局并发闸护着。 */
@@ -630,6 +702,14 @@ const lastUserAt = new Map()
 // 记忆靠它回到原话。以前从来不生成，所以 fragments.turn_id 全空，
 // memory_items.source_turn_id 一条都 join 不上——「你还记得我当时说的」就只剩正文，没有出处。
 const lastTurnId = new Map()
+/** 这一轮号还没收尾（preStep 或用户事件开的）。同一句用户话的所有工具步共用它，收尾后清掉。 */
+const openTurn = new Set()
+/* 2026-11-22：preStep 的 payload.messages 是空列表（诊断打出来 n=0），拿不到「用户这句话」，
+   整条情绪链因此每轮都被跳过。用户消息事件那边能拿到文本，这里存一份，preStep 兜底用。 */
+const lastUserLine = new Map()
+/* 2026-11-24 拆开情绪判断之后：这一轮走到第几个模型步、有没有被叫回来过。
+   第一步不等反射（等就会挡在我思考前面）；从第二步起才等——那时我本来就在干活。 */
+const nudgedTurns = new Set()
 // 2026-11-19：宿主 subagents/agents 服务的可达性探针，一个进程只探一次
 let subProbeDone = false
 // 这一轮用户那句话的碎片 id：等回答落库时，把「回答接自问话」这条边写进 antecedents。
@@ -1592,6 +1672,7 @@ export function queueSummary(db, aid, { turnId = null, conversationId = null, us
 async function runSummaryJob(db, aid, job) {
   try {
     if (String(getParam(db, aid, 'presence.summary') || 'on') === 'off') return
+    if (String(getParam(db, aid, 'affect.on') || 'on') === 'off') return // 情绪关停：对句摘要/收拢都不跑
     if (lastSentenceOf(db, aid, { turnId: job.turnId })) return
     const maxChars = Number(getParam(db, aid, 'presence.summary.chars')) || 24
     // 2026-11-21 主人收口：一轮写完，只让小模型写「对方：… / 我：…」这两句，别的不要。
@@ -1603,7 +1684,9 @@ async function runSummaryJob(db, aid, job) {
         delays: [0, 800, 1500], timeoutMs: 30000,
         complete: async (m) => {
           const req = toModelRequest(m)
-          const out = await localComplete(db, { system: req.system, text: req.text, model: localModel, maxTokens: 200, timeoutMs: 30000, format: null })
+          // 2026-11-22 三块排队：这对摘要跟着对话走，归聊天块
+          // 2026-11-22 主人：这里以前没给名字，看板上就混成「chat／回一句」。它其实是对句摘要。
+          const out = await localComplete(db, { system: req.system, text: req.text, model: localModel, maxTokens: 200, timeoutMs: 30000, format: null, block: 'chat', label: 'affect:pair' })
           return out && out.text
         },
       })
@@ -1628,10 +1711,13 @@ async function runSummaryJob(db, aid, job) {
   } catch { /* 定时器里失败不冒泡，读侧还有截断 */ }
 }
 
-function commitTurn(db, aid, sid) {
+function commitTurn(db, aid, sid, forcedTid = null) {
   const u = lastUser.get(sid)
   const aText = pendingReply.get(sid)
-  const tid = lastTurnId.get(sid) || null
+  // 2026-11-22 审查确认：这里原来直接读 lastTurnId。但 commitTurn 是回话后 1.2 秒才跑，
+  // 如果这 1.2 秒里用户又说了下一句，preStep 已经把 lastTurnId 换成新号——上一轮就被记成新号，
+  // 两轮同号，后一轮的摘要被判「这轮做过了」跳过。改成由设置定时器那刻把号快照下来传进来。
+  const tid = forcedTid || lastTurnId.get(sid) || null
   const exprForResidue = pendingExpr.get(sid) || null
   pendingReply.delete(sid)
   pendingExpr.delete(sid)
@@ -1639,7 +1725,10 @@ function commitTurn(db, aid, sid) {
   if (timer) { clearTimeout(timer); commitTimers.delete(sid) }
   if (!u || !aText) return
   lastUser.delete(sid)
-  lastTurnId.delete(sid)
+  // 2026-11-22 主人：这里原来把 turnId 也删了。一删，工具调用中间我每说完一段话，
+  // 系统就当成新的一轮、开新号、再排一次轮次总结——这一轮十几个工具步，就排了十几次。
+  // 现在编号留着：同一句用户话的整轮共用一号，只有用户真的说下一句才换（见 captureTurn 的 user 分支）。
+  openTurn.delete(sid)
   turnStartAt.delete(sid)
   const pushed = pushedTurns.delete(sid)
   const at = now()
@@ -1884,8 +1973,14 @@ const turn = readEvent(event)
       recordEngagement(db, aid, t, prevAt ? (nowMs - prevAt) / 60000 : null, nowMs)
       lastUserAt.set(sid, nowMs)
       // preStep 可能已经先生成过这一轮号：有就复用，没有才新生成，保证原话和事帧同一个号。
-      const tid = lastTurnId.get(sid) || makeTurnId()
+      // 2026-11-22 主人：只有「用户真的说了新的一句」才换号。判据是 openTurn——
+      // 这一轮还没收尾（preStep 开的号、或者同一句被重复触发）就沿用；收尾了才新开。
+      const tid = openTurn.has(sid) ? (lastTurnId.get(sid) || makeTurnId()) : makeTurnId()
       lastTurnId.set(sid, tid)
+      // 2026-11-22：这一轮号确认给用户这句话之后就把记号关掉。
+      // 留着不关，后面每句都会被当成同一轮，摘要一看「这轮做过了」就跳过——好几轮都不再跑。
+      // 工具步不靠这个记号，它们复用 lastTurnId；收尾时 lastTurnId 也不删。
+      openTurn.delete(sid)
       if (t.startsWith('（它主动来找你')) pushedTurns.add(sid)
       // T4 原文层：用户这句话先落冷库，哪怕这一轮最后没有回复也不丢。
       // 把碎片 id 记着：等回答落库时用它写「接自」（同一轮里最硬的那条边）。
@@ -1933,7 +2028,10 @@ pushTurn(aid, { role: 'user', text: t, at: now(), sessionId: sid })
         const found = readEvent(evs[i])
         if (found.kind === 'user') {
           const t = cleanUserText(found.text)
-          if (t) { lastUser.set(sid, t); if (!turnStartAt.get(sid)) turnStartAt.set(sid, Date.now()); if (!lastTurnId.get(sid)) lastTurnId.set(sid, makeTurnId()); break }
+          // 2026-11-22 审查确认：这里原来是「没号才补」，但号已经改成不删，这句几乎永远不成立——
+          // assistant 事件来了就复用上一轮已经总结过的旧号，摘要被判「这轮做过了」直接跳过。
+          // 改成「这一轮没开过号（preStep 没跑到）就新开一个」。
+          if (t) { lastUser.set(sid, t); if (!turnStartAt.get(sid)) turnStartAt.set(sid, Date.now()); if (!openTurn.has(sid)) lastTurnId.set(sid, makeTurnId()); break }
         }
       }
     } catch { /* 日志读不到 */ }
@@ -1959,8 +2057,10 @@ pushTurn(aid, { role: 'user', text: t, at: now(), sessionId: sid })
   pendingExpr.set(sid, levelCache.get(aid) || null)
   const old = commitTimers.get(sid)
   if (old) clearTimeout(old)
+  // 2026-11-22：把「这一轮的号」在设置定时器时就定住，别让 1.2 秒后的 commitTurn 读到下一轮的号。
+  const snapTid = lastTurnId.get(sid) || null
   const timer = setTimeout(() => {
-    try { commitTurn(db, aid, sid) } catch { /* 忽略 */ }
+    try { commitTurn(db, aid, sid, snapTid) } catch { /* 忽略 */ }
   }, 1200)
   if (timer.unref) timer.unref()
   commitTimers.set(sid, timer)
@@ -2196,6 +2296,12 @@ function hostSpec() {
                 pull: String(getFlag(d, 'frame.pull') || 'normal'),
                 bias: String(getFlag(d, 'frame.bias') || 'on'),
               })
+              // 2026-11-23：找核读链（frame.inject.chain=on 时优先用树读出来的一行，空则回退旧「上一帧」）。
+              // 只读 frame_shadow 的连续树，纯代码；开关默认 off，先并列观察。
+              if (String(getFlag(d, 'frame.inject.chain') || 'off') === 'on') {
+                const readLine = buildReadLineSync(d, id, { conversationId, max: 60 })
+                if (readLine) frameBlock = '## 最近在走\n' + readLine
+              }
             }
           } catch { frameBlock = '' }
           const base0 = id ? consciousnessBlock(d, id, { snap: snapOpt, sessionId: sid, conversationId }) : ''
@@ -2214,7 +2320,8 @@ function hostSpec() {
           // 情绪模块罢工（2026-11-17）：上一轮判断没算成、回退了规则——写进提示词，让这一轮说话时提一句。
           let strikeBlock = ''
           try {
-            const rawStrike = getFlag(d, 'affect.v4.strike')
+            // 2026-11-23：罢工标记按会话存了，先读本会话的，再退全局（兼容旧数据）。
+            const rawStrike = getFlag(d, 'affect.v4.strike' + (conversationId ? '|' + String(conversationId) : '')) || getFlag(d, 'affect.v4.strike')
             if (rawStrike) {
               const st = JSON.parse(rawStrike)
               const fresh = st && st.at && Date.now() - Date.parse(st.at) < 10 * 60000
@@ -2279,7 +2386,7 @@ function hostSpec() {
     preStep: async (payload, next) => {
       // 2026-11-22 主人：要能看出「一步一卡」卡在哪一段。这里只记时间，不做任何改变。
       const __psT0 = Date.now()
-      markLoop('prestep')
+      markStage('prestep')
       // 2026-11-19 探针：宿主 subagents/agents 服务插件能不能拿到（整进程一次）
       if (!subProbeDone) {
         subProbeDone = true
@@ -2311,6 +2418,7 @@ function hostSpec() {
         }
       }
       try {
+        markStage('retrieve')
         const d = ensureDb()
         const sid = payload && payload.agent && payload.agent.session && payload.agent.session.id
           ? String(payload.agent.session.id) : ''
@@ -2509,6 +2617,7 @@ function hostSpec() {
       } catch (e) { __probe('recall-err:' + (e && e.message)) }
       // 开口前量一下桌面还剩多少地方；拿不到窗口就不猜，说不说交给 mindstate。
       try { noteSessionMeter(payload) } catch { /* 量水位失败不影响这一轮 */ }
+      markStage('affect')
       /* 情绪链（2026-11-17 定稿）：回复生成前，把这一句拼进事帧（事=上一轮总结的近十轮），
          进判断层，出这一轮的 S/N/D 和二级词。同一句只跑一次；失败不影响回复。
          注意：这里在 preStep 的大 try 外面，d / sid / aid / qRaw 都拿不到，全部自己取。 */
@@ -2521,38 +2630,86 @@ function hostSpec() {
         try {
           const msgs = (payload && payload.messages) || []
           for (let i = msgs.length - 1; i >= 0; i--) {
+            // 2026-11-22 审查确认：这里原来不检查角色，倒着找到第一条有字的消息就当用户话——
+            // 末尾若是 assistant / tool 消息，会把模型自己或工具输出当成你说的那句。
+            // 召回那段（2410 附近）是查了 role 的，这里对齐。
+            const role = String((msgs[i] && (msgs[i].role || msgs[i].type)) || '')
+            if (role && role !== 'user') continue
             const t = cleanUserText(messageText(msgs[i]))
             if (t) { qLine = t; break }
           }
         } catch { qLine = '' }
+        // 2026-11-22：payload.messages 是空列表，退回「最近一条用户话」（5 分钟内才算这一轮）。
+        if (!qLine && sid2) {
+          const last = lastUserLine.get(sid2)
+          if (last && Date.now() - last.at < 5 * 60 * 1000) qLine = String(last.t || '')
+        }
         if (qLine && aid2) {
           const key = aid2 + '|' + sid2 + '|' + qLine
-          if (lastAffectTurn.get(aid2) !== key) {
-            lastAffectTurn.set(aid2, key)
+          // 2026-11-23：去重槽必须按「会话」存，不能只按 agent。
+          // 只按 agent 时，A 会话判完写 key、B 会话进来把同一格覆盖，A 下次对不上就再判一遍——
+          // 实测两个会话交替时同一句话被反复判十几遍，d 被同一个会话刷到 1.00。
+          const slot = aid2 + '|' + sid2
+          if (lastAffectTurn.get(slot) !== key) {
+            lastAffectTurn.set(slot, key)
             const qqNow = currentQQContext()
             const cid = qqNow && qqNow.isQQ && qqNow.conversationId ? String(qqNow.conversationId) : webConversationId(sid2)
             // 2026-11-18：preStep 跑在用户消息事件之前，所以这里通常还没有轮次号——
             // 先生成一个放 lastTurnId，后面 sessionEvent(user) 会复用同一个，原话和事帧才对得上。
-            const tid2 = lastTurnId.get(sid2) || makeTurnId()
+            // 2026-11-22 审查确认：这里以前是 lastTurnId.get(sid2) || makeTurnId()，
+            // 但 lastTurnId 从写下后整份代码里没有任何地方删过，从第二轮起永远拿到上一轮的旧号——
+            // 于是第二轮的用户话复用了第一轮的号，摘要一看「这轮做过了」就跳过，好几句都不再跑。
+            // preStep 只在「用户说了新的一句」时才执行，所以这里一定是新的一轮，直接开新号。
+            const tid2 = makeTurnId()
             lastTurnId.set(sid2, tid2)
+            openTurn.add(sid2)
             let r = false
-            try { r = await appraiseTurnNow(d2, aid2, { text: qLine, conversationId: cid, turnId: tid2 }) } catch (e) { __probe('affect-chain-err:' + (e && e.message)) }
+            // 2026-11-24 主人：情绪整块先关停——preStep 不判、不发反射，把那一拍让出去。
+            const affectOn = String(getParam(d2, aid2, 'affect.on') || 'on') !== 'off'
+            if (!affectOn) { /* 情绪关停中：这一块什么都不做 */ }
+            else try {
+              // 2026-11-24 拆开：开关 on 时这里不再等判官——反射发出去就返回，由我调 settle 收尾。
+              // 关着就走老路（一次十键、等它回来），行为一字不差。
+              const splitOn = String(getParam(d2, aid2, 'affect.v4.judge.split') || 'off') === 'on'
+              if (splitOn) {
+                // 2026-11-24 定稿：0 处把原料记下、**直接把判断层发出去**（不等）。
+                // 结果先存着；我在 3 里调 emotion 取它算账，close 兜底等。
+                rememberTurnContext(aid2, { text: qLine, turnId: tid2, conversationId: cid })
+                r = !!startReflex(d2, { aid: aid2, text: qLine, turnId: tid2, conversationId: cid })
+              } else r = await appraiseTurnNow(d2, aid2, { text: qLine, conversationId: cid, turnId: tid2 })
+            } catch (e) { __probe('affect-chain-err:' + (e && e.message)) }
             __probe('affect-chain(' + (r ? 'ok' : 'false') + ') text=' + String(qLine).slice(0, 16) + ' cid=' + String(cid).slice(0, 20))
           }
         } else {
-          __probe('affect-chain-empty q=' + String(qLine).slice(0, 8) + ' aid=' + String(aid2))
+          // 2026-11-22：这里一直报空，说明 payload.messages 里取不出用户文本。
+          // 先把它的真实长相打出来（条数、最后一条的键和角色），别瞎猜格式。
+          let dbg = 'none'
+          try {
+            const msgs = (payload && payload.messages) || []
+            const last = msgs[msgs.length - 1]
+            const roles = msgs.slice(-4).map((m) => String((m && (m.role || m.type || m.kind)) || '?')).join(',')
+            dbg = 'n=' + msgs.length + ' roles=' + (roles || '-')
+              + ' keys=' + (last ? Object.keys(last).join('/') : '-')
+              // 2026-11-22：n=0 说明这个钩子根本没带消息列表。把 payload 顶层键也打出来，
+              // 看它到底给了什么，再决定从哪儿取「用户这句话」。
+              + ' pkeys=' + (payload && typeof payload === 'object' ? Object.keys(payload).join('/') : '-')
+          } catch (e) { dbg = 'err:' + String((e && e.message) || e).slice(0, 40) }
+          __probe('affect-chain-empty q=' + String(qLine).slice(0, 8) + ' aid=' + String(aid2) + ' ' + dbg)
         }
       } catch (e) { __probe('affect-chain-outer:' + (e && e.message)) }
       // 2026-11-22 探针：整段 pre-step 花了多久。宿主模型调用不在这里，这里只量我们自己的活。
-      markLoop('prestep-done')
+      markStage('prestep-done')
       __probe('prestep-done total_ms=' + (Date.now() - __psT0))
       return typeof next === 'function' ? next() : undefined
     },
 
     // 3) 会话事件：用户说了什么、模型回了什么
     sessionEvent: (session, event) => {
-      markLoop('session-event')
-      __probe('event:' + (event && event.type))
+      // 2026-11-22 二分用：进、出各打一个点。卡死时如果只看到 se:in 没有 se:done，
+      // 说明是这个回调里卡住；如果 se:done 都出来了还没后续，那就是宿主那边在忙。
+      const __evType = String((event && event.type) || '?')
+      markStage('se:in:' + __evType)
+      __probe('event:' + __evType)
       try {
         const sid = session && session.id ? String(session.id) : ''
         // 第一次见到这段对话就把它钉到「最近唤醒的那个人」；之后只认绑定。
@@ -2566,6 +2723,8 @@ function hostSpec() {
             if (ev.kind === 'user') {
               const t = cleanUserText(ev.text)
               if (t) {
+                // 2026-11-22：存下最新一条用户话，给 preStep 兜底（那边拿不到消息列表）。
+                lastUserLine.set(sid, { t, at: Date.now() })
                 prefetchExpand(t)
                 try { prefetchEmbedding(t) } catch { /* 没有 embedding 能力时静默 */ }
               }
@@ -2577,9 +2736,29 @@ function hostSpec() {
               meterFromUsage(String(session.id), event.data.usage)
             }
           } catch { /* usage 只作退路 */ }
+          // 2026-11-24 拆开之后：这一轮真正结束的那一刻（turn/end）查「收尾做了没有」。
+          // 只记账：不往任何会话里推、不自己起一轮（主人定的：不许动他的窗口）。
+          // 原来那三道闸（同一轮一次 / agent 三次 / 60 秒冷却）是给「推消息」配的；
+          // 推送删掉之后，只有「同一轮别重复记」还有用，另外两道是死重，已删。
+          try {
+            if (event && event.type === 'turn/end') {
+              const d3 = db()
+              if (d3 && id && String(getParam(d3, id, 'affect.v4.judge.split') || 'off') === 'on') {
+                // 口径说明：turn/end 不带轮次号，只能从 lastTurnId 取。它在 preStep 里换新号，
+                // 而 preStep 要等这一轮结束才跑，所以这里取到的就是刚结束的那一轮。
+                const tid3 = lastTurnId.get(sid)
+                if (tid3 && !isTurnSettled(tid3) && !nudgedTurns.has(tid3)) {
+                  nudgedTurns.add(tid3)
+                  if (nudgedTurns.size > 200) nudgedTurns.delete(nudgedTurns.values().next().value)
+                  noteSettleMiss(d3, id, { turnId: tid3, reason: 'emotion-close-not-called' })
+                }
+              }
+            }
+          } catch { /* 检查失败不影响这一轮 */ }
           captureTurn(db(), id, session, event)
         }
       } catch { /* 单条事件失败不影响对话 */ }
+      markStage('se:done:' + __evType)
     },
 
     // 4) HTTP：API / SSE / ping
@@ -2701,6 +2880,38 @@ function hostSpec() {
           }
         },
       })
+      /* 2026-11-22 主人：模型调用看板改成事件驱动——本地队列入队/开始/完成才推，
+         不再让页面每 1.5 秒来问一次。连上先给一份快照，之后只推变化。 */
+      const d6b = child.webServer.register({
+        kind: 'exact',
+        path: '/dsh-consciousness/local-events',
+        handler: (req, res) => {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-store',
+            Connection: 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          })
+          res.write(': connected\n\n')
+          // 2026-11-22：本地队列和宿主队列的变化都推，每份都带上另一样的最新快照，
+          // 前端拿到的永远是完整状态，不用自己拼。
+          const send = (g) => {
+            let payload = g
+            try { payload = { ...g, host: hostQueueInfo(ensureDb()) } } catch { /* 拿不到宿主就只发本地 */ }
+            try { res.write('event: local\ndata: ' + JSON.stringify(payload) + '\n\n') } catch { /* 前端断了靠 close */ }
+          }
+          send(localQueueInfo(ensureDb()))
+          const off = onGatewayChange((snap) => send(snap))
+          const offH = onHostChange(() => send(localQueueInfo(ensureDb())))
+          const ping = setInterval(() => { try { res.write(': ping\n\n') } catch { /* ignore */ } }, 15000)
+          if (ping.unref) ping.unref()
+          req.on('close', () => {
+            try { off() } catch { /* ignore */ }
+            try { offH() } catch { /* ignore */ }
+            clearInterval(ping)
+          })
+        },
+      })
       const d7 = child.webServer.register({
         kind: 'exact',
         path: '/dsh-consciousness/board',
@@ -2815,7 +3026,13 @@ let embedWarmTimer = null
  */
 let localWatchTimer = null
 function startLocalModels(db) {
-  if (localWatchTimer) return
+  // 2026-11-22：热重载时模块级变量会重置成 null，`if (localWatchTimer) return` 挡不住，
+  // 于是每重载一次就多一条 60 秒的本地看门狗（每分钟 ping 两秒、没起就拉 llama-server、还要预热模型），
+  // 越重载越慢——主人说的「重载完打开要等好久」就是它叠出来的。
+  // 改成把手挂 globalThis：新的先把旧的收掉，永远只留一条。
+  const KEY = Symbol.for('dsh-consciousness.local-watch')
+  const prev = globalThis[KEY]
+  if (prev) { try { clearInterval(prev) } catch { /* 旧的已经没了 */ } }
   let warmed = false
   let warming = false
   const tick = async () => {
@@ -2835,10 +3052,14 @@ function startLocalModels(db) {
   tick()
   localWatchTimer = setInterval(() => { __timed('local-watch', tick) }, 60 * 1000)
   if (localWatchTimer.unref) localWatchTimer.unref()
+  globalThis[KEY] = localWatchTimer
 }
 
 function startEmbedKeepalive() {
-  if (embedWarmTimer) return
+  // 同上：热重载不叠。每重载一次多一条 4 分钟的保活，最后会一起去打向量服务。
+  const KEY = Symbol.for('dsh-consciousness.embed-warm')
+  const prev = globalThis[KEY]
+  if (prev) { try { clearInterval(prev) } catch { /* 旧的已经没了 */ } }
   embedWarmTimer = setInterval(() => {
     __timed('embed-keepalive', () => {
       try {
@@ -2848,6 +3069,7 @@ function startEmbedKeepalive() {
     })
   }, 4 * 60 * 1000)
   if (embedWarmTimer.unref) embedWarmTimer.unref()
+  globalThis[KEY] = embedWarmTimer
 }
 
 export function apply(ctx) {
@@ -2862,13 +3084,28 @@ export function apply(ctx) {
     console.error('[dsh-consciousness-v6] another instance holds the lock; plugin stays offline')
     return
   }
+  // 2026-11-22：呼吸哨兵。主线程每 500ms 打一次心跳，独立线程盯它；
+  // 停摆超过 2 秒就记下精确起点、进程内存、WAL 大小、当时停在哪一段。
+  // 它是卡死期间唯一还活着的记录者，主线程里写的日志那时候全断。
+  try {
+    const KEY = Symbol.for('dsh-consciousness.breath-watch')
+    const prev = globalThis[KEY]
+    if (prev && typeof prev.stop === 'function') { try { prev.stop() } catch { /* 旧的已经停了 */ } }
+    const base = path.dirname(DB_PATH)
+    globalThis[KEY] = startBreathWatch({
+      outPath: path.join(base, 'freeze-probe.jsonl'),
+      walPath: DB_PATH + '-wal',
+      stagePath: path.join(base, 'stage.log'),
+      stuckMs: 2000,
+    })
+  } catch { /* 哨兵起不来不影响插件 */ }
   // 绝不让本插件的初始化异常拖垮 Desktop Host（否则 welcome 鉴权失败，整个 DeepSeek 打不开）。
 try {
     ensureDb()
     // 2026-11-22：卡死看门狗——DSH 卡死/重启都不影响它；这里只负责「还活着就不重复起」。
     ensureFreezeWatch()
     // 2026-11-22：事件循环卡顿探针。卡住超过 1.5 秒就把「当时在做什么」写进 hook.log。
-    startLoopWatch(__probe)
+    startLoopWatch(__probe, { stageFile: path.join(path.dirname(DB_PATH), 'stage.txt') })
     startMaintenance()
     try { startHeartbeat() } catch { /* 心跳起不来不影响宿主 */ }
     startEmbedKeepalive()

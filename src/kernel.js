@@ -85,6 +85,8 @@ export const PARAMS = {
   'memory.event.fallback': ['C4', 'off'],
   // 夜里切事让路：最近 N 分钟有真人说话就不切（0 = 不让路）。默认 1 分钟。
   'memory.cut.pause.minutes': ['C4', 1],
+  // 2026-11-24 主人：情绪整块总闸。off = preStep 不判、不发反射、不收尾记账（情绪先不管）。
+  'affect.on': ['C4', 'on'],
   // v4 影子精修：on = 回复后用本地模型再算一版事帧（异步、不阻塞，source=model）；默认 off 先攒规则数据。
   'affect.engine.shadow.model': ['C4', 'off'],
   // 判断层走谁：host = 宿主模型（准，慢一点，默认）；local = 本地 14b（快，偏钝）。
@@ -456,6 +458,10 @@ export const PARAMS = {
   'affect.inject.snapshot': ['C4', 'on'],
   // 多旧就不带了：超过这个钟点（默认 12）算「上一回」，不再当「刚才那一刻」。
   'affect.inject.snapshot.hours': ['C4', 12],
+  // 判断层拆两段（2026-11-24）：on = 0 里发反射、settle 收尾；off = 还在 preStep 里等整份 JUDGE_SYS。
+  // 这个键必须先在 PARAMS 里声明——getParam 对没声明的键一律返回 undefined（2026-11-14 踩过同一个坑：
+  // 库里写了值，代码读出来永远是 undefined，于是开关「看起来关了/开了」其实没动）。
+  'affect.v4.judge.split': ['C4', 'off'],
   // 说话那一刻的感觉（feel 工具）：注入开关 / 两条闸。
   // inject=off 就逐字回到没有这条通路的时候；min.gap 是两次记录之间最少隔几秒（防流水账）。
   'affect.feel.inject': ['C4', 'on'],
