@@ -20,7 +20,7 @@ import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
 import { ensureTable as ensureFrameTable } from '../frame_shadow.js'
 import { fireEmotion, closeEmotion } from '../affect_v4_shadow.js'
-import { submitPlan, currentMotivationTurn, latestPlan, logCheck, logToolUsed, pendingChecklist } from '../motivation.js'
+import { submitPlan, currentMotivationTurn, latestPlan, latestPlanAny, logCheck, logToolUsed, pendingChecklist } from '../motivation.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, readHeartNotes, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
@@ -327,27 +327,29 @@ function withMotivationGate(tool) {
         if (!d || !a) return run(args, exec)
         if (String(getParam(d, a, 'motivation.on') || 'off') !== 'on') return run(args, exec)
         const ctx = currentMotivationTurn(a)
-        const row = ctx ? latestPlan(d, a, ctx.turnId) : null
+        // 拿不到「这一轮」的号时，退到该 agent 最新一版计划上判断——否则整段闸会被跳过、静默放行。
+        const row = ctx ? latestPlan(d, a, ctx.turnId) : latestPlanAny(d, a)
+        const tno = ctx ? ctx.turnId : (row ? row.turn_id : null)
         // 探针：一眼看出闸有没有被调用、当时看到了什么（closed 是 0 还是 1、清单还差谁）。
         try {
           logCheck(d, a, {
-            turnId: ctx ? ctx.turnId : null, step: -2, stale: false,
-            reason: 'gate:' + tool.name + ' aid=' + String(a).slice(-6) + ' row=' + (row ? String(row.closed) : 'none')
-              + ' pend=' + (ctx && row && Number(row.closed) === 1 ? String(pendingChecklist(d, a, ctx.turnId)) : '-'),
+            turnId: tno, step: -2, stale: false,
+            reason: 'gate:' + tool.name + ' aid=' + String(a).slice(-6) + ' ctx=' + (ctx ? 'y' : 'n') + ' row=' + (row ? String(row.closed) : 'none')
+              + ' pend=' + (row && Number(row.closed) === 1 ? String(pendingChecklist(d, a, tno)) : '-'),
           })
         } catch { /* 探针失败不影响 */ }
         // 1) 这一轮还没交：除了 plan_note / feel，一律不许动手。
         if (ctx && !row && tool.name !== 'plan_note' && tool.name !== 'feel') {
-          try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'blocked:' + tool.name }) } catch { /* ignore */ }
+          try { logCheck(d, a, { turnId: tno, step: -1, stale: true, reason: 'blocked:' + tool.name }) } catch { /* ignore */ }
           return { ok: false, blocked: 'plan-first', reason: '这一轮还没交动机：先调 plan_note 写一句动机和台上几条待办，再回来干活。' }
         }
         // 2) 已经声明收口：只放行清单上还没做的那一项（和 plan_note/feel），其余对外动作全拦。
-        if (ctx && row && Number(row.closed) === 1) {
-          const pending = pendingChecklist(d, a, ctx.turnId)
+        if (row && Number(row.closed) === 1) {
+          const pending = pendingChecklist(d, a, tno)
           const allowed = new Set(['plan_note', 'feel'])
           if (pending) allowed.add(pending)
           if (!allowed.has(tool.name)) {
-            try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'close-pending:' + tool.name }) } catch { /* ignore */ }
+            try { logCheck(d, a, { turnId: tno, step: -1, stale: true, reason: 'close-pending:' + tool.name }) } catch { /* ignore */ }
             return { ok: false, blocked: 'close-pending', reason: '已声明收口：先把清单上还没做的「' + (pending || '?') + '」做完，再动别的。' }
           }
         }

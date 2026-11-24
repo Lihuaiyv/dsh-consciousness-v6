@@ -82,6 +82,13 @@ export function logCheck(db, agentId, { turnId = null, step = null, stale = fals
 }
 
 /** 读这一轮最新一版（后面判定/页面要用）。没有就返回 null。 */
+/** 该 agent 最近的一版计划（不看轮次）：拿不到本轮号时的退路。 */
+export function latestPlanAny(db, agentId) {
+  try {
+    return db.prepare(`SELECT * FROM ${TABLE} WHERE agent_id=? ORDER BY submitted_at DESC LIMIT 1`).get(String(agentId)) || null
+  } catch { return null }
+}
+
 export function latestPlan(db, agentId, turnId) {
   try {
     return db.prepare(`SELECT * FROM ${TABLE} WHERE agent_id=? AND turn_id=? ORDER BY seq DESC LIMIT 1`)
