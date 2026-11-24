@@ -66,6 +66,17 @@ import { start as startLoopWatch, mark as markLoop } from './src/modules/loop_wa
 import { startBreathWatch } from './src/modules/breath_watch.js'
 import { hostQueueInfo, setHostProbe, onHostChange, setHostRecent, setHostDb } from './src/modules/host_llm.js'
 import { renderPlanPage, planData, rememberMotivationTurn, motivationTick } from './src/modules/motivation.js'
+import { latestPlan, currentMotivationTurn } from './src/modules/motivation.js'
+
+// 轮头提醒：这一轮还没交计划时，在提示词末尾补一句「先交再干活」；交了就没有这句。
+function withMotivationNudge(d, text) {
+  try {
+    const aid = activeAgentId(d) || ''
+    const ctx = currentMotivationTurn(aid)
+    if (!ctx || latestPlan(d, aid, ctx.turnId)) return text
+    return text + '\n\n## 本轮还没交动机\n这一轮你还没交 plan_note：第一次思考结束时，先调它写一句动机（这一轮为什么值得做、挂在哪）和台上至多三条待办，再往下干活。'
+  } catch { return text }
+}
 import { appraiseTurnNow, summarizeAffairs, rememberTurnContext, startReflex, noteSettleMiss, isTurnSettled } from './src/modules/affect_v4_shadow.js'
 // 情绪链去重：同一句用户话只跑一次（工具步会反复进 preStep）。
 const lastAffectTurn = new Map()
@@ -2359,11 +2370,11 @@ function hostSpec() {
             const extra = qqChannelBlock(qq)
             const promptText = [base, backToSceneLine(d, sid), extra, eventLine, stateLine].filter(Boolean).join('\n\n')
             try { rememberBlock(sid, promptText) } catch { /* 留底失败不影响提示词 */ }
-            return promptText
+            return withMotivationNudge(d, promptText)
           }
           const promptText = [base, eventLine, stateLine].filter(Boolean).join('\n\n')
           try { rememberBlock(sid, promptText) } catch { /* 留底失败不影响提示词 */ }
-          return promptText
+          return withMotivationNudge(d, promptText)
         } catch { return '' }
       },
     },
