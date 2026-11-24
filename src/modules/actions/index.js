@@ -5,7 +5,7 @@
  * 这样开关只影响「能不能动手」，不影响模型知不知道有这回事。
  */
 import { now } from '../../db.js'
-import { nid, getFlag } from '../../kernel.js'
+import { nid, getFlag, getParam } from '../../kernel.js'
 import { htmlToText } from './util.js'
 import { canFetch, assertSearch, fetchPage, searchPages } from '../../host/web.js'
 import { getConfig, saveConfig, publicConfig, sendMessage, status as channelStatus, test as channelTest } from './channels.js'
@@ -20,7 +20,7 @@ import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
 import { ensureTable as ensureFrameTable } from '../frame_shadow.js'
 import { fireEmotion, closeEmotion } from '../affect_v4_shadow.js'
-import { submitPlan } from '../motivation.js'
+import { submitPlan, currentMotivationTurn, latestPlan, logCheck } from '../motivation.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, readHeartNotes, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
@@ -312,6 +312,31 @@ function toolGate(name) {
 /**
  * 建四个模型工具。web/model 延迟取：工具注册时宿主服务可能还没挂好。
  */
+/* 动机闸（2026-11-24）：这一轮还没交计划时，除 plan_note / feel 之外的工具一律拒绝，
+   回一句「先交动机再来干活」。还能说话、还能聊天，但一动手就被弹回去。
+   只读、不调模型；motivation.on 关着时整段不生效。 */
+function withMotivationGate(tool) {
+  const run = tool && tool.execute
+  if (typeof run !== 'function') return tool
+  return {
+    ...tool,
+    async execute(args, exec) {
+      try {
+        const d = db()
+        const a = aidOfSession(exec) || aid()
+        if (!d || !a) return run(args, exec)
+        if (String(getParam(d, a, 'motivation.on') || 'off') !== 'on') return run(args, exec)
+        if (tool.name === 'plan_note' || tool.name === 'feel') return run(args, exec)
+        const ctx = currentMotivationTurn(a)
+        if (!ctx) return run(args, exec)
+        if (latestPlan(d, a, ctx.turnId)) return run(args, exec)
+        try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'blocked:' + tool.name }) } catch { /* 记账失败不影响拒绝 */ }
+        return { ok: false, blocked: 'plan-first', reason: '这一轮还没交动机：先调 plan_note 写一句动机和台上至多三条待办，再回来干活。' }
+      } catch { return run(args, exec) }
+    },
+  }
+}
+
 export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getSpeech, getModel, gateSearch, getLocalStatus, log } = {}) {
   const db = () => getDb()
   const aid = () => getAgentId()
@@ -886,7 +911,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         }
       },
     },
-  ].sort(byToolRank)
+  ].sort(byToolRank).map(withMotivationGate)
 }
 
 /**
