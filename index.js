@@ -2676,6 +2676,14 @@ function hostSpec() {
             lastTurnId.set(sid2, tid2)
             // 动机/计划：把这一轮的原话和轮次号交给 motivation（工具里拿不到）。
             try { rememberMotivationTurn(aid2, { turnId: tid2, text: qLine, conversationId: cid, step: Number((payload && payload.step) || 0) }) } catch { /* ignore */ }
+            // 自动占位：新的一轮先落一条空壳计划（动机「待补」、0 条待办），不靠我记性；
+            // 我再调 plan_note 时会在同一轮上出第 2 版，把动机换成真的。
+            try {
+              if (String(getParam(d2, aid2, 'motivation.on') || 'off') === 'on') {
+                const had = latestPlan(d2, aid2, tid2)
+                if (!had) submitPlan(d2, aid2, { motive: '待补', source: 'self', items: [], deferred: [], note: '自动占位：等我想清楚再改' })
+              }
+            } catch { /* ignore */ }
             // 第 0 步补查：上面那次 tick 跑在轮次号生成之前，拿不到号会被跳过；这里有了号，补一次。
             try {
               if (String(getParam(d2, aid2, 'motivation.on') || 'off') === 'on') {

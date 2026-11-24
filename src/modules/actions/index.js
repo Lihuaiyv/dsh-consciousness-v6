@@ -315,7 +315,7 @@ function toolGate(name) {
 /* 动机闸（2026-11-24）：这一轮还没交计划时，除 plan_note / feel 之外的工具一律拒绝，
    回一句「先交动机再来干活」。还能说话、还能聊天，但一动手就被弹回去。
    只读、不调模型；motivation.on 关着时整段不生效。 */
-function withMotivationGate(tool, scope) {
+export function withMotivationGate(tool, scope) {
   const { db, aid, aidOfSession } = scope || {}
   const run = tool && tool.execute
   if (typeof run !== 'function') return tool
