@@ -607,6 +607,69 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       },
     },
     {
+      /* 动机与计划（P1）：交一版「这轮为什么值得做 + 台上做哪几件事」。
+         名字用 plan_note 而不是 plan：plan 在宿主里像是个内部概念，注册上去会被静静丢掉
+         （2026-11-24 实测：工具表里一直没有它，报 unknown tool）。 */
+      name: 'plan_note',
+      description: '交一版动机与计划：motive 一句话说这一轮为什么值得做（没变写「同前」），'
+        + 'items 台上待办（至多三条，每条带 id/text/done；改版必须沿用旧 id），'
+        + 'deferred 台下延后项（带原因），note 这版为什么改（第二版起必填）。',
+      parameters: schema({
+        motive: str('这一轮为什么值得做（一句话；没变写「同前」）'),
+        source: { type: 'string', enum: ['user', 'doc', 'self'], description: '动机挂在哪：他的话=user / 文档里的事=doc / 我自己想的=self' },
+        items: {
+          type: 'array',
+          description: '台上待办，至多三条',
+          items: {
+            type: 'object',
+            properties: {
+              id: str('这条的编号，改版时要沿用'),
+              text: str('要做的事，动词开头'),
+              done: { type: 'boolean', description: '做完没有' },
+            },
+            required: ['id', 'text'],
+          },
+        },
+        deferred: {
+          type: 'array',
+          description: '台下延后项（不占台上三个位置）',
+          items: {
+            type: 'object',
+            properties: { id: str('编号，可省'), text: str('延后的事'), reason: str('为什么延后') },
+            required: ['text'],
+          },
+        },
+        note: str('这一版为什么改（第二版起必填）'),
+      }, ['motive']),
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' }, seq: { type: 'number' }, reason: { type: 'string' },
+            items: { type: 'number' }, deferred: { type: 'number' }, motiveChanged: { type: 'boolean' }, diff: { type: 'object' },
+          },
+        },
+        render: (_a, v) => TEXT(v && v.ok
+          ? '计划已交：第 ' + v.seq + ' 版 · 台上 ' + v.items + ' 条 · 台下 ' + v.deferred + ' 条'
+            + (v.motiveChanged ? ' · 动机变了' : ' · 动机同前')
+          : '没交成：' + ((v && v.reason) || '?')),
+      },
+      timeoutMs: 5000,
+      presentCall: (args) => ({ card: 'generic', title: '计划 · ' + String((args && args.motive) || '').slice(0, 20), kind: 'other', rawInput: args }),
+      async execute(args, exec) {
+        const d = db()
+        const a = aidOfSession(exec) || aid()
+        if (!d || !a) return { ok: false, reason: 'no_db' }
+        return submitPlan(d, a, {
+          motive: args && args.motive,
+          source: args && args.source,
+          items: args && args.items,
+          deferred: args && args.deferred,
+          note: args && args.note,
+        })
+      },
+    },
+    {
       /* 我自己落帧：这一轮在讲哪一件（核）+ 补话 + 接着谁。
          为什么放这儿：核在我开口前就知道，不该等说完再叫判官读我的字。
          零模型调用：只写 frame_shadow 一行、frame_edges 一条边；读口 frame_read 不用改。 */
@@ -836,6 +899,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
  */
 const TOOL_ORDER = [
   'feel',
+  'plan_note',
   // 判断层发出去（不等）：越早越好，它在后台跑
   'emotion',
   'frame',
