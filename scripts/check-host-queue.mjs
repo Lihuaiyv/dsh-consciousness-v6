@@ -42,7 +42,7 @@ function check(name, ok, detail) {
   check('同一 agent 严格保序（前一个完才下一个）', order.join(',') === 'start1,end1,start2,end2', order.join(','))
 }
 
-// 3) 不同 agent 也排队：2026-11-22 主人要求「跨会话排队」，默认并发 1，两个 agent 不再并行
+// 3) 不同 agent / 不同会话可以并行：2026-11-23 主人定——链按会话编，两个会话各调一个，不再互相等
 {
   let r = 0
   let maxR = 0
@@ -52,8 +52,23 @@ function check(name, ok, detail) {
     run: async () => { r++; maxR = Math.max(maxR, r); order.push(key); await sleep(40); r-- },
   })
   await Promise.all([mk('Y'), mk('Z')])
-  check('不同 agent 也排队（并发 1 时 maxR=1）', maxR === 1, 'maxR=' + maxR)
+  check('不同 agent 可以并行（并发 2 时 maxR=2）', maxR === 2, 'maxR=' + maxR)
   check('两个 agent 都跑到了', order.length === 2, 'ran=' + order.join(','))
+}
+
+// 3b) 同一个 agent、不同会话（lane）也并行；这是在「两个窗口同时说话」的那条路
+{
+  const order = []
+  const a = scheduleHostTask(null, {
+    agent: 'L', lane: 'c1', label: 'c1', timeoutMs: 5000,
+    run: async () => { order.push('c1'); await sleep(30) },
+  })
+  const b = scheduleHostTask(null, {
+    agent: 'L', lane: 'c2', label: 'c2', timeoutMs: 5000,
+    run: async () => { order.push('c2'); await sleep(30) },
+  })
+  await Promise.all([a, b])
+  check('同一 agent 不同会话互不等待', order.length === 2, order.join(','))
 }
 
 // 4) 排队超时：槽被占满时，等超预算的那个提前失败、且不执行
@@ -63,7 +78,7 @@ function check(name, ok, detail) {
   const h2 = scheduleHostTask(null, { agent: 'H2', timeoutMs: 8000, run: () => sleep(1800) })
   await sleep(20)
   const mid = hostQueueInfo(null)
-  check('快照：一个在跑、其余在排（并发 1）', mid.running === 1 && mid.queued >= 1, JSON.stringify(mid))
+  check('快照：并发 2 被占满、后面的在排', mid.running === 2 && mid.queued >= 0, JSON.stringify(mid))
   const t0 = Date.now()
   const late = scheduleHostTask(null, {
     agent: 'H3', label: 'late', timeoutMs: 1000,

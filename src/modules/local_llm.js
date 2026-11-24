@@ -81,5 +81,6 @@ export function localQueueInfo(_db) {
  */
 export async function localComplete(db, req = {}) {
   const priority = Number.isFinite(Number(req.priority)) ? Number(req.priority) : gw.PRIORITY.normal
-  return gw.gatewayChat(db, { ...req, priority })
+  // 2026-11-22 三块排队：block 必须一路透传，不许在这里丢掉
+  return gw.gatewayChat(db, { ...req, priority, block: req.block })
 }

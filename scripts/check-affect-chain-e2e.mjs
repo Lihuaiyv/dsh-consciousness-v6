@@ -91,11 +91,11 @@ const rows = db.prepare("SELECT * FROM affect_v4_shadow WHERE agent_id=? AND tur
 check('本轮两行（rules+model）', rows.length === 2 && rows[0].source === 'rules' && rows[1].source === 'model', JSON.stringify(rows.map((r) => r.source)))
 const f1 = JSON.parse(rows[1]?.frame_json || '{}')
 check('事取的是上一轮总结', f1.summary === affairsA2.text || String(f1.summary || '').includes('我等到了这一句'), String(f1.summary).slice(0, 80))
-check('判断输入是「这件事：现在：」', appText.startsWith('这件事：') && appText.includes('现在：'), appText.slice(0, 40))
+check('判断输入按时间分「之前的事 / 当下的事」', appText.includes('【之前的事】') && appText.includes('【当下的事】'), appText.slice(0, 60))
 check('判断行标 host', JSON.parse(rows[1]?.judgment_json || '{}').judge === 'host', '')
 
 // ── 4) 判断失败：两行、回退规则、挂罢工标记 ──
-db.prepare("DELETE FROM flags WHERE key='affect.v4.strike'").run()
+db.prepare("DELETE FROM flags WHERE key LIKE 'affect.v4.strike%'").run()
 await appraiseTurnNow(db, aid, {
   text: '再继续吧', turnId: 'e2e_t2', conversationId: 'convA',
   complete: async () => { throw new Error('judge down') },
@@ -107,7 +107,7 @@ const j2e = JSON.parse(rows2[1]?.judgment_json || '{}')
 check('判断挂：model 行标 incomplete', j2e.judge === 'incomplete', JSON.stringify(j2e).slice(0, 100))
 check('判断挂：报警记了缺哪几个', Array.isArray(j2e.missing) && j2e.missing.length > 0, j2e.missing)
 check('判断挂：不补 by（不假装判出来了）', j2e.by === undefined, j2e.by)
-check('判断挂：挂了罢工标记', !!db.prepare("SELECT value FROM flags WHERE key='affect.v4.strike'").get(), '')
+check('判断挂：挂了罢工标记', !!db.prepare("SELECT value FROM flags WHERE key LIKE 'affect.v4.strike%' LIMIT 1").get(), '')
 
 // ── 5) 宿主闸门：并发 1，同一时刻只跑一个；排队严格先来后到 ──
 // 2026-11-22 主人定：聊天要按到达顺序，后到的急事也不许插队（能插的只有实验，走网关）。

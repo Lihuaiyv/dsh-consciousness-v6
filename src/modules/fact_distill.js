@@ -84,7 +84,7 @@ function safeText(s) {
 /** 第一道：事件 → 候选事实。 */
 export async function distillEvent(db, localComplete, ev) {
   const text = `事件时间：${ev.created_at || ''}\n事件：${ev.title}\n经过：${String(ev.story || '').slice(0, 500)}\n原话：${String(ev.quotes || '').slice(0, 300)}`
-  const r = await localComplete(db, { system: DISTILL_SYSTEM, text, maxTokens: 500 })
+  const r = await localComplete(db, { system: DISTILL_SYSTEM, text, maxTokens: 500, block: 'night' })
   let parsed = null
   try { parsed = JSON.parse(String(r && r.text || '')) } catch { parsed = null }
   const arr = parsed && Array.isArray(parsed.facts) ? parsed.facts : []
@@ -127,7 +127,7 @@ export async function judgeFacts(localComplete, { facts, sourceText, existing = 
   if (!list.length) return { kept: [], dropped: [], raw: '' }
   const cand = list.map((f, i) => `${i + 1}. [${f.kind}] ${f.text}\n   依据：${f.why}`).join('\n')
   const text = `原文：\n${String(sourceText || '').slice(0, 1500)}\n\n已有事实：\n${(existing || []).slice(0, 20).map((x) => '- ' + x).join('\n') || '（无）'}\n\n候选：\n${cand}`
-  const r = await localComplete(null, { system: JUDGE_SYSTEM, text, maxTokens: 900 })
+  const r = await localComplete(null, { system: JUDGE_SYSTEM, text, maxTokens: 900, block: 'night' })
   let parsed = null
   try { parsed = JSON.parse(String(r && r.text || '')) } catch { parsed = null }
   const rows = parsed && Array.isArray(parsed.judge) ? parsed.judge : []
@@ -156,7 +156,7 @@ export async function clusterCandidates(localComplete, candidates) {
   const list = Array.isArray(candidates) ? candidates : []
   if (!list.length) return []
   const lines = list.map((c, i) => `${i + 1}. [${c.kind}] ${c.text}`).join('\n')
-  const r = await localComplete(null, { system: CLUSTER_SYSTEM, text: `候选：\n${lines}`, maxTokens: 1200 })
+  const r = await localComplete(null, { system: CLUSTER_SYSTEM, text: `候选：\n${lines}`, maxTokens: 1200, block: 'night' })
   let parsed = null
   try { parsed = JSON.parse(String(r && r.text || '')) } catch { parsed = null }
   const rows = parsed && Array.isArray(parsed.clusters) ? parsed.clusters : []

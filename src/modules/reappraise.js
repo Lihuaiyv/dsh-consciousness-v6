@@ -12,6 +12,7 @@
  */
 import { event } from '../kernel.js'
 import { oneLine } from './pack.js'
+import { hostComplete } from './host_llm.js'
 
 const DAY = 86400000
 
@@ -112,17 +113,21 @@ function currentAffect(db, aid) {
   return null
 }
 
-async function ask(model, text, before) {
+async function ask(db, model, text, before) {
   const sys = '你在替一个意识体回看一件旧事。用第一人称写一句现在再看的感觉，不超过 60 字，'
     + '像随口说的，不要总结、不要劝自己、不要说「我成长了」，也不要编造新事实。'
     + '只写这一句。'
   const user = '这件事：' + text.slice(0, 300)
     + (before ? '\n当时大概是「' + before.label + '」，强度 ' + before.intensity.toFixed(2) : '')
   try {
-    const out = await model.chat([
-      { role: 'system', content: sys },
-      { role: 'user', content: user },
-    ], 140, false, 0.7)
+    // 2026-11-22 三块排队：事后回看属于夜间整理块，必须排队，不许裸调 model.chat
+    const out = await hostComplete(db, {
+      label: 'reappraise:ask', block: 'night', timeoutMs: 20000, priority: 6,
+      complete: () => model.chat([
+        { role: 'system', content: sys },
+        { role: 'user', content: user },
+      ], 140, false, 0.7),
+    })
     return oneLine(String(out || '').replace(/^["'「]|["'」]$/g, '').trim(), 70)
   } catch { return '' }
 }
@@ -138,7 +143,7 @@ export async function reappraiseTick(db, aid, { at = Date.now(), model = null } 
   if (!model || typeof model.chat !== 'function') return { ok: false, skipped: 'no_model' }
 
   const before = nearestAffect(db, aid, m.created_at)
-  const text = await ask(model, m.text, before)
+  const text = await ask(db, model, m.text, before)
   if (!text) return { ok: false, skipped: 'empty' }
 
   const after = currentAffect(db, aid)

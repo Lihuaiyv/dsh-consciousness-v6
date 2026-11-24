@@ -17,8 +17,9 @@
  * 标签法不会每句推一小格，幅度只由严重程度决定，形状才不会被单句攒到底。
  */
 
-/** 三档严重程度 → 幅度。存在的档留给 applyShock，这里只取前两档。 */
-export const MAGNITUDE = { none: 0.22, strong: 0.55, existence: 1 }
+/** 三档严重程度 → 幅度。存在的档留给 applyShock，这里只取前两档。
+ *  2026-11-22：none 改名 normal；none 键保留，兼容旧调用。 */
+export const MAGNITUDE = { normal: 0.22, strong: 0.55, existence: 1, none: 0.22 }
 
 const clamp11 = (v) => Math.max(-1, Math.min(1, Number(v) || 0))
 

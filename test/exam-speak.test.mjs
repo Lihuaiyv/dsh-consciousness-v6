@@ -178,11 +178,15 @@ const reasonOf = (d) => (d && d.reason) || '(none)'
   // a) 今天已经说满 2 句 → 不开口
   const w = makeWorld()
   try {
-    prefs(w, { per_day: 4 }) // 把 per_day 抬高，单独测预算门
+    // 2026-11-24 修：原来这里把 per_day 抬到 4 却又只说 2 句，永远测不到「用满」。
+    // 要单独测预算门，就把上限留在默认 2，说满两句。
+    prefs(w, { per_day: 2 })
     withDeficit(w)
     saidToday(w); saidToday(w)
     const d = decideSpeak(w.db, w.aid)
-    check('S10a 今天的打扰预算用满：不开口', d.will === false && d.reason === 'budget', { reason: reasonOf(d) })
+    // 2026-11-24 修：实现里「每天说满几句」的门叫 per_day，「token/月度花销」的门才叫 budget
+    // （parts/speak/judge.js 469/473 两行）。这条测的是句数，所以期待 per_day。
+    check('S10a 今天的打扰预算用满：不开口', d.will === false && d.reason === 'per_day', { reason: reasonOf(d) })
   } finally { w.close() }
 
   // b) 今天只说 1 句 → 预算没满，不该按 budget 拦

@@ -49,7 +49,9 @@ function check(name, ok, detail) {
   check('排队中：队列里有 2 条', localPending() === 2, localPending())
   release()
   await Promise.all([hold, low, high])
-  check('优先级插队：聊天(1)排到批量(7)前面', order.join(',') === 'high,low', order.join(','))
+  // 2026-11-22 分块之后：同一块里先来后到，优先级数字不再插队（只有块间才插）。
+  // 这里 low 和 high 都在聊天块（label 不带 exp:/split: 那些前缀），所以按入队顺序跑。
+  check('同一块里按入队顺序（块内不再按优先级数字插队）', order.join(',') === 'low,high', order.join(','))
 }
 
 // 3) 排队超时：还没轮到就等超了，提前失败且不执行

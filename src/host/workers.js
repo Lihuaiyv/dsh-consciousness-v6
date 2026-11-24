@@ -474,7 +474,8 @@ export function createWorkers(deps) {
                     withFrame, withFeat, wideCtx, titleSynth,
                     // localComplete 返回 { text, ms, ... }；cutDayV4 要字符串
                     complete: async (req) => {
-                      const r = await localComplete(d, { ...req, priority: LOCAL_PRIORITY.split, label: 'cut-v4', timeoutMs: 120000 })
+                      // 2026-11-22 三块排队：切事属于夜间整理块
+                      const r = await localComplete(d, { ...req, priority: LOCAL_PRIORITY.split, block: 'night', label: 'cut-v4', timeoutMs: 120000 })
                       return typeof r === 'string' ? r : String((r && r.text) || '')
                     },
                     embed: (list) => model.embed(list),

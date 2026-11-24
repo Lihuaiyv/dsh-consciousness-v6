@@ -125,64 +125,6 @@ function affairsFirstLine(db, conversationId) {
 }
 
 /**
- * 加格那三行（2026-11-21）：我在哪 / 手上没完什么 / 下一步做什么。
- * 直接读 flags 里的 `affect.v4.affairs|<conv>`，不跨模块 import（免得循环依赖）。
- * 没有加格、或开关关了，返回 ''，上一帧那段与以前一字不差。
- */
-function plusTail(db, conversationId) {
-  return '' // 2026-11-21：找事那条路（我在/手上没完/下一步）已废弃，主人否掉。代码待清。
-  /* eslint-disable no-unreachable */
-  try {
-    if (!db) return ''
-    const cid = conversationId ? String(conversationId) : ''
-    // 优先读格表（连续树的骨架）：那里有「开着的几条线 + 各自停在哪」；
-    // 没格表再退回 affairs 快照（老会话、或开关刚关掉时）。
-    const gKey = cid ? 'affect.v4.grid|' + cid : 'affect.v4.grid'
-    const grow = db.prepare('SELECT value FROM flags WHERE key=?').get(gKey)
-    if (grow) {
-      const g = JSON.parse(grow.value) || {}
-      const open = (g.nodes || []).filter((n) => n && n.state === 'open')
-      if (open.length) {
-        const shown = open.slice(0, 2).map((n) => n.line + (n.blocked ? `←卡在「${n.blocked}」` : `←${n.todo || '待推'}`))
-        const first = open[0]
-        // 条件驱动回退：当前这条卡住了，就在同一个父底下的兄弟线里找一条没卡的先走。
-        // 这就是「退回上一层，挑那条现在能走的路」的最小实现。
-        let pick = first
-        if (first.blocked && first.parent) {
-          const sib = open.find((n) => n !== first && n.parent === first.parent && !n.blocked && n.todo)
-          if (sib) pick = sib
-        }
-        const next = pick.blocked ? `先解掉「${pick.blocked}」，再做「${pick.todo || pick.line}」` : `做「${pick.todo || pick.line}」`
-        const s = `手上没完：${shown.join('；')}${open.length > 2 ? `；还有 ${open.length - 2} 条` : ''}；下一步：${next}`
-        return s.length > 120 ? s.slice(0, 119) + '…' : s
-      }
-    }
-    const key = cid ? 'affect.v4.affairs|' + cid : 'affect.v4.affairs'
-    let row = db.prepare('SELECT value FROM flags WHERE key=?').get(key)
-    if (!row && cid) row = db.prepare('SELECT value FROM flags WHERE key=?').get('affect.v4.affairs')
-    if (!row) return ''
-    const o = JSON.parse(row.value) || {}
-    const open = Array.isArray(o.open) ? o.open.filter((x) => x && (x.line || x.todo)) : []
-    if (!o.kind && !o.where && !open.length) return ''
-    const bits = []
-    if (o.where) bits.push('我在：' + String(o.where))
-    // 几条线各自停在哪：最多列两条，多的折成「还有 N 条」
-    if (open.length) {
-      const shown = open.slice(0, 2).map((x) => x.line + (x.blocked ? `←卡在「${x.blocked}」` : `←${x.todo || '待推'}`))
-      bits.push('手上没完：' + shown.join('；') + (open.length > 2 ? `；还有 ${open.length - 2} 条` : ''))
-    }
-    let next = '（手上没有没完的事）'
-    if (open.length) {
-      const f = open[0]
-      next = f.blocked ? `先解掉「${f.blocked}」，再做「${f.todo || f.line}」` : `做「${f.todo || f.line}」`
-    }
-    bits.push('下一步：' + next)
-    const s = bits.join('；')
-    return s.length > 120 ? s.slice(0, 119) + '…' : s
-  } catch { return '' }
-}
-
-/**
  * 影子帧那一段（2026-11-17）：从 affect_v4_shadow 读最近一帧（优先 model 行）。
  * 影子期默认不接提示词（frame.inject=off）；开了才由 index.js 优先用这条，空再回文件。
  */
@@ -202,8 +144,7 @@ export function shadowFrameLine(db, aid, { max = 60, conversationId = null } = {
     if (!summary && !what) return ''
     const body = [summary ? `停在「${summary}」` : '', what ? `锚是「${what}」` : ''].filter(Boolean).join('，')
     const trimmed = body.length > Math.max(40, max) ? clipAtPunct(body, Math.max(40, max)) : body
-    const tail = plusTail(db, conversationId)
-    return `## 上一帧（我上一次说到哪儿）\n${trimmed}${tail ? '\n' + tail : ''}`
+    return `## 上一帧（我上一次说到哪儿）\n${trimmed}`
   } catch {
     return ''
   }

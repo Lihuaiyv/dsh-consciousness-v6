@@ -18,6 +18,7 @@ import { now } from '../../db.js'
 import { nid } from '../../kernel.js'
 import { canonicalUrl, hostOf, sha256, htmlToText, tokensOf, jaccard, mapLimit, parseJsonLoose, clamp } from './util.js'
 import { scoreSource, scoreLabel, sourceTag, classifyDomain } from './credibility.js'
+import { hostComplete } from '../host_llm.js'
 
 const DEPTHS = {
   quick: { rounds: 1, perRound: 3, perQuery: 6, fetch: 5, label: '快速' },
@@ -44,11 +45,15 @@ function modelReady(model) {
   try { return !!model && model.status && model.status().primary === 'ok' } catch { return false }
 }
 
-async function askJson(model, system, user, maxTokens = 1200) {
-  const raw = await model.chat([
-    { role: 'system', content: system },
-    { role: 'user', content: user },
-  ], maxTokens, true, 0.2)
+async function askJson(db, model, system, user, maxTokens = 1200) {
+  // 2026-11-22 三块排队：研究是主人叫的活，归实验块（排在夜间整理前面），但必须排队
+  const raw = await hostComplete(db, {
+    label: 'research:ask', block: 'exp', timeoutMs: 60000, priority: 3,
+    complete: () => model.chat([
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ], maxTokens, true, 0.2),
+  })
   return parseJsonLoose(raw)
 }
 
@@ -64,11 +69,11 @@ function aspectQueries(topic, aspects, count, round) {
   return out
 }
 
-async function planQueries({ model, topic, goal, aspects, count }) {
+async function planQueries({ db, model, topic, goal, aspects, count }) {
   const fallback = aspectQueries(topic, aspects, count, 0)
   if (!modelReady(model)) return { queries: fallback, by: 'heuristic' }
   try {
-    const out = await withTimeout(askJson(model,
+    const out = await withTimeout(askJson(db, model,
       '你是检索策略助手。只输出 JSON，不要解释。',
       '主题：' + topic + '\n目的：' + (goal || '尽量全面、可信地了解这个主题') + '\n'
       + '请给出 ' + count + ' 条互补的中文检索式，覆盖：现状、关键数据、正反观点、最新进展、可执行方案。\n'
@@ -130,14 +135,14 @@ async function fetchText(web, url, signal) {
   return { ok: text.length >= 200, status: Number(r.statusCode) || 200, text, title: htmlToText(title, { max: 200 }) }
 }
 
-async function extractClaims(model, { topic, goal, source, text }) {
+async function extractClaims(db, model, { topic, goal, source, text }) {
   const sys = '你是严谨的研究助手。只依据给定正文抽取可核验的说法，绝不补充正文里没有的信息。只输出 JSON。'
   const user = '研究主题：' + topic + '\n研究目的：' + (goal || '') + '\n'
     + '来源标题：' + (source.title || '') + '\n来源域名：' + hostOf(source.url) + '\n'
     + '正文（可能被截断）：\n' + text.slice(0, 6000) + '\n\n'
     + '请输出：{"summary":"3 句以内摘要","claims":[{"claim":"一条可核验的具体说法","quote":"正文中的原句（≤80字）","stance":"support|neutral|oppose","confidence":0到1}],"published":"YYYY-MM-DD 或空","author":"作者或机构，没有就空"}\n'
     + '要求：claims 最多 5 条，只留和主题相关的；数字、时间、结论优先；不要把广告词当事实。'
-  const out = await withTimeout(askJson(model, sys, user, 900), 60000, '抽取 ' + hostOf(source.url))
+  const out = await withTimeout(askJson(db, model, sys, user, 900), 60000, '抽取 ' + hostOf(source.url))
   if (!out || !Array.isArray(out.claims)) return { summary: text.slice(0, 240), claims: [], published: '', author: '' }
   return {
     summary: cleanSnippet(out.summary).slice(0, 500),
@@ -242,7 +247,7 @@ function renderFallbackReport({ topic, goal, sources, clusters, stats, modelUsed
   return lines.join('\n')
 }
 
-async function synthesize({ model, topic, goal, sources, clusters, stats, aspectList, maxTokens = 900 }) {
+async function synthesize({ db, model, topic, goal, sources, clusters, stats, aspectList, maxTokens = 900 }) {
   if (!modelReady(model)) return null
   const srcLines = sources.map((s, i) => '[' + sourceTag(i) + '] ' + (s.title || '') + ' | ' + s.domain + ' | '
     + s.tier_label + (s.purpose === 'commercial' ? '（商业/推广）' : '')
@@ -265,10 +270,14 @@ async function synthesize({ model, topic, goal, sources, clusters, stats, aspect
     + '## 来源\n（列 [S#] 标题 — 域名 — 可信度）\n\n'
     + '硬性要求：不要输出「根据我的知识」；没有来源支撑的判断必须写「推测」；'
     + '单来源结论在证据表备注里写「单一来源」；来源日期超过 3 年的注明「较旧」。'
-  return withTimeout(model.chat([
-    { role: 'system', content: sys },
-    { role: 'user', content: user },
-  ], maxTokens, false, 0.3), 180000, '报告生成')
+  // 2026-11-22 三块排队：报告生成也是主人叫的活，归实验块，但必须排队
+  return hostComplete(db, {
+    label: 'research:synthesize', block: 'exp', timeoutMs: 180000, priority: 3,
+    complete: () => withTimeout(model.chat([
+      { role: 'system', content: sys },
+      { role: 'user', content: user },
+    ], maxTokens, false, 0.3), 180000, '报告生成'),
+  })
 }
 
 /**
@@ -293,7 +302,7 @@ export async function runResearch(opts) {
   const aspectList = (Array.isArray(aspects) && aspects.length ? aspects : ASPECTS).map(String).slice(0, 10)
 
   onStep({ phase: 'plan', message: '拆检索式' })
-  const planned = await planQueries({ model, topic: cleanTopic, goal, aspects: aspectList, count: depth.rounds * depth.perRound })
+  const planned = await planQueries({ db, model, topic: cleanTopic, goal, aspects: aspectList, count: depth.rounds * depth.perRound })
 
   const runId = nid('rsr_')
   const found = new Map()
@@ -397,7 +406,7 @@ export async function runResearch(opts) {
     if (modelUsed) {
       onStep({ phase: 'extract', message: '读第 ' + (i + 1) + '/' + fetched.length + ' 个来源' })
       try {
-        ex = await extractClaims(model, { topic: cleanTopic, goal, source: f, text: f.text })
+        ex = await extractClaims(db, model, { topic: cleanTopic, goal, source: f, text: f.text })
       } catch (e) {
         // 抽取失败要留痕：不能把「没抽出来」当成「来源里没有说法」
         extractFailed++
@@ -480,13 +489,13 @@ export async function runResearch(opts) {
   let synthError = ''
   if (modelUsed && clusters.length) {
     try {
-      report = await synthesize({ model, topic: cleanTopic, goal, sources, clusters, stats, aspectList })
+      report = await synthesize({ db, model, topic: cleanTopic, goal, sources, clusters, stats, aspectList })
       if (!report || !String(report).trim()) throw new Error('模型返回了空报告')
     } catch (e) {
       synthError = String((e && e.message) || e).slice(0, 240)
       // 2200 token 有时会被路由拒；退一档再试一次，别直接掉回模板
       try {
-        report = await synthesize({ model, topic: cleanTopic, goal, sources, clusters, stats, aspectList, maxTokens: 600 })
+        report = await synthesize({ db, model, topic: cleanTopic, goal, sources, clusters, stats, aspectList, maxTokens: 600 })
         if (!report || !String(report).trim()) report = null
       } catch (e2) {
         synthError += ' | retry: ' + String((e2 && e2.message) || e2).slice(0, 200)

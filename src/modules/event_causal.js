@@ -14,6 +14,7 @@
  *   - 「同一条线」按时间接：同一个会话里时间紧挨着的两段，就是同一件事的下一步。
  */
 import { now } from '../db.js'
+import { hostComplete } from './host_llm.js'
 
 export const BASE_DAYS = 30            // 底图只看最近这么久（更老的边留着）
 export const ADJ_GAP_MIN = 60          // 同一天挨着：相邻两件间隔 ≤ 60 分钟
@@ -242,15 +243,50 @@ export function coverageOf(db, aid) {
   } catch { return { events: 0, covered: 0, ratio: 0 } }
 }
 
+/** 底图水位：上次算到哪个开始时间（ISO）。没有就返回空串——那一次要补满 30 天。 */
+function readWatermark(db, aid) {
+  try {
+    const r = db.prepare('SELECT value FROM flags WHERE key=?').get('event.basegraph.watermark|' + String(aid))
+    return r && r.value ? String(r.value) : ''
+  } catch { return '' }
+}
+
+function writeWatermark(db, aid, iso) {
+  try {
+    db.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)')
+      .run('event.basegraph.watermark|' + String(aid), String(iso))
+  } catch { /* 记不上就下次再算一遍，不影响正确性 */ }
+}
+
 /**
  * 建底图（幂等，只追加）。先把「没有孤立事件」做到；孤立件连到同一天最近的一件。
+ *
+ * 2026-11-22：以前每 5 分钟把最近 30 天全部重算一遍（实测一段 2108ms，占整跳 92%），
+ * 库越大越慢，最后把主线程堵死。现在记一个水位，只算「新来的那几件事」：
+ *   - 没有新事件 → 直接退（几个查询，毫秒级）；
+ *   - 有新事件 → 只拿它们当主体，跟最近 7 天内的旧事件比（跨会话本来就只允许 7 天，
+ *     同一天/同一会话更近，所以 7 天池够用），只插入涉及新事件的边。
+ * 老的边一条不删，历史覆盖不会退化。
  */
 export function buildBaseGraph(db, aid, { nowMs = Date.now(), days = BASE_DAYS } = {}) {
   const iso = new Date(nowMs).toISOString()
-  const items = loadEvents(db, aid, { nowMs, days })
-  if (!items.length) return { ok: true, events: 0, edges: 0, added: 0, coverage: coverageOf(db, aid) }
+  const watermark = readWatermark(db, aid)
+  // 第一次没有水位：补满 30 天。之后只取 7 天池。
+  const poolDays = watermark ? CROSS_SESSION_DAYS : days
+  const items = loadEvents(db, aid, { nowMs, days: poolDays })
+  if (!items.length) return { ok: true, skipped: true, events: 0, edges: 0, added: 0, coverage: coverageOf(db, aid) }
 
-  const edges = baseEdgesOf(items)
+  const newest = items.reduce((mx, e) => (String(e.startAt) > mx ? String(e.startAt) : mx), watermark || '')
+  const fresh = watermark ? items.filter((e) => String(e.startAt) > watermark) : items
+  if (!fresh.length) {
+    // 没有新事：只补水位，别重算。这是常态，一次心跳几十微秒。
+    writeWatermark(db, aid, newest)
+    return { ok: true, skipped: true, events: 0, edges: 0, added: 0, coverage: coverageOf(db, aid) }
+  }
+
+  const freshIds = new Set(fresh.map((e) => e.id))
+  // 只留「一头是新事件」的边：老边上一轮已经写过了，重复插只是白花时间。
+  const edges = baseEdgesOf(items).filter((e) => freshIds.has(e.from_id) || freshIds.has(e.to_id))
   const touched = new Set()
   for (const e of edges) { touched.add(e.from_id); touched.add(e.to_id) }
   const byDay = new Map()
@@ -259,7 +295,7 @@ export function buildBaseGraph(db, aid, { nowMs = Date.now(), days = BASE_DAYS }
     if (!byDay.has(e.day)) byDay.set(e.day, [])
     byDay.get(e.day).push(e)
   }
-  for (const e of items) {
+  for (const e of fresh) {
     if (touched.has(e.id)) continue
     const same = (byDay.get(e.day) || []).filter((x) => x.id !== e.id)
     if (!same.length) continue
@@ -285,13 +321,15 @@ export function buildBaseGraph(db, aid, { nowMs = Date.now(), days = BASE_DAYS }
       added += Number(r.changes) || 0
     } catch { /* 单条写不进不影响别的 */ }
   }
+  // 这一批算完了才推进水位：中途抛错下次会重算同一批，宁可重算也不能漏。
+  writeWatermark(db, aid, newest)
   try {
     db.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(
       'evt_' + Math.random().toString(36).slice(2, 12), aid, 'event.causal.build',
-      JSON.stringify({ events: items.length, edges: edges.length, added }), iso,
+      JSON.stringify({ events: fresh.length, edges: edges.length, added, incremental: !!watermark }), iso,
     )
   } catch { /* 记账失败不算错 */ }
-  return { ok: true, events: items.length, edges: edges.length, added, coverage: coverageOf(db, aid) }
+  return { ok: true, skipped: false, events: fresh.length, edges: edges.length, added, coverage: coverageOf(db, aid) }
 }
 
 /**
@@ -427,10 +465,14 @@ async function completeBy(db, { system, text, maxTokens, timeoutMs, temperature,
     try {
       // kernel 导出的是单例对象（export const model = createModel()），不是函数
       const kernel = await import('../kernel.js')
-      const out = await kernel.model.chat([
-        { role: 'system', content: system },
-        { role: 'user', content: text },
-      ], maxTokens, false, temperature)
+      // 2026-11-22 三块排队：这也是模型调用，必须排队（夜间整理块），不许裸调主模型
+      const out = await hostComplete(db, {
+        label: 'causal:main', block: 'night', timeoutMs: 30000, priority: 7,
+        complete: () => kernel.model.chat([
+          { role: 'system', content: system },
+          { role: 'user', content: text },
+        ], maxTokens, false, temperature),
+      })
       // 落到规则兜底 = 主模型其实没通（返回空壳）；**输出为空也当没通**，降级去本地。
       // 2026-11-17 实测：主模型调通了但吐回空字符串，被当成"判过了"，一晚上记了 530 件空判断。
       if (kernel.model.servedBy !== 'fallback' && String(out || '').trim()) return { text: out, judge: 'main' }
@@ -442,10 +484,15 @@ async function completeBy(db, { system, text, maxTokens, timeoutMs, temperature,
     const out = await localComplete(db, {
       system, text, maxTokens, timeoutMs, temperature,
       priority: 7,
+      block: 'night',
       label: 'causal:' + String(via || 'local'),
       ...(m ? { model: m } : {}),
     })
-    if (String(out || '').trim()) return { text: out, judge: 'local' }
+    // 2026-11-23（D102）：localComplete → gatewayChat 返回的是 { text, ms, model }，
+    // 不是字符串。以前在这里直接 `return { text: out }`，下游 JSON.parse 拿到对象就成了
+    // "[object Object]"，本地判边永远降级成 none。取 .text 再判空。
+    const txt = typeof out === 'string' ? out : String((out && out.text) || '')
+    if (txt.trim()) return { text: txt, judge: 'local' }
   } catch { /* 往下走规则 */ }
   return { text: '', judge: 'rule' }
 }

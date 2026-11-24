@@ -9,7 +9,7 @@
  * 2026-11-13 16:1x（地基 A1）：mode 不再靠调用方记得传——缺省时按 isWorkMode 现算；
  * 新增单行写口 writeChatTurnRow，收掉 actions / qq_push / qq_bridge / wechat_inbox 四处直写。
  */
-import { nid } from '../kernel.js'
+import { nid, getFlag } from '../kernel.js'
 import { now } from '../db.js'
 import { isWorkMode } from './work_mode.js'
 // 2026-11-15（D59）：白天自己点名要留的句子（〔留〕）。
@@ -20,11 +20,28 @@ import { latestFeel } from './feel.js'
 import { appendTurnFrame } from './frame_store.js'
 // 帧写完立刻补算向量/偏离（python 子进程，后台，不占开口时间），开关 frame.compute。
 import { kickFrameCompute } from './frame_compute.js'
+// 找核影子：一轮的账写完后切这一段（2026-11-23 从 chatReply 挪到这儿，所有通道一起覆盖）。
+import { shadowFrame } from './frame_shadow.js'
 
 /** 调用方给了就用；没给（null/空串）就按当前工作模式现算。算不出才留 null。 */
 function resolveMode(db, aid, mode) {
   if (mode != null && String(mode).trim() !== '') return String(mode)
   try { return isWorkMode(db, aid) ? 'work' : 'chat' } catch { return null }
+}
+
+// 找核影子接在「一轮的账」这个统一出口：网页 / QQ / 微信走 captureTurn → commitTurn → writeChatTurns，
+// /chat 与微信主人回合走 chatReply → writeChatTurns。挂在这里，所有通道一次覆盖，不再只挂 chatReply。
+// 三条规矩：开关先判（off 连函数都不调，不留异步尾巴）、不 await（不挡回话）、失败吞掉。
+let shadowImpl = shadowFrame
+/** 测试缝：换成 spy，验「这一轮到底调没调、传的是什么」。 */
+export function setShadowImpl(fn) { shadowImpl = typeof fn === 'function' ? fn : shadowFrame }
+function shadowTurn(db, aid, { reply, turnId, at }) {
+  if (!reply) return
+  try {
+    if (String(getFlag(db, 'affect.frame.shadow') || 'off') !== 'on') return
+    const p = shadowImpl(db, aid, { reply: String(reply), turnId: turnId || at, at })
+    if (p && typeof p.catch === 'function') p.catch(() => {})
+  } catch { /* 影子失败不影响这轮账 */ }
 }
 
 export function writeChatTurns(db, aid, {
@@ -63,6 +80,8 @@ export function writeChatTurns(db, aid, {
       kickFrameCompute(db)
     }
   } catch { /* 帧写坏了不算这轮的错 */ }
+  // 找核：同一轮同一号，接在账写完之后。异步，不挡回话。
+  shadowTurn(db, aid, { reply: agentText, turnId: turnId || at, at })
   return { at, mood, mode: m }
 }
 

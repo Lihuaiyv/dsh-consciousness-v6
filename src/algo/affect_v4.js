@@ -285,8 +285,14 @@ export function advanceState(prev = null, deltas = null, opts = {}) {
     // 2026-11-21：以前写死 max(0.12, …)，震到 0.02 之后下一句负面反而把 s 抬到 0.12——
     // 越难受反而越回升，方向是反的。现在地板取 min(0.12, 当前值)：已经在底下就留在底下。
     const floorS = Math.min(0.12, s)
-    let nextS = clamp01(s + ks * eff * edge)
-    if (nextS > s + stepUp) nextS = s + stepUp
+    // 谷底反弹（2026-11-22 深夜，评审点出 C10「我请吃饭」被判成「心里沉」）：
+    // 前面连着几句被压到 0.3 以下时，一句明确的好话该往回拉得动一点，
+    // 否则一整段都困在低安区，人家来哄她也接不住。坏消息砸得深（stepDown 0.35），
+    // 好消息在谷底也得回得来（0.30）。
+    const rebound = ds > 0 && s < 0.35
+    const kEff = rebound ? Math.max(ks, 0.45) : ks
+    let nextS = clamp01(s + kEff * eff * edge)
+    if (nextS > s + (rebound ? 0.45 : stepUp)) nextS = s + (rebound ? 0.45 : stepUp)
     if (nextS < s - stepDown) nextS = s - stepDown
     s = Math.max(floorS, Math.min(0.95, nextS))
 
@@ -310,7 +316,12 @@ export function advanceState(prev = null, deltas = null, opts = {}) {
     const dd = clamp11(dl.d)
     const kduRebound = Math.max(0, num(opts.kduRebound, 0.5))
     const kd = dd >= 0 ? (d < 0.35 ? kduRebound : kdu) : kdd
-    d = clamp01(d + kd * dd)
+    // 2026-11-23：欲往上贴顶要饱和。原来 d + kd*dd 没有天花板，判官又总给正，
+    // 一路顶到 1.0 就下不来（真库 d 均 0.789，常贴 0.95+）。人想要一样东西到一定程度，
+    // 也不会「越要越想」，0.85 以上越靠顶越推不动。
+    let effD = kd * dd
+    if (dd > 0 && d > 0.85) effD *= Math.max(0, (1 - d) / 0.15)
+    d = clamp01(d + effD)
   }
   return { s: round4(s), n: round4(n), d: round4(d), at: new Date(atMs).toISOString(), hot: hotNext, sStreak: sStreakOut, sLast: sLastOut, debt: round4(debt) }
 }
@@ -393,6 +404,14 @@ export function primaryDistribution(s, n, d, { sigma = 0.55 } = {}) {
 export const SECONDARY_PROTOTYPES = LEXICON_V4
 
 export function gateOf(gate, x) {
+  // 2026-11-23 主人定：门控先拆，做对照。
+  // 原因：词条的 gate 语义没写清（other/me/self 各指什么，原始数据 axes-v4.json 也没了），
+  // 而实现里 other/me 拿 frame.target（这句在说谁）判、self 拿 by（谁造成的）判——两套字段混着用。
+  // 真被骂时「你太蠢了」target=me，而「委屈」标的是 other，会把最该出的词压到三折，等于接反了。
+  // 拆了对比：词有没有变差。没变差说明这道门本来没帮上忙；变差再按 by 重新接。
+  // 要恢复旧行为：把下面 return 1 换回原来的三行判断。
+  return 1
+  /* 旧实现（留档，别删）：
   const ok = {
     other: x.target === 'other',
     self: x.by === 'me' || x.agency === 'self',
@@ -401,6 +420,7 @@ export function gateOf(gate, x) {
   let mul = 1
   for (const g of gate || []) if (!ok[g]) mul *= 0.3
   return mul
+  */
 }
 
 /**

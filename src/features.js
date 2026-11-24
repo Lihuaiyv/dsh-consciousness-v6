@@ -1751,6 +1751,10 @@ export async function chatReply(db, aid, body) {
   // 网页说完再传 QQ：扔出去不 await，一次外发最多 15 秒，不能拖着这一轮的回复。
   try { relayReplyToQQ(db, aid, reply, conv).catch(() => {}) } catch { /* 开关没开/参数读不到时静默 */ }
 
+  // 影子帧（2026-11-22）：把这一轮切出的核写进副表，只写不读。
+  // 2026-11-23：接点挪到 turn_write.js 的 writeChatTurns —— 网页 / QQ / 微信 / /chat 都从那里写一轮的账，
+  // 只挂 chatReply 会漏掉真对话（重启也不补）。这里不再调，免得同一轮切两遍。
+
   return {
     reply, source,
     pack: pack.items, tokens: pack.tokens,

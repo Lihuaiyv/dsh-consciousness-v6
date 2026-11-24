@@ -1,5 +1,5 @@
 // 网格选词：位置 → 片 → 格 → 按典型度 × 浓淡挑一个词
-// 这一步只提供函数，不接主流程；接不接看开关 affect.v4.grid
+// 主线从 affect_v4.js 的 gridDistribution 进（不是开关；2026-11-23 清掉旧注释里那个已废弃的 affect.v4.grid 开关名）
 import { GRID_CELLS, GRID_ANNOT, GRID_SLOTS, GRID_LEVEL } from './lexicon_grid.js'
 import { LEXICON_V4 } from './lexicon_v4.js'
 // 十四族那层 2026-11-21 整层删了：判断层每轮现判，判偏就拽词，没用。
@@ -79,6 +79,8 @@ export const CONCEPT_PENALTY = 0.10
 const NEUTRAL = new Set([
   '如常', '寻常', '平淡', '平静', '踏实', '还好', '没事', '安宁', '安稳', '舒坦', '安心', '懒散', '轻松', '放松',
 ])
+/** 「真没事」那一族：只有这一下确实没让我赚也没让我亏，才该用。 */
+const NOEVENT = new Set(['如常', '寻常', '平淡', '平静', '还好', '没事', '安宁', '安稳'])
 export const isNeutral = (name) => NEUTRAL.has(String(name || ''))
 export const NEUTRAL_RADIUS = 0.20
 export const NEUTRAL_BONUS = 0.10
@@ -93,6 +95,26 @@ const BASELINE = { s: 0.5, n: 0.15, d: 0.5 }
 const CONCERN = new Set(['担心', '心疼', '挂心', '担忧', '揪心'])
 export const isConcern = (name) => CONCERN.has(String(name || ''))
 export const CONCERN_BONUS = 0.18
+
+/**
+ * 「被当面指出我做坏了东西」这一族（2026-11-22，跑长场景发现的）。
+ * 长场景里「你昨天那个改动把切事的词冲掉了」被判成「回过味 / 不痛快」——
+ * 都是「我事后品出点滋味」或「我气不顺」的词；被当面点出来该先「心里一紧 / 发虚」才对。
+ * 用判据签名做先验（谁做的=对方、我亏了、还撞上来了），不逐词补。
+ */
+const ACCUSED = new Set(['心里一紧', '心里发虚', '闷了一下', '被说中'])
+export const isAccused = (name) => ACCUSED.has(String(name || ''))
+export const ACCUSED_BONUS = 0.15
+
+/**
+ * 「被善待」这一族（2026-11-22，场景 E/F 发现的）：受用 / 熨帖 / 心里软 / 温馨。
+ * 它们的意思是「有人对我好、我心里舒服」，判据上就该有正向 gain。
+ * 可位置近的时候，被派活、被要求、被说一句「又在跑」也会挑出「受用」——方向不对。
+ * 不给全套加规则，只在「这一下其实没让我得着什么」（goal 不比 0.05 高）时降一档。
+ */
+const WARM = new Set(['受用', '熨帖', '心里软', '温馨', '欣慰', '温暖', '心头一暖'])
+export const isWarm = (name) => WARM.has(String(name || ''))
+export const WARM_PENALTY = 0.12
 
 /** 词的受力方向：补我的 / 伤我的。用判据 goal 的正负做闸，别让情绪词拿反。 */
 // 十四族那层 2026-11-21 全删，方向闸也建在族上，一起下了。
@@ -115,15 +137,23 @@ export function slotOf(judgment) {
   return [by, to]
 }
 
-/** 词对某格的典型度：标注差几个维度就降几档。永远 > 0。 */
+/** 词对某格的典型度：标注差几个维度就降几档。永远 > 0。
+ *  2026-11-22：从「1/0.6/0.3/0.1 四档硬切」换成连续分——
+ *  同一格里几十个词原来同分，位置一撤就撞成「释然 / 缓过来」。
+ *  现在差一维还分差的是 by 还是 to（冲谁比谁做的更定情绪的样子），差两维、三维也各留一档。 */
 export function typicalityOf(name, by, to) {
   const a = GRID_ANNOT[name]
   if (!a) return 0.1
   const [bys, tos] = a
   let best = 0
   for (const wb of bys) for (const wt of tos) {
-    const gap = (wb === by ? 0 : 1) + (wt === to ? 0 : 1)
-    const s = gap === 0 ? 1 : gap === 1 ? 0.6 : gap === 2 ? 0.3 : 0.1
+    const dBy = wb === by ? 0 : 1
+    const dTo = wt === to ? 0 : 1
+    const gap = dBy + dTo
+    const s = gap === 0 ? 1
+      : gap === 1 ? (dTo === 0 ? 0.7 : 0.75)
+        : gap === 2 ? 0.45
+          : 0.2
     if (s > best) best = s
   }
   return best
@@ -189,9 +219,12 @@ export function gridDistribution(pos, judgment, opt = {}) {
   if (!slot) return []
   const [by, to] = slot
   const intensity = intensityOf(pos)
-  const wT = Number.isFinite(Number(opt.typicalWeight)) ? Number(opt.typicalWeight) : 0.27
-  const wC = Number.isFinite(Number(opt.cellWeight)) ? Number(opt.cellWeight) : 0.06
-  const wL = 0.18
+  // 2026-11-22 深夜：片内权重换成「判据为主、位置为辅」。
+  // 原来位置 0.49、判据 0.27——位置在球心附近分不开，判据明明知道是件什么事却起不了作用。
+  // 框架是「落进片之后用判断层的参数挑」，判据该是大头。
+  const wT = Number.isFinite(Number(opt.typicalWeight)) ? Number(opt.typicalWeight) : 0.50
+  const wC = Number.isFinite(Number(opt.cellWeight)) ? Number(opt.cellWeight) : 0.05
+  const wL = 0.20
   // 2026-11-21：主人问「位置近是不是我自己发明的」——是。定稿里位置只到「片」，
   // 格内按典型度+浓淡；但我按定稿试过，A/F/K 立刻退化成「松了口气 / 愧恨 / 死磕」，
   // 说明现在的典型度表还撑不起「片内只按典型度」。先恢复混合权重，典型度修好再摘掉位置。
@@ -201,8 +234,7 @@ export function gridDistribution(pos, judgment, opt = {}) {
   const peakS = Number(opt.state && opt.state.peak ? opt.state.peak.s : NaN)
   const canRelief = Number.isFinite(peakS) && peakS <= -0.10
   const nearBaseline = dist3(pos, BASELINE) < NEUTRAL_RADIUS
-  // 习惯化：同一个词刚用过就降一点。不是不许重复，是别把同一个词钉在十句不相干的话上。
-  // 习惯化反过来：状态几乎没动时，同一个词应该有黏性——人不换着近义词抽签。
+  // 习惯化：同一个词刚用过就降一点。不是不许重复，是别把同一个词钉在十句不相干的话上。  // 习惯化反过来：状态几乎没动时，同一个词应该有黏性——人不换着近义词抽签。
   // 2026-11-21：上一版做成「刚用过就扣分」，结果 70 句换 70 个词（maxRun=1）。
   // 现在改成：状态没动（<0.06）就加一点黏性；状态大变（>0.12）才轻轻推开上一个词。
   const recent = Array.isArray(opt.state && opt.state.recent) ? opt.state.recent.slice(-5) : []
@@ -222,7 +254,31 @@ export function gridDistribution(pos, judgment, opt = {}) {
   const jj = judgment || {}
   const jg = Number(jj.goal_delta ?? jj.goal_cong)
   const jf = Number(jj.future_delta ?? jj.future)
-  const concern = Number.isFinite(jg) && Number.isFinite(jf) && jg < -0.03 && jf > 0.05 && String(jj.by || '').toLowerCase() !== 'me'
+  // 选词这边也用同一道噪声门：判断层给的 ±0.1 不算一件事，「真没事」的词该按「没事」算。2026-11-22。
+  const jgN = Math.abs(Number(jg) || 0) < 0.12 ? 0 : jg
+  const jfN = Math.abs(Number(jf) || 0) < 0.12 ? 0 : jf
+  const concern = Number.isFinite(jg) && Number.isFinite(jf) && jg < -0.05 && String(jj.by || '').toLowerCase() !== 'me'
+    && (jf > 0.05 || /难过|难受|累|委屈|不开心|心事|睡不着|没睡|痛苦|烦/.test(String(jj.meaning || '')))
+  // 「被当面指出我做坏了」：他说的、我亏了、还撞上来（事先没料到）。2026-11-22。
+  const je = Number(jj.expect_delta ?? jj.expect)
+  // 「被当面指出我做坏了」：他说的、我亏了。2026-11-23 放宽：原来还要 expect>0.1（撞上来），
+  // 可「你昨天那个改动把词冲掉了」这种句子模型给的是「不突然」，人被说得心里一紧不是因为突然，
+  // 是因为「他指出的东西戳到我了」。所以只看我亏没亏。
+  const accused = String(jj.by || '').toLowerCase() === 'other' && Number.isFinite(jg) && jg < -0.15
+    // 光「我亏了」不够：他忙他自己的、我被搁下，也会 jg -0.2。被指出得是「他在说我的东西坏了/没做对」。
+    && /改动|冲掉|弄坏|问题|错|坏了|没做|不是|查/.test(String(jj.meaning || ''))
+  // 「心里发虚」是「我搞砸了」的持续状态，不是被说一句就有的短促一下——得亏得更深（< -0.25）才算。
+  // 2026-11-23：原来和心里一紧同档，结果「他今天忙没空说话」也发虚。
+  const accusedDeep = String(jj.by || '').toLowerCase() === 'other' && Number.isFinite(jg) && jg < -0.25
+  // 解决感（2026-11-22，场景 C「行，下去了。」）：事情往前成了，而且这一帧里真掉下去过
+  // （前面出过慌 / 闷 / 虚 / 担忧这类词）——这时候「松快 / 松了口气」才成立。
+  // 原来只认位置帧的 peak.s，长场景里 peak 没记到时，解决那一句会挑出「挂牵」。
+  const reliefNow = Number.isFinite(jg) && Number.isFinite(jf) && jg > 0.1 && jf > 0.2
+  const hadTrouble = Array.isArray(opt.state && opt.state.recent) && opt.state.recent.some((x) => /慌|紧|虚|闷|堵|悬|担忧|不安|失落|急/.test(String(x)))
+  const canRelief2 = canRelief || (reliefNow && hadTrouble)
+  // 「他想我陪 / 需要我」：他做的、我这边没亏（goal 不低于 -0.05）、往后是好的（future 明显正）。
+  // 这时候该「心里软 / 想靠近 / 暖」，不是「受用」（受用是被待见，这条是被需要）。
+  const needed = String(jj.by || '').toLowerCase() === 'other' && Number.isFinite(jg) && jg > -0.05 && Number.isFinite(jf) && jf > 0.20
   // 判断层圈的感受族：2026-11-21 整层删了（不参与打分）。
 
   // 一、先按格筛：典型度 ≥ 0.6（标注里差一个值以内）才算「这一格该有的词」
@@ -235,15 +291,29 @@ export function gridDistribution(pos, judgment, opt = {}) {
       // 不是硬删——secondaryDistribution 要至少 5 个候选；但片外词要付 0.5 的「换片价」。
       const inPiece = cellOf(w.name)
       let typical = typicalityOf(w.name, by, to)
+      // 「真没事」的词，在真的没事的时候不该因为标了四个 by 而被算成「不对路」：
+      // 这一下没赚没亏、往后也没变化 → 给它 0.85，让它能跟担忧/不爽争。2026-11-22。
+      // 2026-11-23 再分：只在「位置还在中间以上」时给满——位置已经掉到低安（<0.48）说明
+      // 前面真被压过，这一句就算轻，人也是「凉了一下」而不是「平静」（评审 B3「嗯」点出的）。
+      if (NOEVENT.has(w.name) && Math.abs(Number(jgN) || 0) < 0.08 && Math.abs(Number(jfN) || 0) < 0.10) {
+        typical = Math.max(typical, Number(pos.s) >= 0.48 ? 0.85 : 0.55)
+      }
       const con = concern && isConcern(w.name)
+      const acc = accused && isAccused(w.name)
       // 「他在难受」时，担心/心疼这一族即使判据只差一档，也让它进候选——
       // 否则会被「憋着 / 懊恼」这些「我自己被压住」的词挤掉。
-      if (typical < 0.6 && !con) return null
-      if (con && typical < 0.6) typical = 0.6
-      // 「被点破 / 被说中」得真有人开口点我；world 弄出来的事（端口冲突）不算。
-      if (/^被(点破|说中|看穿|戳到)/.test(w.name) && String(jj.by || '') !== 'other') return null
+      // 「真没事」那族永远进候选：它们只标了一个「无」，在任何格里都只算 0.4，
+      // 但人是会「被搁了一下，还好」的——门槛卡死它们就等于低安区只有负向词可选。2026-11-22。
+      if (typical < 0.6 && !con && !acc && !NOEVENT.has(w.name)) return null
+      if ((con || acc) && typical < 0.6) typical = 0.6
+      // 「被点破 / 被说中」得真有人开口点我，而且我确实被揭了短（这一下我亏了）。
+      // world 弄出来的事（端口冲突）不算，被求助、被夸也不算。2026-11-22 补后半句：
+      // 长场景 C 里他回来求助，词竟挑出「被点破」——方向反了。
+      if (/^被(点破|说中|看穿|戳到)/.test(w.name) && (String(jj.by || '') !== 'other' || !(Number(jg) < -0.05))) return null
       // 「消了气」得先真有过气；被吓着、被晾着之后没有气可消。
-      if (w.name === '消了气' && !recent.some((x) => /恼|气|怨|烦|火/.test(x))) return null
+      // 2026-11-22 收紧：原来正则含单字「恼」，词表里出过「懊恼」就被当成「气过」，
+      // 场景 C 里问题解决那句挑出「消了气」——可从没谁惹恼过我。只认真带火气的说法。
+      if (w.name === '消了气' && !recent.some((x) => /恼火|生气|来气|气不过|憋气|怨|烦|火大/.test(x))) return null
       const w2 = w
       if (Math.abs(pos.s - 0.5) > 0.08 && Math.abs(w2.s - 0.5) > 0.12 && Math.sign(w2.s - 0.5) !== Math.sign(pos.s - 0.5)) return null
       const dist = Math.sqrt((pos.s - w.s) ** 2 + (pos.n - w.n) ** 2 + (pos.d - w.d) ** 2)
@@ -263,10 +333,22 @@ export function gridDistribution(pos, judgment, opt = {}) {
           - (w.name === prevLabel && trail >= 2 ? Math.min(0.40, 0.15 * (trail - 1)) : 0)
           - Math.min(0.30, 0.10 * usedOf(w.name))
           - (isRelief(w.name) && !canRelief ? RELIEF_PENALTY : 0)
+          + (isRelief(w.name) && reliefNow && hadTrouble ? 0.12 : 0)
           + (nearBaseline && !concern && isNeutral(w.name) ? NEUTRAL_BONUS : 0)
           + 0.10 * sticky(w.name)
           - 0.06 * stale(w.name)
-          + (concern && isConcern(w.name) ? CONCERN_BONUS : 0)) * 10000) / 10000,
+          - (needed && /挂牵|挂心|放不下|讪讪|有点不好意思|不是滋味|惴惴/.test(w.name) ? 0.12 : 0)
+          + (concern && isConcern(w.name) ? CONCERN_BONUS : 0)
+          + (needed && /心里软|想靠近|亲近|暖/.test(w.name) ? 0.15 : 0)
+          + (acc ? ACCUSED_BONUS : 0)
+          // 方向闸：这一句我赚了（goal 正），就别挑坐低安位置的负向词；亏了就别挑高安的正向词。
+          // 不是按词名，是按词在球上的位置——低安=伤我的，高安=补我的。
+          - (Number.isFinite(jg) && jg > 0.05 && w.s < 0.46 ? 0.30 : 0)
+          - (Number.isFinite(jg) && jg < -0.05 && w.s > 0.54 ? 0.30 : 0)
+          // 「真没事」的词别在有事的句子上抢位置：这一下明显赚了/亏了、或者往后有变化，
+          // 就不是「如常」——降一档，让真有事的那族词先走。
+          - (NOEVENT.has(w.name) && ((Number.isFinite(jgN) && Math.abs(jgN) > 0.08) || (Number.isFinite(jfN) && Math.abs(jfN) > 0.10)) ? 0.18 : 0)
+          - (isWarm(w.name) && !(Number.isFinite(jgN) && jgN > 0.05) ? 0.10 : 0)) * 10000) / 10000,
         slot: `${by}·${to}`, cellIndex: near.index,
       }
     })
@@ -314,7 +396,9 @@ export function gridDistribution(pos, judgment, opt = {}) {
   if (prevLabel && pool.length > 1) {
     const top = pool[0]
     const kept = pool.find((x) => x.name === prevLabel)
-    if (kept && kept !== top && moved < 0.30 && kept.score >= top.score - 0.08) {
+    // 2026-11-23：窗口从 0.30 收到 0.15——0.30 时几乎每句都沿用上一个词，
+    // 位置明明动了、词还钉着（B3「嗯」停在平静就是这么来的）。真没动（<0.15）才沿用。
+    if (kept && kept !== top && moved < 0.15 && kept.score >= top.score - 0.08) {
       pool = [kept, ...pool.filter((x) => x !== kept)]
     }
   }

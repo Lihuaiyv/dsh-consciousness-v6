@@ -52,6 +52,7 @@ import * as res from './modules/self_residue.js'
 import { lifeTick, lifeLine } from './modules/life.js'
 import { model as kernelModel } from './kernel.js'
 import * as gw from './modules/local_gateway.js'
+import { hostQueueInfo } from './modules/host_llm.js'
 import * as procWatch from './modules/proc_watch.js'
 import { unzipStore } from './zip.js'
 import { defaultFileSeam } from './host/fs.js'
@@ -226,7 +227,12 @@ async function routes(db, method, path, body, role, bound) {
   //   { token:'user', method:'POST', path:'/local/exp',
   //     body:{ system:'', text:'...', maxTokens:200, model:'', label:'bench-x' } }
   if (path === '/local/status') {
-    return { ok: true, ...(await gw.gatewayStatus(db)) }
+    const base = await gw.gatewayStatus(db)
+    // 2026-11-22 审查确认：这份快照原来不带 host，所以 SSE 一断，面板的云端那行就永远空。
+    // 定时拉取也要能拿到它。
+    let host = null
+    try { host = hostQueueInfo(db) } catch { /* 拿不到就不带，不拖累本地那两行 */ }
+    return { ok: true, ...base, host }
   }
   // 看板（DSH 界面里那块）用：队列 + 常驻模型 + 本机模型进程，一次拿全。
   if (path === '/local/live') {

@@ -233,6 +233,18 @@ CREATE TABLE IF NOT EXISTS agent_runtime(
   agent_id TEXT PRIMARY KEY, state TEXT NOT NULL DEFAULT 'idle',
   since TEXT NOT NULL, reason TEXT, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS flags(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+-- 2026-11-23：链执行的账。run 一行、step 一步一行；step 只追加，run 回填结束字段。
+-- 为什么单独两张表：链每一步的输入输出要能回看、能单步重放（设计-链与块-2026-11-23 v2）。
+CREATE TABLE IF NOT EXISTS chain_runs(
+  id TEXT PRIMARY KEY, chain_id TEXT NOT NULL, agent_id TEXT, conversation_id TEXT,
+  turn_id TEXT, key TEXT, started_at TEXT NOT NULL, ended_at TEXT,
+  ok INTEGER, failed_step TEXT, ms INTEGER);
+CREATE TABLE IF NOT EXISTS chain_steps(
+  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, seq INTEGER NOT NULL,
+  step_id TEXT NOT NULL, kind TEXT NOT NULL, block INTEGER, label TEXT,
+  in_json TEXT, out_json TEXT, truncated INTEGER NOT NULL DEFAULT 0,
+  ms INTEGER, status TEXT NOT NULL, err TEXT);
+CREATE INDEX IF NOT EXISTS idx_chain_steps_run ON chain_steps(run_id, seq);
 CREATE TABLE IF NOT EXISTS algo_bindings(
   agent_id TEXT NOT NULL, name TEXT NOT NULL,
   active TEXT NOT NULL, canary TEXT, ratio REAL NOT NULL DEFAULT 0,
@@ -510,6 +522,10 @@ CREATE TABLE IF NOT EXISTS surfaced_items(
   memory_id TEXT, kind TEXT NOT NULL DEFAULT 'related', text TEXT NOT NULL,
   at TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0, used_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_surf_agent ON surfaced_items(agent_id, at DESC);
+-- 2026-11-22：浮现队列那条 SELECT 是「每条记忆去 surfaced_items 里查它最近一次出现」，
+-- 而原来的索引只到 agent_id，于是每条记忆都要把该 agent 的五万多行从头扫一遍。
+-- 实测 59421 行 × 8255 条记忆 ≈ 十亿级比较，一行 SQL 卡 9.9 秒。补上按记忆编号的复合索引。
+CREATE INDEX IF NOT EXISTS idx_surf_mem ON surfaced_items(agent_id, memory_id, at);
 
 -- 实体：人名 / 物件 / 项目。用来把「同一件事的不同说法」并到一起（「美式」和「咖啡」）。
 CREATE TABLE IF NOT EXISTS entities(
@@ -825,6 +841,11 @@ export function openDb(file) {
   // 老行留 NULL = 明确没标签，按日常处理（不猜）。
   try { db.exec('ALTER TABLE chat_turns ADD COLUMN mode TEXT') } catch { /* 已存在 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_chat_turn ON chat_turns(agent_id, turn_id)') } catch { /* 老库异常不影响启动 */ }
+  // 2026-11-22：speakerOf 那条是「这一句是谁说的」，只按 turn_id 查、不带 agent_id，
+  // 上面的复合索引用不上，只能整表扫两万四。单列补一条。
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_chat_turn_only ON chat_turns(turn_id)') } catch { /* 老库异常不影响启动 */ }
+  // 切事/判边逐件查「这一轮有没有进过碎片」，fragments 两万三，同样只按 turn_id 查。
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_frag_turn ON fragments(turn_id)') } catch { /* 老库异常不影响启动 */ }
   try { db.exec('CREATE INDEX IF NOT EXISTS idx_chat_conv ON chat_turns(agent_id, conversation_id, created_at)') } catch { /* 老库异常不影响启动 */ }
   // 情绪 v3：底色 / 慢 / 快 / 总。独立表，不动 affect_state 的定长 INSERT。
   db.exec(`CREATE TABLE IF NOT EXISTS affect_v3(
@@ -962,6 +983,8 @@ export function openDb(file) {
     reason TEXT, state TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL, expires_at TEXT);`)
   db.exec('CREATE INDEX IF NOT EXISTS idx_sq_agent ON surface_queue(agent_id, state, created_at)')
+  // 2026-11-22：同一条查询里还要按 memory_id 查队列，补一条按记忆编号的复合索引。
+  try { db.exec('CREATE INDEX IF NOT EXISTS idx_sq_mem ON surface_queue(agent_id, memory_id, state)') } catch { /* 索引失败不影响开库 */ }
 // 生活流每天按 agent 查最近事件；events 只增不减，没索引会全表扫。
 try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, created_at DESC)') } catch { /* 索引失败不影响开库 */ }
   // 三观引擎：只增账本 + 投影缓存。开关（sangguan.enabled）关闭时只是空表，不影响其他模块。

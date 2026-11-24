@@ -13,6 +13,7 @@
  * 注意：聊天回复本身不走这里（那是前台，必须即时）；这里只接待后台调用。
  */
 import { getFlag } from '../kernel.js'
+import { compareQueued, blockOf } from './queue_policy.js'
 
 const Q_RECENT_MAX = 30
 const qRecent = []
@@ -29,17 +30,18 @@ function concurrency(db) {
     if (Number.isFinite(n) && n >= 1) return Math.min(8, Math.floor(n))
   } catch { /* 读不到就按 2 */ }
   // 2026-11-22 主人：跨会话要排队——不管开几个对话，同一时刻只让一个调宿主模型。
-  // 以前默认 2，两个会话能同时各调一个，撞在一起。要放开仍可用 llm.host.concurrency 覆盖。
-  return 1
+  // 2026-11-23 改：并发 1 → 2。宿主是云端、不占本地显存，两个会话可以各调一个；
+  // 真正要防的「同会话内顺序颠倒」由下面按会话的链保证，不必把全局压成 1。
+  // 要回到串行仍可用 llm.host.concurrency=1 覆盖。
+  return 2
 }
 
 function acquire(db, priority = 5) {
   if (running < concurrency(db)) { running++; return Promise.resolve() }
   return new Promise((resolve) => {
     waiters.push({ resolve, priority: Number(priority) || 5, seq: ++qSeq })
-    // 2026-11-22 主人：聊天要先来后到，不许按优先级插队（只有实验那种由网关单独排）。
-    // 以前按 priority 排，后到的判定会插到先到的摘要前面。
-    waiters.sort((a, b) => a.seq - b.seq)
+    // 2026-11-22 三块排队：规则只在 queue_policy.js 里定义，这里只调用。
+    waiters.sort(compareQueued)
   })
 }
 
@@ -50,6 +52,35 @@ function release() {
 }
 
 let probeFn = null
+/** 2026-11-22：宿主队列的变化也推给看板（和本地队列一样，变了才说）。 */
+const hostChangeListeners = new Set()
+export function onHostChange(fn) {
+  if (typeof fn !== 'function') return () => {}
+  hostChangeListeners.add(fn)
+  return () => { hostChangeListeners.delete(fn) }
+}
+/** 2026-11-22 主人：别再从日志里抠——单独一张表，每次宿主调用记一行，重启后从表里读。 */
+let hostDb = null
+let hostInserts = 0
+export function setHostDb(db) { hostDb = db || null }
+
+/** 2026-11-22：把历史记录灌回去——进程重启后从插件的调用日志读回，看板不会一重启就清空。 */
+export function setHostRecent(list) {
+  if (!Array.isArray(list)) return
+  qRecent.length = 0
+  for (const x of list.slice(-30)) {
+    if (x && x.at && x.label) qRecent.push({ at: String(x.at), label: String(x.label), ms: Number(x.ms) || 0, slot: 'host', ok: x.ok == null ? true : !!Number(x.ok) })
+  }
+}
+
+function notifyHostChange() {
+  if (!hostChangeListeners.size) return
+  let snap = null
+  try { snap = hostQueueInfo(null) } catch { return }
+  for (const fn of hostChangeListeners) {
+    try { fn(snap) } catch { /* 一个订阅者出错不影响别人 */ }
+  }
+}
 /** 2026-11-22：把每条宿主调用的等待/执行耗时接到插件的 hook.log 上，方便看「卡在哪一段」。 */
 export function setHostProbe(fn) {
   probeFn = typeof fn === 'function' ? fn : null
@@ -74,6 +105,19 @@ function record(it, ok, err) {
     }
   } catch { /* 探针不影响调用 */ }
   if (qRecent.length > Q_RECENT_MAX) qRecent.splice(0, qRecent.length - Q_RECENT_MAX)
+  // 2026-11-22：落一行到表里，重启后看板还能看见。
+  try {
+    if (hostDb) {
+      // 注意：这里参数叫 it，不是 snap（以前写错过一次，报错被 catch 吞了，表一直空）。
+      hostDb.prepare('INSERT INTO host_calls (at, label, ms, ok) VALUES (?, ?, ?, ?)')
+        .run(new Date().toISOString(), String(it.label || '-').slice(0, 40), ms, ok ? 1 : 0)
+      // 这张表只给面板看，不留历史：每写二十条清一次，只留最近六十条。
+      if (++hostInserts % 20 === 0) {
+        hostDb.prepare('DELETE FROM host_calls WHERE id NOT IN (SELECT id FROM host_calls ORDER BY id DESC LIMIT 60)').run()
+      }
+    }
+  } catch { /* 写表/清表失败不影响队列 */ }
+  notifyHostChange()
 }
 
 function fail(it, e) {
@@ -94,6 +138,7 @@ async function exec(it, db) {
   if (it.timer) { clearTimeout(it.timer); it.timer = null }
   it.phase = 'running'
   it.startedAt = Date.now()
+  notifyHostChange()
   // 2026-11-17：预算管到「执行」——排队 + 执行合计不得超过 timeoutMs。
   // 之前只管排队，判断层实际跑 35 秒也照等；情绪链不吃这个亏，超了直接弃、回退规则。
   // 说明：这里的超时不取消真正的模型请求（kernelModel.complete 不支持取消），
@@ -129,10 +174,14 @@ async function exec(it, db) {
  * 排队执行一个后台宿主调用。对外一般不直接调，用 hostComplete。
  * 同一个 agent 的调用严格保序；不同 agent 共享全局并发。
  */
-export function scheduleHostTask(db, { agent = '', label = '', timeoutMs = 30000, priority = 5, run } = {}) {
+export function scheduleHostTask(db, { agent = '', lane = '', label = '', timeoutMs = 30000, priority = 5, block = null, run } = {}) {
   return new Promise((resolve, reject) => {
     if (typeof run !== 'function') { reject(new Error('host task: no run')); return }
-    const key = String(agent || '')
+    // 2026-11-23：链的键加上会话（lane）。
+    // 以前只按 agent 编，两个会话被串成同一条链——一个会话的调用要等另一个跑完，
+    // 判断层等出十几秒。加上 lane 后：同一会话内部仍严格保序（总结一定在判断前），
+    // 两个会话各走各的链，不再互相等。不传 lane 的调用保持原来的 agent 级行为。
+    const key = String(agent || '') + (lane ? '|' + String(lane) : '')
     const raw = Number(timeoutMs)
     const unlimited = raw === 0   // 2026-11-22：0 = 不设超时（不截断、不假失败）
     const it = {
@@ -140,9 +189,15 @@ export function scheduleHostTask(db, { agent = '', label = '', timeoutMs = 30000
       key,
       label: String(label || '').slice(0, 40),
       priority: Number.isFinite(Number(priority)) ? Number(priority) : 5,
+      // 2026-11-22 强制引导：必须声明属于哪一块。没传就按标签推断，推断不出的记警告。
+      block: block != null ? blockOf(block) : blockOf(label),
+      blockInferred: block == null,
       timeoutMs: unlimited ? 0 : Math.max(1000, raw || 30000),
       enqueuedAt: Date.now(), startedAt: 0, phase: 'waiting', timer: null,
       run, resolve, reject,
+    }
+    if (block == null && probeFn) {
+      try { probeFn('queue-block-inferred label=' + it.label + ' block=' + it.block) } catch { /* 探针失败不影响 */ }
     }
     // 排队超时：还没轮到就等超了，直接失败，调用方走兜底。不设超时时没有这一步。
     if (!unlimited) {
@@ -153,6 +208,7 @@ export function scheduleHostTask(db, { agent = '', label = '', timeoutMs = 30000
       if (it.timer.unref) it.timer.unref()
     }
     pending.add(it)
+    notifyHostChange()
     // 2026-11-22 主人定：聊天的调用要严格先来后到，不许插队。
     // 以前 2026-11-17 为了「回复别等上一轮总结」，让 priority<3 的判定直接抢槽、
     // 不挂同 agent 链——结果下一轮判定会插到上一轮摘要前面，摘要还没生成，
@@ -171,9 +227,9 @@ export function scheduleHostTask(db, { agent = '', label = '', timeoutMs = 30000
  * @param complete 宿主模型的 complete 函数（一般传 kernelModel.complete 或 model.chat 包装）
  * @param agent    同一 agent 保序（一般传 agent_id）
  */
-export async function hostComplete(db, { complete, agent = '', label = '', timeoutMs = 30000, priority = 5, ...req } = {}) {
+export async function hostComplete(db, { complete, agent = '', lane = '', label = '', timeoutMs = 30000, priority = 5, block = null, ...req } = {}) {
   if (typeof complete !== 'function') throw new Error('host complete: no model')
-  return scheduleHostTask(db, { agent, label, timeoutMs, priority, run: () => complete(req) })
+  return scheduleHostTask(db, { agent, lane, label, timeoutMs, priority, block, run: () => complete(req) })
 }
 
 /** 宿主后台队列快照：给工具和诊断用，只读。 */

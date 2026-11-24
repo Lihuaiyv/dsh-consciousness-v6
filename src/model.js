@@ -461,7 +461,47 @@ export class ModelPort {
   extract(turns) { return this._run('extract', turns) }
   summarize(turns) { return this._run('summarize', turns) }
   reply(ctx) { return this._run('reply', ctx) }
-  complete(req) { return this._run('complete', req) }
+  complete(req) { return this._completeChecked(req) }
+  /**
+   * 2026-11-23：空返回不能静默。
+   * 以前 `_run('complete')` 把空字符串当成功往上传，上层只看到「unparsed / raw 空」，
+   * 分不清是没模型、模型回空、还是被截断——今天查了一下午才追到这儿。
+   * completeStrict 早就判了空，但判断层走的是这条普通路，所以补在这里：
+   * 一处盖住所有适配器（外配 OpenAI / 宿主 / 本地链），不用逐个补。
+   */
+  async _completeChecked(req) {
+    const out = await this._run('complete', req)
+    if (out == null || !String(out).trim()) {
+      const err = new Error('llm empty: 适配器返回空（served=' + (this.servedBy || '?')
+        + (this.fallbackWhy ? ', fallbackWhy=' + this.fallbackWhy : '') + '）')
+      err.empty = true
+      this.lastError = err.message
+      throw err
+    }
+    return out
+  }
+  /**
+   * 严格版：只用主模型，**不兜底**（2026-11-23 主人定）。
+   *
+   * 为什么：判断层拿到规则兜底那段固定的 `{"overlap":"unknown",...}` 时，
+   * 会当成「模型回了但没写全」——字段全缺、`sanitize-null`，然后白重试一次。
+   * 更坏的是它看起来像「模型失败」，掩盖了「其实根本没有模型参与」。
+   * 主模型不可用 / 熔断中 / 返回空，一律抛错，让调用方明确判「这一轮没算成」。
+   */
+  async completeStrict(req) {
+    if (!this.primary || typeof this.primary.available !== 'function' || !this.primary.available()) {
+      throw new Error('judge-strict: 主模型不可用（不兜底）')
+    }
+    // 2026-11-23：**不看熔断**。熔断是别的活（J1 三观模板连吃三次 1500）点着的，
+    // 判断层被连坐过 8 次——那 8 次都是 1 毫秒空手，压根没去调。
+    // 判断层自己走这条 strict 路，失败不计入熔断计数，也就不该受它的禁。
+    const out = await this.primary.complete(req)
+    if (out == null || !String(out).trim()) throw new Error('judge-strict: 主模型返回空（不兜底）')
+    this.failures = 0
+    this.servedBy = 'primary'
+    this.fallbackWhy = null
+    return out
+  }
   embed(texts) { return this._run('embed', texts) }
   /**
    * 通用对话：研究工具要按消息数组问模型（规划 / 抽取 / 写报告），
@@ -700,9 +740,10 @@ class HostLlmAdapter {
     if (!ctx) return false
     try { return typeof ctx.get('llm')?.stream === 'function' } catch { return false }
   }
-  async complete({ system, text, maxTokens }) {
+  async complete(req) {
+    const { system, text, maxTokens, reasoningEffort = '', stats = null } = req || {}
     const mt = Number(maxTokens)
-    return this._chat(system, text, Number.isFinite(mt) && mt > 0 ? mt : 500, 0.3)
+    return this._chat(system, text, Number.isFinite(mt) && mt > 0 ? mt : 500, 0.3, null, { reasoningEffort, stats })
   }
   async summarize(turns) {
     const list = Array.isArray(turns) ? turns : []
@@ -748,7 +789,17 @@ class HostLlmAdapter {
     if (!provider || !model) throw new Error('llm route: provider=' + provider + ' model=' + model + ' sel=' + JSON.stringify(sel || null))
     return { llm, provider, model }
   }
-  async _chat(system, text, maxTokens = 400, temperature = 0.2, history = null) {
+  /**
+   * 真正打宿主流。
+   *
+   * extra（2026-11-24 加，只认两个键）：
+   * - reasoningEffort：想要的思考档（'low' / 'medium' …）。**只从模型自己声明的档里挑**，
+   *   没声明就不传——`resolveCallConfig` 对不支持的档是直接拒，不是夹到最近的档。
+   * - stats：一个对象，调用完往里填这一次的量（思考字数 / token 用量 / 收到哪些块）。
+   *   为什么要有它：判断层判决只有 157 字节却要 5~29 秒，怀疑时间全在思考上，
+   *   可我们以前只数 text-delta，思考那块一个字都没记——「思考爆表」是推的，不是量的。
+   */
+  async _chat(system, text, maxTokens = 400, temperature = 0.2, history = null, extra = null) {
     const { llm, provider, model } = await this.route()
     // 多轮上下文：把同一段会话的前几轮也带进去（宿主模型按 messages 吃）
     const messages = []
@@ -758,37 +809,98 @@ class HostLlmAdapter {
     }
     messages.push({ role: 'user', content: [{ type: 'text', text: String(text) }] })
     const opts = { provider, model, system, messages, maxTokens, temperature }
+    const wantEffort = String((extra && extra.reasoningEffort) || '').trim()
+    const stats = extra && extra.stats && typeof extra.stats === 'object' ? extra.stats : null
     let out = ''
     let sawDelta = false
     let finishKind = ''
+    let reasoningChars = 0
+    let usage = null
+    let effortUsed = ''
+    const blocks = []
+    const fill = () => {
+      if (!stats) return
+      stats.reasoningChars = reasoningChars
+      stats.outputChars = out.length
+      stats.finish = finishKind || ''
+      stats.effort = effortUsed
+      stats.blocks = blocks.slice()
+      if (usage) stats.usage = usage
+      if (!stats.ms) stats.ms = Date.now() - t0
+    }
+    const t0 = Date.now()
     if (typeof llm.prepareCall === 'function') {
       const cfg = { provider, model, temperature, maxTokens }
-      const call = await llm.prepareCall(cfg)
+      // 档位只经 configure 选：它能拿到模型声明的 efforts，而且是「纯选择」，
+      // 不会替我们猜；模型没声明就原样返回 controls，等于不传档。
+      const pickEffort = (controls, info) => {
+        if (!wantEffort) return controls
+        const list = info && info.reasoning && Array.isArray(info.reasoning.efforts) ? info.reasoning.efforts : []
+        const ids = list.map((e) => String((e && e.id) || '')).filter(Boolean)
+        const hit = ids.find((id) => id === wantEffort)
+          || ids.find((id) => id.toLowerCase() === wantEffort.toLowerCase())
+        return hit ? { ...controls, reasoningEffort: hit } : controls
+      }
+      const call = await llm.prepareCall(cfg, undefined, pickEffort)
+      effortUsed = String((call.config && call.config.reasoningEffort) || '')
       // 用 prepareCall 返回的 config 原样回传，避免校验不一致
       const streamOpts = { ...call.config, system, messages: opts.messages }
       for await (const ch of call.stream(streamOpts)) {
         if (ch.type === 'text-delta') { out += ch.text; sawDelta = true }
-        else if (ch.type === 'block-end' && ch.block?.type === 'text' && !sawDelta) out += ch.block.text || ''
-        else if (ch.type === 'finish') {
+        else if (ch.type === 'reasoning-delta') { reasoningChars += String(ch.text || '').length }
+        else if (ch.type === 'block-start') { if (ch.blockType) blocks.push(String(ch.blockType)) }
+        else if (ch.type === 'usage') { usage = ch.usage || usage }
+        else if (ch.type === 'block-end') {
+          if (ch.block?.type === 'text' && !sawDelta) out += ch.block.text || ''
+          else if (ch.block?.type === 'reasoning') {
+            // 有的适配器只给整块，不给逐字 delta：两种都要数得到。
+            reasoningChars = Math.max(reasoningChars, String(ch.block.text || '').length)
+          }
+        } else if (ch.type === 'finish') {
           finishKind = String(ch.reason?.kind || '')
           if (ch.reason?.kind === 'error') {
             // 把原因带出来：上层只会记一句 lastError，看不见细节的话没法修
+            fill()
             throw new Error('llm finish error: ' + JSON.stringify(ch.reason).slice(0, 280))
           }
         }
       }
     } else {
-      for await (const ch of llm.stream(opts)) if (ch.type === 'text-delta') out += ch.text
+      for await (const ch of llm.stream(opts)) {
+        if (ch.type === 'text-delta') out += ch.text
+        else if (ch.type === 'reasoning-delta') reasoningChars += String(ch.text || '').length
+        else if (ch.type === 'usage') usage = ch.usage || usage
+      }
     }
+    fill()
+    // 一句话说清「这次到底想了多少」：报错里带上，修的时候不用再猜。
+    const thinkNote = '（思考 ' + reasoningChars + ' 字'
+      + (usage ? '，出 ' + (usage.outputTokens ?? '?') + ' token'
+        + (usage.reasoningTokens != null ? '（其中思考 ' + usage.reasoningTokens + '）' : '') : '')
+      + (effortUsed ? '，档 ' + effortUsed : '') + '）'
     // 2026-11-22：额度用光（length）又没吐字，不能再当成「成功但空」。
     // 以前它返回空串，上层以为是「宿主回了空」去重试一次，白等 8 秒。
-    if (!out.trim() && finishKind === 'length') {
-      const err = new Error('llm truncated: maxTokens=' + maxTokens + ' 用光，正文为空')
+    // 2026-11-23：有的通道把「额度用光」叫 `max-tokens` 而不是 `length`——今天真库抓到的就是它
+    // （`finish=max-tokens sawDelta=no maxTokens=2000`）。只认 length 会漏，所以两个名字都算。
+    if (!out.trim() && (finishKind === 'length' || finishKind === 'max-tokens')) {
+      const err = new Error('llm truncated: maxTokens=' + maxTokens + ' 用光，正文为空（finish=' + finishKind + '）' + thinkNote)
       err.truncated = true
+      err.finishKind = finishKind
+      throw err
+    }
+    // 2026-11-23：空返回不能静默。以前这里直接 return ''，上层只能记「unparsed、raw 空」，
+    // 分不清是流被掐断、模型真空回、还是别的原因——今天查了一下午才到这一步。
+    // 现在带结束原因一起抛，诊断里能看出是哪种；也不再把「没算成」伪装成「算成了空」。
+    if (!out.trim()) {
+      const err = new Error('llm empty: finish=' + (finishKind || '(没收到)')
+        + ' sawDelta=' + (sawDelta ? 'yes' : 'no') + ' maxTokens=' + maxTokens + thinkNote)
+      err.empty = true
+      err.finishKind = finishKind || ''
       throw err
     }
     return out
   }
+
   async appraise(text, formula = 'v1', context = '') {
     const user = contextForUser(context, text)
     if (String(formula) === 'concern') {

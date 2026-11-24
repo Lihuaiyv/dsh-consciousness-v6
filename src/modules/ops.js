@@ -23,10 +23,27 @@ import { expireStaleProactive } from './proactive.js'
  */
 export function auditStore(db, opt = {}) {
   const n = (sql) => { try { return Number(db.prepare(sql).get().n || 0) } catch { return -1 } }
+  /**
+   * 2026-11-22 主人查出来的根因：fts5 的 id 是 UNINDEXED，`WHERE f.id = m.id` 点查不了，
+   * 查询计划是「外层一行、内层整表扫」。memory_items 8255 行 × memory_fts 5.2MB ≈ 43GB，
+   * 主线程停 34 秒、读盘 1.4GB/s，界面直接卡死。raw_fts 更狠：23187 行 × 59MB ≈ 1.4TB。
+   *
+   * 改成：两边各取一遍 id 集合，在 JS 里做差集。代价从 n 遍整表扫降到 2 遍。
+   */
+  const missing = (idsSql, ftsTable) => {
+    try {
+      const want = db.prepare(idsSql).all().map((r) => String(r.id))
+      if (!want.length) return 0
+      const have = new Set(db.prepare('SELECT id FROM ' + ftsTable).all().map((r) => String(r.id)))
+      let miss = 0
+      for (const id of want) if (!have.has(id)) miss++
+      return miss
+    } catch { return -1 }
+  }
   const checks = [
-    { name: 'memory_fts', bad: n("SELECT COUNT(*) n FROM memory_items m WHERE m.status='active' AND NOT EXISTS(SELECT 1 FROM memory_fts f WHERE f.id=m.id)") },
-    { name: 'raw_fts', bad: n("SELECT COUNT(*) n FROM fragments r WHERE NOT EXISTS(SELECT 1 FROM raw_fts f WHERE f.id=r.id)") },
-    { name: 'fact_fts', bad: n("SELECT COUNT(*) n FROM fact_archive f WHERE NOT EXISTS(SELECT 1 FROM fact_fts x WHERE x.id=f.id)") },
+    { name: 'memory_fts', bad: missing("SELECT id FROM memory_items WHERE status='active'", 'memory_fts') },
+    { name: 'raw_fts', bad: missing('SELECT id FROM fragments', 'raw_fts') },
+    { name: 'fact_fts', bad: missing('SELECT id FROM fact_archive', 'fact_fts') },
     { name: 'memory_links', bad: n("SELECT COUNT(*) n FROM memory_links l WHERE NOT EXISTS(SELECT 1 FROM memory_items m WHERE m.id=l.from_id) OR NOT EXISTS(SELECT 1 FROM memory_items m WHERE m.id=l.to_id)") },
     { name: 'feel_refs', bad: n(`SELECT (
         (SELECT COUNT(*) FROM memory_items m WHERE m.feel_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM affect_feel f WHERE f.id=m.feel_id))

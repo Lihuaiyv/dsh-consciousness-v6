@@ -43,6 +43,7 @@ import path from 'node:path'
 // 注意：这里**不 import kernel.js**。kernel.js 会 import model.js，model.js 又要用本模块，
 // 静态引入会成环（拿到的可能是半初始化的绑定）。所以通道不碰参数库，参数就是写死的这份。
 import { dataDir, repoRoot } from '../paths.js'
+import { compareQueued, BLOCK, blockOf, blockOfTask } from './queue_policy.js'
 
 /* ---------------- 写死的参数（不许改，改了要申请） ---------------- */
 
@@ -92,6 +93,24 @@ const NO_WINDOW = 0x08000000 // CREATE_NO_WINDOW
 const als = new AsyncLocalStorage()
 const qItems = []
 const qRecent = []
+/* 2026-11-22 主人：本地队列的完成记录也要跨重启——和宿主那张表一个道理。
+   它原来只在内存里，DSH 一重启端口变、看板那两行就空。 */
+let localDb = null
+let localInserts = 0
+export function setLocalDb(db) { localDb = db || null }
+/** 把历史灌回去（启动时从表里读）。 */
+export function setLocalRecent(list) {
+  if (!Array.isArray(list)) return
+  qRecent.length = 0
+  for (const x of list.slice(-40)) {
+    if (!x || !x.at || !x.label) continue
+    qRecent.push({
+      at: String(x.at), slot: String(x.slot || 'chat'), lane: String(x.lane || 'normal'),
+      label: String(x.label), priority: Number(x.priority) || 0,
+      waitedMs: 0, ms: Number(x.ms) || 0, ok: x.ok == null ? true : !!Number(x.ok), reentrant: false, error: '',
+    })
+  }
+}
 const Q_RECENT_MAX = 40
 /**
  * 两个槽，不是一个。
@@ -106,6 +125,27 @@ const SLOTS = Object.freeze({ chat: 1, embed: 1 })
 const runningBySlot = { chat: 0, embed: 0 }
 let manualHold = 0
 let seq = 0
+
+/* 2026-11-22 主人：看板别每 1.5 秒来问一次，改成「变了才说」。
+   入队 / 开始 / 完成三处调 notifyChange，120ms 内合并一次，推一份纯内存快照出去。
+   没人在看的时候（没有订阅者）它什么都不做，零开销。 */
+const changeListeners = new Set()
+let changeTimer = null
+export function onGatewayChange(fn) {
+  if (typeof fn !== 'function') return () => {}
+  changeListeners.add(fn)
+  return () => { changeListeners.delete(fn) }
+}
+function notifyChange() {
+  if (!changeListeners.size) return
+  // 2026-11-22：原来合并 120ms，结果「开始」和「完成」被压成一条，只发出跑完那版——
+  // 面板上槽位永远是空的。现在每次变化各推各的；一次任务最多三条，流量可忽略。
+  let snap = null
+  try { snap = quickStatus() } catch { return }
+  for (const fn of changeListeners) {
+    try { fn(snap) } catch { /* 一个订阅者出错不影响别人 */ }
+  }
+}
 
 const bus = { lastError: '', lastErrorAt: '', swaps: 0, swapModel: '' }
 
@@ -133,6 +173,18 @@ function record(it, ok, err) {
   })
   if (!ok) { bus.lastError = String((err && err.message) || err || '').slice(0, 200); bus.lastErrorAt = new Date().toISOString() }
   if (qRecent.length > Q_RECENT_MAX) qRecent.splice(0, qRecent.length - Q_RECENT_MAX)
+  // 落一行到表里（写失败不影响队列）：看板重启后才不会空。
+  try {
+    if (localDb) {
+      const last = qRecent[qRecent.length - 1]
+      localDb.prepare('INSERT INTO local_calls (at, slot, label, ms, ok) VALUES (?, ?, ?, ?, ?)')
+        .run(String(last.at), String(last.slot || 'chat'), String(last.label || '-').slice(0, 40), Number(last.ms) || 0, last.ok ? 1 : 0)
+      // 这张表也只给面板看：每写二十条清一次，留最近一百二十条。
+      if (++localInserts % 20 === 0) {
+        localDb.prepare('DELETE FROM local_calls WHERE id NOT IN (SELECT id FROM local_calls ORDER BY id DESC LIMIT 120)').run()
+      }
+    }
+  } catch { /* 写表失败不影响队列 */ }
 }
 
 function pickNext(slot) {
@@ -140,8 +192,8 @@ function pickNext(slot) {
   for (let i = 0; i < qItems.length; i++) {
     const it = qItems[i]
     if (it.started || it.slot !== slot) continue
-    if (best < 0 || it.priority < qItems[best].priority
-      || (it.priority === qItems[best].priority && it.seq < qItems[best].seq)) best = i
+    // 2026-11-22 三块排队：块间可插队、块内先来后到。规则只在 queue_policy.js 里定义。
+    if (best < 0 || compareQueued(it, qItems[best]) < 0) best = i
   }
   return best
 }
@@ -154,6 +206,7 @@ function settle(it, ok, value, err) {
   if (it.started) runningBySlot[it.slot] = Math.max(0, runningBySlot[it.slot] - 1)
   it.started = true
   record(it, ok, err)
+  notifyChange()
   if (ok) it.resolve(value)
   else it.reject(err || new Error('local gateway task failed'))
   pump()
@@ -171,6 +224,7 @@ function pump() {
       runningBySlot[slot]++
       if (it.waitTimer) { clearTimeout(it.waitTimer); it.waitTimer = null }
       it.startedAt = Date.now()
+      notifyChange()
       const budget = Math.max(1000, it.timeoutMs - (it.startedAt - it.enqueuedAt))
       const ac = new AbortController()
       let killed = false
@@ -212,6 +266,9 @@ export function enqueue(db, { lane = 'normal', label = '', priority = PRIORITY.n
       lane: laneOf,
       slot: slotOf(laneOf),
       label: labelOf,
+      // 2026-11-22：块在入队时定下来。先看标签里明确写的前缀，再看 lane——
+      // 不能拿任意标签去猜（实验里 label 写成 "demo-A" 会被判成聊天块）。
+      block: blockOfTask(labelOf, laneOf),
       priority: Math.max(0, Number(priority) || 0),
       timeoutMs: wait,
       enqueuedAt: Date.now(),
@@ -227,6 +284,7 @@ export function enqueue(db, { lane = 'normal', label = '', priority = PRIORITY.n
     }, wait)
     if (it.waitTimer.unref) it.waitTimer.unref()
     qItems.push(it)
+    notifyChange()
     pump()
   })
 }
@@ -656,12 +714,14 @@ export function quickStatus() {
     queued: qItems.filter((x) => !x.started).length,
     runningItems: qItems.filter((x) => x.started).map((x) => ({
       slot: x.slot, model: modelOf(x), lane: x.lane, label: x.label, priority: x.priority,
+      block: x.block != null ? x.block : blockOf(x.label || x.lane || x.priority),
       runningMs: now - (x.startedAt || now), timeoutMs: x.timeoutMs,
     })),
     queue: qItems.filter((x) => !x.started)
-      .sort((a, b) => a.priority - b.priority || a.seq - b.seq)
+      .sort(compareQueued)
       .map((x) => ({
         slot: x.slot, model: modelOf(x), lane: x.lane, label: x.label, priority: x.priority,
+        block: x.block != null ? x.block : blockOf(x.label || x.lane || x.priority),
         waitedMs: now - x.enqueuedAt, timeoutMs: x.timeoutMs,
       })),
     swapModel: bus.swapModel,
@@ -702,6 +762,6 @@ export function gatewayEmbedAdapter() {
     embedOnly: true,
     available() { return true },
     capabilities() { return { embed: true } },
-    async embed(texts) { return gatewayEmbed(null, texts, { label: 'vector' }) },
+    async embed(texts) { return gatewayEmbed(null, texts, { label: 'embed:vector' }) },
   }
 }

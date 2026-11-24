@@ -2521,6 +2521,13 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-paths.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 120000 })
   check('路径闸：没有写死的绝对路径', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
+// 情绪链开关的两条腿都要在（2026-11-24 踩过：删注释时把 else 一起删了，开关关着就静默不跑）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const src = fs.readFileSync(path.join(repoRoot, 'index.js'), 'utf8')
+  check('情绪链：开关开走反射、关走判官（else 没被删）',
+    /if \(splitOn\) \{?[\s\S]{0,2000}?\n\s*\}?\s*else r = await appraiseTurnNow\(/.test(src))
+}
 // v2.1 P1.5：水位闸锁——事件联想只收「待联想」，台面不收；情绪不单独触发
 {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -2619,6 +2626,12 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-host-queue.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('宿主后台排队：并发上限/同 agent 保序/排队超时/快照', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+// 排队分块门禁（2026-11-22）：每个模型调用都必须声明属于哪一块（聊天/实验/夜间）
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-queue-blocks.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('排队分块：每个模型调用都声明了块（chat/exp/night）', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
 // 精修排队（2026-11-17）：同一 agent 两轮同时来，排队不丢、顺序不乱
 {
@@ -2783,6 +2796,48 @@ db.prepare('UPDATE drive_state SET unlocked=?, tokens=?, band=? WHERE agent_id=?
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
   const r = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'check-event-candidate-v2.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
   check('候选边：同会话相邻 / 跨会话不连 / 同专名跨天 / 接续挂着 / 泛词挡', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 找核影子（2026-11-23）：接在「一轮的账」上，网页 / QQ / 微信 / /chat 一起覆盖；开关先判、失败不连累记账
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'shadow-frame-channel.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('找核影子：所有通道都走一轮的账（off 不调 / 抛错不连累）', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 分句（2026-11-23）：纯代码第一步——分号不切、纯符号不成句、markdown 不打断
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'frame-sentences.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('分句：纯代码第一步（分号不切 / 纯符号不成句）', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 链引擎（2026-11-23）：顺序 / when / stop / 错误策略 / 防重入 / 块号校验
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'chain.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('链引擎：顺序 / when / stop / 错误策略 / 防重入 / 块号校验', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 找核写链（2026-11-23）：临时库 + mock 模型，模拟正常/单句/提件空/漏句/写失败/重放/并发
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'frame-chain.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('找核写链：正常/单句/提件空/漏句/写失败/重放/并发', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 找核读链（2026-11-23）：临时库造帧，读成一行；去重/跨轮/会话过滤/截断
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'frame-read.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('找核读链：读成一行（去重/跨轮/会话过滤/截断）', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
+}
+
+// 宿主调用「想了多少」（2026-11-24）：思考字数/用量/档位可测；没声明的档不硬塞；空正文必抛
+{
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'test', 'host-reasoning-stats.test.mjs')], { cwd: repoRoot, encoding: 'utf8', timeout: 60000 })
+  check('宿主调用记账：思考字数/用量/档位 + 空正文必抛', r.status === 0, String(r.stderr || r.stdout || '').slice(0, 300))
 }
 
 console.log(`\n通过 ${pass.length} / ${pass.length + fail.length}`)

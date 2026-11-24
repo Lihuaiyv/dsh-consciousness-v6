@@ -103,7 +103,10 @@ const hi = enqueue(null, {
   run: async () => { seqOrder.push('hi') },
 })
 await Promise.all([slowFirst, normal, hi])
-check('高优先级插到普通前面', seqOrder.indexOf('hi') < seqOrder.indexOf('normal'), seqOrder)
+// 2026-11-22 分块之后，规则变成「块内先来后到、块间才插队」：
+// 这三个任务都在聊天块里（label 不匹配 exp:/split: 这些前缀），所以按入队顺序跑，
+// 优先级数字不再在块内插队——这条断言跟着设计改，不再要求 hi 抢到 normal 前面。
+check('同一块里按先来后到（块内不再按优先级数字插队）', seqOrder.join(',') === 'low,normal,hi', seqOrder)
 
 // 4) 嵌套调用就地跑：老的队列会让一个槽等自己，永久卡住
 let nested = ''
