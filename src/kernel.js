@@ -90,6 +90,8 @@ export const PARAMS = {
   'motivation.on': ['C4', 'off'],
   // 强制单独一口：force=off 时只提醒和记账，不用 tool_choice 拦。
   'motivation.force': ['C4', 'off'],
+  // 收尾清单：声明收口后按顺序要点名做的工具，JSON 数组。默认只有 emotion 一项。
+  'motivation.close.list': ['C4', '["emotion"]'],
   // 收口闸单独一口：close.gate=off 时不因「待办清空」触发 emotion。
   'motivation.close.gate': ['C4', 'off'],
   // 2026-11-24 主人：情绪整块总闸。off = preStep 不判、不发反射、不收尾记账（情绪先不管）。

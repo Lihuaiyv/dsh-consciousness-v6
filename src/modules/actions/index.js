@@ -20,7 +20,7 @@ import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
 import { ensureTable as ensureFrameTable } from '../frame_shadow.js'
 import { fireEmotion, closeEmotion } from '../affect_v4_shadow.js'
-import { submitPlan, currentMotivationTurn, latestPlan, logCheck } from '../motivation.js'
+import { submitPlan, currentMotivationTurn, latestPlan, logCheck, logToolUsed, pendingChecklist } from '../motivation.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, readHeartNotes, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
@@ -326,17 +326,33 @@ function withMotivationGate(tool) {
         const a = aidOfSession(exec) || aid()
         if (!d || !a) return run(args, exec)
         if (String(getParam(d, a, 'motivation.on') || 'off') !== 'on') return run(args, exec)
-        if (tool.name === 'plan_note' || tool.name === 'feel') return run(args, exec)
         const ctx = currentMotivationTurn(a)
-        if (!ctx) return run(args, exec)
-        if (latestPlan(d, a, ctx.turnId)) return run(args, exec)
-        try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'blocked:' + tool.name }) } catch { /* 记账失败不影响拒绝 */ }
-        return { ok: false, blocked: 'plan-first', reason: '这一轮还没交动机：先调 plan_note 写一句动机和台上至多三条待办，再回来干活。' }
-      } catch { return run(args, exec) }
+        const row = ctx ? latestPlan(d, a, ctx.turnId) : null
+        // 1) 这一轮还没交：除了 plan_note / feel，一律不许动手。
+        if (ctx && !row && tool.name !== 'plan_note' && tool.name !== 'feel') {
+          try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'blocked:' + tool.name }) } catch { /* ignore */ }
+          return { ok: false, blocked: 'plan-first', reason: '这一轮还没交动机：先调 plan_note 写一句动机和台上几条待办，再回来干活。' }
+        }
+        // 2) 已经声明收口：只放行清单上还没做的那一项（和 plan_note/feel），其余对外动作全拦。
+        if (ctx && row && Number(row.closed) === 1) {
+          const pending = pendingChecklist(d, a, ctx.turnId)
+          const allowed = new Set(['plan_note', 'feel'])
+          if (pending) allowed.add(pending)
+          if (!allowed.has(tool.name)) {
+            try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'close-pending:' + tool.name }) } catch { /* ignore */ }
+            return { ok: false, blocked: 'close-pending', reason: '已声明收口：先把清单上还没做的「' + (pending || '?') + '」做完，再动别的。' }
+          }
+        }
+      } catch { /* 闸坏了就放行，不挡正事 */ }
+      const out = await run(args, exec)
+      try {
+        const d2 = db(); const a2 = aidOfSession(exec) || aid(); const c2 = a2 ? currentMotivationTurn(a2) : null
+        if (d2 && a2) logToolUsed(d2, a2, { tool: tool.name, turnId: c2 ? c2.turnId : null })
+      } catch { /* ignore */ }
+      return out
     },
   }
 }
-
 export function createActionTools({ getDb, getAgentId, getAgentIdForSession, getWeb, getSpeech, getModel, gateSearch, getLocalStatus, log } = {}) {
   const db = () => getDb()
   const aid = () => getAgentId()
@@ -786,6 +802,10 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
       parameters: schema({
         by: { type: 'string', enum: ['me', 'other', 'world'], description: '兜底发的时候用：这股劲是谁弄出来的' },
         to: { type: 'string', enum: ['me', 'other', 'world', 'none'], description: '兜底发的时候用：这股劲冲着谁' },
+        // 2026-11-24 主人定：落树并进收口，不再单独开一件工具——省一次轮内调用。
+        what: str('这一轮承重的那一件，≤12 字；接话轮留空'),
+        sat: str('可选：围着它的补话，最多两句，用「、」隔开'),
+        link: { type: 'string', enum: ['continue', 'new'], description: '接着上一件=continue，新开=new' },
       }),
       output: {
         schema: { type: 'object', properties: { ok: { type: 'boolean' }, reason: { type: 'string' }, waitedMs: { type: 'number' } } },
@@ -797,7 +817,12 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
         const d = db()
         const a = aidOfSession(exec) || aid()
         if (!d || !a) return { ok: false, reason: 'no_db' }
-        return closeEmotion(d, { aid: a, by: args && args.by, to: args && args.to })
+        const sid = exec && exec.agent && exec.agent.id ? String(exec.agent.id) : ''
+        // 先落树，再结情绪：两件事一次调用做完（2026-11-24 主人定）
+        let framed = null
+        try { framed = writeSelfFrame(d, a, sid, args || {}) } catch (e) { framed = { ok: false, reason: String((e && e.message) || e).slice(0, 80) } }
+        const r = await closeEmotion(d, { aid: a, by: args && args.by, to: args && args.to })
+        return framed && framed.ok ? { ...r, frame: framed.core } : r
       },
     },
     {
@@ -922,12 +947,43 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
  *   三、外面的手：看看外面 → 研究 → 留个话 → 公开说一句
  *   四、收尾：先结算情绪（settle）→ 再落手（发出去）；act_send 是全表最后一件
  */
+/**
+ * 落树（2026-11-24 并进收口）：这一轮在讲哪一件 + 补话 + 接着谁。
+ * 内部串行、零模型调用；开关 frame.self，默认关。
+ */
+function writeSelfFrame(d, a, sid, args) {
+  try { if (String(getFlag(d, 'frame.self') || 'off') !== 'on') return { ok: false, reason: 'off' } } catch { return { ok: false, reason: 'off' } }
+  const what = String((args && args.what) || '').replace(/\s+/g, ' ').trim().slice(0, 12)
+  const sat = String((args && args.sat) || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+  const link = String((args && args.link) || 'continue')
+  ensureFrameTable(d)
+  const at = new Date().toISOString()
+  const prev = d.prepare("SELECT id, core FROM frame_shadow WHERE role='nucleus' ORDER BY rowid DESC LIMIT 1").get()
+  if (!what) {
+    d.prepare('INSERT INTO events VALUES(?,?,?,?,?)').run(nid('evt_'), a, 'frame.self.empty', JSON.stringify({ at, session: sid || null }), at)
+    return { ok: true, core: '' }
+  }
+  if (prev && String(prev.core || '').trim() === what) {
+    d.prepare('UPDATE frame_shadow SET sat=? WHERE id=?').run(sat || null, prev.id)
+    return { ok: true, core: what, reused: true }
+  }
+  const tid = 'self_' + (sid || a) + '_' + Date.now().toString(36)
+  const id = tid + '-A'
+  d.prepare('INSERT OR REPLACE INTO frame_shadow (id,turn_id,seg,created_at,core,core_goal,sents,text,under_id,role,head_id,rel,sat,plan) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(id, tid, id, at, what, '', null, null, null, 'nucleus', null, null, sat || null, JSON.stringify({ self: true }))
+  if (link !== 'new' && prev && prev.id) {
+    const eid = 'fe_' + (id + '_' + prev.id).replace(/[^A-Za-z0-9]/g, '_')
+    d.prepare('INSERT OR REPLACE INTO frame_edges (id,from_id,to_id,rel,created_at) VALUES (?,?,?,?,?)').run(eid, id, prev.id, 'continue', at)
+  }
+  return { ok: true, core: what }
+}
+
 const TOOL_ORDER = [
   'feel',
   'plan_note',
   // 判断层发出去（不等）：越早越好，它在后台跑
   'emotion',
-  'frame',
+
   'memory_search',
   'heart_note',
   'local_llm_status',

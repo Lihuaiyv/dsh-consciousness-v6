@@ -79,11 +79,13 @@ function withMotivationNudge(d, text) {
     let items = []
     if (row) { try { items = JSON.parse(row.items_json || '[]') } catch { items = [] } }
     const allDone = row ? (items.length === 0 || items.every((it) => it.done)) : false
-    const closing = row && /收口|到这|收尾/.test(String(row.note || ''))
-    // 只有两种时候出声：还没交、或已经可以收口。其余一律不出声（落后只记库、进页面，不进提示词）。
+    // 三种时候出声：没交、已声明收口但清单还差一项、台上清空还没声明。其余一律不出声。
     let line = ''
     if (!row) line = '\n\n## 本轮还没交动机\n这一轮你还没交 plan_note：第一次思考结束时，先调它写一句动机（为什么值得做、挂在哪）和台上几条待办，再往下干活。'
-    else if (allDone || closing) line = '\n\n## 本轮可以收口\n台上已经清空（或你已声明收口）：按收尾清单去做第一条，再开口。'
+    else if (Number(row.closed) === 1) {
+      const pending = pendingChecklist(d, aid, ctx.turnId)
+      if (pending) line = '\n\n## 收口清单还差一项\n已声明收口，清单上还没做的是「' + pending + '」：先去做它，再开口。'
+    } else if (allDone) line = '\n\n## 台上清空了\n台上已经没有待办：可以声明收口（plan_note 带 close:true），然后按清单做第一项。'
     return text + line
   } catch { return text }
 }

@@ -105,10 +105,25 @@ export function recentPlanEvents(db, limit = 40) {
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
-﻿export function renderPlanPage(db) {
+/** 页上的钟。库存的是 UTC，这里固定换成北京时间，不跟机器时区走。 */
+export function formatPlanTime(t) {
+  const raw = String(t || '').trim()
+  if (!raw) return ''
+  const d = new Date(raw)
+  if (Number.isNaN(+d)) return raw.replace('T', ' ').slice(0, 16)
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(d)
+  const g = (type) => parts.find((p) => p.type === type)?.value || ''
+  return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute')
+}
+
+export function renderPlanPage(db) {
   const rows = recentPlanRows(db, 40)
   const evs = recentPlanEvents(db, 80)
-  const fmt = (t) => String(t || '').replace('T', ' ').slice(0, 16)
+  const fmt = formatPlanTime
   const esc = (x) => String(x == null ? '' : x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
   // 1) 每轮的提交（最新一版代表这一轮）
@@ -182,7 +197,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
     + 'td.st{width:44px;white-space:nowrap;color:var(--muted)}tr.ok td.st{color:var(--ok)}'
     + 'td.id{width:40px;text-align:right;color:var(--muted);font-size:11px}td.why{color:var(--muted);font-size:12.5px}'
     + '.note{font-size:13px;color:var(--muted);margin-top:8px}.empty{color:var(--muted);padding:6px 0;font-size:14px}'
-    + '</style><div class="wrap"><h1>动机与计划</h1><p class="sub">每 2 秒自刷 · 提交与检查都在同一条时间线上（虚框 = 那一轮没交）</p>'
+    + '</style><div class="wrap"><h1>动机与计划</h1><p class="sub">每 2 秒自刷 · 时间是北京时间 · 提交与检查都在同一条时间线上（虚框 = 那一轮没交）</p>'
     + (html || '<div class="card"><div class="empty">还没有任何记录。</div></div>')
     + '</div></html>'
 }
@@ -325,3 +340,31 @@ export function motivationTick(db, agentId, { step = 0, turnId = null } = {}) {
  * 只读页 /dsh-consciousness/plan：给你看的窗口，2 秒自刷。
  * 每轮一张卡：动机 / 计划（台上）/ 台下 / 为什么改 / 状态。编号缩小，流水用中文。
  */
+
+/** 记一次工具调用（只记名字和轮次，给收口清单判断“这条做过没有”）。 */
+export function logToolUsed(db, agentId, { tool = '', turnId = null } = {}) {
+  writeEvent(db, agentId, 'tool.used', { tool: String(tool || '').slice(0, 40), turnId, at: now() })
+}
+
+/** 收尾清单：从参数读，坏了就用默认 ['emotion']。 */
+export function checklistOf(db, agentId) {
+  try {
+    const row = db.prepare("SELECT value FROM agent_params WHERE agent_id=? AND key='motivation.close.list'").get(agentId)
+    const raw = row ? String(row.value || '').replace(/^"|"$/g, '') : ''
+    const arr = JSON.parse(raw)
+    if (Array.isArray(arr) && arr.length) return arr.map((x) => String(x)).slice(0, 10)
+  } catch { /* 读不出来用默认 */ }
+  return ['emotion']
+}
+
+/** 这一轮清单上第一条还没做过的；都做完了返回 null。 */
+export function pendingChecklist(db, agentId, turnId) {
+  try {
+    const list = checklistOf(db, agentId)
+    const used = new Set(db.prepare("SELECT payload FROM events WHERE type='tool.used' AND agent_id=?").all(agentId)
+      .map((r) => { try { return JSON.parse(r.payload) } catch { return {} } })
+      .filter((p) => !turnId || String(p.turnId) === String(turnId))
+      .map((p) => String(p.tool || '')))
+    return list.find((t) => !used.has(t)) || null
+  } catch { return null }
+}
