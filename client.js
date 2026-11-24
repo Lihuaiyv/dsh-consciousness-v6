@@ -9499,14 +9499,86 @@ window.__ModuleLoader__.load({
     }
     // 把机器名翻成人话
     const MB_TASK = {
-      'chat': '普通调用', 'affect:judge': '情绪判断', 'affect:summary': '情绪摘要',
-      'affect:summary:retry': '情绪摘要(重试)', 'affect:topic': '情绪话题',
+      // 2026-11-22 主人：名字要能一眼看出在干什么，别用「普通调用」「向量」这种术语。
+      'chat': '回一句', 'affect:pair': '两句摘要',
+      'affect:summary': '轮次总结', 'affect:summary:retry': '轮次总结(重试)',
+      'affect:judge': '情绪判断', 'affect:topic': '事帧',
+      'affect:frame': '这一帧', 'affect:frame2': '这一帧',
       'split:work': '切事摘要', 'split:daily': '切事兜底', 'cut-v4': '切事',
+      'split': '切事', 'nightly': '夜间整理', 'diary': '写日记', 'batch': '批量整理', 'warm': '预热',
       'warm:chat': '预热14B', 'warm:embed': '预热语义',
-      'causal:main': '判边', 'causal:judge': '判边判断', 'vector': '向量',
+      'causal:main': '理线索', 'causal:judge': '理线索判断',
+      'vector': '翻记忆', 'embed:vector': '翻记忆', 'embed': '翻记忆',
       'exp': '实验', 'exp-judge': '实验判官', 'judge:frame': '帧判官', 'judge:frame2': '帧判官',
     }
     const MB_TIER = { 1: '聊天', 2: '向量', 3: '实验', 5: '切事', 6: '普通', 7: '批量' }
+    // 三块是一条队列里的三段，用实心色带区分：聊天白 / 实验紫 / 夜间整理黑。
+    const MB_BLOCK = [
+      null,
+      { name: '聊天', bg: '#ffffff', fg: '#1f2328', border: '#d0d7de', chipBg: 'rgba(0,0,0,0.07)' },
+      { name: '实验', bg: '#a371f7', fg: '#ffffff', border: '#8b5cf6', chipBg: 'rgba(255,255,255,0.22)' },
+      { name: '夜间整理', bg: '#161b22', fg: '#e6edf3', border: '#30363d', chipBg: 'rgba(255,255,255,0.13)' },
+    ]
+    // 任务名 → 属于哪块（和 queue_policy.blockOfTask 一个口径，只用于给完成残留上色）
+    const blockOfLabel = (l) => {
+      const s = String(l || '')
+      if (/^exp[:.]|^experiment/i.test(s)) return 2
+      if (/^split|^nightly|^batch|^diary|^整理|^切事|^批量/i.test(s)) return 3
+      return 1
+    }
+    // 2026-11-22 主人：胶囊自己是竖的（名字在上、时长在下），但一排横着往右推。
+    const doneChip = (key, label, ms) => h('div', {
+      key,
+      style: {
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+        padding: '3px 7px', borderRadius: 8, border: '1px solid ' + MB_C.line,
+        fontSize: 10, color: MB_C.dim, opacity: 0.72, flex: '0 0 auto', whiteSpace: 'nowrap',
+      },
+    }, [
+      h('span', { key: 'l2' }, mbTask(label || '')),
+      h('span', { key: 'm', style: { fontVariantNumeric: 'tabular-nums', opacity: 0.85 } }, mbSec(ms)),
+    ])
+    // 2026-11-22 审查确认：g.host.recent 和 hostLog 是超集关系，直接拼会让每条出现两次，
+    // slice(-10) 就只拿到 5 条不同记录（每条两份），看着像「只显示几条」。
+    // 合并时按 at|label 去重，再按时间排好（旧→新）。
+    const mergeHostDone = (host, log) => {
+      const out = []
+      const seen = new Set()
+      for (const x of ((host && host.recent) || []).concat(log || [])) {
+        if (!x || !x.at) continue
+        const k = x.at + '|' + (x.label || '')
+        if (seen.has(k)) continue
+        seen.add(k)
+        out.push(x)
+      }
+      return out.sort((a, b) => String(a.at).localeCompare(String(b.at)))
+    }
+    const laneBox = (key, strong, sub, right, chips) => h('div', { key, style: { marginTop: 10 } }, [
+      h('div', { key: 'h', style: { display: 'flex', alignItems: 'baseline', gap: 6, minHeight: 16 } }, [
+        h('span', { key: 's', style: { fontSize: 12, fontWeight: 600, color: MB_C.acc, flex: '0 0 auto', whiteSpace: 'nowrap' } }, strong),
+        h('span', { key: 't', style: { fontSize: 10.5, color: MB_C.dim, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, sub),
+        h('span', { key: 'r', style: { fontSize: 10.5, color: MB_C.dim, whiteSpace: 'nowrap', marginLeft: 'auto' } }, right),
+      ]),
+      h('div', { key: 'row', style: { display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 4, minHeight: 18, alignItems: 'flex-start' } }, chips),
+    ])
+    // 2026-11-22 主人：直接照宿主的源代码搬——三块都调这一个函数，只把「队列快照」和「完成记录」传进去。
+    // 原来宿主那段怎么处理没数据、怎么取最近三条、怎么画灰胶囊，全都在这里，一样不改。
+    const modelBlock = (key, strong, sub, gw, doneList) => {
+      const hr = Number(gw && gw.running) || 0
+      const hq = Number(gw && gw.queued) || 0
+      // 2026-11-22 主人：竖着排——最新的在最左边，旧的往右推，到右边界被裁掉。
+      // 原来只留四条：容器里永远四个元素，新来的只能把某一格内容换掉，看着像「替换」。
+      // 现在多留几条让总宽溢出，容器裁掉右边，才是「挤出去」。
+      const done = (doneList || []).slice(-10).reverse()
+      const noData = !gw
+      const chips = noData
+        ? h('span', { key: 'nd', style: { fontSize: 10, color: MB_C.dim, opacity: 0.55 } }, '事件流还没带过来，等下一次推送')
+        : (done.length
+          ? h('div', { key: 'line', style: { display: 'flex', flexDirection: 'row', gap: 4, overflow: 'hidden', width: '100%' } },
+            done.map((x, i) => doneChip(key + '-d-' + (x.at || (i + '-' + (x.label || ''))), x.label || '', x.ms)))
+          : h('span', { key: 'e', style: { fontSize: 10, color: MB_C.dim, opacity: 0.55 } }, '空闲（还没调用过）'))
+      return laneBox(key, strong, sub, noData ? '没拿到' : ('在跑 ' + hr + ' · 在排 ' + hq), chips)
+    }
     const mbTask = (label) => MB_TASK[label] || String(label || '调用').replace(/^affect:/, '情绪:')
     const mbModel = (name) => String(name || '')
       .replace('qwen2.5:14b-instruct', '14B').replace('qwen3-embedding:0.6b', '语义')
@@ -9536,6 +9608,27 @@ window.__ModuleLoader__.load({
       // 进程和显存要点「看进程」才去拉 /local/live，拉完停住，不自动轮询。
       const [okAt, setOkAt] = useState(0)
       const [procsState, setProcsState] = useState(null)
+      // 2026-11-22：记下最后一次收到推送的时刻。推送断了要能看见，不能靠轮询假装还在。
+      const [lastPushAt, setLastPushAt] = useState(0)
+      // 2026-11-22 主人：宿主最近记录只存在插件内存里，进程一重启就清空，看着像「只跑了一次」。
+      // 前端自己留一份到本地存储，重启后还认，能看到更长的历史。
+      const [hostLog, setHostLog] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('dsh.hostLog') || '[]').slice(-30) } catch { return [] }
+      })
+      useEffect(() => {
+        // 注意：宿主快照在 data.gateway.host 里，不是 data.host（这里以前写错过，所以本地那份一直没存进去）。
+        const gw = data && data.gateway
+        const hr = gw && gw.host && Array.isArray(gw.host.recent) ? gw.host.recent : null
+        if (!hr || !hr.length) return
+        setHostLog((old) => {
+          const seen = new Set(old.map((x) => x.at + '|' + (x.label || '')))
+          const add = hr.filter((x) => x && !seen.has(x.at + '|' + (x.label || '')))
+          if (!add.length) return old
+          const next = [...old, ...add].slice(-30)
+          try { localStorage.setItem('dsh.hostLog', JSON.stringify(next)) } catch { /* 存不下就只在内存 */ }
+          return next
+        })
+      }, [data])
 
       useEffect(() => {
         let alive = true
@@ -9545,7 +9638,11 @@ window.__ModuleLoader__.load({
           try {
             const g = await call('POST', '/local/status', {})
             if (!alive) return
-            setData({ gateway: g })
+            // 2026-11-22 主人：宿主记录一旦拿到就不能丢——/local/status 和 /local/live 这两份快照
+            // 里没有宿主队列。新快照没带，就沿用上一次的。
+            setData((old) => ({
+              gateway: { ...g, host: g.host || (old && old.gateway ? old.gateway.host : null) },
+            }))
             setErr('')
             setOkAt(Date.now())
           } catch (e) {
@@ -9554,14 +9651,49 @@ window.__ModuleLoader__.load({
           }
         }
         pull()
-        timer = setInterval(pull, 1500)
-        return () => { alive = false; clearInterval(timer) }
+        // 2026-11-22 主人：改成事件驱动——本地队列入队/开始/完成时后端推一份过来，
+        // 不再让这个面板每 1.5 秒来问一次。下面 30 秒那一次只是兜底，
+        // 防 SSE 断了以后看板僵在旧数据上。
+        let es = null
+        if (!paused) {
+          try {
+            es = new EventSource('/dsh-consciousness/local-events')
+            es.addEventListener('local', (ev) => {
+              if (!alive) return
+              try {
+                const g = JSON.parse(ev.data)
+                setLastPushAt(Date.now())
+                // 2026-11-22 主人：宿主记录一旦拿到就不能丢——/local/status 和 /local/live 这两份快照
+            // 里没有宿主队列。新快照没带，就沿用上一次的。
+            setData((old) => ({
+              gateway: { ...g, host: g.host || (old && old.gateway ? old.gateway.host : null) },
+            }))
+                setErr('')
+                setOkAt(Date.now())
+              } catch { /* 坏包不管，等下一份 */ }
+            })
+          } catch { es = null }
+        }
+        // 2026-11-22 主人：不要用密轮询盖住推送的问题——那样验证不出推送本身坏没坏。
+        // 严格以推送为主；这 30 秒只当「万一断了」的兜底。
+        timer = setInterval(pull, 30000)
+        return () => {
+          alive = false
+          clearInterval(timer)
+          if (es) { try { es.close() } catch { /* ignore */ } }
+        }
       }, [paused])
 
       const loadProcs = async () => {
         try {
           const d = await call('POST', '/local/live', {})
-          setData(d)
+          setData((old) => ({
+            ...d,
+            gateway: {
+              ...(d.gateway || {}),
+              host: (d.gateway && d.gateway.host) || (old && old.gateway ? old.gateway.host : null),
+            },
+          }))
           setProcsState(d.procs || null)
           setOkAt(Date.now())
           setErr('')
@@ -9610,32 +9742,57 @@ window.__ModuleLoader__.load({
       ])
 
       const slotLine = (slot, title) => {
-        const cur = curOf(slot)
-        const q = waiting.filter((x) => x.slot === slot)
-        const model = (cur && cur.model) || (slot === 'embed' ? 'qwen3-embedding:0.6b' : 'qwen2.5:14b-instruct')
-        const pct = cur ? Math.min(100, Math.round((Number(cur.runningMs) || 0) / Math.max(1, Number(cur.timeoutMs) || 1) * 100)) : 0
-        return h('div', { key: slot, style: { marginTop: 9 } }, [
-          h('div', { key: 'h', style: { display: 'flex', alignItems: 'baseline', gap: 6 } }, [
-            h('span', { key: 'm', style: { fontSize: 12, fontWeight: 600, color: MB_C.acc } }, mbModel(model)),
-            h('span', { key: 't', style: { fontSize: 10.5, color: MB_C.dim } }, title),
-            h('span', { key: 'q', style: { marginLeft: 'auto', fontSize: 10.5, color: MB_C.dim } },
-              '在跑 ' + ((slots[slot] || {}).running || 0) + ' · 在排 ' + q.length),
-          ]),
-          h('div', { key: 'r', style: { display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 2 } }, [
-            h('span', { key: 'l', style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: cur ? MB_C.ink : MB_C.dim } },
-              cur ? mbTask(cur.label || cur.lane) : '空着'),
-            cur ? mbChip(MB_TIER[cur.priority] || ('p' + cur.priority)) : null,
-            cur ? h('span', { key: 's', style: { fontSize: 10.5, color: MB_C.dim, whiteSpace: 'nowrap' } },
-              mbSec(cur.runningMs) + ' / 限 ' + mbSec(cur.timeoutMs)) : null,
-          ]),
-          h('div', { key: 'bar', style: { height: 3, borderRadius: 2, marginTop: 4, background: MB_C.layer, overflow: 'hidden' } },
-            h('div', { style: { width: pct + '%', height: '100%', background: MB_C.acc, transition: 'width .5s linear' } })),
-          q.length ? h('div', { key: 'ql', style: { marginTop: 3, display: 'flex', flexDirection: 'column', gap: 2 } },
-            q.slice(0, 3).map((x, i) => h('div', { key: i, style: { display: 'flex', gap: 6, fontSize: 10.5, color: MB_C.dim } }, [
-              h('span', { key: 'l', style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, mbTask(x.label || x.lane)),
-              h('span', { key: 'w', style: { marginLeft: 'auto', whiteSpace: 'nowrap' } }, '等了 ' + mbSec(x.waitedMs)),
-            ]))) : null,
-        ])
+        // 2026-11-22 主人：14B 和向量也改成「宿主那种」的一排胶囊，别画三条横带；
+        // 跑完的多留两秒（灰色「完成」），不然几十毫秒的调用根本看不见。
+        const all = [
+          ...running.filter((x) => x.slot === slot).map((x) => ({ ...x, _run: true })),
+          ...waiting.filter((x) => x.slot === slot).map((x) => ({ ...x, _run: false })),
+        ]
+        // 2026-11-22 主人：跟宿主一模一样的逻辑——直接读最近完成的调用记录，
+        // 不做「刚完成两秒」那套。最近两条一直挂着，直到被新的顶掉。
+        const mineGhosts = ((g.recent || []))
+          .filter((r) => r && r.slot === slot && r.ok !== false)
+          .slice(-3)
+          .reverse()
+          .map((r) => ({ key: 'r-' + r.at, label: r.label || r.lane, block: blockOfLabel(r.label || r.lane), ms: r.ms }))
+        const model = (all.find((x) => x.model) || {}).model || (slot === 'embed' ? 'qwen3-embedding:0.6b' : 'qwen2.5:14b-instruct')
+        const runN = all.filter((x) => x._run).length
+        const waitN = all.length - runN
+        const chip = (x, state) => {
+          const meta = MB_BLOCK[Number(x.block) || 1]
+          const isRun = state === 'run'
+          const isGhost = state === 'ghost'
+          // 2026-11-22 主人：胶囊保持原来的颜色，来源只用前面一个小点区分（白/紫/黑）。
+          return h('div', {
+            key: (x.key || (x.label || '') + state) + state,
+            title: (x.label || '') + (x.lane ? ' · ' + x.lane : ''),
+            style: {
+              display: 'flex', alignItems: 'center', gap: 4, padding: '1px 7px', borderRadius: 999,
+              fontSize: 10.5, whiteSpace: 'nowrap',
+              background: isRun ? MB_C.acc + '22' : 'transparent',
+              border: '1px solid ' + (isRun ? MB_C.acc + '88' : MB_C.line),
+              color: isRun ? MB_C.ink : MB_C.dim,
+              opacity: isGhost ? 0.45 : (isRun ? 1 : 0.8),
+              fontWeight: isRun ? 600 : 400,
+            },
+          }, [
+            h('span', {
+              key: 'dot',
+              style: { width: 5, height: 5, borderRadius: 999, background: meta.bg, border: '1px solid ' + meta.border, flex: '0 0 auto' },
+            }),
+            h('span', { key: 'l2' }, mbTask(x.label || x.lane)),
+            h('span', { key: 't2', style: { opacity: 0.72, fontVariantNumeric: 'tabular-nums' } },
+              isGhost ? mbSec(x.ms) + ' 完成' : (isRun ? mbSec(x.runningMs) : '等 ' + mbSec(x.waitedMs))),
+          ])
+        }
+        // 2026-11-22 主人：先跟宿主一模一样——只列历史胶囊，在跑和在排只看上面那行数字，
+        // 不画实心/空心的在跑胶囊。等这条对齐了再谈加别的。
+        const row = mineGhosts.map((x) => doneChip(x.key, x.label, x.ms))
+        return modelBlock(
+          slot, mbModel(model), title,
+          { running: runN, queued: waitN },
+          (g.recent || []).filter((r) => r && r.slot === slot && r.ok !== false),
+        )
       }
 
       const body = open ? h('div', { key: 'body', style: { marginTop: 8, borderTop: '1px solid ' + MB_C.line, paddingTop: 4 } }, [
@@ -9646,6 +9803,11 @@ window.__ModuleLoader__.load({
           + (s60.lastAt ? ' · 最后一条 ' + mbTime(s60.lastAt) + ' ' + mbTask(s60.lastLabel || '') : '')),
         slotLine('chat', '14B 槽（聊天 / 切事 / 实验）'),
         slotLine('embed', '向量槽'),
+        // 2026-11-22 主人：宿主这块要常驻，别没活就整块消失。
+        // 2026-11-22 审查确认的顺序 bug：内存 recent（最新十条）前面接 localStorage 历史，
+        // modelBlock 内部 slice(-10) 取的是尾部，结果最新那几条一条都不显示，显示的是更旧的。
+        // 合并后先按时间排好（旧→新），和它 slice(-10).reverse() 的约定对齐。
+        modelBlock('host', '宿主', '（云端）', g.host, mergeHostDone(g.host, hostLog)),
         models.length ? h('div', { key: 'models', style: { marginTop: 10 } }, [
           h('div', { key: 't', style: { fontSize: 10.5, color: MB_C.dim } }, '显卡上挂着'),
           h('div', { key: 'l', style: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 3 } },
@@ -9667,7 +9829,8 @@ window.__ModuleLoader__.load({
               h('span', { key: 'p', style: { color: MB_C.dim } }, '#' + p.pid),
               h('span', { key: 'm', style: { marginLeft: 'auto', color: MB_C.dim } }, p.memMB + 'M'),
               p.fresh ? mbChip('新起', 'warn') : null,
-            ])) : h('span', { style: { fontSize: 11, color: MB_C.dim } }, '没有模型进程在跑')),
+            ])) : h('span', { style: { fontSize: 11, color: MB_C.dim } },
+              procsState ? '没有模型进程在跑' : '还没拉过进程，点「看进程」'),),
         ]),
         pEvents.length ? h('div', { key: 'ev', style: { marginTop: 8 } }, [
           h('div', { key: 't', style: { fontSize: 10.5, color: MB_C.dim } }, '进程变化'),
