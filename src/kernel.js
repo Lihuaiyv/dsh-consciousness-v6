@@ -85,6 +85,13 @@ export const PARAMS = {
   'memory.event.fallback': ['C4', 'off'],
   // 夜里切事让路：最近 N 分钟有真人说话就不切（0 = 不让路）。默认 1 分钟。
   'memory.cut.pause.minutes': ['C4', 1],
+  // 2026-11-24：动机与计划（plan）总闸。off（默认）= 完全不动，只建表；
+  // on 才做「轮头请交动机+待办 / 落后提醒 / 待办清空后触发收口」。
+  'motivation.on': ['C4', 'off'],
+  // 强制单独一口：force=off 时只提醒和记账，不用 tool_choice 拦。
+  'motivation.force': ['C4', 'off'],
+  // 收口闸单独一口：close.gate=off 时不因「待办清空」触发 emotion。
+  'motivation.close.gate': ['C4', 'off'],
   // 2026-11-24 主人：情绪整块总闸。off = preStep 不判、不发反射、不收尾记账（情绪先不管）。
   'affect.on': ['C4', 'on'],
   // v4 影子精修：on = 回复后用本地模型再算一版事帧（异步、不阻塞，source=model）；默认 off 先攒规则数据。

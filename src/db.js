@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { ensureSangguanSchema } from './modules/sangguan/schema.js'
+import { ensureMotivationSchema } from './modules/motivation.js'
 import { RECOVERED_TABLES, RECOVERED_REST } from './schema_recovered.js'
 
 const SCHEMA = `
@@ -992,6 +993,12 @@ try { db.exec('CREATE INDEX IF NOT EXISTS idx_event_agent ON events(agent_id, cr
     ensureSangguanSchema(db)
   } catch (e) {
     console.warn('[sangguan] 建表跳过：', e && e.message)
+  }
+  // 动机与计划（plan）：P0 只建表，不参与任何判断。
+  try {
+    ensureMotivationSchema(db)
+  } catch (e) {
+    console.warn('[motivation] 建表跳过：', e && e.message)
   }
   // 一次性迁移：0~1 的 mood → -1~1 的 slow / total（已有记录不覆盖）
   try {
