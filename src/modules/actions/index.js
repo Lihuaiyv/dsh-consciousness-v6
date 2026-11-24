@@ -328,6 +328,14 @@ function withMotivationGate(tool) {
         if (String(getParam(d, a, 'motivation.on') || 'off') !== 'on') return run(args, exec)
         const ctx = currentMotivationTurn(a)
         const row = ctx ? latestPlan(d, a, ctx.turnId) : null
+        // 探针：一眼看出闸有没有被调用、当时看到了什么（closed 是 0 还是 1、清单还差谁）。
+        try {
+          logCheck(d, a, {
+            turnId: ctx ? ctx.turnId : null, step: -2, stale: false,
+            reason: 'gate:' + tool.name + ' aid=' + String(a).slice(-6) + ' row=' + (row ? String(row.closed) : 'none')
+              + ' pend=' + (ctx && row && Number(row.closed) === 1 ? String(pendingChecklist(d, a, ctx.turnId)) : '-'),
+          })
+        } catch { /* 探针失败不影响 */ }
         // 1) 这一轮还没交：除了 plan_note / feel，一律不许动手。
         if (ctx && !row && tool.name !== 'plan_note' && tool.name !== 'feel') {
           try { logCheck(d, a, { turnId: ctx.turnId, step: -1, stale: true, reason: 'blocked:' + tool.name }) } catch { /* ignore */ }
@@ -343,7 +351,10 @@ function withMotivationGate(tool) {
             return { ok: false, blocked: 'close-pending', reason: '已声明收口：先把清单上还没做的「' + (pending || '?') + '」做完，再动别的。' }
           }
         }
-      } catch { /* 闸坏了就放行，不挡正事 */ }
+      } catch (e) {
+        // 闸自己坏了也要留痕，否则会静默放行，看起来像"没生效"。
+        try { logCheck(db(), aidOfSession(exec) || aid(), { step: -3, stale: false, reason: 'gate-error:' + String((e && e.message) || e).slice(0, 120) }) } catch { /* ignore */ }
+      }
       const out = await run(args, exec)
       try {
         const d2 = db(); const a2 = aidOfSession(exec) || aid(); const c2 = a2 ? currentMotivationTurn(a2) : null
