@@ -228,6 +228,10 @@ export function planData(db, limit = 30) {
 
 // ── 轮次上下文：preStep 记，工具取（工具里拿不到轮次号） ──────────
 const lastTurn = new Map()
+let lastAid = ''
+/** 最近一次交计划的 agent：工具调用里拿不到会话时的保底。 */
+export function lastMotivationAgent() { return lastAid }
+
 export function rememberMotivationTurn(aid, { turnId = null, text = '', conversationId = null, step = 0 } = {}) {
   try {
     if (!aid || !turnId) return false
