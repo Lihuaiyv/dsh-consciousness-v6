@@ -36,8 +36,10 @@ export function ensureMotivationSchema(db) {
     deferred_json TEXT NOT NULL DEFAULT '[]',
     note TEXT,
     diff_json TEXT,
+    step INTEGER NOT NULL DEFAULT 0,
     submitted_at TEXT NOT NULL
   )`)
+  try { db.exec('ALTER TABLE plan ADD COLUMN step INTEGER NOT NULL DEFAULT 0') } catch { /* 已有 */ }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_plan_turn ON ${TABLE}(agent_id, turn_id, seq)`)
 }
 
@@ -186,10 +188,10 @@ export function planData(db, limit = 30) {
 
 // ── 轮次上下文：preStep 记，工具取（工具里拿不到轮次号） ──────────
 const lastTurn = new Map()
-export function rememberMotivationTurn(aid, { turnId = null, text = '', conversationId = null } = {}) {
+export function rememberMotivationTurn(aid, { turnId = null, text = '', conversationId = null, step = 0 } = {}) {
   try {
     if (!aid || !turnId) return false
-    lastTurn.set(String(aid), { turnId: String(turnId), text: String(text || ''), conversationId })
+    lastTurn.set(String(aid), { turnId: String(turnId), text: String(text || ''), conversationId, step: Number(step) || 0 })
     return true
   } catch { return false }
 }
@@ -268,12 +270,32 @@ export function submitPlan(db, agentId, { motive = '', source = 'self', items = 
   })) : []
   const id = nid('pln_')
   const at = now()
-  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at,step)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, String(agentId), ctx.turnId, seq, motiveText, String(source || 'self'),
     JSON.stringify(nextItems), JSON.stringify(deferredArr), String(note || ''),
-    JSON.stringify(diff), at,
+    JSON.stringify(diff), at, Number(ctx.step) || 0,
   )
   logSubmit(db, agentId, { turnId: ctx.turnId, seq, motive: motiveText, items: nextItems, deferred: deferredArr, motiveChanged })
   return { ok: true, seq, diff, motiveChanged, items: nextItems.length, deferred: deferredArr.length }
+}
+
+/**
+ * P2：每步查一次「交过没有 / 落后没有」，**只记账不拦**。
+ * stale 的判据（先做能判断的两条）：
+ *   - 这一轮还没有任何一版：no-plan
+ *   - 最新一版是在更早的步骤交的（中间发生过工具往返，却没更新）：step-lag
+ */
+export function motivationTick(db, agentId, { step = 0, turnId = null } = {}) {
+  try {
+    const ctx = currentMotivationTurn(agentId)
+    const tid = turnId || (ctx && ctx.turnId)
+    if (!tid) return { ok: false, reason: 'no-turn' }
+    const latest = latestPlan(db, agentId, tid)
+    let stale = false; let reason = ''
+    if (!latest) { stale = true; reason = 'no-plan' }
+    else if (Number(latest.step || 0) < Number(step || 0)) { stale = true; reason = 'step-lag' }
+    logCheck(db, agentId, { turnId: tid, step, stale, reason })
+    return { ok: true, stale, reason, seq: latest ? latest.seq : 0 }
+  } catch (e) { return { ok: false, reason: 'throw:' + String((e && e.message) || '').slice(0, 60) } }
 }

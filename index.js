@@ -65,7 +65,7 @@ import { processSnapshot } from './src/modules/proc_watch.js'
 import { start as startLoopWatch, mark as markLoop } from './src/modules/loop_watch.js'
 import { startBreathWatch } from './src/modules/breath_watch.js'
 import { hostQueueInfo, setHostProbe, onHostChange, setHostRecent, setHostDb } from './src/modules/host_llm.js'
-import { renderPlanPage, planData, rememberMotivationTurn } from './src/modules/motivation.js'
+import { renderPlanPage, planData, rememberMotivationTurn, motivationTick } from './src/modules/motivation.js'
 import { appraiseTurnNow, summarizeAffairs, rememberTurnContext, startReflex, noteSettleMiss, isTurnSettled } from './src/modules/affect_v4_shadow.js'
 // 情绪链去重：同一句用户话只跑一次（工具步会反复进 preStep）。
 const lastAffectTurn = new Map()
