@@ -67,11 +67,13 @@ export function logSubmit(db, agentId, { turnId = null, seq = 1, motive = '', it
 }
 
 /** 记一次检查。P0 里也没人调它；接上判定后每步调用一次。 */
-export function logCheck(db, agentId, { turnId = null, step = null, stale = false, reason = '', wouldForce = false, tool = '' } = {}) {
+export function logCheck(db, agentId, { turnId = null, step = null, stale = false, reason = '', wouldForce = false, tool = '', wouldReject = false } = {}) {
   writeEvent(db, agentId, 'plan.check', {
     turnId, step, stale: !!stale, reason: String(reason || '').slice(0, 120),
     // P3 影子：这一拍如果开了强制，本该锁哪个工具。只记录，不插手请求。
-    wouldForce: !!wouldForce, tool: String(tool || '').slice(0, 40), at: now(),
+    wouldForce: !!wouldForce, tool: String(tool || '').slice(0, 40),
+    // P4 影子：这一拍本该被拒绝（不让我回话），实际还没开。
+    wouldReject: !!wouldReject, at: now(),
   })
 }
 
@@ -128,7 +130,7 @@ export function renderPlanPage(db) {
     if (e.type === 'plan.submit') {
       return `<tr><td>${fmt(e.created_at)}</td><td class="t">提交</td><td>第 ${p.seq} 版 · 待办 ${p.items} 条 · 台下 ${p.deferred || 0} 条 · 动机${p.motiveChanged ? '变了' : '未变'}（${p.motiveLen || 0} 字）</td></tr>`
     }
-    return `<tr><td>${fmt(e.created_at)}</td><td class="t warn">检查</td><td>${p.stale ? '落后' : '正常'}${p.reason ? ' · ' + esc(p.reason) : ''}${p.wouldForce ? ' · <b>本该强制调 plan</b>' : ''}</td></tr>`
+    return `<tr><td>${fmt(e.created_at)}</td><td class="t warn">检查</td><td>${p.stale ? '落后' : '正常'}${p.reason ? ' · ' + esc(p.reason) : ''}${p.wouldForce ? ' · <b>本该强制调 plan</b>' : ''}${p.wouldReject ? ' · <b>本该拒绝这一步</b>' : ''}</td></tr>`
   }).join('') : '<tr><td colspan="3" class="empty">还没有事件</td></tr>'
 
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -302,7 +304,8 @@ export function motivationTick(db, agentId, { step = 0, turnId = null } = {}) {
     else if (Number(latest.step || 0) < Number(step || 0)) { stale = true; reason = 'step-lag' }
     // P3 影子：落后 → 这一拍本该强制调 plan（真强制要 tool_choice + 关思考，见计划文档）。
     const wouldForce = stale
-    logCheck(db, agentId, { turnId: tid, step, stale, reason, wouldForce, tool: wouldForce ? 'plan' : '' })
+    // 拒绝这一步的影子：落后就记「本该拒绝」，不真的拒（真拒要 preStep 返回 reject，先看数据）。
+    logCheck(db, agentId, { turnId: tid, step, stale, reason, wouldForce, tool: wouldForce ? 'plan' : '', wouldReject: stale })
     return { ok: true, stale, reason, wouldForce, seq: latest ? latest.seq : 0 }
   } catch (e) { return { ok: false, reason: 'throw:' + String((e && e.message) || '').slice(0, 60) } }
 }
