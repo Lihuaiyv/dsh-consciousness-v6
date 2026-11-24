@@ -153,8 +153,6 @@ export function makeNameProbeGuard({ getDb, getAid, param } = {}) {
       const db = typeof getDb === 'function' ? getDb() : null
       if (!db) return undefined
       const aid = typeof getAid === 'function' ? String(getAid() || '') : ''
-      const read = typeof param === 'function' ? param : (k) => (db && aid ? getParam(db, aid, k) : undefined)
-      if (String(read('motivation.on') ?? 'off') !== 'on') return undefined
       const sid = execution.agent && execution.agent.id ? String(execution.agent.id) : ''
       audit(db, aid, 'gate.probe', { name, sessionId: sid })
       return undefined
