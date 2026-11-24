@@ -2651,6 +2651,8 @@ function hostSpec() {
             // preStep 只在「用户说了新的一句」时才执行，所以这里一定是新的一轮，直接开新号。
             const tid2 = makeTurnId()
             lastTurnId.set(sid2, tid2)
+            // 动机/计划：把这一轮的原话和轮次号交给 motivation（工具里拿不到）。
+            try { rememberMotivationTurn(aid2, { turnId: tid2, text: qLine, conversationId: cid, step: Number((payload && payload.step) || 0) }) } catch { /* ignore */ }
             openTurn.add(sid2)
             let r = false
             // 2026-11-24 主人：情绪整块先关停——preStep 不判、不发反射，把那一拍让出去。
