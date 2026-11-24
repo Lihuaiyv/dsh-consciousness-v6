@@ -41,10 +41,12 @@ export function ensureMotivationSchema(db) {
     diff_json TEXT,
     step INTEGER NOT NULL DEFAULT 0,
     closed INTEGER NOT NULL DEFAULT 0,
+    source_text TEXT,
     submitted_at TEXT NOT NULL
   )`)
   try { db.exec('ALTER TABLE plan ADD COLUMN step INTEGER NOT NULL DEFAULT 0') } catch { /* 已有 */ }
   try { db.exec('ALTER TABLE plan ADD COLUMN closed INTEGER NOT NULL DEFAULT 0') } catch { /* 已有 */ }
+  try { db.exec('ALTER TABLE plan ADD COLUMN source_text TEXT') } catch { /* 已有 */ }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_plan_turn ON ${TABLE}(agent_id, turn_id, seq)`)
 }
 
@@ -127,6 +129,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
       + '<div class="head"><span class="round">回合 ' + esc(String(g.turn).replace(/^turn_/, '').slice(0, 10)) + '</span>'
       + '<span>' + fmt(r.submitted_at) + '</span><span class="meta">第 ' + r.seq + ' 版 · 来源 ' + esc(r.source || 'self') + '</span>'
       + '<span class="badge' + (r.closed ? ' b-closed' : '') + '">' + status + '</span></div>'
+      + (r.source_text ? '<div class="block"><div class="label">你说的</div><div class="quote">' + esc(r.source_text) + '</div></div>' : '')
       + '<div class="block"><div class="label">动机</div><div class="motive">' + esc(r.motive || '（空）') + '</div></div>'
       + '<div class="block"><div class="label">计划 · 台上（' + doneN + '/' + items.length + '）</div>'
       + (itemRows ? '<table>' + itemRows + '</table>' : '<div class="empty">台上没有待办</div>')
@@ -154,7 +157,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
     + '.round{font-weight:600;color:var(--ink)}.badge{margin-left:auto;padding:1px 8px;border-radius:999px;border:1px solid var(--line)}'
     + '.badge.b-closed{color:var(--ok);border-color:var(--ok)}.block{margin:10px 0}'
     + '.label{font-size:12px;color:var(--muted);margin-bottom:2px}.label.sub{margin-top:10px}'
-    + '.motive{font-size:16px;line-height:1.5}table{width:100%;border-collapse:collapse;font-size:14px}'
+    + '.motive{font-size:16px;line-height:1.5}.quote{font-size:13.5px;color:var(--muted);border-left:3px solid var(--line);padding-left:8px;line-height:1.5}table{width:100%;border-collapse:collapse;font-size:14px}'
     + 'td{padding:4px;border-bottom:1px solid var(--line);vertical-align:top}td.st{width:44px;white-space:nowrap;color:var(--muted)}'
     + 'tr.ok td.st{color:var(--ok)}td.id{width:40px;text-align:right;color:var(--muted);font-size:11px}'
     + 'td.why{color:var(--muted);font-size:12.5px}.note{font-size:13px;color:var(--muted);margin-top:8px}'
@@ -266,11 +269,11 @@ export function submitPlan(db, agentId, { motive = '', source = 'self', items = 
   })) : []
   const id = nid('pln_')
   const at = now()
-  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at,step,closed)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at,step,closed,source_text)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, String(agentId), ctx.turnId, seq, motiveText, String(source || 'self'),
     JSON.stringify(nextItems), JSON.stringify(deferredArr), String(note || ''),
-    JSON.stringify(diff), at, Number(ctx.step) || 0, close ? 1 : 0,
+    JSON.stringify(diff), at, Number(ctx.step) || 0, close ? 1 : 0, String(ctx.text || '').slice(0, 300),
   )
   logSubmit(db, agentId, { turnId: ctx.turnId, seq, motive: motiveText, items: nextItems, deferred: deferredArr, motiveChanged })
   return { ok: true, seq, diff, motiveChanged, closed: !!close, items: nextItems.length, deferred: deferredArr.length }
