@@ -2674,6 +2674,12 @@ function hostSpec() {
             lastTurnId.set(sid2, tid2)
             // 动机/计划：把这一轮的原话和轮次号交给 motivation（工具里拿不到）。
             try { rememberMotivationTurn(aid2, { turnId: tid2, text: qLine, conversationId: cid, step: Number((payload && payload.step) || 0) }) } catch { /* ignore */ }
+            // 第 0 步补查：上面那次 tick 跑在轮次号生成之前，拿不到号会被跳过；这里有了号，补一次。
+            try {
+              if (String(getParam(d2, aid2, 'motivation.on') || 'off') === 'on') {
+                motivationTick(d2, aid2, { step: Number((payload && payload.step) || 0), turnId: tid2 })
+              }
+            } catch { /* ignore */ }
             openTurn.add(sid2)
             let r = false
             // 2026-11-24 主人：情绪整块先关停——preStep 不判、不发反射，把那一拍让出去。
