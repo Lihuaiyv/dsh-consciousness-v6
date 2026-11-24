@@ -675,7 +675,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
           },
         },
         render: (_a, v) => TEXT(v && v.ok
-          ? '计划已交：第 ' + v.seq + ' 版 · 台上 ' + v.items + ' 条 · 台下 ' + v.deferred + ' 条'
+          ? '计划已交：第 ' + v.seq + ' 版 · 台上 ' + v.items + ' 条 · 台下 ' + v.deferred + ' 条' + (v.closed ? ' · 已声明收口' : '')
             + (v.motiveChanged ? ' · 动机变了' : ' · 动机同前')
           : '没交成：' + ((v && v.reason) || '?')),
       },

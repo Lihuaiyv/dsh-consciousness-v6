@@ -40,9 +40,11 @@ export function ensureMotivationSchema(db) {
     note TEXT,
     diff_json TEXT,
     step INTEGER NOT NULL DEFAULT 0,
+    closed INTEGER NOT NULL DEFAULT 0,
     submitted_at TEXT NOT NULL
   )`)
   try { db.exec('ALTER TABLE plan ADD COLUMN step INTEGER NOT NULL DEFAULT 0') } catch { /* 已有 */ }
+  try { db.exec('ALTER TABLE plan ADD COLUMN closed INTEGER NOT NULL DEFAULT 0') } catch { /* 已有 */ }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_plan_turn ON ${TABLE}(agent_id, turn_id, seq)`)
 }
 
@@ -234,7 +236,7 @@ function parseItems(raw) {
  * 校验：动机必填；台上至多 3 条；id 唯一且非空；改动（不是第一版）必须带 note；
  *       原有 id 必须继承（不许整批换号），被删的 id 记进 diff 的 removed。
  */
-export function submitPlan(db, agentId, { motive = '', source = 'self', items = null, deferred = null, note = '' } = {}) {
+export function submitPlan(db, agentId, { motive = '', source = 'self', items = null, deferred = null, note = '', close = false } = {}) {
   const ctx = currentMotivationTurn(agentId)
   if (!ctx) return { ok: false, reason: 'no-turn' }
   const rawMotive = String(motive || '').trim()
@@ -277,14 +279,14 @@ export function submitPlan(db, agentId, { motive = '', source = 'self', items = 
   })) : []
   const id = nid('pln_')
   const at = now()
-  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at,step)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at,step,closed)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, String(agentId), ctx.turnId, seq, motiveText, String(source || 'self'),
     JSON.stringify(nextItems), JSON.stringify(deferredArr), String(note || ''),
-    JSON.stringify(diff), at, Number(ctx.step) || 0,
+    JSON.stringify(diff), at, Number(ctx.step) || 0, close ? 1 : 0,
   )
   logSubmit(db, agentId, { turnId: ctx.turnId, seq, motive: motiveText, items: nextItems, deferred: deferredArr, motiveChanged })
-  return { ok: true, seq, diff, motiveChanged, items: nextItems.length, deferred: deferredArr.length }
+  return { ok: true, seq, diff, motiveChanged, closed: !!close, items: nextItems.length, deferred: deferredArr.length }
 }
 
 /**
