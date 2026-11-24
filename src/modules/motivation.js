@@ -103,76 +103,67 @@ export function recentPlanEvents(db, limit = 40) {
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
-export function renderPlanPage(db) {
-  const rows = recentPlanRows(db, 30)
+﻿export function renderPlanPage(db) {
+  const rows = recentPlanRows(db, 40)
   const evs = recentPlanEvents(db, 40)
-  const fmt = (t) => String(t || '').replace('T', ' ').slice(0, 19)
-  const rowHtml = rows.length ? rows.map((r) => {
-    let items = []
+  const fmt = (t) => String(t || '').replace('T', ' ').slice(0, 16)
+  const esc = (x) => String(x == null ? '' : x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  const rounds = new Map()
+  for (const r of rows) {
+    const k = r.turn_id + '|' + r.submitted_at.slice(0, 16)
+    if (!rounds.has(k)) rounds.set(k, { turn: r.turn_id, at: r.submitted_at, list: [] })
+    rounds.get(k).list.push(r)
+  }
+  const cards = [...rounds.values()].map((g) => {
+    const r = g.list.sort((a, b) => b.seq - a.seq)[0]
+    let items = []; let deferred = []
     try { items = JSON.parse(r.items_json || '[]') } catch { items = [] }
-    let deferred = []
     try { deferred = JSON.parse(r.deferred_json || '[]') } catch { deferred = [] }
-    const li = items.map((it) => `<li class="${it.done ? 'done' : ''}">${it.done ? '✓' : '○'} <code>${esc(it.id)}</code> ${esc(it.text)}</li>`).join('')
-    const dl = deferred.map((it) => `<li class="shelf">↧ <code>${esc(it.id)}</code> ${esc(it.text)}${it.reason ? ' <span class="why">（' + esc(it.reason) + '）</span>' : ''}</li>`).join('')
-    return `<div class="card">
-      <div class="head"><span class="turn">${esc(r.turn_id)}</span><span class="seq">第 ${r.seq} 版</span><span class="src">来源 ${esc(r.source || '-')}</span><span class="time">${fmt(r.submitted_at)}</span></div>
-      <div class="motive">${esc(r.motive || '（动机空）')}</div>
-      ${li ? '<ul class="items">' + li + '</ul>' : '<div class="empty">台上没有待办</div>'}
-      ${dl ? '<div class="label">台下（延后）</div><ul class="items">' + dl + '</ul>' : ''}
-      ${r.note ? '<div class="note">改动原因：' + esc(r.note) + '</div>' : ''}
-    </div>`
-  }).join('') : '<div class="empty big">还没有任何一版计划被提交。<br><span class="hint">P0 阶段只记账、不写表；接上 plan 工具后这里才会有内容。</span></div>'
+    const doneN = items.filter((i) => i.done).length
+    const status = r.closed ? '已声明收口' : (items.length && doneN === items.length ? '台上清空' : '进行中')
+    const itemRows = items.map((it) => '<tr class="' + (it.done ? 'ok' : '') + '"><td class="st">' + (it.done ? '做完' : '没做') + '</td><td>' + esc(it.text) + '</td><td class="id">' + esc(it.id) + '</td></tr>').join('')
+    const shelfRows = deferred.map((it) => '<tr><td class="st">延后</td><td>' + esc(it.text) + '</td><td class="why">' + esc(it.reason || '') + '</td></tr>').join('')
+    return '<div class="card">'
+      + '<div class="head"><span class="round">回合 ' + esc(String(g.turn).replace(/^turn_/, '').slice(0, 10)) + '</span>'
+      + '<span>' + fmt(r.submitted_at) + '</span><span class="meta">第 ' + r.seq + ' 版 · 来源 ' + esc(r.source || 'self') + '</span>'
+      + '<span class="badge' + (r.closed ? ' b-closed' : '') + '">' + status + '</span></div>'
+      + '<div class="block"><div class="label">动机</div><div class="motive">' + esc(r.motive || '（空）') + '</div></div>'
+      + '<div class="block"><div class="label">计划 · 台上（' + doneN + '/' + items.length + '）</div>'
+      + (itemRows ? '<table>' + itemRows + '</table>' : '<div class="empty">台上没有待办</div>')
+      + (shelfRows ? '<div class="label sub">台下 · 先不做</div><table>' + shelfRows + '</table>' : '')
+      + '</div>'
+      + (r.note ? '<div class="note">为什么改：' + esc(r.note) + '</div>' : '')
+      + '</div>'
+  }).join('')
   const evHtml = evs.length ? evs.map((e) => {
     let p = {}
     try { p = JSON.parse(e.payload || '{}') } catch { p = {} }
-    if (e.type === 'plan.submit') {
-      return `<tr><td>${fmt(e.created_at)}</td><td class="t">提交</td><td>第 ${p.seq} 版 · 待办 ${p.items} 条 · 台下 ${p.deferred || 0} 条 · 动机${p.motiveChanged ? '变了' : '未变'}（${p.motiveLen || 0} 字）</td></tr>`
-    }
-    return `<tr><td>${fmt(e.created_at)}</td><td class="t warn">检查</td><td>${p.stale ? '落后' : '正常'}${p.reason ? ' · ' + esc(p.reason) : ''}${p.wouldForce ? ' · <b>本该强制调 plan</b>' : ''}${p.wouldReject ? ' · <b>本该拒绝这一步</b>' : ''}</td></tr>`
-  }).join('') : '<tr><td colspan="3" class="empty">还没有事件</td></tr>'
-
-  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
-<meta http-equiv="refresh" content="2">
-<title>计划 · 动机与必交</title>
-<style>
- :root{--bg:#faf9f7;--card:#fff;--line:#e6e2dc;--ink:#23201d;--muted:#8a837b;--ok:#166534;--warn:#b45309}
- @media (prefers-color-scheme:dark){:root{--bg:#191817;--card:#222120;--line:#333030;--ink:#ece8e2;--muted:#9c948b;--ok:#4ade80;--warn:#fbbf24}}
- body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,"Segoe UI",system-ui,"Microsoft YaHei",sans-serif}
- .wrap{max-width:900px;margin:0 auto;padding:20px 16px 48px}
- h1{font-size:18px;margin:0 0 4px}
- .sub{color:var(--muted);margin:0 0 16px}
- .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 10px}
- .head{display:flex;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:6px}
- .seq{color:var(--warn);font-weight:600}
- .motive{font-size:15px;margin:2px 0 8px}
- .items{margin:0;padding-left:2px;list-style:none}
- .items li{margin:2px 0}
- .items li.done{color:var(--ok)}
- .items li.shelf{color:var(--muted)}
- .why{font-size:12px}
- .label{font-size:12px;color:var(--muted);margin:8px 0 2px}
- .note{font-size:12px;color:var(--muted);margin-top:6px}
- .empty{color:var(--muted);padding:6px 0}
- .empty.big{padding:24px;text-align:center}
- .hint{font-size:12px}
- table{width:100%;border-collapse:collapse;font-size:12.5px}
- th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:top}
- th{color:var(--muted);font-weight:600}
- td.t{white-space:nowrap;color:var(--ok)}
- td.t.warn{color:var(--warn)}
- code{font:12px ui-monospace,Consolas,monospace;background:rgba(127,127,127,.12);padding:0 4px;border-radius:3px}
- h2{font-size:14px;margin:22px 0 8px;color:var(--muted)}
-</style>
-<div class="wrap">
- <h1>计划 · 动机与必交</h1>
- <p class="sub">每 2 秒自刷 · 只读库 · 不占模型队列</p>
- ${rowHtml}
- <h2>记账流水（plan.submit / plan.check）</h2>
- <table><thead><tr><th style="width:150px">时间</th><th style="width:60px">类型</th><th>内容</th></tr></thead><tbody>${evHtml}</tbody></table>
-</div></html>`
+    if (e.type === 'plan.submit') return '<tr><td>' + fmt(e.created_at) + '</td><td>交了一版</td><td>第 ' + p.seq + ' 版 · 台上 ' + p.items + ' 条 · 动机' + (p.motiveChanged ? '变了' : '没变') + '</td></tr>'
+    const why = p.reason === 'no-plan' ? '这一轮还没交' : p.reason === 'step-lag' ? '交过之后又动过手' : String(p.reason || '')
+    return '<tr><td>' + fmt(e.created_at) + '</td><td>检查一次</td><td>' + (p.stale ? '落后：' + esc(why) : '正常') + (p.wouldReject ? ' · 本该拦下' : '') + '</td></tr>'
+  }).join('') : '<tr><td colspan="3" class="empty">还没有记录</td></tr>'
+  return '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>动机与计划</title>'
+    + '<style>'
+    + ':root{--bg:#faf9f7;--card:#fff;--line:#e7e3dd;--ink:#23201d;--muted:#8a837b;--ok:#166534}'
+    + '@media (prefers-color-scheme:dark){:root{--bg:#181716;--card:#222120;--line:#343130;--ink:#ece8e2;--muted:#9c948b;--ok:#4ade80}}'
+    + 'body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,"Segoe UI",system-ui,"Microsoft YaHei",sans-serif}'
+    + '.wrap{max-width:860px;margin:0 auto;padding:24px 16px 56px}h1{font-size:20px;margin:0 0 2px}'
+    + '.sub{color:var(--muted);margin:0 0 18px;font-size:13px}'
+    + '.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:0 0 14px}'
+    + '.head{display:flex;gap:10px;align-items:center;font-size:12.5px;color:var(--muted);margin-bottom:10px;flex-wrap:wrap}'
+    + '.round{font-weight:600;color:var(--ink)}.badge{margin-left:auto;padding:1px 8px;border-radius:999px;border:1px solid var(--line)}'
+    + '.badge.b-closed{color:var(--ok);border-color:var(--ok)}.block{margin:10px 0}'
+    + '.label{font-size:12px;color:var(--muted);margin-bottom:2px}.label.sub{margin-top:10px}'
+    + '.motive{font-size:16px;line-height:1.5}table{width:100%;border-collapse:collapse;font-size:14px}'
+    + 'td{padding:4px;border-bottom:1px solid var(--line);vertical-align:top}td.st{width:44px;white-space:nowrap;color:var(--muted)}'
+    + 'tr.ok td.st{color:var(--ok)}td.id{width:40px;text-align:right;color:var(--muted);font-size:11px}'
+    + 'td.why{color:var(--muted);font-size:12.5px}.note{font-size:13px;color:var(--muted);margin-top:8px}'
+    + '.empty{color:var(--muted);padding:6px 0;font-size:14px}h2{font-size:14px;color:var(--muted);margin:26px 0 8px}'
+    + '</style><div class="wrap"><h1>动机与计划</h1><p class="sub">每 2 秒自刷 · 只读库 · 每回合一张卡</p>'
+    + (cards || '<div class="card"><div class="empty">还没有任何一版计划被提交。</div></div>')
+    + '<h2>流水</h2><div class="card" style="padding:8px 12px"><table><tbody>' + evHtml + '</tbody></table></div></div></html>'
 }
 
-/** 给面板/脚本用的 JSON 快照（只读）。 */
 export function planData(db, limit = 30) {
   const rows = recentPlanRows(db, limit).map((r) => {
     let items = []; let deferred = []
