@@ -19,7 +19,10 @@
 
 // 不引 kernel：db.js 会引本模块，kernel 又经 algo 引回 db，引进 kernel 就成环。
 const now = () => new Date().toISOString()
-const nid = (prefix) => prefix + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)
+// 编号：时间 + 自增序号 + 随机尾。光靠 Date.now()+随机，同一毫秒里两条事件有概率撞号，
+// 而 events.id 是主键、写失败又被吞掉，表现成「少记一笔」——P1 验收脚本 5 跑 2 挂就是这么来的。
+let _seq = 0
+const nid = (prefix) => prefix + Date.now().toString(36) + (_seq++).toString(36) + Math.random().toString(16).slice(2, 6)
 
 const TABLE = 'plan'
 
@@ -64,9 +67,11 @@ export function logSubmit(db, agentId, { turnId = null, seq = 1, motive = '', it
 }
 
 /** 记一次检查。P0 里也没人调它；接上判定后每步调用一次。 */
-export function logCheck(db, agentId, { turnId = null, step = null, stale = false, reason = '' } = {}) {
+export function logCheck(db, agentId, { turnId = null, step = null, stale = false, reason = '', wouldForce = false, tool = '' } = {}) {
   writeEvent(db, agentId, 'plan.check', {
-    turnId, step, stale: !!stale, reason: String(reason || '').slice(0, 120), at: now(),
+    turnId, step, stale: !!stale, reason: String(reason || '').slice(0, 120),
+    // P3 影子：这一拍如果开了强制，本该锁哪个工具。只记录，不插手请求。
+    wouldForce: !!wouldForce, tool: String(tool || '').slice(0, 40), at: now(),
   })
 }
 
@@ -123,7 +128,7 @@ export function renderPlanPage(db) {
     if (e.type === 'plan.submit') {
       return `<tr><td>${fmt(e.created_at)}</td><td class="t">提交</td><td>第 ${p.seq} 版 · 待办 ${p.items} 条 · 台下 ${p.deferred || 0} 条 · 动机${p.motiveChanged ? '变了' : '未变'}（${p.motiveLen || 0} 字）</td></tr>`
     }
-    return `<tr><td>${fmt(e.created_at)}</td><td class="t warn">检查</td><td>${p.stale ? '落后' : '正常'}${p.reason ? ' · ' + esc(p.reason) : ''}</td></tr>`
+    return `<tr><td>${fmt(e.created_at)}</td><td class="t warn">检查</td><td>${p.stale ? '落后' : '正常'}${p.reason ? ' · ' + esc(p.reason) : ''}${p.wouldForce ? ' · <b>本该强制调 plan</b>' : ''}</td></tr>`
   }).join('') : '<tr><td colspan="3" class="empty">还没有事件</td></tr>'
 
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -295,7 +300,9 @@ export function motivationTick(db, agentId, { step = 0, turnId = null } = {}) {
     let stale = false; let reason = ''
     if (!latest) { stale = true; reason = 'no-plan' }
     else if (Number(latest.step || 0) < Number(step || 0)) { stale = true; reason = 'step-lag' }
-    logCheck(db, agentId, { turnId: tid, step, stale, reason })
-    return { ok: true, stale, reason, seq: latest ? latest.seq : 0 }
+    // P3 影子：落后 → 这一拍本该强制调 plan（真强制要 tool_choice + 关思考，见计划文档）。
+    const wouldForce = stale
+    logCheck(db, agentId, { turnId: tid, step, stale, reason, wouldForce, tool: wouldForce ? 'plan' : '' })
+    return { ok: true, stale, reason, wouldForce, seq: latest ? latest.seq : 0 }
   } catch (e) { return { ok: false, reason: 'throw:' + String((e && e.message) || '').slice(0, 60) } }
 }
