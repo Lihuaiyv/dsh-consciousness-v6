@@ -2427,6 +2427,17 @@ function hostSpec() {
         const tidT = mv && mv.sid ? lastTurnId.get(mv.sid) : null
         if (aidT && tidT && String(getParam(dT, aidT, 'motivation.on') || 'off') === 'on') {
           motivationTick(dT, aidT, { step: Number((payload && payload.step) || 0), turnId: tidT })
+            // 每步补占位：这一段是真的会跑到的（检查就是在这里记的）。
+            // 用模块自己记的「当前这一轮」判断，不依赖开局那段的参数。
+            try {
+              if (String(getParam(dT, aidT, 'motivation.on') || 'off') === 'on') {
+                const cM = currentMotivationTurn(aidT)
+                if (cM && !latestPlan(dT, aidT, cM.turnId)) {
+                  submitPlan(dT, aidT, { motive: '待补', source: 'self', items: [], deferred: [], note: '自动占位：等我想清楚再改' })
+                }
+              }
+            } catch { /* ignore */ }
+
         }
       } catch { /* 检查失败不影响这一轮 */ }
       try {
