@@ -2394,6 +2394,18 @@ function hostSpec() {
           if (kind === 'sub') return typeof next === 'function' ? next() : undefined
         }
       }
+      // 动机/计划 P2：每步查一次「交过没有 / 落后没有」——只记账，不拦（motivation.on 默认 off）。
+      // 身份必须和情绪链同源：sessionAgentId；preStepView 的标识不是 agt_…，
+      // 拿它去读 motivation.on 永远读默认 off，整段会被静静跳过（2026-11-24 数据一直是 0 的原因）。
+      try {
+        const mv = preStepView(payload)
+        const dT = ensureDb()
+        const aidT = mv && mv.sid ? sessionAgentId(dT, mv.sid) : activeAgentId(dT)
+        const tidT = mv && mv.sid ? lastTurnId.get(mv.sid) : null
+        if (aidT && tidT && String(getParam(dT, aidT, 'motivation.on') || 'off') === 'on') {
+          motivationTick(dT, aidT, { step: Number((payload && payload.step) || 0), turnId: tidT })
+        }
+      } catch { /* 检查失败不影响这一轮 */ }
       try {
         markStage('retrieve')
         const d = ensureDb()
@@ -2928,6 +2940,7 @@ function hostSpec() {
         try { d4() } catch { /* ignore */ }
         try { d5() } catch { /* ignore */ }
         try { d6() } catch { /* ignore */ }
+        try { d6b() } catch { /* ignore */ }
         try { d6c() } catch { /* ignore */ }
         try { d6d() } catch { /* ignore */ }
         try { d7() } catch { /* ignore */ }
