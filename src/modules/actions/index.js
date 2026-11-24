@@ -681,6 +681,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
           },
         },
         note: str('这一版为什么改（第二版起必填）'),
+        close: { type: 'boolean', description: '这一轮到此为止就填 true（声明收口；之后只许做收尾清单里还没做的那一项）' },
       }, ['motive']),
       output: {
         schema: {
@@ -707,6 +708,7 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
           items: args && args.items,
           deferred: args && args.deferred,
           note: args && args.note,
+          close: !!(args && args.close),
         })
       },
     },
