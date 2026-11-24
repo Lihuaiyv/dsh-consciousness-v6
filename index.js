@@ -2431,8 +2431,9 @@ function hostSpec() {
             // 用模块自己记的「当前这一轮」判断，不依赖开局那段的参数。
             try {
               if (String(getParam(dT, aidT, 'motivation.on') || 'off') === 'on') {
-                const cM = currentMotivationTurn(aidT)
-                if (cM && !latestPlan(dT, aidT, cM.turnId)) {
+                // 用这一段自己算出来的轮次号：模块里的「当前一轮」此时还没写进（它在后面那段才置）。
+                const tidP = tidT || (currentMotivationTurn(aidT) ? currentMotivationTurn(aidT).turnId : null)
+                if (tidP && !latestPlan(dT, aidT, tidP)) {
                   submitPlan(dT, aidT, { motive: '待补', source: 'self', items: [], deferred: [], note: '自动占位：等我想清楚再改' })
                 }
               }
