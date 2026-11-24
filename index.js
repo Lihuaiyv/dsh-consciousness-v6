@@ -65,6 +65,7 @@ import { processSnapshot } from './src/modules/proc_watch.js'
 import { start as startLoopWatch, mark as markLoop } from './src/modules/loop_watch.js'
 import { startBreathWatch } from './src/modules/breath_watch.js'
 import { hostQueueInfo, setHostProbe, onHostChange, setHostRecent, setHostDb } from './src/modules/host_llm.js'
+import { renderPlanPage } from './src/modules/motivation.js'
 import { appraiseTurnNow, summarizeAffairs, rememberTurnContext, startReflex, noteSettleMiss, isTurnSettled } from './src/modules/affect_v4_shadow.js'
 // 情绪链去重：同一句用户话只跑一次（工具步会反复进 preStep）。
 const lastAffectTurn = new Map()
@@ -2912,6 +2913,20 @@ function hostSpec() {
           })
         },
       })
+      // P0.5：动机与计划的只读页（2 秒自刷，只查库，不占队列）。
+      const d6c = child.webServer.register({
+        kind: 'exact',
+        path: '/dsh-consciousness/plan',
+        handler: (_req, res) => {
+          try {
+            const html = renderPlanPage(ensureDb())
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+            res.end(html)
+          } catch (e) {
+            sendJson(res, 500, { error: '计划页渲染失败：' + String((e && e.message) || e).slice(0, 160) })
+          }
+        },
+      })
       const d7 = child.webServer.register({
         kind: 'exact',
         path: '/dsh-consciousness/board',
@@ -2932,6 +2947,7 @@ function hostSpec() {
         try { d4() } catch { /* ignore */ }
         try { d5() } catch { /* ignore */ }
         try { d6() } catch { /* ignore */ }
+        try { d6c() } catch { /* ignore */ }
         try { d7() } catch { /* ignore */ }
       }
     },
