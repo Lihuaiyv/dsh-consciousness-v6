@@ -7,6 +7,7 @@
 import { now } from '../../db.js'
 import { nid, getFlag } from '../../kernel.js'
 import { htmlToText } from './util.js'
+import { canFetch, assertSearch, fetchPage, searchPages } from '../../host/web.js'
 import { getConfig, saveConfig, publicConfig, sendMessage, status as channelStatus, test as channelTest } from './channels.js'
 import { searchVideos, popular, recommend, videoDetail, comments, postComment, biliStatus } from './bilibili.js'
 import { runResearch, listRuns, getRun } from './research.js'
@@ -19,6 +20,7 @@ import { ingestBrowse } from '../browse.js'
 import { recordFeel, feelRecall, FEEL_GUIDE } from '../feel.js'
 import { ensureTable as ensureFrameTable } from '../frame_shadow.js'
 import { fireEmotion, closeEmotion } from '../affect_v4_shadow.js'
+import { submitPlan } from '../motivation.js'
 import { settleEmotion } from '../emotion_event.js'
 import { executeHear, executeSay, markVoiceExpect, markVoiceShape, takeVoiceShape, lastAssistantReply, maybeSpeakReply } from './voice.js'
 import { readHeartNote, readHeartNotes, writeHeartNote, clearHeartNote, heartNoteStatus, heartNoteWakeTick } from '../heartnote.js'
@@ -107,17 +109,17 @@ function rememberSent(db, agentId, out, text, actionId) {
 async function browseUrl(url, { web, signal }) {
   const u = String(url || '').trim()
   if (!/^https?:\/\//i.test(u)) throw new Error('只支持 http/https 的网址')
-  if (web && typeof web.fetch === 'function') {
-    const r = await web.fetch({ url: u }, signal)
-    const body = (r && r.body) || {}
-    const text = body.kind === 'html' ? htmlToText(String(body.content || ''), { max: 6000 }) : String(body.content || '').slice(0, 6000)
-    const title = body.kind === 'html'
-      ? htmlToText((String(body.content || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '', { max: 200 })
+  if (canFetch(web)) {
+    const r = await fetchPage(web, u, signal)
+    const raw = r ? r.content : ''
+    const text = r && r.kind === 'html' ? htmlToText(raw, { max: 6000 }) : String(raw).slice(0, 6000)
+    const title = r && r.kind === 'html'
+      ? htmlToText((raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '', { max: 200 })
       : ''
     return {
       mode: 'url',
       url: u,
-      status: Number(r && r.statusCode) || 0,
+      status: r ? r.statusCode : 0,
       truncated: !!(r && r.truncated),
       title,
       text,
@@ -174,8 +176,8 @@ export async function executeBrowse(db, agentId, args = {}, deps = {}) {  requir
     const query = String(args.query || '').trim()
     if (!query) throw new Error('网页检索需要 query')
     const web = deps.web
-    if (!web || typeof web.search !== 'function') throw new Error('宿主没有 web 检索服务，搜不了')
-    const r = await web.search({ query, maxResults: limit }, deps.signal)
+    assertSearch(web)
+    const r = await searchPages(web, query, limit, deps.signal)
     out = {
       mode,
       query,

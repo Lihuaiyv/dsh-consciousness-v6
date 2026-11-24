@@ -65,12 +65,14 @@ import { processSnapshot } from './src/modules/proc_watch.js'
 import { start as startLoopWatch, mark as markLoop } from './src/modules/loop_watch.js'
 import { startBreathWatch } from './src/modules/breath_watch.js'
 import { hostQueueInfo, setHostProbe, onHostChange, setHostRecent, setHostDb } from './src/modules/host_llm.js'
-import { renderPlanPage } from './src/modules/motivation.js'
+import { renderPlanPage, planData, rememberMotivationTurn } from './src/modules/motivation.js'
 import { appraiseTurnNow, summarizeAffairs, rememberTurnContext, startReflex, noteSettleMiss, isTurnSettled } from './src/modules/affect_v4_shadow.js'
 // 情绪链去重：同一句用户话只跑一次（工具步会反复进 preStep）。
 const lastAffectTurn = new Map()
 import { attachDb } from './src/algo/index.js'
 import { createHost, readEvent, messageText } from './src/host/dsh.js'
+import { web as hostWeb, speech as hostSpeech, tokenMeter as hostTokenMeter, subagents as hostSubagents, sessionController, qqBridge as hostQQBridge, probeAgentServices } from './src/host/services.js'
+import { preStepView, contextWindowOf, measureTokens, snapshotEvents, assistantUsage, isTurnEnd, subagentRoot } from './src/host/read.js'
 // DSH 私有文件的唯一读口（workspace / projcache / qq-sessions）；断链会在这里留账。
 import { defaultFileSeam, breakLineOf } from './src/host/fs.js'
 import { appendTurn, recentDiaryLines, migrateArchive, backfillFactArchive, sessionBridge } from './src/modules/archive.js'
@@ -222,16 +224,9 @@ function sessionKindJudge(db, sid, agent) {
   let source = 'format'
   let err = ''
   try {
-    const sub = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('subagents') : null
-    if (!sub) err = 'no-subagents-service'
-    else if (typeof sub.rootOf !== 'function') err = 'no-rootOf'
-    else if (!agent) err = 'no-agent'
-    else {
-      const root = sub.rootOf(agent)
-      const rootSid = root && root.session && root.session.id ? String(root.session.id) : ''
-      if (rootSid) { kind = rootSid === String(sid) ? 'main' : 'sub'; source = 'rootOf' }
-      else err = 'root-empty'
-    }
+    const got = subagentRoot(hostSubagents(hostCtx), agent)
+    if (got.err) err = got.err
+    else { kind = got.rootSid === String(sid) ? 'main' : 'sub'; source = 'rootOf' }
   } catch (e) { err = String((e && e.message) || e).slice(0, 80) }
   const fallback = !kind
   if (fallback) kind = fmt
@@ -640,7 +635,7 @@ async function heartbeatDeep(aid) {
   } catch { /* 主动消息失败跳过 */ }
   // 她自己的生活：每天最多一次。只读浏览；端口/宿主 web 没开就只「想一想」。
   try {
-    const web = optionalService('web')
+    const web = hostWeb(hostCtx)
     let browseOn = false
     try {
       const r = d.prepare("SELECT enabled FROM action_ports WHERE agent_id=? AND name='browse'").get(aid)
@@ -2024,7 +2019,7 @@ pushTurn(aid, { role: 'user', text: t, at: now(), sessionId: sid })
   if (turn.kind !== 'assistant') return
   if (!lastUser.has(sid)) {
     try {
-      const evs = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : []
+      const evs = snapshotEvents(session)
       for (let i = evs.length - 1; i >= 0; i--) {
         const found = readEvent(evs[i])
         if (found.kind === 'user') {
@@ -2076,9 +2071,7 @@ let qqScopeProbeDone = false
 /** 宿主有没有「往会话里推一条消息」的口子（sessionController.prompt）。 */
 function pushPort() {
   try {
-    const sc = hostCtx && hostCtx.get('sessionController')
-    if (!sc || typeof sc.prompt !== 'function') return null
-    return sc
+    return sessionController(hostCtx)
   } catch { return null }
 }
 
@@ -2100,7 +2093,7 @@ async function maybePushProactive(db, aid, out) {
     try {
       if (String(getParam(db, aid, 'qq.push.enable') || 'off') === 'on') {
         const target = String(getParam(db, aid, 'qq.push.target') || '').trim()
-        const api = hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get('qqBridge') : null
+        const api = hostQQBridge(hostCtx)
         const q = await pushProactiveToQQ({
           db, aid, api, chatKey: ownerChatKey(target), line: out.text, proactiveId: out.id,
         })
@@ -2186,34 +2179,26 @@ let lastMeterAt = 0
 
 /**
  * 量这一轮的水位。
- * tokenMeter 是宿主服务，只有这里知道；失败就静默，别让「提醒」把对话弄挂。
+ * 水位从宿主读口拿；失败就静默，别让「提醒」把对话弄挂。
  * 15 秒节流：pre-step 每步都跑，measure 是 O(surface)，长会话里不值得每步都算一遍。
  */
 function noteSessionMeter(payload, readTokens) {
   const t0 = Date.now()
   if (t0 - lastMeterAt < 15000) return
-  const agent = payload && payload.agent
-  const session = agent && agent.session
+  const meterView = preStepView(payload)
+  const session = meterView.session
   if (!session || !session.id) return
   lastMeterAt = t0
   const d = ensureDb()
   const aid = sessionAgentId(d, String(session.id)) || activeAgentId(d)
-  let window = 0
-  try {
-    const rc = typeof session.requestContext === 'function' ? session.requestContext() : null
-    if (rc) window = Math.max(0, Number(rc.contextWindow) || 0)
-  } catch { window = 0 }
+  let window = contextWindowOf(session)
   if (!window && aid) window = Math.max(0, Number(getParam(d, aid, 'mind.meter.window')) || 0)
   let used = 0
   try {
     if (typeof readTokens === 'function') {
       used = Math.max(0, Number(readTokens(session)) || 0)
     } else {
-      const tm = optionalService('tokenMeter')
-      if (tm && typeof tm.measure === 'function') {
-        const mm = tm.measure(session)
-        used = Math.max(0, Number(mm && mm.totalTokens) || 0)
-      }
+      used = measureTokens(hostTokenMeter(hostCtx), session)
     }
   } catch { used = 0 }
   if (!used) return
@@ -2393,25 +2378,16 @@ function hostSpec() {
         subProbeDone = true
         try {
           const d0 = ensureDb()
-          const get = (n) => (hostCtx && typeof hostCtx.get === 'function' ? hostCtx.get(n) : null)
-          const sub = get('subagents')
-          const ag = get('agents')
           try {
-            // index.js 里没有 import setFlag——直接写库里，别依赖别的模块的导出
-            d0.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run('probe.subagents', JSON.stringify({
-              hasSub: !!sub,
-              subMethods: sub ? ['rootOf', 'listDescendants', 'resolveName', 'namesOf', 'sendMessage'].filter((m) => typeof sub[m] === 'function') : [],
-              hasAgents: !!ag,
-              agentMethods: ag ? ['get', 'list'].filter((m) => typeof ag[m] === 'function') : [],
-              at: new Date().toISOString(),
-            }))
+            d0.prepare('INSERT OR REPLACE INTO flags(key,value) VALUES(?,?)').run('probe.subagents', JSON.stringify(probeAgentServices(hostCtx)))
           } catch { /* 写不进就算了 */ }
         } catch { /* 探针不影响对话 */ }
       }
       // 2026-11-19：子代理会话不检索、不拼提示词、不跑情绪链——这一轮直接放行
       {
-        const subAgent = payload && payload.agent
-        const subSid = subAgent && subAgent.session && subAgent.session.id ? String(subAgent.session.id) : ''
+        const subView = preStepView(payload)
+        const subAgent = subView.agent
+        const subSid = subView.sid
         if (subSid) {
           let kind = 'main'
           try { kind = sessionKindJudge(ensureDb(), subSid, subAgent) } catch { kind = isSubSessionId(subSid) ? 'sub' : 'main' }
@@ -2421,11 +2397,11 @@ function hostSpec() {
       try {
         markStage('retrieve')
         const d = ensureDb()
-        const sid = payload && payload.agent && payload.agent.session && payload.agent.session.id
-          ? String(payload.agent.session.id) : ''
+        const stepView = preStepView(payload)
+        const sid = stepView.sid
         const aid = sid ? sessionAgentId(d, sid) : activeAgentId(d)
         if (aid) {
-          const msgs = (payload && payload.messages) || []
+          const msgs = stepView.messages
           let q = ''
           let prevUser = ''
           for (let i = msgs.length - 1; i >= 0; i--) {
@@ -2624,12 +2600,12 @@ function hostSpec() {
          注意：这里在 preStep 的大 try 外面，d / sid / aid / qRaw 都拿不到，全部自己取。 */
       try {
         const d2 = ensureDb()
-        const sid2 = payload && payload.agent && payload.agent.session && payload.agent.session.id
-          ? String(payload.agent.session.id) : ''
+        const affectView = preStepView(payload)
+        const sid2 = affectView.sid
         const aid2 = sid2 ? sessionAgentId(d2, sid2) : activeAgentId(d2)
         let qLine = ''
         try {
-          const msgs = (payload && payload.messages) || []
+          const msgs = affectView.messages
           for (let i = msgs.length - 1; i >= 0; i--) {
             // 2026-11-22 审查确认：这里原来不检查角色，倒着找到第一条有字的消息就当用户话——
             // 末尾若是 assistant / tool 消息，会把模型自己或工具输出当成你说的那句。
@@ -2686,14 +2662,12 @@ function hostSpec() {
           // 先把它的真实长相打出来（条数、最后一条的键和角色），别瞎猜格式。
           let dbg = 'none'
           try {
-            const msgs = (payload && payload.messages) || []
+            const msgs = affectView.messages
             const last = msgs[msgs.length - 1]
             const roles = msgs.slice(-4).map((m) => String((m && (m.role || m.type || m.kind)) || '?')).join(',')
             dbg = 'n=' + msgs.length + ' roles=' + (roles || '-')
               + ' keys=' + (last ? Object.keys(last).join('/') : '-')
-              // 2026-11-22：n=0 说明这个钩子根本没带消息列表。把 payload 顶层键也打出来，
-              // 看它到底给了什么，再决定从哪儿取「用户这句话」。
-              + ' pkeys=' + (payload && typeof payload === 'object' ? Object.keys(payload).join('/') : '-')
+              + ' pkeys=' + affectView.keys.join('/')
           } catch (e) { dbg = 'err:' + String((e && e.message) || e).slice(0, 40) }
           __probe('affect-chain-empty q=' + String(qLine).slice(0, 8) + ' aid=' + String(aid2) + ' ' + dbg)
         }
@@ -2733,16 +2707,15 @@ function hostSpec() {
           } catch { /* 预取失败不影响事件处理 */ }
           // 退路水位：宿主没给 tokenMeter 时，用上一次请求真实的输入量近似。
           try {
-            if (event && event.type === 'assistant/message' && event.data && event.data.usage) {
-              meterFromUsage(String(session.id), event.data.usage)
-            }
+            const usage = assistantUsage(event)
+            if (usage) meterFromUsage(String(session.id), usage)
           } catch { /* usage 只作退路 */ }
           // 2026-11-24 拆开之后：这一轮真正结束的那一刻（turn/end）查「收尾做了没有」。
           // 只记账：不往任何会话里推、不自己起一轮（主人定的：不许动他的窗口）。
           // 原来那三道闸（同一轮一次 / agent 三次 / 60 秒冷却）是给「推消息」配的；
           // 推送删掉之后，只有「同一轮别重复记」还有用，另外两道是死重，已删。
           try {
-            if (event && event.type === 'turn/end') {
+            if (isTurnEnd(event)) {
               const d3 = db()
               if (d3 && id && String(getParam(d3, id, 'affect.v4.judge.split') || 'off') === 'on') {
                 // 口径说明：turn/end 不带轮次号，只能从 lastTurnId 取。它在 preStep 里换新号，
@@ -2927,6 +2900,14 @@ function hostSpec() {
           }
         },
       })
+      // 同上的 JSON 版，给我们自己的客户端面板用（相对路径，跟端口走）。
+      const d6d = child.webServer.register({
+        kind: 'exact',
+        path: '/dsh-consciousness/plan.json',
+        handler: (_req, res) => {
+          try { sendJson(res, 200, planData(ensureDb())) } catch (e) { sendJson(res, 500, { ok: false, error: String((e && e.message) || e).slice(0, 160) }) }
+        },
+      })
       const d7 = child.webServer.register({
         kind: 'exact',
         path: '/dsh-consciousness/board',
@@ -2948,6 +2929,7 @@ function hostSpec() {
         try { d5() } catch { /* ignore */ }
         try { d6() } catch { /* ignore */ }
         try { d6c() } catch { /* ignore */ }
+        try { d6d() } catch { /* ignore */ }
         try { d7() } catch { /* ignore */ }
       }
     },
@@ -2959,8 +2941,8 @@ function hostSpec() {
       getAgentId: () => initiatorAgentId(),
       // QQ 会话里没有「当前发起人」：按这条会话自己认人，别让 feel 写成 no_db。
       getAgentIdForSession: (sid) => { try { return agentOfSession(ensureDb(), sid) } catch { return '' } },
-      getWeb: () => optionalService('web'),
-      getSpeech: () => optionalService('speechToText'),
+      getWeb: () => hostWeb(hostCtx),
+      getSpeech: () => hostSpeech(hostCtx),
       getModel: () => model,
       // 本地/宿主后台队列快照（local_llm_status 工具用）：谁在跑、谁在排、最近几条。
       getLocalStatus: () => {
@@ -2994,7 +2976,7 @@ function hostSpec() {
     // 7) 对外服务：别的插件（QQ 桥）按名字拿「听」和「说」，不 import 我们的文件。
     // 名字定死了就不许边写边改——跨包契约一改两边都要动。
     services: createVoiceServices({
-      getSpeech: () => optionalService('speechToText'),
+      getSpeech: () => hostSpeech(hostCtx),
       getConfig: () => {
         const d = ensureDb()
         const aid = activeAgentId(d)
@@ -3095,7 +3077,7 @@ export function apply(ctx) {
   // QQ 等外部通道的 reply() 也用同一份意识体包，避免网页一个样、QQ 另一个样
   try { attachContextBlock((db, aid, opts) => consciousnessBlock(db, aid, opts)) } catch { /* 包构建失败就退回精简提示 */ }
   try { hostCtx = ctx } catch { /* 宿主上下文不可用 */ }
-  try { attachActionDeps({ getWeb: () => optionalService('web'), getSpeech: () => optionalService('speechToText'), getModel: () => model }) } catch { /* 行动层降级 */ }
+  try { attachActionDeps({ getWeb: () => hostWeb(hostCtx), getSpeech: () => hostSpeech(hostCtx), getModel: () => model }) } catch { /* 行动层降级 */ }
   if (!acquireLock()) {
     console.error('[dsh-consciousness-v6] another instance holds the lock; plugin stays offline')
     return

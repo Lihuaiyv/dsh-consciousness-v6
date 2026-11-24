@@ -164,3 +164,116 @@ export function renderPlanPage(db) {
  <table><thead><tr><th style="width:150px">时间</th><th style="width:60px">类型</th><th>内容</th></tr></thead><tbody>${evHtml}</tbody></table>
 </div></html>`
 }
+
+/** 给面板/脚本用的 JSON 快照（只读）。 */
+export function planData(db, limit = 30) {
+  const rows = recentPlanRows(db, limit).map((r) => {
+    let items = []; let deferred = []
+    try { items = JSON.parse(r.items_json || '[]') } catch { items = [] }
+    try { deferred = JSON.parse(r.deferred_json || '[]') } catch { deferred = [] }
+    return {
+      turnId: r.turn_id, seq: r.seq, motive: r.motive, source: r.source,
+      items, deferred, note: r.note, diff: r.diff_json, at: r.submitted_at,
+    }
+  })
+  const events = recentPlanEvents(db, 40).map((e) => {
+    let payload = {}
+    try { payload = JSON.parse(e.payload || '{}') } catch { payload = {} }
+    return { type: e.type, at: e.created_at, ...payload }
+  })
+  return { ok: true, rows, events, latest: rows[0] || null }
+}
+
+// ── 轮次上下文：preStep 记，工具取（工具里拿不到轮次号） ──────────
+const lastTurn = new Map()
+export function rememberMotivationTurn(aid, { turnId = null, text = '', conversationId = null } = {}) {
+  try {
+    if (!aid || !turnId) return false
+    lastTurn.set(String(aid), { turnId: String(turnId), text: String(text || ''), conversationId })
+    return true
+  } catch { return false }
+}
+export function currentMotivationTurn(aid) { return lastTurn.get(String(aid || '')) || null }
+
+/** 跟上一版比，算出改了什么（代码算，不是我填）。 */
+function diffOf(prev, next) {
+  const oldItems = new Map((prev ? prev.items : []).map((it) => [String(it.id), it]))
+  const added = []; const done = []; const removed = []; const edited = []
+  for (const it of next) {
+    const o = oldItems.get(String(it.id))
+    if (!o) { added.push(String(it.id)); continue }
+    if (!o.done && it.done) done.push(String(it.id))
+    if (String(o.text || '') !== String(it.text || '')) edited.push(String(it.id))
+    oldItems.delete(String(it.id))
+  }
+  for (const id of oldItems.keys()) removed.push(id)
+  return { added, done, removed, edited }
+}
+
+function parseItems(raw) {
+  if (!raw) return []
+  if (!Array.isArray(raw)) throw new Error('items 必须是数组')
+  return raw.map((it) => ({
+    id: String((it && it.id) || '').trim(),
+    text: String((it && it.text) || '').trim(),
+    done: !!(it && it.done),
+  }))
+}
+
+/**
+ * 交一版计划。P1 只做写表 + 校验，不做任何自动触发。
+ * 校验：动机必填；台上至多 3 条；id 唯一且非空；改动（不是第一版）必须带 note；
+ *       原有 id 必须继承（不许整批换号），被删的 id 记进 diff 的 removed。
+ */
+export function submitPlan(db, agentId, { motive = '', source = 'self', items = null, deferred = null, note = '' } = {}) {
+  const ctx = currentMotivationTurn(agentId)
+  if (!ctx) return { ok: false, reason: 'no-turn' }
+  const rawMotive = String(motive || '').trim()
+  if (!rawMotive) return { ok: false, reason: 'motive-required' }
+  let nextItems
+  try { nextItems = parseItems(items) } catch (e) { return { ok: false, reason: String(e.message || e) } }
+  if (nextItems.length > 3) return { ok: false, reason: 'too-many-items' }
+  const seen = new Set()
+  for (const it of nextItems) {
+    if (!it.id) return { ok: false, reason: 'item-id-required' }
+    if (seen.has(it.id)) return { ok: false, reason: 'duplicate-item-id' }
+    seen.add(it.id)
+  }
+  const prevRow = latestPlan(db, agentId, ctx.turnId)
+  // 「同前」= 确认动机未变：沿用上一版的文字，不算改动。
+  const motiveText = rawMotive === '同前' ? String((prevRow && prevRow.motive) || '') : rawMotive
+  if (!motiveText) return { ok: false, reason: 'motive-required' }
+  let prev = null
+  if (prevRow) {
+    let prevItems = []; try { prevItems = JSON.parse(prevRow.items_json || '[]') } catch { prevItems = [] }
+    prev = { items: prevItems, motive: prevRow.motive }
+  }
+  const seq = prevRow ? Number(prevRow.seq) + 1 : 1
+  // 第二版起必须说明为什么改（第一版是起步，不要求）。
+  if (prevRow && !String(note || '').trim()) return { ok: false, reason: 'note-required' }
+  // 编号继承：上一版里没被删掉的，不能在新版里“换号”出现同样文字（防整批换血）。
+  if (prev) {
+    const prevTexts = new Map(prev.items.map((it) => [String(it.text || ''), String(it.id)]))
+    for (const it of nextItems) {
+      const oldId = prevTexts.get(it.text)
+      if (oldId && oldId !== it.id) return { ok: false, reason: 'id-not-inherited:' + oldId + '->' + it.id }
+    }
+  }
+  const diff = diffOf(prev, nextItems)
+  const motiveChanged = rawMotive === '同前' ? false : (!prev || String(prev.motive || '') !== motiveText)
+  const deferredArr = Array.isArray(deferred) ? deferred.map((d) => ({
+    id: String((d && d.id) || '').trim() || ('d' + Math.random().toString(36).slice(2, 6)),
+    text: String((d && d.text) || '').trim(),
+    reason: String((d && d.reason) || '').trim(),
+  })) : []
+  const id = nid('pln_')
+  const at = now()
+  db.prepare(`INSERT INTO ${TABLE}(id,agent_id,turn_id,seq,motive,source,items_json,deferred_json,note,diff_json,submitted_at)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+    id, String(agentId), ctx.turnId, seq, motiveText, String(source || 'self'),
+    JSON.stringify(nextItems), JSON.stringify(deferredArr), String(note || ''),
+    JSON.stringify(diff), at,
+  )
+  logSubmit(db, agentId, { turnId: ctx.turnId, seq, motive: motiveText, items: nextItems, deferred: deferredArr, motiveChanged })
+  return { ok: true, seq, diff, motiveChanged, items: nextItems.length, deferred: deferredArr.length }
+}

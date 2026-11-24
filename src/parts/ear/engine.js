@@ -1,7 +1,7 @@
 // 听见 · 转规格与识别：两个外部世界的接口都在这一格。
 //
 //   1. ffmpeg（进程）——把任意音频转成 16k 单声道 PCM16 WAV；
-//   2. DSH 的识别服务（宿主服务）——把那段 WAV 转成字。
+//   2. 识别服务的调用在 src/host/speech.js，这里转一手，考卷还从这里进。
 //
 // 两个都走注入：ffmpeg 用 `run`，识别服务用传进来的 `service`。
 // 所以这个文件不 spawn、不拿全局状态，考卷能直接喂假数据。
@@ -9,12 +9,7 @@ import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { canonicalizeWav, inspectWav } from './probe.js'
-
-/** DSH 语音服务在宿主里的服务名（cordis service id）。 */
-export const DSH_SPEECH_SERVICE = 'speechToText'
-
-/** 默认语言：auto = 让识别自己判（中英混说也稳）。 */
-export const DEFAULT_STT_LANGUAGE = 'auto'
+export { SPEECH_SERVICE as DSH_SPEECH_SERVICE, DEFAULT_STT_LANGUAGE, transcribeViaDsh, explainDshError } from '../../host/speech.js'
 
 /**
  * execFile 的 message 开头是整条命令，真正的原因在 stderr 最后一行。
@@ -76,40 +71,3 @@ export async function toWav16k({ buffer, ext = 'amr', ffmpegPath = 'ffmpeg', tmp
   }
 }
 
-/**
- * 用 DSH 自带的语音服务转写。
- * @param {object} options
- * @param {object|undefined} options.service 宿主服务（`ctx.get('speechToText')`）
- * @param {Buffer} options.wav 16 kHz 单声道 PCM16 WAV
- * @param {string} [options.language]
- * @param {AbortSignal} [options.signal]
- * @returns {Promise<{ text: string, audioSeconds: number|null, inferenceSeconds: number|null }>}
- */
-export async function transcribeViaDsh({ service, wav, language = DEFAULT_STT_LANGUAGE, signal }) {
-  if (!service || typeof service.resolve !== 'function' || typeof service.transcribe !== 'function') {
-    throw new Error('DSH 的语音转文字没启用：请把 @deepseek-ai/dsh-experimental-voice-input-bundle 加进 profile 的 bundles 并重启')
-  }
-  const check = inspectWav(wav)
-  if (!check.ok) throw new Error(`音频不符合 DSH 语音服务的要求：${check.reason}`)
-  const spec = service.resolve({ audio: new Uint8Array(wav), language })
-  const transcript = await service.transcribe(spec, signal ?? AbortSignal.timeout(120_000))
-  const text = String(transcript?.text ?? '').trim()
-  if (text === '') throw new Error('DSH 语音服务返回了空文本（可能是录音太短或没人说话）')
-  return {
-    text,
-    audioSeconds: Number.isFinite(transcript?.audioSeconds) ? transcript.audioSeconds : null,
-    inferenceSeconds: Number.isFinite(transcript?.inferenceSeconds) ? transcript.inferenceSeconds : null,
-  }
-}
-
-/** 把识别服务的异常翻译成主人看得懂的一句话。 */
-export function explainDshError(error) {
-  const message = String(error?.message ?? error)
-  if (/download|prepare|preparation|model/i.test(message)) {
-    return `首次使用要下载本地语音模型：${message.slice(0, 80)}`
-  }
-  if (/unavailable|not registered|unknown provider/i.test(message)) {
-    return `DSH 里没有可用的本地识别提供方（检查 profile 是否装了 speech-to-text-sensevoice）：${message.slice(0, 60)}`
-  }
-  return `DSH 语音转文字失败：${message.slice(0, 90)}`
-}
