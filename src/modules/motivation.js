@@ -103,10 +103,6 @@ export function recentPlanEvents(db, limit = 40) {
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
-/**
- * 只读页 /dsh-consciousness/plan：给你看的窗口，2 秒自刷。
- * 只查库、不写库、不调模型——不占队列，也不影响我这边速度。
- */
 export function renderPlanPage(db) {
   const rows = recentPlanRows(db, 30)
   const evs = recentPlanEvents(db, 40)
@@ -311,3 +307,8 @@ export function motivationTick(db, agentId, { step = 0, turnId = null } = {}) {
     return { ok: true, stale, reason, wouldForce, seq: latest ? latest.seq : 0 }
   } catch (e) { return { ok: false, reason: 'throw:' + String((e && e.message) || '').slice(0, 60) } }
 }
+
+/**
+ * 只读页 /dsh-consciousness/plan：给你看的窗口，2 秒自刷。
+ * 每轮一张卡：动机 / 计划（台上）/ 台下 / 为什么改 / 状态。编号缩小，流水用中文。
+ */
