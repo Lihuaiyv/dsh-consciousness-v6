@@ -637,14 +637,14 @@ export function createActionTools({ getDb, getAgentId, getAgentIdForSession, get
          （2026-11-24 实测：工具表里一直没有它，报 unknown tool）。 */
       name: 'plan_note',
       description: '交一版动机与计划：motive 一句话说这一轮为什么值得做（没变写「同前」），'
-        + 'items 台上待办（至多三条，每条带 id/text/done；改版必须沿用旧 id），'
+        + 'items 台上待办（通常 2–3 条，最多 5 条；每条带 id/text/done，改版必须沿用旧 id），'
         + 'deferred 台下延后项（带原因），note 这版为什么改（第二版起必填）。',
       parameters: schema({
         motive: str('这一轮为什么值得做（一句话；没变写「同前」）'),
         source: { type: 'string', enum: ['user', 'doc', 'self'], description: '动机挂在哪：他的话=user / 文档里的事=doc / 我自己想的=self' },
         items: {
           type: 'array',
-          description: '台上待办，至多三条',
+          description: '台上待办（建议 2–3 条，最多 5 条）',
           items: {
             type: 'object',
             properties: {

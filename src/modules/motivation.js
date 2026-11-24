@@ -120,7 +120,7 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
     try { items = JSON.parse(r.items_json || '[]') } catch { items = [] }
     try { deferred = JSON.parse(r.deferred_json || '[]') } catch { deferred = [] }
     const doneN = items.filter((i) => i.done).length
-    const status = r.closed ? '已声明收口' : (items.length && doneN === items.length ? '台上清空' : '进行中')
+    const status = r.closed ? '已声明收口' : (items.length && doneN === items.length ? '台上清空' : '进行中') + (items.length > 3 ? ' · 偏多' : '')
     const itemRows = items.map((it) => '<tr class="' + (it.done ? 'ok' : '') + '"><td class="st">' + (it.done ? '做完' : '没做') + '</td><td>' + esc(it.text) + '</td><td class="id">' + esc(it.id) + '</td></tr>').join('')
     const shelfRows = deferred.map((it) => '<tr><td class="st">延后</td><td>' + esc(it.text) + '</td><td class="why">' + esc(it.reason || '') + '</td></tr>').join('')
     return '<div class="card">'
@@ -230,7 +230,7 @@ export function submitPlan(db, agentId, { motive = '', source = 'self', items = 
   if (!rawMotive) return { ok: false, reason: 'motive-required' }
   let nextItems
   try { nextItems = parseItems(items) } catch (e) { return { ok: false, reason: String(e.message || e) } }
-  if (nextItems.length > 3) return { ok: false, reason: 'too-many-items' }
+  if (nextItems.length > 5) return { ok: false, reason: 'too-many-items' } // 上限 5：建议 2–3，超过不硬卡
   const seen = new Set()
   for (const it of nextItems) {
     if (!it.id) return { ok: false, reason: 'item-id-required' }
