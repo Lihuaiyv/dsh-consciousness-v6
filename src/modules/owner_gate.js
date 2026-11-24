@@ -139,3 +139,25 @@ export function makeOwnerGuard({ getDb, getAid, param, findSessionsFile, tool = 
     }
   }
 }
+
+/**
+ * 对账用探针：只记录「宿主把哪些工具名送进了守卫」，从不拒绝。
+ * 目的：确认 write / pwsh / edit 这些宿主工具到底过不过守卫——
+ * 只有看得见它们，动机三闸才谈得上拦写作。
+ */
+export function makeNameProbeGuard({ getDb, getAid, param } = {}) {
+  return function nameProbe(execution) {
+    try {
+      const name = String((execution && execution.name) || '')
+      if (!name) return undefined
+      const db = typeof getDb === 'function' ? getDb() : null
+      if (!db) return undefined
+      const aid = typeof getAid === 'function' ? String(getAid() || '') : ''
+      const read = typeof param === 'function' ? param : (k) => (db && aid ? getParam(db, aid, k) : undefined)
+      if (String(read('motivation.on') ?? 'off') !== 'on') return undefined
+      const sid = execution.agent && execution.agent.id ? String(execution.agent.id) : ''
+      audit(db, aid, 'gate.probe', { name, sessionId: sid })
+      return undefined
+    } catch { return undefined }
+  }
+}

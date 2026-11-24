@@ -153,7 +153,7 @@ import { heartbeatTick } from './src/modules/heartbeat.js'
 import { attachQQBridge, attachQQIngest, attachQQFeelProvider, isQQSessionId, qqChannelBlock } from './src/modules/qq_bridge.js'
 import { findQQSessionsFile } from './src/modules/qq_watch.js'
 import { mindLine, noteMeter, meterFromUsage, meterOf } from './src/modules/mindstate.js'
-import { makeOwnerGuard, verdictFor } from './src/modules/owner_gate.js'
+import { makeOwnerGuard, verdictFor, makeNameProbeGuard } from './src/modules/owner_gate.js'
 
 // 情绪注入的人话化交给 modules/expression_state.js（第一人称感受 + 软愿望）；这里不再保留「强度 / 心情 / 底色」的数字分档函数。
 // 必须与 package.json / cordis.patch.yml 的包名一致，否则 loader 挂载异常。
